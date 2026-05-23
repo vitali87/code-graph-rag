@@ -107,6 +107,14 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
+def _resolve_active_projects(projects: str | None, default_project: str) -> list[str]:
+    if projects:
+        parsed = [p.strip() for p in projects.split(",") if p.strip()]
+        if parsed:
+            return parsed
+    return [default_project]
+
+
 def _maybe_start_stack() -> None:
     mgr = StackManager()
     if mgr.status().state == StackState.RUNNING:
@@ -266,6 +274,11 @@ def start(
         "--no-sync",
         help=ch.HELP_NO_SYNC,
     ),
+    projects: str | None = typer.Option(
+        None,
+        "--projects",
+        help=ch.HELP_PROJECTS,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
@@ -325,11 +338,24 @@ def start(
             interactive_setup=interactive_setup,
         )
 
+    active_projects = _resolve_active_projects(projects, resolved_project_name)
+
     try:
         if ask_agent:
-            main_single_query(target_repo_path, effective_batch_size, ask_agent)
+            main_single_query(
+                target_repo_path,
+                effective_batch_size,
+                ask_agent,
+                active_projects=active_projects,
+            )
         else:
-            asyncio.run(main_async(target_repo_path, effective_batch_size))
+            asyncio.run(
+                main_async(
+                    target_repo_path,
+                    effective_batch_size,
+                    active_projects=active_projects,
+                )
+            )
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:

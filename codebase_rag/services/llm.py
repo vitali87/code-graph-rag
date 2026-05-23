@@ -157,6 +157,7 @@ def create_rag_orchestrator(
     tools: list[Tool],
     project_root: Path | None = None,
     load_instructions: bool = True,
+    active_projects: list[str] | None = None,
 ) -> tuple[Agent, str]:
     try:
         config = settings.active_orchestrator_config
@@ -166,7 +167,9 @@ def create_rag_orchestrator(
             load_cgr_instructions(project_root) if load_instructions else None
         )
         system_prompt = build_rag_orchestrator_prompt(
-            tools, project_instructions=project_instructions
+            tools,
+            project_instructions=project_instructions,
+            active_projects=active_projects,
         )
 
         agent = Agent(

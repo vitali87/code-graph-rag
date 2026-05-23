@@ -56,6 +56,14 @@ HELP_NO_START_STACK = (
 HELP_NO_SYNC = (
     "Skip the automatic incremental graph sync that runs before the agent starts."
 )
+HELP_PROJECTS = (
+    "Comma-separated list of project names to scope agent queries to. "
+    "Overrides --project-name. If omitted, defaults to the current repo's project."
+)
+HELP_WORKSPACE = (
+    "Open the agent over all projects defined in a cgr workspace TOML "
+    "(stored under ~/.cgr/workspaces/<name>.toml)."
+)
 
 HELP_BATCH_SIZE = "Number of buffered nodes/relationships before flushing to Memgraph"
 HELP_MEMGRAPH_HOST = "Memgraph host"

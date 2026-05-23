@@ -1515,7 +1515,9 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 
 
 def _initialize_services_and_agent(
-    repo_path: str, ingestor: QueryProtocol
+    repo_path: str,
+    ingestor: QueryProtocol,
+    active_projects: list[str] | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
@@ -1564,23 +1566,35 @@ def _initialize_services_and_agent(
         ],
         project_root=Path(repo_path),
         load_instructions=app_context.session.load_cgr_instructions,
+        active_projects=active_projects,
     )
     return rag_agent, confirmation_tool_names, system_prompt
 
 
-def main_single_query(repo_path: str, batch_size: int, question: str) -> None:
+def main_single_query(
+    repo_path: str,
+    batch_size: int,
+    question: str,
+    active_projects: list[str] | None = None,
+) -> None:
     _setup_common_initialization(repo_path)
     # (H) Override logger to stderr so stdout is clean for scripted output
     logger.remove()
     logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
 
     with connect_memgraph(batch_size) as ingestor:
-        rag_agent, _, _ = _initialize_services_and_agent(repo_path, ingestor)
+        rag_agent, _, _ = _initialize_services_and_agent(
+            repo_path, ingestor, active_projects=active_projects
+        )
         response = asyncio.run(rag_agent.run(question, message_history=[]))
         print(response.output)  # noqa: T201
 
 
-async def main_async(repo_path: str, batch_size: int) -> None:
+async def main_async(
+    repo_path: str,
+    batch_size: int,
+    active_projects: list[str] | None = None,
+) -> None:
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
@@ -1596,7 +1610,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
         )
 
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
-            repo_path, ingestor
+            repo_path, ingestor, active_projects=active_projects
         )
         _prime_context_token_counter(system_prompt)
         await run_chat_loop(rag_agent, [], project_root, tool_names)
