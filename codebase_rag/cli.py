@@ -8,6 +8,7 @@ from loguru import logger
 from rich.panel import Panel
 from rich.table import Table
 
+from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
@@ -215,6 +216,7 @@ def _run_graph_sync(
             project_name=project_name,
         )
         updater.run()
+        cgr_state.record_sync(project_name)
 
         if output:
             _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
@@ -693,6 +695,35 @@ def daemon_command(ctx: typer.Context) -> None:
 )
 def workspace_command(ctx: typer.Context) -> None:
     workspace_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(name=ch.CLICommandName.STOP, help=ch.CMD_STOP)
+def stop_command() -> None:
+    mgr = StackManager()
+    try:
+        mgr.down()
+    except StackError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+    _info(style("stack stopped", cs.Color.GREEN))
+
+
+@app.command(name=ch.CLICommandName.STATUS, help=ch.CMD_STATUS)
+def status_command() -> None:
+    status = StackManager().status()
+    app_context.console.print(
+        f"stack:    {status.state.value} "
+        f"(memgraph={status.memgraph_endpoint} reachable={status.memgraph_reachable}, "
+        f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
+    )
+    app_context.console.print(f"compose:  {status.compose_file}")
+    timestamps = cgr_state.read_sync_timestamps()
+    if not timestamps:
+        app_context.console.print("syncs:    (no projects synced via cgr yet)")
+        return
+    app_context.console.print("syncs:")
+    for project, ts in sorted(timestamps.items()):
+        app_context.console.print(f"  - {project}: last sync {ts}")
 
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)

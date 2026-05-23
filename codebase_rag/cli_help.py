@@ -14,6 +14,8 @@ class CLICommandName(StrEnum):
     DELETE_PROJECT = "delete-project"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
+    STOP = "stop"
+    STATUS = "status"
 
 
 APP_DESCRIPTION = (
@@ -63,6 +65,9 @@ HELP_WORKSPACE_REPO_PROJECT_NAME = (
 )
 
 MSG_NO_WORKSPACES = "(no workspaces; create one with 'cgr workspace create <name>')"
+
+CMD_STOP = "Alias for `cgr daemon down`: stop the shared docker stack."
+CMD_STATUS = "Show daemon stack state plus last-sync timestamp per project."
 
 HELP_DAEMON_LOGS_FOLLOW = "Stream logs continuously (Ctrl+C to stop)."
 HELP_DAEMON_LOGS_SERVICE = (
@@ -184,4 +189,6 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
+    CLICommandName.STOP: CMD_STOP,
+    CLICommandName.STATUS: CMD_STATUS,
 }
