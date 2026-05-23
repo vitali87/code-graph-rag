@@ -11,7 +11,7 @@ import subprocess
 import sys
 import uuid
 from collections import deque
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from contextlib import contextmanager
 from dataclasses import replace
 from html import escape as html_escape
@@ -1595,6 +1595,8 @@ async def main_async(
     batch_size: int,
     active_projects: list[str] | None = None,
     show_config_table: bool = True,
+    pre_chat_sync: Callable[[], None] | None = None,
+    pre_chat_sync_message: str = cs.MSG_SYNCING_KNOWLEDGE_GRAPH,
 ) -> None:
     project_root = _setup_common_initialization(repo_path)
 
@@ -1615,7 +1617,20 @@ async def main_async(
             repo_path, ingestor, active_projects=active_projects
         )
         _prime_context_token_counter(system_prompt)
+
+        if pre_chat_sync is not None:
+            await _run_pre_chat_sync(pre_chat_sync, pre_chat_sync_message)
+
         await run_chat_loop(rag_agent, [], project_root, tool_names)
+
+
+async def _run_pre_chat_sync(task: Callable[[], None], message: str) -> None:
+    logger.disable("codebase_rag")
+    try:
+        with _thinking_with_status_bar(message):
+            await asyncio.to_thread(task)
+    finally:
+        logger.enable("codebase_rag")
 
 
 async def main_optimize_async(

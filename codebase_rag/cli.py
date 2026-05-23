@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
 
@@ -392,16 +393,19 @@ def start(
 
     workspace_config = _load_workspace_or_exit(workspace)
 
+    sync_task: Callable[[], None] | None = None
+    sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
     if not no_sync:
         if workspace_config is not None:
-            _sync_workspace(workspace_config, effective_batch_size, exclude)
-        else:
-            _info(
-                style(
-                    cs.CLI_MSG_SYNCING_GRAPH.format(path=resolved_repo), cs.Color.CYAN
-                )
+            sync_task = partial(
+                _sync_workspace, workspace_config, effective_batch_size, exclude
             )
-            _run_graph_sync(
+            sync_message = cs.MSG_SYNCING_WORKSPACE.format(
+                name=workspace_config.name, count=len(workspace_config.repos)
+            )
+        else:
+            sync_task = partial(
+                _run_graph_sync,
                 repo=resolved_repo,
                 project_name=resolved_project_name,
                 batch_size=effective_batch_size,
@@ -418,6 +422,8 @@ def start(
 
     try:
         if ask_agent:
+            if sync_task is not None:
+                sync_task()
             main_single_query(
                 target_repo_path,
                 effective_batch_size,
@@ -431,6 +437,8 @@ def start(
                     effective_batch_size,
                     active_projects=active_projects,
                     show_config_table=False,
+                    pre_chat_sync=sync_task,
+                    pre_chat_sync_message=sync_message,
                 )
             )
     except KeyboardInterrupt:

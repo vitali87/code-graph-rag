@@ -247,6 +247,12 @@ CLI_MSG_WORKSPACE_SYNC_REPO = (
 CLI_MSG_WORKSPACE_EMPTY = (
     "Workspace '{name}' has no repos (use cgr workspace add-repo)."
 )
+MSG_SYNCING_KNOWLEDGE_GRAPH = (
+    "[bold cyan]Syncing knowledge graph[/bold cyan] (incremental, --no-sync to skip)"
+)
+MSG_SYNCING_WORKSPACE = (
+    "[bold cyan]Syncing workspace '{name}'[/bold cyan] ({count} repos)"
+)
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
