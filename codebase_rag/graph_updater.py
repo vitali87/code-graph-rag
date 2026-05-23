@@ -35,6 +35,7 @@ from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
     cached_relative_path,
     should_skip_path,
+    should_skip_rel_file,
 )
 from .utils.source_extraction import extract_source_with_fallback
 
@@ -465,8 +466,7 @@ class GraphUpdater:
         rehashed_count = 0
         t0 = time.monotonic()
         seen_keys: set[str] = set()
-        for filepath in eligible_files:
-            file_key = str(cached_relative_path(filepath, self.repo_path))
+        for filepath, file_key in eligible_files:
             try:
                 stat = filepath.stat()
             except OSError:
@@ -534,7 +534,7 @@ class GraphUpdater:
         )
         return True
 
-    def _collect_eligible_files(self) -> list[Path]:
+    def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
             if not should_skip_path(
                 self._single_file,
@@ -542,30 +542,43 @@ class GraphUpdater:
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             ):
-                return [self._single_file]
+                file_key = cached_relative_path(
+                    self._single_file, self.repo_path
+                ).as_posix()
+                return [(self._single_file, file_key)]
             return []
 
-        eligible: list[Path] = []
+        eligible: list[tuple[Path, str]] = []
         hash_name = cs.HASH_CACHE_FILENAME
-        for dirpath, dirnames, filenames in os.walk(str(self.repo_path)):
-            dirpath_obj = Path(dirpath)
-            rel_dir = cached_relative_path(dirpath_obj, self.repo_path).as_posix()
-            dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
+        repo_str = str(self.repo_path)
+        repo_prefix_len = len(repo_str) + 1
+        exclude_paths = self.exclude_paths
+        unignore_paths = self.unignore_paths
+        for dirpath, dirnames, filenames in os.walk(repo_str):
+            if len(dirpath) < repo_prefix_len:
+                rel_dir = ""
+                dir_parts: tuple[str, ...] = ()
+            else:
+                rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
+                dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
+            dir_prefix = f"{rel_dir}/" if rel_dir else ""
             dirnames[:] = sorted(
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
             )
             for fname in sorted(filenames):
                 if fname == hash_name:
                     continue
-                filepath = Path(f"{dirpath}/{fname}")
-                if not should_skip_path(
-                    filepath,
-                    self.repo_path,
-                    exclude_paths=self.exclude_paths,
-                    is_file=True,
-                    unignore_paths=self.unignore_paths,
+                dot = fname.rfind(".")
+                suffix = fname[dot:] if dot != -1 else ""
+                rel_path_str = f"{dir_prefix}{fname}"
+                if not should_skip_rel_file(
+                    rel_path_str,
+                    dir_parts,
+                    suffix,
+                    exclude_paths=exclude_paths,
+                    unignore_paths=unignore_paths,
                 ):
-                    eligible.append(filepath)
+                    eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
@@ -585,9 +598,7 @@ class GraphUpdater:
         processed_since_flush = 0
 
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
-        for filepath in eligible_files:
-            file_key = str(cached_relative_path(filepath, self.repo_path))
-
+        for filepath, file_key in eligible_files:
             hashed = _hash_file_with_bytes(filepath)
             if hashed is None:
                 unreadable_count += 1

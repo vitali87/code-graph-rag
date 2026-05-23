@@ -63,3 +63,25 @@ def should_skip_path(
     ):
         return False
     return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
+
+
+def should_skip_rel_file(
+    rel_path_str: str,
+    dir_parts: tuple[str, ...],
+    suffix: str,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    if suffix in cs.IGNORE_SUFFIXES:
+        return True
+    if exclude_paths and (
+        not exclude_paths.isdisjoint(dir_parts)
+        or rel_path_str in exclude_paths
+        or any(rel_path_str.startswith(f"{p}/") for p in exclude_paths)
+    ):
+        return True
+    if unignore_paths and any(
+        rel_path_str == p or rel_path_str.startswith(f"{p}/") for p in unignore_paths
+    ):
+        return False
+    return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
