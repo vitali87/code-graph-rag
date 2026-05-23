@@ -140,9 +140,50 @@ sudo dnf install ripgrep
 
 ## 🛠️ Installation
 
+### System-wide install (recommended for end users)
+
+`cgr` is published to PyPI and can be installed system-wide so it works from any
+target repo without activating a project virtualenv:
+
+```bash
+# with uv (recommended)
+uv tool install code-graph-rag
+
+# or with pipx
+pipx install code-graph-rag
+```
+
+After install, `cgr` is on PATH. From any repository, run:
+
+```bash
+cd ~/path/to/some-target-repo
+cgr daemon up        # one-time: start the shared memgraph + qdrant stack
+cgr start            # auto-sync the current repo and drop into the agent
+```
+
+`cgr start` defaults `--repo-path` to the current directory and auto-syncs the
+graph incrementally on entry. Pass `--no-sync` to skip the sync, or
+`--no-start-stack` if memgraph/qdrant already run elsewhere.
+
+Useful subcommands:
+
+| Command | Purpose |
+|---|---|
+| `cgr daemon up/down/status/restart/logs` | Manage the shared docker stack |
+| `cgr stop` | Alias for `cgr daemon down` |
+| `cgr status` | Show stack state + per-project last-sync timestamp |
+| `cgr workspace create/list/show/delete` | Manage named bundles of repos |
+| `cgr workspace add-repo / remove-repo` | Edit a workspace's repo set |
+| `cgr start --workspace mono` | Open the agent over every project in the workspace |
+| `cgr start --projects a,b,c` | Scope agent queries to the listed projects |
+
+Indexed data persists across `cgr daemon down` thanks to named memgraph + qdrant
+volumes (`memgraph_data`, `memgraph_log`, `qdrant_storage`).
+
+### Local development install
+
 ```bash
 git clone https://codeberg.org/vitali87/code-graph-rag.git
-
 cd code-graph-rag
 ```
 
