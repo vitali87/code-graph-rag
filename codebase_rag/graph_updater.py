@@ -646,6 +646,7 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
 
@@ -664,6 +665,18 @@ class GraphUpdater:
 
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
         for filepath, file_key in eligible_files:
+            if not force and file_key in old_hashes:
+                try:
+                    file_mtime = filepath.stat().st_mtime
+                except OSError:
+                    unreadable_count += 1
+                    continue
+                if file_mtime <= cache_mtime:
+                    new_hashes[file_key] = old_hashes[file_key]
+                    current_file_keys.add(file_key)
+                    skipped_count += 1
+                    continue
+
             hashed = _hash_file_with_bytes(filepath)
             if hashed is None:
                 unreadable_count += 1
