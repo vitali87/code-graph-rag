@@ -40,6 +40,7 @@ from .utils.path_utils import (
 from .utils.source_extraction import extract_source_with_fallback
 
 type FileHashCache = dict[str, str]
+type DirMtimesCache = dict[str, float]
 
 
 class FunctionRegistryTrie:
@@ -302,6 +303,39 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
+    if not cache_path.is_file():
+        return {}
+    try:
+        with cache_path.open(encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
+    except (json.JSONDecodeError, OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_dir_mtimes(cache_path: Path, mtimes: DirMtimesCache) -> None:
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w", encoding="utf-8") as f:
+            json.dump(mtimes, f)
+    except OSError:
+        pass
+
+
+def _touch_empty_json(cache_path: Path) -> None:
+    if cache_path.exists():
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w", encoding="utf-8") as f:
+            f.write(cs.JSON_EMPTY_OBJECT)
+    except OSError:
+        pass
+
+
 class GraphUpdater:
     def __init__(
         self,
@@ -335,6 +369,7 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self.fast_path_bail_reason: str | None = None
         self.fast_path_timings: FastPathTimings | None = None
+        self._collected_dir_mtimes: DirMtimesCache = {}
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -451,85 +486,103 @@ class GraphUpdater:
             )
             return False
         cache_mtime = cache_path.stat().st_mtime
+        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         t0 = time.monotonic()
         old_hashes = _load_hash_cache(cache_path)
+        old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
         load_cache_elapsed = time.monotonic() - t0
         if not old_hashes:
             self.fast_path_bail_reason = cs.FAST_PATH_BAIL_EMPTY_CACHE.format(
                 path=cache_path
             )
             return False
-        t0 = time.monotonic()
-        eligible_files = self._collect_eligible_files()
-        walk_elapsed = time.monotonic() - t0
+        if not old_dir_mtimes:
+            self.fast_path_bail_reason = cs.FAST_PATH_BAIL_NO_DIR_MTIMES.format(
+                path=dir_mtimes_path
+            )
+            return False
 
-        rehashed_count = 0
         t0 = time.monotonic()
-        seen_keys: set[str] = set()
-        for filepath, file_key in eligible_files:
+        repo_str = str(self.repo_path)
+        for dir_key, cached_mtime in old_dir_mtimes.items():
+            dir_path_str = (
+                repo_str if dir_key == cs.ROOT_DIR_KEY else f"{repo_str}/{dir_key}"
+            )
             try:
-                stat = filepath.stat()
+                current_mtime = os.stat(dir_path_str).st_mtime
             except OSError:
-                continue
-            if stat.st_mtime <= cache_mtime:
-                if file_key not in old_hashes:
-                    self.fast_path_bail_reason = cs.FAST_PATH_BAIL_NEW_FILE.format(
-                        file_key=file_key
-                    )
-                    self.fast_path_timings = FastPathTimings(
-                        load_cache=load_cache_elapsed,
-                        walk=walk_elapsed,
-                        stat_hash=time.monotonic() - t0,
-                        total=time.monotonic() - t_start,
-                        files_count=len(eligible_files),
-                        rehashed_count=rehashed_count,
-                    )
-                    return False
-                seen_keys.add(file_key)
-                continue
-            rehashed_count += 1
-            current_hash = _hash_file(filepath)
-            old_hash = old_hashes.get(file_key)
-            if old_hash is None or current_hash != old_hash:
-                self.fast_path_bail_reason = (
-                    cs.FAST_PATH_BAIL_NEW_FILE.format(file_key=file_key)
-                    if old_hash is None
-                    else cs.FAST_PATH_BAIL_HASH_MISMATCH.format(file_key=file_key)
+                self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DIR_MISSING.format(
+                    dir_key=dir_key
                 )
                 self.fast_path_timings = FastPathTimings(
                     load_cache=load_cache_elapsed,
-                    walk=walk_elapsed,
+                    walk=time.monotonic() - t0,
+                    stat_hash=0.0,
+                    total=time.monotonic() - t_start,
+                    files_count=len(old_hashes),
+                    rehashed_count=0,
+                )
+                return False
+            if current_mtime != cached_mtime:
+                self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DIR_MTIME_CHANGED.format(
+                    dir_key=dir_key
+                )
+                self.fast_path_timings = FastPathTimings(
+                    load_cache=load_cache_elapsed,
+                    walk=time.monotonic() - t0,
+                    stat_hash=0.0,
+                    total=time.monotonic() - t_start,
+                    files_count=len(old_hashes),
+                    rehashed_count=0,
+                )
+                return False
+        dir_check_elapsed = time.monotonic() - t0
+
+        t0 = time.monotonic()
+        rehashed_count = 0
+        for file_key, old_hash in old_hashes.items():
+            file_path_str = f"{repo_str}/{file_key}"
+            try:
+                stat = os.stat(file_path_str)
+            except OSError:
+                self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DELETED_FILES.format(
+                    count=1, sample=file_key
+                )
+                self.fast_path_timings = FastPathTimings(
+                    load_cache=load_cache_elapsed,
+                    walk=dir_check_elapsed,
                     stat_hash=time.monotonic() - t0,
                     total=time.monotonic() - t_start,
-                    files_count=len(eligible_files),
+                    files_count=len(old_hashes),
                     rehashed_count=rehashed_count,
                 )
                 return False
-            seen_keys.add(file_key)
+            if stat.st_mtime <= cache_mtime:
+                continue
+            rehashed_count += 1
+            current_hash = _hash_file(Path(file_path_str))
+            if current_hash != old_hash:
+                self.fast_path_bail_reason = cs.FAST_PATH_BAIL_HASH_MISMATCH.format(
+                    file_key=file_key
+                )
+                self.fast_path_timings = FastPathTimings(
+                    load_cache=load_cache_elapsed,
+                    walk=dir_check_elapsed,
+                    stat_hash=time.monotonic() - t0,
+                    total=time.monotonic() - t_start,
+                    files_count=len(old_hashes),
+                    rehashed_count=rehashed_count,
+                )
+                return False
         stat_hash_elapsed = time.monotonic() - t0
 
-        missing_from_disk = set(old_hashes.keys()) - seen_keys
-        if missing_from_disk:
-            sample = next(iter(sorted(missing_from_disk)))
-            self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DELETED_FILES.format(
-                count=len(missing_from_disk), sample=sample
-            )
-            self.fast_path_timings = FastPathTimings(
-                load_cache=load_cache_elapsed,
-                walk=walk_elapsed,
-                stat_hash=stat_hash_elapsed,
-                total=time.monotonic() - t_start,
-                files_count=len(eligible_files),
-                rehashed_count=rehashed_count,
-            )
-            return False
         self.fast_path_bail_reason = None
         self.fast_path_timings = FastPathTimings(
             load_cache=load_cache_elapsed,
-            walk=walk_elapsed,
+            walk=dir_check_elapsed,
             stat_hash=stat_hash_elapsed,
             total=time.monotonic() - t_start,
-            files_count=len(eligible_files),
+            files_count=len(old_hashes),
             rehashed_count=rehashed_count,
         )
         return True
@@ -550,23 +603,31 @@ class GraphUpdater:
 
         eligible: list[tuple[Path, str]] = []
         hash_name = cs.HASH_CACHE_FILENAME
+        dir_mtimes_name = cs.DIR_MTIMES_FILENAME
         repo_str = str(self.repo_path)
         repo_prefix_len = len(repo_str) + 1
         exclude_paths = self.exclude_paths
         unignore_paths = self.unignore_paths
+        self._collected_dir_mtimes = {}
         for dirpath, dirnames, filenames in os.walk(repo_str):
             if len(dirpath) < repo_prefix_len:
                 rel_dir = ""
                 dir_parts: tuple[str, ...] = ()
+                dir_key = cs.ROOT_DIR_KEY
             else:
                 rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
                 dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
+                dir_key = rel_dir or cs.ROOT_DIR_KEY
             dir_prefix = f"{rel_dir}/" if rel_dir else ""
+            try:
+                self._collected_dir_mtimes[dir_key] = os.stat(dirpath).st_mtime
+            except OSError:
+                pass
             dirnames[:] = sorted(
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
             )
             for fname in sorted(filenames):
-                if fname == hash_name:
+                if fname in (hash_name, dir_mtimes_name):
                     continue
                 dot = fname.rfind(".")
                 suffix = fname[dot:] if dot != -1 else ""
@@ -583,9 +644,13 @@ class GraphUpdater:
 
     def _process_files(self, force: bool = False) -> None:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
+
+        _touch_empty_json(cache_path)
+        _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
         new_hashes: FileHashCache = {}
@@ -682,6 +747,7 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
         _save_hash_cache(cache_path, new_hashes)
+        _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
 
     def _pre_parse_changed_files(
         self,

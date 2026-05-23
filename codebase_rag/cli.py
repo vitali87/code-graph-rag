@@ -271,6 +271,8 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
+    dir_mtimes_path = repo_path / cs.DIR_MTIMES_FILENAME
+    dir_mtimes_path.unlink(missing_ok=True)
 
 
 def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:

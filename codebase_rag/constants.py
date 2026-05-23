@@ -268,6 +268,13 @@ FAST_PATH_BAIL_HASH_MISMATCH = "file hash changed since last sync: {file_key}"
 FAST_PATH_BAIL_DELETED_FILES = (
     "{count} file(s) in cache no longer present on disk (e.g. {sample})"
 )
+FAST_PATH_BAIL_NO_DIR_MTIMES = (
+    "no directory mtimes cache at {path} (first run after upgrade or clean)"
+)
+FAST_PATH_BAIL_DIR_MISSING = "cached directory no longer present on disk: {dir_key}"
+FAST_PATH_BAIL_DIR_MTIME_CHANGED = (
+    "directory mtime changed since last sync (file added/removed): {dir_key}"
+)
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
@@ -1812,6 +1819,9 @@ GEMFILE_GEM_PREFIX = "gem "
 
 # (H) Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+ROOT_DIR_KEY = "."
+JSON_EMPTY_OBJECT = "{}"
 
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600
