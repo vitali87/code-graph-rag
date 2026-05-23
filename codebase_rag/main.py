@@ -1594,11 +1594,13 @@ async def main_async(
     repo_path: str,
     batch_size: int,
     active_projects: list[str] | None = None,
+    show_config_table: bool = True,
 ) -> None:
     project_root = _setup_common_initialization(repo_path)
 
-    table = _create_configuration_table(repo_path)
-    app_context.console.print(table)
+    if show_config_table:
+        table = _create_configuration_table(repo_path)
+        app_context.console.print(table)
 
     async with connect_memgraph(batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))

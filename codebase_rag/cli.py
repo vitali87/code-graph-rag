@@ -15,6 +15,7 @@ from . import logs as ls
 from .config import load_cgrignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
+    _create_configuration_table,
     app_context,
     connect_memgraph,
     export_graph_to_file,
@@ -368,6 +369,9 @@ def start(
 
     _update_and_validate_models(orchestrator, cypher)
 
+    if not ask_agent and not update_graph:
+        app_context.console.print(_create_configuration_table(target_repo_path))
+
     if update_graph:
         _info(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=resolved_repo), cs.Color.GREEN)
@@ -426,6 +430,7 @@ def start(
                     target_repo_path,
                     effective_batch_size,
                     active_projects=active_projects,
+                    show_config_table=False,
                 )
             )
     except KeyboardInterrupt:
