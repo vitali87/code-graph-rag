@@ -462,6 +462,76 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _diff_dir_against_cache(
+        self,
+        dir_path_str: str,
+        dir_key: str,
+        old_hashes: FileHashCache,
+        old_dir_mtimes: DirMtimesCache,
+    ) -> tuple[str | None, str | None]:
+        prefix = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
+        expected_files: set[str] = set()
+        expected_dirs: set[str] = set()
+        for fk in old_hashes:
+            if fk.startswith(prefix):
+                rest = fk[len(prefix) :]
+                if "/" not in rest:
+                    expected_files.add(rest)
+        for dk in old_dir_mtimes:
+            if dk == cs.ROOT_DIR_KEY or not dk.startswith(prefix):
+                continue
+            rest = dk[len(prefix) :]
+            if "/" not in rest:
+                expected_dirs.add(rest)
+
+        actual_files: set[str] = set()
+        actual_dirs: set[str] = set()
+        try:
+            with os.scandir(dir_path_str) as it:
+                for entry in it:
+                    name = entry.name
+                    if name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
+                        continue
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        is_dir = False
+                    if is_dir:
+                        actual_dirs.add(name)
+                    else:
+                        actual_files.add(name)
+        except OSError:
+            return None, dir_key
+
+        dir_parts: tuple[str, ...] = (
+            () if dir_key == cs.ROOT_DIR_KEY else tuple(dir_key.split("/"))
+        )
+        dir_prefix_for_keep = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
+
+        for name in actual_dirs - expected_dirs:
+            if not self._should_keep_dir(name, dir_prefix_for_keep):
+                continue
+            return f"{prefix}{name}", None
+        for name in actual_files - expected_files:
+            dot = name.rfind(".")
+            suffix = name[dot:] if dot != -1 else ""
+            if should_skip_rel_file(
+                f"{prefix}{name}",
+                dir_parts,
+                suffix,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                continue
+            return f"{prefix}{name}", None
+
+        for name in expected_files - actual_files:
+            return None, f"{prefix}{name}"
+        for name in expected_dirs - actual_dirs:
+            return None, f"{prefix}{name}"
+
+        return None, None
+
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         if dirname not in cs.IGNORE_PATTERNS and (
             not self.exclude_paths or dirname not in self.exclude_paths
@@ -524,18 +594,35 @@ class GraphUpdater:
                 )
                 return False
             if current_mtime != cached_mtime:
-                self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DIR_MTIME_CHANGED.format(
-                    dir_key=dir_key
+                addition, removal = self._diff_dir_against_cache(
+                    dir_path_str, dir_key, old_hashes, old_dir_mtimes
                 )
-                self.fast_path_timings = FastPathTimings(
-                    load_cache=load_cache_elapsed,
-                    walk=time.monotonic() - t0,
-                    stat_hash=0.0,
-                    total=time.monotonic() - t_start,
-                    files_count=len(old_hashes),
-                    rehashed_count=0,
-                )
-                return False
+                if addition is not None:
+                    self.fast_path_bail_reason = cs.FAST_PATH_BAIL_NEW_ITEM.format(
+                        item=addition
+                    )
+                    self.fast_path_timings = FastPathTimings(
+                        load_cache=load_cache_elapsed,
+                        walk=time.monotonic() - t0,
+                        stat_hash=0.0,
+                        total=time.monotonic() - t_start,
+                        files_count=len(old_hashes),
+                        rehashed_count=0,
+                    )
+                    return False
+                if removal is not None:
+                    self.fast_path_bail_reason = cs.FAST_PATH_BAIL_REMOVED_ITEM.format(
+                        item=removal
+                    )
+                    self.fast_path_timings = FastPathTimings(
+                        load_cache=load_cache_elapsed,
+                        walk=time.monotonic() - t0,
+                        stat_hash=0.0,
+                        total=time.monotonic() - t_start,
+                        files_count=len(old_hashes),
+                        rehashed_count=0,
+                    )
+                    return False
         dir_check_elapsed = time.monotonic() - t0
 
         t0 = time.monotonic()

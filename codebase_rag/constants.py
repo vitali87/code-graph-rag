@@ -275,6 +275,8 @@ FAST_PATH_BAIL_DIR_MISSING = "cached directory no longer present on disk: {dir_k
 FAST_PATH_BAIL_DIR_MTIME_CHANGED = (
     "directory mtime changed since last sync (file added/removed): {dir_key}"
 )
+FAST_PATH_BAIL_NEW_ITEM = "new eligible item appeared on disk: {item}"
+FAST_PATH_BAIL_REMOVED_ITEM = "cached item no longer present on disk: {item}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
