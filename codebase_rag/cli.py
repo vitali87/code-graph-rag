@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import Callable
 from functools import partial
 from importlib.metadata import version as get_version
@@ -198,6 +199,7 @@ def _run_graph_sync(
     else:
         unignore_paths = cgrignore.unignore or None
 
+    elapsed = time.monotonic()
     with connect_memgraph(batch_size) as ingestor:
         if clean:
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -224,6 +226,21 @@ def _run_graph_sync(
             _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
+    elapsed = time.monotonic() - elapsed
+    if updater.skipped_because_in_sync:
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_SYNC_SKIPPED.format(project=project_name, elapsed=elapsed),
+                cs.Color.GREEN,
+            )
+        )
+    else:
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_SYNC_DONE.format(project=project_name, elapsed=elapsed),
+                cs.Color.GREEN,
+            )
+        )
 
 
 def _delete_hash_cache(repo_path: Path) -> None:

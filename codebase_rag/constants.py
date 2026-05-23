@@ -253,6 +253,8 @@ MSG_SYNCING_KNOWLEDGE_GRAPH = (
 MSG_SYNCING_WORKSPACE = (
     "[bold cyan]Syncing workspace '{name}'[/bold cyan] ({count} repos)"
 )
+CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
+CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"

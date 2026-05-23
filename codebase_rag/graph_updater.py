@@ -329,6 +329,7 @@ class GraphUpdater:
         self.ast_cache = BoundedASTCache()
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        self.skipped_because_in_sync = False
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -362,6 +363,7 @@ class GraphUpdater:
 
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
+            self.skipped_because_in_sync = True
             self.ingestor.flush_all()
             return
 
@@ -439,21 +441,31 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
             return False
+        cache_mtime = cache_path.stat().st_mtime
         old_hashes = _load_hash_cache(cache_path)
         if not old_hashes:
             return False
         eligible_files = self._collect_eligible_files()
-        if len(eligible_files) != len(old_hashes):
-            return False
+
+        seen_keys: set[str] = set()
         for filepath in eligible_files:
             file_key = str(cached_relative_path(filepath, self.repo_path))
-            old_hash = old_hashes.get(file_key)
-            if old_hash is None:
-                return False
+            try:
+                stat = filepath.stat()
+            except OSError:
+                continue
+            if stat.st_mtime <= cache_mtime:
+                if file_key not in old_hashes:
+                    return False
+                seen_keys.add(file_key)
+                continue
             current_hash = _hash_file(filepath)
-            if current_hash != old_hash:
+            old_hash = old_hashes.get(file_key)
+            if old_hash is None or current_hash != old_hash:
                 return False
-        return True
+            seen_keys.add(file_key)
+
+        return seen_keys == set(old_hashes.keys())
 
     def _collect_eligible_files(self) -> list[Path]:
         if self._single_file is not None:
