@@ -88,6 +88,14 @@ def create_mock_node(
 logger.remove()
 
 
+@pytest.fixture(autouse=True)
+def _disable_stack_autostart() -> Generator[None, None, None]:
+    from unittest.mock import patch
+
+    with patch("codebase_rag.cli._maybe_start_stack"):
+        yield
+
+
 @pytest.fixture
 def temp_repo() -> Generator[Path, None, None]:
     """Creates a temporary repository path for a test and cleans up afterward."""

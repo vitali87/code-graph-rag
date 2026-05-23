@@ -53,6 +53,9 @@ HELP_DAEMON_LOGS_SERVICE = (
 HELP_NO_START_STACK = (
     "Skip auto-starting the docker stack. Useful when memgraph/qdrant run elsewhere."
 )
+HELP_NO_SYNC = (
+    "Skip the automatic incremental graph sync that runs before the agent starts."
+)
 
 HELP_BATCH_SIZE = "Number of buffered nodes/relationships before flushing to Memgraph"
 HELP_MEMGRAPH_HOST = "Memgraph host"

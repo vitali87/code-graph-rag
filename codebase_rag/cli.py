@@ -118,6 +118,51 @@ def _maybe_start_stack() -> None:
         raise typer.Exit(1) from e
 
 
+def _run_graph_sync(
+    repo: Path,
+    project_name: str,
+    batch_size: int,
+    exclude: list[str] | None,
+    interactive_setup: bool,
+    clean: bool = False,
+    output: str | None = None,
+) -> None:
+    cgrignore = load_cgrignore_patterns(repo)
+    cli_excludes = frozenset(exclude) if exclude else frozenset()
+    exclude_paths = cli_excludes | cgrignore.exclude or None
+    unignore_paths: frozenset[str] | None
+    if interactive_setup:
+        unignore_paths = prompt_for_unignored_directories(repo, exclude)
+    else:
+        unignore_paths = cgrignore.unignore or None
+
+    with connect_memgraph(batch_size) as ingestor:
+        if clean:
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
+            _delete_hash_cache(repo)
+
+        ingestor.ensure_constraints()
+
+        parsers, queries = load_parsers()
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
+            project_name=project_name,
+        )
+        updater.run()
+
+        if output:
+            _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
+            if not export_graph_to_file(ingestor, output):
+                raise typer.Exit(1)
+
+
 def _delete_hash_cache(repo_path: Path) -> None:
     cache_path = repo_path / cs.HASH_CACHE_FILENAME
     if cache_path.exists():
@@ -216,6 +261,11 @@ def start(
         "--no-start-stack",
         help=ch.HELP_NO_START_STACK,
     ),
+    no_sync: bool = typer.Option(
+        False,
+        "--no-sync",
+        help=ch.HELP_NO_SYNC,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
@@ -248,49 +298,32 @@ def start(
     _update_and_validate_models(orchestrator, cypher)
 
     if update_graph:
-        repo_to_update = Path(target_repo_path)
         _info(
-            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
+            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=resolved_repo), cs.Color.GREEN)
         )
-
-        cgrignore = load_cgrignore_patterns(repo_to_update)
-        cli_excludes = frozenset(exclude) if exclude else frozenset()
-        exclude_paths = cli_excludes | cgrignore.exclude or None
-        unignore_paths: frozenset[str] | None = None
-        if interactive_setup:
-            unignore_paths = prompt_for_unignored_directories(repo_to_update, exclude)
-        else:
+        if not interactive_setup:
             _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-            unignore_paths = cgrignore.unignore or None
-
-        with connect_memgraph(effective_batch_size) as ingestor:
-            if clean:
-                _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-                ingestor.clean_database()
-                _delete_hash_cache(repo_to_update)
-
-            ingestor.ensure_constraints()
-
-            parsers, queries = load_parsers()
-
-            updater = GraphUpdater(
-                ingestor=ingestor,
-                repo_path=repo_to_update,
-                parsers=parsers,
-                queries=queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=resolved_project_name,
-            )
-            updater.run()
-
-            if output:
-                _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
-                if not export_graph_to_file(ingestor, output):
-                    raise typer.Exit(1)
-
+        _run_graph_sync(
+            repo=resolved_repo,
+            project_name=resolved_project_name,
+            batch_size=effective_batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+        )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
+
+    if not no_sync:
+        _info(style(cs.CLI_MSG_SYNCING_GRAPH.format(path=resolved_repo), cs.Color.CYAN))
+        _run_graph_sync(
+            repo=resolved_repo,
+            project_name=resolved_project_name,
+            batch_size=effective_batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+        )
 
     try:
         if ask_agent:

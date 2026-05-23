@@ -239,6 +239,7 @@ CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
 CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
+CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
