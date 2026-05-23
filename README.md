@@ -143,15 +143,19 @@ sudo dnf install ripgrep
 ### System-wide install (recommended for end users)
 
 `cgr` is published to PyPI and can be installed system-wide so it works from any
-target repo without activating a project virtualenv:
+target repo without activating a project virtualenv. Install with the
+`treesitter-full` (all languages) and `semantic` (vector search) extras:
 
 ```bash
 # with uv (recommended)
-uv tool install code-graph-rag
+uv tool install "code-graph-rag[treesitter-full,semantic]"
 
 # or with pipx
-pipx install code-graph-rag
+pipx install "code-graph-rag[treesitter-full,semantic]"
 ```
+
+For a Python-only install, omit the extras. For local development from a clone,
+use `uv tool install --editable "/path/to/code-graph-rag[treesitter-full,semantic]"`.
 
 After install, `cgr` is on PATH. From any repository, run:
 
