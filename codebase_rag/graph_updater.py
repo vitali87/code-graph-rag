@@ -493,10 +493,16 @@ class GraphUpdater:
                     if name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
                         continue
                     try:
-                        is_dir = entry.is_dir(follow_symlinks=False)
+                        is_symlink = entry.is_symlink()
                     except OSError:
-                        is_dir = False
-                    if is_dir:
+                        is_symlink = False
+                    try:
+                        is_dir_following = entry.is_dir()
+                    except OSError:
+                        is_dir_following = False
+                    if is_symlink and is_dir_following:
+                        continue
+                    if is_dir_following:
                         actual_dirs.add(name)
                     else:
                         actual_files.add(name)
