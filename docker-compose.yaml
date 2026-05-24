@@ -4,6 +4,9 @@ services:
     ports:
       - "${MEMGRAPH_PORT:-7687}:7687"
       - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
+    volumes:
+      - memgraph_data:/var/lib/memgraph
+      - memgraph_log:/var/log/memgraph
   lab:
     image: memgraph/lab
     ports:
@@ -20,3 +23,5 @@ services:
 
 volumes:
   qdrant_storage:
+  memgraph_data:
+  memgraph_log:

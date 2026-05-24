@@ -12,6 +12,10 @@ class CLICommandName(StrEnum):
     DOCTOR = "doctor"
     STATS = "stats"
     DELETE_PROJECT = "delete-project"
+    DAEMON = "daemon"
+    WORKSPACE = "workspace"
+    STOP = "stop"
+    STATUS = "status"
 
 
 APP_DESCRIPTION = (
@@ -37,6 +41,53 @@ CMD_LANGUAGE_LIST = "List all currently configured languages."
 CMD_LANGUAGE_REMOVE = "Remove a language from the project."
 CMD_LANGUAGE_CLEANUP = "Clean up orphaned git modules that weren't properly removed."
 
+CMD_DAEMON = "Manage the shared cgr docker stack (memgraph + qdrant)"
+CMD_DAEMON_GROUP = "Manage the shared cgr docker stack (memgraph + qdrant)"
+CMD_DAEMON_UP = "Start the docker stack and wait until healthy."
+CMD_DAEMON_DOWN = "Stop the docker stack (preserves data volumes)."
+CMD_DAEMON_STATUS = "Show whether memgraph and qdrant are reachable."
+CMD_DAEMON_LOGS = "Tail docker compose logs for the stack."
+CMD_DAEMON_RESTART = "Restart the docker stack."
+
+CMD_WORKSPACE = "Manage cgr workspaces (named bundles of repos)"
+CMD_WORKSPACE_GROUP = "Manage cgr workspaces (named bundles of repos)"
+CMD_WORKSPACE_LIST = "List all workspaces."
+CMD_WORKSPACE_CREATE = "Create a new empty workspace."
+CMD_WORKSPACE_DELETE = "Delete a workspace TOML (does not touch indexed graph data)."
+CMD_WORKSPACE_SHOW = "Show a workspace's repos and project names."
+CMD_WORKSPACE_ADD_REPO = "Add a repo to a workspace."
+CMD_WORKSPACE_REMOVE_REPO = "Remove a repo from a workspace by path."
+
+HELP_WORKSPACE_DESCRIPTION = "Optional human-readable description."
+HELP_WORKSPACE_FORCE = "Overwrite an existing workspace with the same name."
+HELP_WORKSPACE_REPO_PROJECT_NAME = (
+    "Project name to associate with this repo (defaults to derive_project_name(repo))."
+)
+
+MSG_NO_WORKSPACES = "(no workspaces; create one with 'cgr workspace create <name>')"
+
+CMD_STOP = "Alias for `cgr daemon down`: stop the shared docker stack."
+CMD_STATUS = "Show daemon stack state plus last-sync timestamp per project."
+
+HELP_DAEMON_LOGS_FOLLOW = "Stream logs continuously (Ctrl+C to stop)."
+HELP_DAEMON_LOGS_SERVICE = (
+    "Limit logs to a specific service (memgraph, qdrant, lab). Default: all."
+)
+HELP_NO_START_STACK = (
+    "Skip auto-starting the docker stack. Useful when memgraph/qdrant run elsewhere."
+)
+HELP_NO_SYNC = (
+    "Skip the automatic incremental graph sync that runs before the agent starts."
+)
+HELP_PROJECTS = (
+    "Comma-separated list of project names to scope agent queries to. "
+    "Overrides --project-name. If omitted, defaults to the current repo's project."
+)
+HELP_WORKSPACE = (
+    "Open the agent over all projects defined in a cgr workspace TOML "
+    "(stored under ~/.cgr/workspaces/<name>.toml)."
+)
+
 HELP_BATCH_SIZE = "Number of buffered nodes/relationships before flushing to Memgraph"
 HELP_MEMGRAPH_HOST = "Memgraph host"
 HELP_MEMGRAPH_PORT = "Memgraph port"
@@ -54,9 +105,15 @@ HELP_NO_INSTRUCTIONS = (
     "(useful when the consolidated memories are bloating the system prompt)"
 )
 
-HELP_REPO_PATH_RETRIEVAL = "Path to the target repository for code retrieval"
-HELP_REPO_PATH_INDEX = "Path to the target repository to index."
-HELP_REPO_PATH_OPTIMIZE = "Path to the repository to optimize"
+HELP_REPO_PATH_RETRIEVAL = (
+    "Path to the target repository for code retrieval (defaults to current directory)"
+)
+HELP_REPO_PATH_INDEX = (
+    "Path to the target repository to index (defaults to current directory)."
+)
+HELP_REPO_PATH_OPTIMIZE = (
+    "Path to the repository to optimize (defaults to current directory)"
+)
 HELP_REPO_PATH_WATCH = "Path to the repository to watch."
 HELP_VERSION = "Show the version and exit."
 
@@ -130,4 +187,8 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.STATS: CMD_STATS,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.DAEMON: CMD_DAEMON,
+    CLICommandName.WORKSPACE: CMD_WORKSPACE,
+    CLICommandName.STOP: CMD_STOP,
+    CLICommandName.STATUS: CMD_STATUS,
 }

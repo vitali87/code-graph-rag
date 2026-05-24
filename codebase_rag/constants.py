@@ -239,6 +239,22 @@ CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
 CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
+CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
+CLI_MSG_WORKSPACE_SYNCING = "Syncing workspace '{name}' ({count} repos)..."
+CLI_MSG_WORKSPACE_SYNC_REPO = (
+    "[{idx}/{total}] Syncing {path} as project '{project_name}'"
+)
+CLI_MSG_WORKSPACE_EMPTY = (
+    "Workspace '{name}' has no repos (use cgr workspace add-repo)."
+)
+MSG_SYNCING_KNOWLEDGE_GRAPH = (
+    "[bold cyan]Syncing knowledge graph[/bold cyan] (incremental, --no-sync to skip)"
+)
+MSG_SYNCING_WORKSPACE = (
+    "[bold cyan]Syncing workspace '{name}'[/bold cyan] ({count} repos)"
+)
+CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
+CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
@@ -1783,6 +1799,9 @@ GEMFILE_GEM_PREFIX = "gem "
 
 # (H) Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+ROOT_DIR_KEY = "."
+JSON_EMPTY_OBJECT = "{}"
 
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600

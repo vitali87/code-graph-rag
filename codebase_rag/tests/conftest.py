@@ -88,6 +88,25 @@ def create_mock_node(
 logger.remove()
 
 
+@pytest.fixture(autouse=True)
+def _disable_stack_autostart() -> Generator[None, None, None]:
+    from unittest.mock import patch
+
+    with patch("codebase_rag.cli._maybe_start_stack"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cgr_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Path, None, None]:
+    from codebase_rag.config import settings
+
+    home = tmp_path_factory.mktemp("cgr-home-iso")
+    monkeypatch.setattr(settings, "CGR_HOME", home)
+    yield home
+
+
 @pytest.fixture
 def temp_repo() -> Generator[Path, None, None]:
     """Creates a temporary repository path for a test and cleans up afterward."""

@@ -33,10 +33,12 @@ from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
     cached_relative_path,
     should_skip_path,
+    should_skip_rel_file,
 )
 from .utils.source_extraction import extract_source_with_fallback
 
 type FileHashCache = dict[str, str]
+type DirMtimesCache = dict[str, float]
 
 
 class FunctionRegistryTrie:
@@ -299,6 +301,39 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
+    if not cache_path.is_file():
+        return {}
+    try:
+        with cache_path.open(encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
+    except (json.JSONDecodeError, OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_dir_mtimes(cache_path: Path, mtimes: DirMtimesCache) -> None:
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w", encoding="utf-8") as f:
+            json.dump(mtimes, f)
+    except OSError:
+        pass
+
+
+def _touch_empty_json(cache_path: Path) -> None:
+    if cache_path.exists():
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w", encoding="utf-8") as f:
+            f.write(cs.JSON_EMPTY_OBJECT)
+    except OSError:
+        pass
+
+
 class GraphUpdater:
     def __init__(
         self,
@@ -329,6 +364,8 @@ class GraphUpdater:
         self.ast_cache = BoundedASTCache()
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        self.skipped_because_in_sync = False
+        self._collected_dir_mtimes: DirMtimesCache = {}
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -359,6 +396,12 @@ class GraphUpdater:
             cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
+
+        if not force and self._is_already_in_sync():
+            logger.info(ls.GRAPH_ALREADY_IN_SYNC)
+            self.skipped_because_in_sync = True
+            self.ingestor.flush_all()
+            return
 
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
@@ -415,6 +458,82 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _diff_dir_against_cache(
+        self,
+        dir_path_str: str,
+        dir_key: str,
+        old_hashes: FileHashCache,
+        old_dir_mtimes: DirMtimesCache,
+    ) -> tuple[str | None, str | None]:
+        prefix = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
+        expected_files: set[str] = set()
+        expected_dirs: set[str] = set()
+        for fk in old_hashes:
+            if fk.startswith(prefix):
+                rest = fk[len(prefix) :]
+                if "/" not in rest:
+                    expected_files.add(rest)
+        for dk in old_dir_mtimes:
+            if dk == cs.ROOT_DIR_KEY or not dk.startswith(prefix):
+                continue
+            rest = dk[len(prefix) :]
+            if "/" not in rest:
+                expected_dirs.add(rest)
+
+        actual_files: set[str] = set()
+        actual_dirs: set[str] = set()
+        try:
+            with os.scandir(dir_path_str) as it:
+                for entry in it:
+                    name = entry.name
+                    if name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
+                        continue
+                    try:
+                        is_symlink = entry.is_symlink()
+                    except OSError:
+                        is_symlink = False
+                    try:
+                        is_dir_following = entry.is_dir()
+                    except OSError:
+                        is_dir_following = False
+                    if is_symlink and is_dir_following:
+                        continue
+                    if is_dir_following:
+                        actual_dirs.add(name)
+                    else:
+                        actual_files.add(name)
+        except OSError:
+            return None, dir_key
+
+        dir_parts: tuple[str, ...] = (
+            () if dir_key == cs.ROOT_DIR_KEY else tuple(dir_key.split("/"))
+        )
+        dir_prefix_for_keep = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
+
+        for name in actual_dirs - expected_dirs:
+            if not self._should_keep_dir(name, dir_prefix_for_keep):
+                continue
+            return f"{prefix}{name}", None
+        for name in actual_files - expected_files:
+            dot = name.rfind(".")
+            suffix = name[dot:] if dot != -1 else ""
+            if should_skip_rel_file(
+                f"{prefix}{name}",
+                dir_parts,
+                suffix,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                continue
+            return f"{prefix}{name}", None
+
+        for name in expected_files - actual_files:
+            return None, f"{prefix}{name}"
+        for name in expected_dirs - actual_dirs:
+            return None, f"{prefix}{name}"
+
+        return None, None
+
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         if dirname not in cs.IGNORE_PATTERNS and (
             not self.exclude_paths or dirname not in self.exclude_paths
@@ -428,7 +547,48 @@ class GraphUpdater:
             )
         )
 
-    def _collect_eligible_files(self) -> list[Path]:
+    def _is_already_in_sync(self) -> bool:
+        if self._single_file is not None:
+            return False
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        if not cache_path.is_file():
+            return False
+        cache_mtime = cache_path.stat().st_mtime
+        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
+        old_hashes = _load_hash_cache(cache_path)
+        old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
+        if not old_hashes or not old_dir_mtimes:
+            return False
+
+        repo_str = str(self.repo_path)
+        for dir_key, cached_mtime in old_dir_mtimes.items():
+            dir_path_str = (
+                repo_str if dir_key == cs.ROOT_DIR_KEY else f"{repo_str}/{dir_key}"
+            )
+            try:
+                current_mtime = os.stat(dir_path_str).st_mtime
+            except OSError:
+                return False
+            if current_mtime != cached_mtime:
+                addition, removal = self._diff_dir_against_cache(
+                    dir_path_str, dir_key, old_hashes, old_dir_mtimes
+                )
+                if addition is not None or removal is not None:
+                    return False
+
+        for file_key, old_hash in old_hashes.items():
+            file_path_str = f"{repo_str}/{file_key}"
+            try:
+                stat = os.stat(file_path_str)
+            except OSError:
+                return False
+            if stat.st_mtime <= cache_mtime:
+                continue
+            if _hash_file(Path(file_path_str)) != old_hash:
+                return False
+        return True
+
+    def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
             if not should_skip_path(
                 self._single_file,
@@ -436,37 +596,63 @@ class GraphUpdater:
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             ):
-                return [self._single_file]
+                file_key = cached_relative_path(
+                    self._single_file, self.repo_path
+                ).as_posix()
+                return [(self._single_file, file_key)]
             return []
 
-        eligible: list[Path] = []
+        eligible: list[tuple[Path, str]] = []
         hash_name = cs.HASH_CACHE_FILENAME
-        for dirpath, dirnames, filenames in os.walk(str(self.repo_path)):
-            dirpath_obj = Path(dirpath)
-            rel_dir = cached_relative_path(dirpath_obj, self.repo_path).as_posix()
-            dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
+        dir_mtimes_name = cs.DIR_MTIMES_FILENAME
+        repo_str = str(self.repo_path)
+        repo_prefix_len = len(repo_str) + 1
+        exclude_paths = self.exclude_paths
+        unignore_paths = self.unignore_paths
+        self._collected_dir_mtimes = {}
+        for dirpath, dirnames, filenames in os.walk(repo_str):
+            if len(dirpath) < repo_prefix_len:
+                rel_dir = ""
+                dir_parts: tuple[str, ...] = ()
+                dir_key = cs.ROOT_DIR_KEY
+            else:
+                rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
+                dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
+                dir_key = rel_dir or cs.ROOT_DIR_KEY
+            dir_prefix = f"{rel_dir}/" if rel_dir else ""
+            try:
+                self._collected_dir_mtimes[dir_key] = os.stat(dirpath).st_mtime
+            except OSError:
+                pass
             dirnames[:] = sorted(
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
             )
             for fname in sorted(filenames):
-                if fname == hash_name:
+                if fname in (hash_name, dir_mtimes_name):
                     continue
-                filepath = Path(f"{dirpath}/{fname}")
-                if not should_skip_path(
-                    filepath,
-                    self.repo_path,
-                    exclude_paths=self.exclude_paths,
-                    is_file=True,
-                    unignore_paths=self.unignore_paths,
+                dot = fname.rfind(".")
+                suffix = fname[dot:] if dot != -1 else ""
+                rel_path_str = f"{dir_prefix}{fname}"
+                if not should_skip_rel_file(
+                    rel_path_str,
+                    dir_parts,
+                    suffix,
+                    exclude_paths=exclude_paths,
+                    unignore_paths=unignore_paths,
                 ):
-                    eligible.append(filepath)
+                    eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
+
+        _touch_empty_json(cache_path)
+        _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
         new_hashes: FileHashCache = {}
@@ -479,8 +665,18 @@ class GraphUpdater:
         processed_since_flush = 0
 
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
-        for filepath in eligible_files:
-            file_key = str(cached_relative_path(filepath, self.repo_path))
+        for filepath, file_key in eligible_files:
+            if not force and file_key in old_hashes:
+                try:
+                    file_mtime = filepath.stat().st_mtime
+                except OSError:
+                    unreadable_count += 1
+                    continue
+                if file_mtime <= cache_mtime:
+                    new_hashes[file_key] = old_hashes[file_key]
+                    current_file_keys.add(file_key)
+                    skipped_count += 1
+                    continue
 
             hashed = _hash_file_with_bytes(filepath)
             if hashed is None:
@@ -565,6 +761,7 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
         _save_hash_cache(cache_path, new_hashes)
+        _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
 
     def _pre_parse_changed_files(
         self,

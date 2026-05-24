@@ -312,6 +312,137 @@ class TestIncrementalUpdates:
         assert "module_b.py" not in new_data
 
 
+class TestFastPathInSync:
+    def test_second_run_skips_all_passes(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater2._is_already_in_sync() is True
+        with (
+            patch.object(
+                updater2, "_process_single_file", wraps=updater2._process_single_file
+            ) as spy_files,
+            patch.object(updater2, "_process_function_calls") as spy_calls,
+        ):
+            updater2.run()
+            assert spy_files.call_count == 0
+            assert spy_calls.call_count == 0
+
+    def test_changed_file_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        (py_project / "module_a.py").write_text("def func_a():\n    return 1\n")
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater2._is_already_in_sync() is False
+
+    def test_new_file_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        (py_project / "module_c.py").write_text("def func_c():\n    pass\n")
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater2._is_already_in_sync() is False
+
+    def test_deleted_file_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        (py_project / "module_a.py").unlink()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater2._is_already_in_sync() is False
+
+    def test_no_hash_cache_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater._is_already_in_sync() is False
+
+    def test_force_bypasses_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        with patch.object(updater2, "_process_function_calls") as spy_calls:
+            updater2.run(force=True)
+            spy_calls.assert_called_once()
+
+
 class TestSlots:
     def test_function_registry_trie_has_slots(self) -> None:
         assert hasattr(FunctionRegistryTrie, "__slots__")

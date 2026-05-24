@@ -1,5 +1,7 @@
 import asyncio
+import time
 from collections.abc import Callable
+from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
 
@@ -8,12 +10,14 @@ from loguru import logger
 from rich.panel import Panel
 from rich.table import Table
 
+from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
 from .config import load_cgrignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
+    _create_configuration_table,
     app_context,
     connect_memgraph,
     export_graph_to_file,
@@ -27,10 +31,17 @@ from .main import (
 from .parser_loader import load_parsers
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
+from .stack import StackManager
+from .stack.cli import cli as daemon_cli
+from .stack.constants import StackState
+from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import ResultRow
+from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
+from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
+from .workspaces.cli import cli as workspace_cli
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -102,6 +113,138 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
+def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
+    if workspace is None:
+        return None
+    try:
+        return load_workspace(workspace)
+    except WorkspaceError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+
+
+def _sync_workspace(
+    config: WorkspaceConfig,
+    batch_size: int,
+    exclude: list[str] | None,
+) -> None:
+    total = len(config.repos)
+    if total == 0:
+        _info(
+            style(cs.CLI_MSG_WORKSPACE_EMPTY.format(name=config.name), cs.Color.YELLOW)
+        )
+        return
+    _info(
+        style(
+            cs.CLI_MSG_WORKSPACE_SYNCING.format(name=config.name, count=total),
+            cs.Color.CYAN,
+        )
+    )
+    for idx, repo in enumerate(config.repos, start=1):
+        repo_path = repo.repo_path()
+        _info(
+            style(
+                cs.CLI_MSG_WORKSPACE_SYNC_REPO.format(
+                    idx=idx,
+                    total=total,
+                    path=repo_path,
+                    project_name=repo.project_name,
+                ),
+                cs.Color.CYAN,
+            )
+        )
+        _run_graph_sync(
+            repo=repo_path,
+            project_name=repo.project_name,
+            batch_size=batch_size,
+            exclude=exclude,
+            interactive_setup=False,
+        )
+
+
+def _resolve_active_projects(projects: str | None, default_project: str) -> list[str]:
+    if projects:
+        parsed = [p.strip() for p in projects.split(",") if p.strip()]
+        if parsed:
+            return parsed
+    return [default_project]
+
+
+def _maybe_start_stack() -> None:
+    mgr = StackManager()
+    if mgr.status().state == StackState.RUNNING:
+        return
+    try:
+        mgr.ensure_running()
+    except StackError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+
+
+def _run_graph_sync(
+    repo: Path,
+    project_name: str,
+    batch_size: int,
+    exclude: list[str] | None,
+    interactive_setup: bool,
+    clean: bool = False,
+    output: str | None = None,
+) -> None:
+    cgrignore = load_cgrignore_patterns(repo)
+    cli_excludes = frozenset(exclude) if exclude else frozenset()
+    exclude_paths = cli_excludes | cgrignore.exclude or None
+    unignore_paths: frozenset[str] | None
+    if interactive_setup:
+        unignore_paths = prompt_for_unignored_directories(repo, exclude)
+    else:
+        unignore_paths = cgrignore.unignore or None
+
+    elapsed = time.monotonic()
+    with connect_memgraph(batch_size) as ingestor:
+        if clean:
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
+            _delete_hash_cache(repo)
+
+        ingestor.ensure_constraints()
+
+        parsers, queries = load_parsers()
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
+            project_name=project_name,
+        )
+        updater.run()
+        cgr_state.record_sync(project_name)
+
+        if output:
+            _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
+            if not export_graph_to_file(ingestor, output):
+                raise typer.Exit(1)
+    elapsed = time.monotonic() - elapsed
+    if updater.skipped_because_in_sync:
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_SYNC_SKIPPED.format(project=project_name, elapsed=elapsed),
+                cs.Color.CYAN,
+                cs.StyleModifier.DIM,
+            )
+        )
+    else:
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_SYNC_DONE.format(project=project_name, elapsed=elapsed),
+                cs.Color.CYAN,
+                cs.StyleModifier.NONE,
+            )
+        )
+
+
 def _delete_hash_cache(repo_path: Path) -> None:
     cache_path = repo_path / cs.HASH_CACHE_FILENAME
     if cache_path.exists():
@@ -112,6 +255,8 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
+    dir_mtimes_path = repo_path / cs.DIR_MTIMES_FILENAME
+    dir_mtimes_path.unlink(missing_ok=True)
 
 
 def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
@@ -195,17 +340,42 @@ def start(
         "--ask-agent",
         help=ch.HELP_ASK_AGENT,
     ),
+    no_start_stack: bool = typer.Option(
+        False,
+        "--no-start-stack",
+        help=ch.HELP_NO_START_STACK,
+    ),
+    no_sync: bool = typer.Option(
+        False,
+        "--no-sync",
+        help=ch.HELP_NO_SYNC,
+    ),
+    projects: str | None = typer.Option(
+        None,
+        "--projects",
+        help=ch.HELP_PROJECTS,
+    ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        help=ch.HELP_WORKSPACE,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    resolved_repo = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
+    target_repo_path = str(resolved_repo)
+    resolved_project_name = project_name or derive_project_name(resolved_repo)
 
     if output and not update_graph:
         app_context.console.print(
             style(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE, cs.Color.RED)
         )
         raise typer.Exit(1)
+
+    if not no_start_stack:
+        _maybe_start_stack()
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -221,56 +391,77 @@ def start(
 
     _update_and_validate_models(orchestrator, cypher)
 
+    if not ask_agent and not update_graph:
+        app_context.console.print(_create_configuration_table(target_repo_path))
+
     if update_graph:
-        repo_to_update = Path(target_repo_path)
         _info(
-            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
+            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=resolved_repo), cs.Color.GREEN)
         )
-
-        cgrignore = load_cgrignore_patterns(repo_to_update)
-        cli_excludes = frozenset(exclude) if exclude else frozenset()
-        exclude_paths = cli_excludes | cgrignore.exclude or None
-        unignore_paths: frozenset[str] | None = None
-        if interactive_setup:
-            unignore_paths = prompt_for_unignored_directories(repo_to_update, exclude)
-        else:
+        if not interactive_setup:
             _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-            unignore_paths = cgrignore.unignore or None
-
-        with connect_memgraph(effective_batch_size) as ingestor:
-            if clean:
-                _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-                ingestor.clean_database()
-                _delete_hash_cache(repo_to_update)
-
-            ingestor.ensure_constraints()
-
-            parsers, queries = load_parsers()
-
-            updater = GraphUpdater(
-                ingestor=ingestor,
-                repo_path=repo_to_update,
-                parsers=parsers,
-                queries=queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            updater.run()
-
-            if output:
-                _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
-                if not export_graph_to_file(ingestor, output):
-                    raise typer.Exit(1)
-
+        _run_graph_sync(
+            repo=resolved_repo,
+            project_name=resolved_project_name,
+            batch_size=effective_batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+        )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
 
+    workspace_config = _load_workspace_or_exit(workspace)
+
+    sync_task: Callable[[], None] | None = None
+    sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
+    if not no_sync:
+        if workspace_config is not None:
+            sync_task = partial(
+                _sync_workspace, workspace_config, effective_batch_size, exclude
+            )
+            sync_message = cs.MSG_SYNCING_WORKSPACE.format(
+                name=workspace_config.name, count=len(workspace_config.repos)
+            )
+        else:
+            sync_task = partial(
+                _run_graph_sync,
+                repo=resolved_repo,
+                project_name=resolved_project_name,
+                batch_size=effective_batch_size,
+                exclude=exclude,
+                interactive_setup=interactive_setup,
+            )
+
+    if workspace_config is not None:
+        active_projects = workspace_config.project_names()
+        if projects:
+            active_projects = _resolve_active_projects(projects, active_projects[0])
+    else:
+        active_projects = _resolve_active_projects(projects, resolved_project_name)
+
     try:
         if ask_agent:
-            main_single_query(target_repo_path, effective_batch_size, ask_agent)
+            if sync_task is not None:
+                sync_task()
+            main_single_query(
+                target_repo_path,
+                effective_batch_size,
+                ask_agent,
+                active_projects=active_projects,
+            )
         else:
-            asyncio.run(main_async(target_repo_path, effective_batch_size))
+            asyncio.run(
+                main_async(
+                    target_repo_path,
+                    effective_batch_size,
+                    active_projects=active_projects,
+                    show_config_table=False,
+                    pre_chat_sync=sync_task,
+                    pre_chat_sync_message=sync_message,
+                )
+            )
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
@@ -306,8 +497,7 @@ def index(
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    repo_to_index = Path(target_repo_path)
+    repo_to_index = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
     _info(style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN))
 
     _info(style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN))
@@ -427,7 +617,7 @@ def optimize(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    target_repo_path = str(resolve_repo_path(repo_path, settings.TARGET_REPO_PATH))
 
     _update_and_validate_models(orchestrator, cypher)
 
@@ -521,6 +711,53 @@ def graph_loader_command(
 )
 def language_command(ctx: typer.Context) -> None:
     language_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(
+    name=ch.CLICommandName.DAEMON,
+    help=ch.CMD_DAEMON,
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def daemon_command(ctx: typer.Context) -> None:
+    daemon_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(
+    name=ch.CLICommandName.WORKSPACE,
+    help=ch.CMD_WORKSPACE,
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def workspace_command(ctx: typer.Context) -> None:
+    workspace_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(name=ch.CLICommandName.STOP, help=ch.CMD_STOP)
+def stop_command() -> None:
+    mgr = StackManager()
+    try:
+        mgr.down()
+    except StackError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+    _info(style("stack stopped", cs.Color.GREEN))
+
+
+@app.command(name=ch.CLICommandName.STATUS, help=ch.CMD_STATUS)
+def status_command() -> None:
+    status = StackManager().status()
+    app_context.console.print(
+        f"stack:    {status.state.value} "
+        f"(memgraph={status.memgraph_endpoint} reachable={status.memgraph_reachable}, "
+        f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
+    )
+    app_context.console.print(f"compose:  {status.compose_file}")
+    timestamps = cgr_state.read_sync_timestamps()
+    if not timestamps:
+        app_context.console.print("syncs:    (no projects synced via cgr yet)")
+        return
+    app_context.console.print("syncs:")
+    for project, ts in sorted(timestamps.items()):
+        app_context.console.print(f"  - {project}: last sync {ts}")
 
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)

@@ -87,8 +87,38 @@ The database contains information about a codebase, structured with the followin
 GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
 
 
+def _format_active_projects_block(active_projects: list[str] | None) -> str:
+    if not active_projects:
+        return (
+            "\n**Project Scope**: This Memgraph database may contain multiple "
+            "indexed projects. Call `list_projects` early to enumerate them, then "
+            "scope graph queries by filtering on the `qualified_name` prefix "
+            "(e.g., `WHERE n.qualified_name STARTS WITH 'projectName.'`).\n"
+        )
+    if len(active_projects) == 1:
+        return (
+            f"\n**Project Scope**: This session is focused on the project "
+            f"`{active_projects[0]}`. Scope Cypher queries by filtering on "
+            f"`WHERE n.qualified_name STARTS WITH '{active_projects[0]}.'` "
+            "unless the user explicitly asks about other projects.\n"
+        )
+    project_list = ", ".join(f"`{p}`" for p in active_projects)
+    starts_with_examples = " OR ".join(
+        f"n.qualified_name STARTS WITH '{p}.'" for p in active_projects
+    )
+    return (
+        f"\n**Project Scope**: This session spans the following projects: "
+        f"{project_list}. When users ask cross-project questions, query across "
+        "all of them. To restrict to one project, filter "
+        f"`n.qualified_name STARTS WITH '<projectName>.'`. To restrict to the "
+        f"active set, filter with `{starts_with_examples}`.\n"
+    )
+
+
 def build_rag_orchestrator_prompt(
-    tools: list["Tool"], project_instructions: str | None = None
+    tools: list["Tool"],
+    project_instructions: str | None = None,
+    active_projects: list[str] | None = None,
 ) -> str:
     t = extract_tool_names(tools)
     base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
@@ -159,6 +189,7 @@ def build_rag_orchestrator_prompt(
     d. Prioritize most relevant findings over comprehensive coverage
 8.  **Synthesize Answer**: Analyze and explain the retrieved content. Cite your sources (file paths or qualified names). Report any errors gracefully.
 """
+    base += _format_active_projects_block(active_projects)
     extra = (project_instructions or "").strip()
     if not extra:
         return base
