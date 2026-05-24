@@ -37,7 +37,7 @@ from .stack.constants import StackState
 from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
-from .types_defs import FastPathTimings, ResultRow
+from .types_defs import ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -227,15 +227,6 @@ def _run_graph_sync(
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
     elapsed = time.monotonic() - elapsed
-    if isinstance(updater.fast_path_timings, FastPathTimings):
-        app_context.console.print(
-            style(
-                cs.CLI_MSG_FAST_PATH_TIMINGS.format(
-                    **updater.fast_path_timings._asdict()
-                ),
-                cs.Color.CYAN,
-            )
-        )
     if updater.skipped_because_in_sync:
         app_context.console.print(
             style(
@@ -244,15 +235,6 @@ def _run_graph_sync(
             )
         )
     else:
-        if updater.fast_path_bail_reason is not None:
-            app_context.console.print(
-                style(
-                    cs.CLI_MSG_FAST_PATH_BAIL.format(
-                        reason=updater.fast_path_bail_reason
-                    ),
-                    cs.Color.YELLOW,
-                )
-            )
         app_context.console.print(
             style(
                 cs.CLI_MSG_SYNC_DONE.format(project=project_name, elapsed=elapsed),

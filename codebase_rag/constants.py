@@ -255,28 +255,6 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
-CLI_MSG_FAST_PATH_BAIL = "Fast-path sync bail reason: {reason}"
-CLI_MSG_FAST_PATH_TIMINGS = (
-    "Fast-path timings: load_cache={load_cache:.2f}s, walk={walk:.2f}s, "
-    "stat_hash={stat_hash:.2f}s, total={total:.2f}s "
-    "(files={files_count}, rehashed={rehashed_count})"
-)
-FAST_PATH_BAIL_NO_CACHE_FILE = "no hash cache file at {path}"
-FAST_PATH_BAIL_EMPTY_CACHE = "hash cache file is empty or invalid: {path}"
-FAST_PATH_BAIL_NEW_FILE = "file present in repo but missing from cache: {file_key}"
-FAST_PATH_BAIL_HASH_MISMATCH = "file hash changed since last sync: {file_key}"
-FAST_PATH_BAIL_DELETED_FILES = (
-    "{count} file(s) in cache no longer present on disk (e.g. {sample})"
-)
-FAST_PATH_BAIL_NO_DIR_MTIMES = (
-    "no directory mtimes cache at {path} (first run after upgrade or clean)"
-)
-FAST_PATH_BAIL_DIR_MISSING = "cached directory no longer present on disk: {dir_key}"
-FAST_PATH_BAIL_DIR_MTIME_CHANGED = (
-    "directory mtime changed since last sync (file added/removed): {dir_key}"
-)
-FAST_PATH_BAIL_NEW_ITEM = "new eligible item appeared on disk: {item}"
-FAST_PATH_BAIL_REMOVED_ITEM = "cached item no longer present on disk: {item}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
