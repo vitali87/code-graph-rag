@@ -231,14 +231,16 @@ def _run_graph_sync(
         app_context.console.print(
             style(
                 cs.CLI_MSG_SYNC_SKIPPED.format(project=project_name, elapsed=elapsed),
-                cs.Color.GREEN,
+                cs.Color.CYAN,
+                cs.StyleModifier.DIM,
             )
         )
     else:
         app_context.console.print(
             style(
                 cs.CLI_MSG_SYNC_DONE.format(project=project_name, elapsed=elapsed),
-                cs.Color.GREEN,
+                cs.Color.CYAN,
+                cs.StyleModifier.NONE,
             )
         )
 
