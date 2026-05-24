@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai.agent import AgentRetries
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -176,8 +177,10 @@ def create_rag_orchestrator(
             model=llm,
             system_prompt=system_prompt,
             tools=tools,
-            retries=settings.AGENT_RETRIES,
-            output_retries=settings.ORCHESTRATOR_OUTPUT_RETRIES,
+            retries=AgentRetries(
+                tools=settings.AGENT_RETRIES,
+                output=settings.ORCHESTRATOR_OUTPUT_RETRIES,
+            ),
             output_type=[str, DeferredToolRequests],
         )
         return agent, system_prompt
