@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-import socket
 import time
 import urllib.error
 import urllib.request
 
+import mgclient  # ty: ignore[unresolved-import]
+
 from . import constants as cs
 
 
-def _tcp_reachable(host: str, port: int, timeout: float = 1.5) -> bool:
+def _bolt_reachable(host: str, port: int) -> bool:
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
+        conn = mgclient.connect(host=host, port=port)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("RETURN 1")
+            cursor.fetchall()
+        finally:
+            conn.close()
+        return True
+    except (mgclient.Error, OSError):
         return False
 
 
@@ -32,7 +39,7 @@ def wait_for_memgraph(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _tcp_reachable(host, port):
+        if _bolt_reachable(host, port):
             return True
         time.sleep(interval)
     return False
