@@ -67,6 +67,9 @@ package = true
 include = ["codebase_rag*", "codec*", "cgr*"]
 exclude = ["*.tests", "*.tests.*"]
 
+[tool.setuptools.package-data]
+codebase_rag = ["docker-compose.yaml"]
+
 [project.optional-dependencies]
 test = [
     "pytest>=8.4.1",
