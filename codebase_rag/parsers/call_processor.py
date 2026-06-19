@@ -481,11 +481,12 @@ class CallProcessor:
             if callee_type == class_label:
                 continue
 
-            ensure_rel(
-                caller_spec,
-                calls_rel,
-                (callee_type, qn_key, callee_qn),
-            )
+            for target_qn in resolver.function_registry.variants(callee_qn):
+                ensure_rel(
+                    caller_spec,
+                    calls_rel,
+                    (callee_type, qn_key, target_qn),
+                )
 
     def _build_nested_qualified_name(
         self,

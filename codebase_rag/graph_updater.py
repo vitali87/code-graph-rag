@@ -42,13 +42,34 @@ type DirMtimesCache = dict[str, float]
 
 
 class FunctionRegistryTrie:
-    __slots__ = ("root", "_entries", "_simple_name_lookup", "_ending_with_cache")
+    __slots__ = (
+        "root",
+        "_entries",
+        "_simple_name_lookup",
+        "_ending_with_cache",
+        "_duplicates",
+    )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
         self.root: TrieNode = {}
         self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
+        self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
+
+    def register_unique_qn(
+        self, natural_qn: QualifiedName, start_line: int
+    ) -> QualifiedName:
+        if natural_qn not in self._entries:
+            return natural_qn
+        variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
+        bucket = self._duplicates.setdefault(natural_qn, [natural_qn])
+        if variant not in bucket:
+            bucket.append(variant)
+        return variant
+
+    def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
+        return self._duplicates.get(qualified_name, [qualified_name])
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         qualified_name = sys.intern(qualified_name)
@@ -92,6 +113,12 @@ class FunctionRegistryTrie:
             return
 
         del self._entries[qualified_name]
+        self._duplicates.pop(qualified_name, None)
+        for natural, bucket in list(self._duplicates.items()):
+            if qualified_name in bucket:
+                bucket.remove(qualified_name)
+                if len(bucket) <= 1:
+                    self._duplicates.pop(natural, None)
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
         if self._ending_with_cache:

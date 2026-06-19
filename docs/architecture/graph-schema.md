@@ -47,6 +47,14 @@ The knowledge graph uses a unified schema across all supported languages.
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Function, Method | CALLS | Function, Method |
 
+## Qualified Name Uniqueness
+
+`qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, `typing.overload`, and `try/except ImportError` fallbacks.
+
+The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant.
+
+A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
+
 ## Language-Specific AST Mappings
 
 ### C++
