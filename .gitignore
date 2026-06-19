@@ -24,3 +24,8 @@ PROJECT.md
 .pypi_cache.json
 .omc
 site/
+
+# Eval harness generated artifacts
+evals/results/
+.cgr-hash-cache.json
+.cgr-dir-mtimes.json
