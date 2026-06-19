@@ -397,8 +397,8 @@ class DeadCodeFormat(StrEnum):
     JSON = "json"
 
 
-# Decorators whose presence marks a function/method as an implicit entry point
-# (web routes, task/flow handlers, fixtures, CLI commands, event listeners).
+# (H) Decorators whose presence marks a function/method as an implicit entry point
+# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners).
 DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     {
         "route",
@@ -419,7 +419,7 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     }
 )
 
-# Substrings in a node's file path that mark it as test code.
+# (H) Substrings in a node's file path that mark it as test code.
 TEST_PATH_PATTERNS: tuple[str, ...] = ("test_", "_test", "conftest", "/tests/")
 
 
@@ -1051,6 +1051,11 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
+# (H) Removes external import-target Module nodes that no module imports anymore
+# (H) (e.g. an imported name that was renamed/removed on an incremental rebuild).
+CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
+    "MATCH (m:Module) WHERE m.is_external = true AND NOT (m)<--() DETACH DELETE m"
+)
 
 # (H) Queries for orphan pruning — returns all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (

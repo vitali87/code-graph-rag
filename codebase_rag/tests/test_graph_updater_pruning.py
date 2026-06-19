@@ -70,6 +70,27 @@ class TestPruneOrphanNodes:
         assert len(delete_calls) == 1
         assert delete_calls[0].args[1] == {cs.KEY_PATH: "old_project/main.py"}
 
+    def test_prune_removes_orphan_external_module_nodes(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        updater._prune_orphan_nodes()
+
+        external_calls = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES
+        ]
+        assert len(external_calls) == 1
+
     def test_prune_skips_other_projects(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
@@ -88,7 +109,13 @@ class TestPruneOrphanNodes:
         ]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 0
+        path_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0]
+            in (cs.CYPHER_DELETE_FILE, cs.CYPHER_DELETE_MODULE, cs.CYPHER_DELETE_FOLDER)
+        ]
+        assert path_deletes == []
 
     def test_prune_no_orphans_skips_deletes(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -110,7 +137,13 @@ class TestPruneOrphanNodes:
         ]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 0
+        path_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0]
+            in (cs.CYPHER_DELETE_FILE, cs.CYPHER_DELETE_MODULE, cs.CYPHER_DELETE_FOLDER)
+        ]
+        assert path_deletes == []
 
     def test_prune_handles_empty_graph(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -126,7 +159,13 @@ class TestPruneOrphanNodes:
         mock_ingestor.fetch_all.side_effect = [[], [], []]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 0
+        path_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0]
+            in (cs.CYPHER_DELETE_FILE, cs.CYPHER_DELETE_MODULE, cs.CYPHER_DELETE_FOLDER)
+        ]
+        assert path_deletes == []
 
     def test_prune_handles_none_path_gracefully(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -150,7 +189,13 @@ class TestPruneOrphanNodes:
         ]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 0
+        path_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0]
+            in (cs.CYPHER_DELETE_FILE, cs.CYPHER_DELETE_MODULE, cs.CYPHER_DELETE_FOLDER)
+        ]
+        assert path_deletes == []
 
     def test_prune_multiple_orphans_across_types(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -187,7 +232,13 @@ class TestPruneOrphanNodes:
         ]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 3
+        path_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0]
+            in (cs.CYPHER_DELETE_FILE, cs.CYPHER_DELETE_MODULE, cs.CYPHER_DELETE_FOLDER)
+        ]
+        assert len(path_deletes) == 3
 
     def test_prune_skips_inline_module_synthetic_paths(
         self, py_project: Path, mock_ingestor: MagicMock

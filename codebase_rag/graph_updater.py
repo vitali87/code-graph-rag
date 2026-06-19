@@ -923,6 +923,10 @@ class GraphUpdater:
                     )
                 total_pruned += len(orphans)
 
+        # (H) Drop external import-target modules that no module imports anymore,
+        # (H) e.g. an imported name renamed/removed on an incremental rebuild.
+        self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
