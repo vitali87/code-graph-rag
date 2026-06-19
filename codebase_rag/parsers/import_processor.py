@@ -405,6 +405,13 @@ class ImportProcessor:
             self.import_mapping[module_qn][local_name] = full_name
             logger.debug(ls.IMP_FROM_IMPORT, local=local_name, full=full_name)
 
+    def _is_package_qn(self, module_qn: str) -> bool:
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        if not module_qn.startswith(prefix):
+            return False
+        rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
+        return (self.repo_path / rel / cs.INIT_PY).is_file()
+
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
 
@@ -419,7 +426,11 @@ class ImportProcessor:
                 if decoded_name := safe_decode_text(child):
                     module_name = decoded_name
 
-        target_parts = module_parts[:-dots] if dots > 0 else module_parts
+        # (H) A package's qualified name already IS the package, so `from .` inside
+        # (H) an __init__.py drops one fewer level than inside a regular module.
+        drop = dots - 1 if self._is_package_qn(module_qn) else dots
+        keep = max(len(module_parts) - drop, 0)
+        target_parts = module_parts[:keep]
 
         if module_name:
             target_parts.extend(module_name.split(cs.SEPARATOR_DOT))
