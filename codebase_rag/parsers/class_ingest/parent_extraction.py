@@ -158,17 +158,19 @@ def extract_python_superclasses(
     import_map = import_processor.import_mapping.get(module_qn)
 
     for child in superclasses_node.children:
-        if child.type != cs.TS_IDENTIFIER or not child.text:
+        if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
             continue
         if not (parent_name := safe_decode_text(child)):
             continue
 
-        if import_map and parent_name in import_map:
-            parent_classes.append(import_map[parent_name])
+        head, sep, tail = parent_name.partition(cs.SEPARATOR_DOT)
+        if import_map and head in import_map:
+            resolved_head = import_map[head]
         elif import_map:
-            parent_classes.append(resolve_to_qn(parent_name, module_qn))
+            resolved_head = resolve_to_qn(head, module_qn)
         else:
-            parent_classes.append(f"{module_qn}.{parent_name}")
+            resolved_head = f"{module_qn}.{head}"
+        parent_classes.append(f"{resolved_head}{sep}{tail}")
 
     return parent_classes
 
