@@ -458,6 +458,20 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _delete_module_entities(self, file_key: str) -> None:
+        """Remove a changed/deleted file's Module subtree from the graph.
+
+        The incremental path re-parses a changed file and re-adds its
+        entities, but the entities the previous parse contributed (the
+        Module and everything it DEFINES, plus their IMPORTS/CALLS edges via
+        DETACH) must be removed first; otherwise renamed-away Function/Class/
+        Method nodes and their edges linger alongside the new ones.
+        """
+        if isinstance(self.ingestor, QueryProtocol):
+            self.ingestor.execute_write(
+                cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: file_key}
+            )
+
     def _diff_dir_against_cache(
         self,
         dir_path_str: str,
@@ -719,6 +733,7 @@ class GraphUpdater:
             for filepath, file_key, is_new, file_bytes in changed_entries:
                 if not is_new:
                     self.remove_file_from_state(filepath)
+                    self._delete_module_entities(file_key)
 
                 changed_count += 1
                 self._process_single_file(
@@ -745,10 +760,8 @@ class GraphUpdater:
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
                 self.remove_file_from_state(deleted_path)
+                self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
-                    self.ingestor.execute_write(
-                        cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: deleted_key}
-                    )
                     self.ingestor.execute_write(
                         cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
                     )
