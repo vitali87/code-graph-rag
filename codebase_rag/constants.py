@@ -349,6 +349,9 @@ ARG_COMMAND = "command"
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
+# (H) Disambiguates definitions that share one qualified name (if/else import
+# (H) fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
+DUP_QN_MARKER = "@"
 
 # (H) Path navigation
 PATH_CURRENT_DIR = "."

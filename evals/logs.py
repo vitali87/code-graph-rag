@@ -1,0 +1,7 @@
+EXTRACTING_CGR = "Building cgr graph for {target} (project={project})"
+CGR_GRAPH_DONE = "cgr graph: {nodes} python nodes, {edges} scored edges"
+EXTRACTING_ORACLE = "Building ast oracle for {target}"
+ORACLE_GRAPH_DONE = "ast oracle: {nodes} python nodes, {edges} scored edges"
+WROTE_SCORES = "Wrote scores to {path}"
+WROTE_DIFF = "Wrote diff to {path}"
+ORACLE_PARSE_FAILED = "Skipped unparseable file {path}: {error}"

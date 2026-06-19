@@ -352,6 +352,12 @@ class FunctionIngestMixin:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
+        unique_qn = self.function_registry.register_unique_qn(
+            resolution.qualified_name, func_node.start_point[0] + 1
+        )
+        if unique_qn != resolution.qualified_name:
+            resolution = resolution._replace(qualified_name=unique_qn)
+
         func_props = self._build_function_props(func_node, resolution, module_qn)
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
