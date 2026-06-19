@@ -10,6 +10,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs
+from ...config import settings
 from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -45,6 +46,30 @@ def _is_nested_inside_function(
             return True
         current = current.parent
     return False
+
+
+def _method_belongs_directly(
+    method_node: Node, class_node: Node, lang_config: LanguageSpec
+) -> bool:
+    current = method_node.parent
+    while current is not None:
+        if current == class_node:
+            return True
+        if current.type in lang_config.class_node_types or (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return False
+        current = current.parent
+    return False
+
+
+def _skip_method(
+    method_node: Node, class_node: Node, class_body: Node, lang_config: LanguageSpec
+) -> bool:
+    if settings.CAPTURE_FUNCTION_LOCAL_DEFINITIONS:
+        return not _method_belongs_directly(method_node, class_node, lang_config)
+    return _is_nested_inside_function(method_node, class_body, lang_config)
 
 
 class ClassIngestMixin:
@@ -252,7 +277,7 @@ class ClassIngestMixin:
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
 
         for method_node in method_nodes:
-            if _is_nested_inside_function(method_node, body_node, lang_config):
+            if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
             ingest_method(
                 method_node,
@@ -300,7 +325,7 @@ class ClassIngestMixin:
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
 
         for method_node in method_nodes:
-            if _is_nested_inside_function(method_node, body_node, lang_config):
+            if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
 
             method_qualified_name = None

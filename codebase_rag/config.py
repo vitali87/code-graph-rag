@@ -184,6 +184,9 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
+    CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
+        False, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
+    )
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
     SHELL_COMMAND_TIMEOUT: int = 30
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
