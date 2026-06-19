@@ -59,6 +59,24 @@ def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
     return _to_graph_data(ingestor, project_name)
 
 
+def extract_cgr_calls(target: Path, project_name: str) -> set[tuple[str, str]]:
+    parsers, queries = load_parsers()
+    ingestor = _CapturingIngestor()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=target,
+        parsers=parsers,
+        queries=queries,
+        project_name=project_name,
+    ).run(force=True)
+    calls_value = cs.RelationshipType.CALLS.value
+    return {
+        (str(from_val), str(to_val))
+        for from_label, from_val, rel_type, to_label, to_val in ingestor.rels
+        if rel_type == calls_value
+    }
+
+
 def _node_key(label: str, props: PropertyDict) -> NodeKey | None:
     path = props.get(cs.KEY_PATH)
     if path is None:

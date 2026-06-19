@@ -34,6 +34,10 @@ SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
     cs.RelationshipType.IMPORTS,
 )
 INIT_STEM = "__init__"
+SEP = cs.SEPARATOR_DOT
+TRACE_CALL_EVENT = "call"
+L3_DIFF_FILENAME = "calls_diff.json"
+L3_WORKSPACE = "l3_workspace"
 SCORED_NAME_EDGE_TYPE_VALUES: frozenset[str] = frozenset(
     e.value for e in SCORED_NAME_EDGE_TYPES
 )
