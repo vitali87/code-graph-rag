@@ -66,6 +66,13 @@ QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_FAILED = (
     "Failed to delete Qdrant vectors for project '{project}': {error}"
 )
+QDRANT_LOCK_ERROR = (
+    "Failed to open embedded Qdrant at '{path}': {error}. The storage folder is "
+    "locked by another process; look for the '.lock' sentinel inside it. Embedded "
+    "Qdrant allows only one process at a time, so a running MCP server and a CLI "
+    "indexing run cannot share it. Set QDRANT_URL to point at a shared Qdrant "
+    "server for concurrent access."
+)
 EMBEDDING_CACHE_HIT = "Embedding cache hit for {count} snippets"
 EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path}"
 EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"

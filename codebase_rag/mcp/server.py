@@ -1,6 +1,8 @@
+import contextlib
 import json
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from loguru import logger
@@ -16,6 +18,7 @@ from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.vector_store import close_qdrant_client
 
 
 def setup_logging() -> None:
@@ -137,18 +140,33 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     return server, ingestor
 
 
+@contextlib.contextmanager
+def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+    """Manage shared service lifetimes for the MCP server.
+
+    Opens the Memgraph ingestor connection and guarantees the embedded Qdrant
+    client lock is released on shutdown, so a CLI indexing run can reuse the
+    storage folder once the server stops.
+    """
+    try:
+        with ingestor:
+            logger.info(
+                lg.MCP_SERVER_CONNECTED.format(
+                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+                )
+            )
+            yield
+    finally:
+        close_qdrant_client()
+
+
 async def serve_stdio() -> None:
     logger.info(lg.MCP_SERVER_STARTING)
 
     server, ingestor = create_server()
     logger.info(lg.MCP_SERVER_CREATED)
 
-    with ingestor:
-        logger.info(
-            lg.MCP_SERVER_CONNECTED.format(
-                host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
-            )
-        )
+    with _service_lifecycle(ingestor):
         try:
             async with stdio_server() as (read_stream, write_stream):
                 await server.run(
@@ -165,8 +183,6 @@ async def serve_http(
     host: str = settings.MCP_HTTP_HOST,
     port: int = settings.MCP_HTTP_PORT,
 ) -> None:
-    import contextlib
-
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
@@ -184,12 +200,7 @@ async def serve_http(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
-        with ingestor:
-            logger.info(
-                lg.MCP_SERVER_CONNECTED.format(
-                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
-                )
-            )
+        with _service_lifecycle(ingestor):
             async with session_manager.run():
                 logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
                 yield

@@ -28,7 +28,15 @@ if has_qdrant_client():
             if settings.QDRANT_URL:
                 _CLIENT = QdrantClient(url=settings.QDRANT_URL)
             else:
-                _CLIENT = QdrantClient(path=settings.QDRANT_DB_PATH)
+                try:
+                    _CLIENT = QdrantClient(path=settings.QDRANT_DB_PATH)
+                except Exception as e:
+                    logger.error(
+                        ls.QDRANT_LOCK_ERROR.format(
+                            path=settings.QDRANT_DB_PATH, error=e
+                        )
+                    )
+                    raise
             if not _CLIENT.collection_exists(settings.QDRANT_COLLECTION_NAME):
                 _CLIENT.create_collection(
                     collection_name=settings.QDRANT_COLLECTION_NAME,

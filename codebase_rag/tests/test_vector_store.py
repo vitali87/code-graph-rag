@@ -110,6 +110,25 @@ def test_get_qdrant_client_uses_path_when_url_unset(
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_get_qdrant_client_logs_and_reraises_on_lock_error(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with patch.object(vs.settings, "QDRANT_URL", None):
+        with patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd_locked"):
+            with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+                mock_client_cls.side_effect = RuntimeError(
+                    "Storage folder is already accessed by another instance"
+                )
+                with patch("codebase_rag.vector_store.logger") as mock_logger:
+                    with pytest.raises(RuntimeError):
+                        vs.get_qdrant_client()
+
+    mock_logger.error.assert_called_once()
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:

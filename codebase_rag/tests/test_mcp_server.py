@@ -1,10 +1,13 @@
+import contextlib
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from codebase_rag.mcp import server as srv
 from codebase_rag.mcp.server import get_project_root
 
 
@@ -173,3 +176,51 @@ class TestGetProjectRoot:
         assert result == actual_cwd.resolve()
         assert result.exists()
         assert result.is_dir()
+
+
+class TestServiceLifecycle:
+    """Tests that the MCP server lifecycle releases the Qdrant client."""
+
+    def test_service_lifecycle_closes_qdrant_on_exit(self) -> None:
+        mock_ingestor = MagicMock()
+
+        with patch.object(srv, "close_qdrant_client") as mock_close:
+            with srv._service_lifecycle(mock_ingestor):
+                mock_ingestor.__enter__.assert_called_once()
+                mock_close.assert_not_called()
+            mock_close.assert_called_once_with()
+            mock_ingestor.__exit__.assert_called_once()
+
+    def test_service_lifecycle_closes_qdrant_on_exception(self) -> None:
+        mock_ingestor = MagicMock()
+
+        with patch.object(srv, "close_qdrant_client") as mock_close:
+            with pytest.raises(RuntimeError):
+                with srv._service_lifecycle(mock_ingestor):
+                    raise RuntimeError("boom")
+            mock_close.assert_called_once_with()
+            mock_ingestor.__exit__.assert_called_once()
+
+
+class TestServeStdioShutdown:
+    """Tests that serve_stdio releases the Qdrant lock on shutdown."""
+
+    async def test_serve_stdio_closes_qdrant_client_on_shutdown(self) -> None:
+        mock_ingestor = MagicMock()
+        mock_server = MagicMock()
+        mock_server.run = AsyncMock()
+        mock_server.create_initialization_options = MagicMock(return_value=MagicMock())
+
+        @contextlib.asynccontextmanager
+        async def fake_stdio() -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+            yield (MagicMock(), MagicMock())
+
+        with patch.object(
+            srv, "create_server", return_value=(mock_server, mock_ingestor)
+        ):
+            with patch.object(srv, "stdio_server", fake_stdio):
+                with patch.object(srv, "close_qdrant_client") as mock_close:
+                    await srv.serve_stdio()
+
+        mock_close.assert_called_once_with()
+        mock_server.run.assert_awaited_once()
