@@ -424,6 +424,25 @@ class CallProcessor:
         else:
             local_var_types = None
 
+        caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
+
+        # (H) Runs independently of call_nodes: a getter access is an attribute, not
+        # (H) a call, so callers that read a property but make no other call must
+        # (H) still reach this pass before the early return below.
+        if language == cs.SupportedLanguage.PYTHON and (
+            prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_property_accesses(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                class_context,
+                queries[language][cs.QUERY_CONFIG],
+                prop_names,
+            )
+
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
             if not calls_query:
@@ -449,7 +468,6 @@ class CallProcessor:
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
-        caller_spec = (caller_type, qn_key, caller_qn)
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -493,6 +511,71 @@ class CallProcessor:
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+    def _ingest_property_accesses(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # (H) Accessing an @property getter invokes the getter method at runtime, but
+        # (H) tree-sitter sees a plain attribute, not a call. Resolve attribute
+        # (H) accesses whose tail names a known property and emit a CALLS edge to the
+        # (H) getter (skipping the attribute that is itself a call's function, which
+        # (H) the call path above already resolves).
+        resolver = self._resolver
+        resolve_func = resolver.resolve_function_call
+        registry = resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        calls_rel = cs.RelationshipType.CALLS
+        qn_key = cs.KEY_QUALIFIED_NAME
+        method_label = cs.NodeLabel.METHOD
+        attr_type = cs.TS_PY_ATTRIBUTE
+        call_type = cs.TS_PY_CALL
+        func_field = cs.TS_FIELD_FUNCTION
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        seen: set[str] = set()
+
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == attr_type and (text := node.text) is not None:
+                attr_text = text.decode(cs.ENCODING_UTF8)
+                if attr_text.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
+                    parent = node.parent
+                    is_call_target = (
+                        parent is not None
+                        and parent.type == call_type
+                        and parent.child_by_field_name(func_field) is node
+                    )
+                    if not is_call_target and (
+                        callee_info := resolve_func(
+                            attr_text, module_qn, local_var_types, class_context
+                        )
+                    ):
+                        callee_qn = callee_info[1]
+                        if (
+                            registry.is_property(callee_qn)
+                            and callee_qn != caller_qn
+                            and callee_qn not in seen
+                        ):
+                            seen.add(callee_qn)
+                            for target_qn in registry.variants(callee_qn):
+                                ensure_rel(
+                                    caller_spec,
+                                    calls_rel,
+                                    (method_label, qn_key, target_qn),
+                                )
+            stack.extend(node.children)
 
     def _build_nested_qualified_name(
         self,

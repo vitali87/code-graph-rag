@@ -2427,6 +2427,8 @@ TS_PY_DECORATOR = "decorator"
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"
 PY_METHOD_INIT = "__init__"
+DECORATOR_AT = "@"
+PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 
 # (H) Python attribute prefixes
 PY_SELF_PREFIX = "self."

@@ -48,6 +48,8 @@ class FunctionRegistryTrie:
         "_simple_name_lookup",
         "_ending_with_cache",
         "_duplicates",
+        "_properties",
+        "_property_names",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -56,6 +58,18 @@ class FunctionRegistryTrie:
         self._simple_name_lookup = simple_name_lookup
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
+        self._properties: set[QualifiedName] = set()
+        self._property_names: set[str] = set()
+
+    def mark_property(self, qualified_name: QualifiedName) -> None:
+        self._properties.add(qualified_name)
+        self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+
+    def is_property(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._properties
+
+    def property_names(self) -> set[str]:
+        return self._property_names
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int
@@ -120,6 +134,14 @@ class FunctionRegistryTrie:
                 if len(bucket) <= 1:
                     self._duplicates.pop(natural, None)
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+        if qualified_name in self._properties:
+            self._properties.discard(qualified_name)
+            if not any(
+                p.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple_name
+                for p in self._properties
+            ):
+                self._property_names.discard(simple_name)
 
         if self._ending_with_cache:
             self._ending_with_cache.pop(simple_name, None)

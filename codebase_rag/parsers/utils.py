@@ -114,6 +114,14 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     )
 
 
+def _is_property_decorator(decorators: list[str]) -> bool:
+    for decorator in decorators:
+        name = decorator.lstrip(cs.DECORATOR_AT).split(cs.SEPARATOR_DOT)[-1]
+        if name in cs.PROPERTY_DECORATORS:
+            return True
+    return False
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -166,6 +174,8 @@ def ingest_method(
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     function_registry[method_qn] = NodeType.METHOD
+    if _is_property_decorator(decorators):
+        function_registry.mark_property(method_qn)
     simple_name_lookup[method_name].add(method_qn)
 
     ingestor.ensure_relationship_batch(
