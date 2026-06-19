@@ -7,6 +7,7 @@ from .types_defs import (
     EdgeKey,
     GraphData,
     LocationStats,
+    NameEdge,
     NodeKey,
     ScoreResult,
     ScoreRow,
@@ -57,7 +58,36 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
     if edge_aggregate is not None:
         rows.append(edge_aggregate)
 
+    for name_edge_type in ec.SCORED_NAME_EDGE_TYPES:
+        cgr_set_n = {e for e in cgr.name_edges if e.rel_type == name_edge_type.value}
+        oracle_set_n = {
+            e for e in oracle.name_edges if e.rel_type == name_edge_type.value
+        }
+        row = _prf(
+            ec.Category.EDGE.value, name_edge_type.value, cgr_set_n, oracle_set_n
+        )
+        if row is not None:
+            rows.append(row)
+            diff[ec.DIFF_NAME_EDGE_PREFIX + name_edge_type.value] = _name_edge_bucket(
+                cgr_set_n, oracle_set_n
+            )
+
     return ScoreResult(rows=rows, location=_location_stats(cgr, oracle), diff=diff)
+
+
+def _fmt_name_edge(edge: NameEdge) -> str:
+    return ec.NAME_EDGE_REPR.format(
+        rel=edge.rel_type,
+        sfile=edge.source.file,
+        sstart=edge.source.start_line,
+        target=edge.target_name,
+    )
+
+
+def _name_edge_bucket(cgr_set: set[NameEdge], oracle_set: set[NameEdge]) -> DiffBucket:
+    missing = [_fmt_name_edge(e) for e in sorted(oracle_set - cgr_set)]
+    extra = [_fmt_name_edge(e) for e in sorted(cgr_set - oracle_set)]
+    return DiffBucket(missing=missing, extra=extra)
 
 
 def _prf(category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:

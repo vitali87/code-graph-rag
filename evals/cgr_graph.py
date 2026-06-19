@@ -6,7 +6,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
 from . import constants as ec
-from .types_defs import DefNode, EdgeKey, GraphData, NodeKey
+from .types_defs import DefNode, EdgeKey, GraphData, NameEdge, NodeKey
 
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 _NodeId = tuple[str, PropertyValue]
@@ -105,4 +105,17 @@ def _to_graph_data(ingestor: _CapturingIngestor) -> GraphData:
             continue
         if _edge_allowed(rel_type, parent.kind):
             edges.add(EdgeKey(rel_type, parent, child))
-    return GraphData(nodes=nodes, edges=edges)
+
+    name_edges: set[NameEdge] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type not in ec.SCORED_NAME_EDGE_TYPE_VALUES:
+            continue
+        source = by_uid.get((from_label, from_val))
+        if source is None:
+            continue
+        target = str(to_val)
+        if rel_type == cs.RelationshipType.INHERITS.value:
+            target = target.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        name_edges.add(NameEdge(rel_type, source, target))
+
+    return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)

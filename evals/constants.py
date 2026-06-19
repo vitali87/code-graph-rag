@@ -26,6 +26,18 @@ SCORED_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
 )
 SCORED_EDGE_TYPE_VALUES: frozenset[str] = frozenset(e.value for e in SCORED_EDGE_TYPES)
 
+# (H) L2 dependency edges: target is a resolved qualified name / module string
+# (H) (often external), so they are scored by name rather than by node location.
+# (H) IMPORTS is deferred until the oracle resolves relative imports the way cgr does.
+SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
+    cs.RelationshipType.INHERITS,
+)
+SCORED_NAME_EDGE_TYPE_VALUES: frozenset[str] = frozenset(
+    e.value for e in SCORED_NAME_EDGE_TYPES
+)
+DIFF_NAME_EDGE_PREFIX = "name_edge:"
+NAME_EDGE_REPR = "{rel} {sfile}:{sstart} -> {target}"
+
 IGNORE_DIRS: frozenset[str] = frozenset(
     {
         ".git",

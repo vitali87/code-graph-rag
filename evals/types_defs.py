@@ -19,9 +19,16 @@ class EdgeKey(NamedTuple):
     child: NodeKey
 
 
+class NameEdge(NamedTuple):
+    rel_type: str
+    source: NodeKey
+    target_name: str
+
+
 class GraphData(NamedTuple):
     nodes: dict[NodeKey, DefNode]
     edges: set[EdgeKey]
+    name_edges: set[NameEdge]
 
 
 class ScoreRow(TypedDict):
