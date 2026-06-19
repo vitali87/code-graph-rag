@@ -11,6 +11,7 @@ class CLICommandName(StrEnum):
     LANGUAGE = "language"
     DOCTOR = "doctor"
     STATS = "stats"
+    DEAD_CODE = "dead-code"
     DELETE_PROJECT = "delete-project"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
@@ -33,6 +34,10 @@ CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
 CMD_STATS = "Display node and relationship statistics for the indexed graph"
+CMD_DEAD_CODE = (
+    "Report functions/methods that are unreachable from any entry point "
+    "(candidates for review, not a guaranteed delete list)"
+)
 CMD_DELETE_PROJECT = "Delete a single project from the shared graph database (keeps other projects intact)"
 
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
@@ -169,6 +174,28 @@ HELP_MCP_HTTP_PORT = (
     "Port to bind the HTTP server — only used when --transport http (default: 8080)"
 )
 
+HELP_DEADCODE_PROJECT_NAME = (
+    "Project to scan (matches the Project node name). "
+    "If omitted, the sole indexed project is used."
+)
+HELP_DEADCODE_ENTRY_POINT = (
+    "Treat functions/methods whose qualified name ends with this value as "
+    "reachable roots. Repeatable."
+)
+HELP_DEADCODE_DECORATOR_ROOT = (
+    "Treat functions/methods carrying this decorator as reachable roots. "
+    "Extends the built-in set (route, task, fixture, command, ...). Repeatable."
+)
+HELP_DEADCODE_INCLUDE_TESTS = (
+    "Treat test code as reachable roots so production code it exercises is "
+    "not reported. On by default."
+)
+HELP_DEADCODE_FORMAT = "Output format: 'table' (default) or 'json'."
+HELP_DEADCODE_OUTPUT = "Write the report to this file instead of stdout."
+HELP_DEADCODE_FAIL_ON_FOUND = (
+    "Exit with code 1 when any candidate is found (useful in CI)."
+)
+
 HELP_DELETE_PROJECT_NAME = (
     "Name of the project to delete (matches the Project node name in the graph)."
 )
@@ -186,6 +213,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.STATS: CMD_STATS,
+    CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,

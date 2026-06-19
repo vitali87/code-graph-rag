@@ -398,6 +398,14 @@ class CodeSnippetResultDict(TypedDict, total=False):
     error: str
 
 
+class DeadCodeRow(TypedDict):
+    label: str
+    name: str
+    qualified_name: str
+    start_line: int
+    end_line: int
+
+
 class ListProjectsSuccessResult(TypedDict):
     projects: list[str]
     count: int
