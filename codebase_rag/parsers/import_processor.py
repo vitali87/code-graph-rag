@@ -56,8 +56,15 @@ class ImportProcessor:
             function_registry, repo_path, project_name
         )
 
+        repo_is_package = (repo_path / cs.INIT_PY).is_file()
+
         @lru_cache(maxsize=4096)
         def _is_local_module_cached(module_name: str) -> bool:
+            # (H) When the repo root is itself a package, its children are importable
+            # (H) only under the package name (project_name.child), never as bare
+            # (H) top-level names, so a bare top-level import resolves externally.
+            if repo_is_package:
+                return module_name == project_name
             return (
                 (repo_path / module_name).is_dir()
                 or (repo_path / f"{module_name}{cs.EXT_PY}").is_file()
@@ -216,6 +223,10 @@ class ImportProcessor:
         logger.debug(ls.IMP_ALIASED_IMPORT, alias=alias, full=full_name)
 
     def _resolve_import_full_name(self, module_name: str, top_level: str) -> str:
+        if module_name == self.project_name or module_name.startswith(
+            self.project_name + cs.SEPARATOR_DOT
+        ):
+            return module_name
         if self._is_local_module(top_level):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
         return module_name
@@ -413,7 +424,10 @@ class ImportProcessor:
         return (self.repo_path / rel / cs.INIT_PY).is_file()
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
-        module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        # (H) Relative imports are always internal; resolve to the full project-
+        # (H) prefixed qualified name so resolution does not depend on bare-name
+        # (H) locality checks (which treat package children as external).
+        module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
         dots = 0
         module_name = ""

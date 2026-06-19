@@ -130,7 +130,7 @@ def _write_tree(root: Path, new_name: str) -> None:
     (root / "__init__.py").touch()
     (root / "a.py").write_text(f"def {new_name}():\n    return 1\n")
     (root / "b.py").write_text(
-        f"from a import {new_name}\n\n\ndef caller():\n    return {new_name}()\n"
+        f"from .a import {new_name}\n\n\ndef caller():\n    return {new_name}()\n"
     )
 
 

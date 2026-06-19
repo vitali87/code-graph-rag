@@ -43,7 +43,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "pkg.sub1.sub2.utils"
+        expected = "myproject.pkg.sub1.sub2.utils"
         assert result == expected
 
     def test_double_dot_relative_import(self, mock_updater: GraphUpdater) -> None:
@@ -66,7 +66,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "pkg.sub1.shared"
+        expected = "myproject.pkg.sub1.shared"
         assert result == expected
 
     def test_triple_dot_relative_import(self, mock_updater: GraphUpdater) -> None:
@@ -89,7 +89,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "pkg.common"
+        expected = "myproject.pkg.common"
         assert result == expected
 
     def test_relative_import_to_package_root(self, mock_updater: GraphUpdater) -> None:
@@ -112,7 +112,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "config"
+        expected = "myproject.config"
         assert result == expected
 
     def test_relative_import_without_module_name(
@@ -133,7 +133,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "pkg.sub1"
+        expected = "myproject.pkg.sub1"
         assert result == expected
 
     def test_relative_import_edge_case_shallow_module(
@@ -158,7 +158,7 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "other"
+        expected = "myproject.other"
         assert result == expected
 
     def test_relative_import_complex_module_path(
@@ -183,5 +183,5 @@ class TestRelativeImportResolution:
             module_qn,
         )
 
-        expected = "pkg.sub1.sub2.helpers.database.models"
+        expected = "myproject.pkg.sub1.sub2.helpers.database.models"
         assert result == expected
