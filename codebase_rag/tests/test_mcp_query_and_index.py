@@ -364,6 +364,77 @@ class TestIndexRepository:
             assert mock_ingestor.delete_project.call_count == 2
 
 
+class TestIndexRepositoryConstraintsAndFlush:
+    """Regression tests for issue #2: MCP indexing produced an incomplete graph.
+
+    The MCP path diverged from the CLI path: it never called
+    ``ensure_constraints()`` and never defensively flushed the long-lived
+    ingestor before/after ``GraphUpdater.run()``, so stale buffered state could
+    leak across calls and missing constraints/indexes corrupted node creation.
+
+    NOTE: A full assertion that ``Class`` and ``Method`` nodes are persisted
+    requires a live Memgraph backend (the in-repo ``_MockIngestor`` does not
+    persist a real graph, and ``GraphUpdater`` emits those node batches
+    regardless of the orchestration bug). These tests instead pin the
+    orchestration that the CLI path performs and the MCP path was missing.
+    """
+
+    @staticmethod
+    def _ordered_calls(manager: MagicMock) -> list[str]:
+        tracked = {
+            "ingestor.ensure_constraints",
+            "ingestor.flush_all",
+            "updater.run",
+        }
+        return [name for name, _, _ in manager.mock_calls if name in tracked]
+
+    async def test_index_ensures_constraints_and_flushes_around_run(
+        self, temp_project_root: Path
+    ) -> None:
+        manager = MagicMock()
+        registry = MCPToolsRegistry(
+            project_root=str(temp_project_root),
+            ingestor=manager.ingestor,
+            cypher_gen=MagicMock(),
+        )
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater_class.return_value = manager.updater
+            manager.updater.run.return_value = None
+
+            await registry.index_repository()
+
+        assert self._ordered_calls(manager) == [
+            "ingestor.ensure_constraints",
+            "ingestor.flush_all",
+            "updater.run",
+            "ingestor.flush_all",
+        ]
+
+    async def test_update_ensures_constraints_and_flushes_around_run(
+        self, temp_project_root: Path
+    ) -> None:
+        manager = MagicMock()
+        registry = MCPToolsRegistry(
+            project_root=str(temp_project_root),
+            ingestor=manager.ingestor,
+            cypher_gen=MagicMock(),
+        )
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater_class.return_value = manager.updater
+            manager.updater.run.return_value = None
+
+            await registry.update_repository()
+
+        assert self._ordered_calls(manager) == [
+            "ingestor.ensure_constraints",
+            "ingestor.flush_all",
+            "updater.run",
+            "ingestor.flush_all",
+        ]
+
+
 class TestQueryAndIndexIntegration:
     """Test integration between querying and indexing."""
 

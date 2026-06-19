@@ -427,13 +427,18 @@ class MCPToolsRegistry:
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
+        self.ingestor.ensure_constraints()
+        self.ingestor.flush_all()
+
         updater = GraphUpdater(
             ingestor=self.ingestor,
             repo_path=Path(self.project_root),
             parsers=self.parsers,
             queries=self.queries,
+            project_name=project_name,
         )
         updater.run()
+        self.ingestor.flush_all()
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
             path=self.project_root, project_name=project_name
@@ -449,13 +454,20 @@ class MCPToolsRegistry:
             return cs.MCP_INDEX_ERROR.format(error=e)
 
     def _update_repository_sync(self) -> str:
+        project_name = Path(self.project_root).resolve().name
+
+        self.ingestor.ensure_constraints()
+        self.ingestor.flush_all()
+
         updater = GraphUpdater(
             ingestor=self.ingestor,
             repo_path=Path(self.project_root),
             parsers=self.parsers,
             queries=self.queries,
+            project_name=project_name,
         )
         updater.run()
+        self.ingestor.flush_all()
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
     async def update_repository(self) -> str:
