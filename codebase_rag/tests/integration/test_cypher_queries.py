@@ -11,11 +11,13 @@ from codebase_rag.cypher_queries import (
     CYPHER_FIND_BY_QUALIFIED_NAME,
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     build_constraint_query,
+    build_dead_code_query,
     build_merge_node_query,
     build_merge_relationship_query,
     build_nodes_by_ids_query,
     wrap_with_unwind,
 )
+from codebase_rag.types_defs import PropertyValue
 
 if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor
@@ -341,6 +343,112 @@ class TestBuildMergeRelationshipQueryIntegration:
             "MATCH (:Function)-[r:CALLS]->(:Function) RETURN r.line as line"
         )
         assert verify[0]["line"] == 42
+
+
+class TestBuildDeadCodeQueryUnit:
+    def test_include_tests_references_test_patterns(self) -> None:
+        query = build_dead_code_query(include_tests=True)
+
+        assert "$test_patterns" in query
+        assert "$project_prefix" in query
+        assert "$root_decorators" in query
+        assert "$entry_points" in query
+        assert "is_exported" in query
+        assert "CALLS*0.." in query
+
+    def test_exclude_tests_omits_test_patterns(self) -> None:
+        query = build_dead_code_query(include_tests=False)
+
+        assert "$test_patterns" not in query
+        assert "$project_prefix" in query
+
+
+@pytest.mark.integration
+class TestBuildDeadCodeQueryIntegration:
+    def _seed(self, ingestor: MemgraphIngestor) -> None:
+        # called -> live; orphan -> dead; handler is a @task root;
+        # routed is a @app.route root calling routed_callee (decorators are
+        # stored @-prefixed and dotted, exactly as the parser emits them);
+        # test_runs is a test root that calls helper (so helper is live)
+        ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(entry:Function {qualified_name: 'proj.mod.main', name: 'main', "
+            "  start_line: 1, end_line: 3, decorators: [], path: 'proj/mod.py'}), "
+            "(called:Function {qualified_name: 'proj.mod.called', name: 'called', "
+            "  start_line: 5, end_line: 7, decorators: [], path: 'proj/mod.py'}), "
+            "(orphan:Function {qualified_name: 'proj.mod.orphan', name: 'orphan', "
+            "  start_line: 9, end_line: 11, decorators: [], path: 'proj/mod.py'}), "
+            "(handler:Function {qualified_name: 'proj.mod.handler', name: 'handler', "
+            "  start_line: 13, end_line: 15, decorators: ['@task'], path: 'proj/mod.py'}), "
+            "(routed:Function {qualified_name: 'proj.mod.routed', name: 'routed', "
+            "  start_line: 21, end_line: 23, decorators: ['@app.route'], "
+            "  path: 'proj/mod.py'}), "
+            "(routed_callee:Function {qualified_name: 'proj.mod.routed_callee', "
+            "  name: 'routed_callee', start_line: 25, end_line: 27, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(helper:Function {qualified_name: 'proj.mod.helper', name: 'helper', "
+            "  start_line: 17, end_line: 19, decorators: [], path: 'proj/mod.py'}), "
+            "(testfn:Function {qualified_name: 'proj.tests.test_runs', "
+            "  name: 'test_runs', start_line: 1, end_line: 4, decorators: [], "
+            "  path: 'proj/tests/test_mod.py'}), "
+            "(entry)-[:CALLS]->(called), "
+            "(routed)-[:CALLS]->(routed_callee), "
+            "(testfn)-[:CALLS]->(helper)"
+        )
+
+    def _params(self, include_tests: bool) -> dict[str, PropertyValue]:
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": ["task", "route"],
+            "entry_points": ["proj.mod.main"],
+        }
+        if include_tests:
+            params["test_patterns"] = ["test_", "_test", "conftest", "/tests/"]
+        return params
+
+    def test_reports_only_the_orphan_with_tests_included(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        self._seed(memgraph_ingestor)
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=True), self._params(True)
+        )
+
+        names = {r["qualified_name"] for r in results}
+        assert names == {"proj.mod.orphan"}
+
+    def test_excluding_tests_reports_orphan_and_test_only_code(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        self._seed(memgraph_ingestor)
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), self._params(False)
+        )
+
+        names = {r["qualified_name"] for r in results}
+        # without test roots, the test fn and its helper are no longer reachable
+        assert names == {
+            "proj.mod.orphan",
+            "proj.tests.test_runs",
+            "proj.mod.helper",
+        }
+
+    def test_returns_row_shape(self, memgraph_ingestor: MemgraphIngestor) -> None:
+        self._seed(memgraph_ingestor)
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=True), self._params(True)
+        )
+
+        assert len(results) == 1
+        row = results[0]
+        assert row["label"] == "Function"
+        assert row["name"] == "orphan"
+        assert row["start_line"] == 9
+        assert row["end_line"] == 11
 
 
 @pytest.mark.integration

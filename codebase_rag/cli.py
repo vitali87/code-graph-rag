@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from collections.abc import Callable
 from functools import partial
@@ -7,6 +8,7 @@ from pathlib import Path
 
 import typer
 from loguru import logger
+from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -37,7 +39,7 @@ from .stack.constants import StackState
 from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
-from .types_defs import ResultRow
+from .types_defs import DeadCodeRow, PropertyValue, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -876,6 +878,182 @@ def stats() -> None:
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+
+def _resolve_dead_code_project(
+    project_name: str | None, projects: list[str]
+) -> str | None:
+    if project_name:
+        return project_name.strip()
+    if len(projects) == 1:
+        return projects[0]
+    return None
+
+
+def _dead_code_params(
+    project_name: str,
+    entry_points: list[str],
+    decorator_roots: list[str],
+    include_tests: bool,
+) -> dict[str, PropertyValue]:
+    root_decorators = sorted(
+        {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
+        | {d.lower() for d in decorator_roots}
+    )
+    params: dict[str, PropertyValue] = {
+        "project_prefix": f"{project_name}{cs.SEPARATOR_DOT}",
+        "root_decorators": root_decorators,
+        "entry_points": list(entry_points),
+    }
+    if include_tests:
+        params["test_patterns"] = list(cs.TEST_PATH_PATTERNS)
+    return params
+
+
+def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
+    start = row.get(cs.KEY_START_LINE, 0)
+    end = row.get(cs.KEY_END_LINE, 0)
+    return DeadCodeRow(
+        label=str(row.get(cs.KEY_LABEL, "")),
+        name=str(row.get(cs.KEY_NAME, "")),
+        qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
+        start_line=int(start) if isinstance(start, int | float) else 0,
+        end_line=int(end) if isinstance(end, int | float) else 0,
+    )
+
+
+def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> Table:
+    table = Table(
+        title=style(
+            cs.CLI_DEADCODE_TABLE_TITLE.format(project_name=project_name),
+            cs.Color.GREEN,
+        ),
+        show_header=True,
+        header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
+    )
+    table.add_column(cs.CLI_DEADCODE_COL_KIND, style=cs.Color.MAGENTA)
+    table.add_column(cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN)
+    table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
+    for row in candidates:
+        table.add_row(
+            row["label"],
+            row["qualified_name"],
+            cs.CLI_DEADCODE_LINE_RANGE.format(
+                start=row["start_line"], end=row["end_line"]
+            ),
+        )
+    return table
+
+
+def _emit_dead_code(
+    candidates: list[DeadCodeRow],
+    output_format: cs.DeadCodeFormat,
+    output: Path | None,
+    project_name: str,
+) -> None:
+    if output_format == cs.DeadCodeFormat.JSON:
+        payload = json.dumps(candidates, indent=2)
+        if output is not None:
+            output.write_text(payload, encoding=cs.ENCODING_UTF8)
+            app_context.console.print(
+                style(
+                    cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
+                    cs.Color.GREEN,
+                )
+            )
+            return
+        typer.echo(payload)
+        return
+
+    table = _build_dead_code_table(candidates, project_name)
+    if output is not None:
+        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+            Console(file=fh).print(table)
+        app_context.console.print(
+            style(
+                cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
+                cs.Color.GREEN,
+            )
+        )
+        return
+
+    if not candidates:
+        app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
+        return
+    app_context.console.print(table)
+    app_context.console.print(
+        style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
+    )
+
+
+@app.command(name=ch.CLICommandName.DEAD_CODE, help=ch.CMD_DEAD_CODE)
+def dead_code(
+    project_name: str | None = typer.Option(
+        None, "--project-name", "-n", help=ch.HELP_DEADCODE_PROJECT_NAME
+    ),
+    entry_point: list[str] = typer.Option(
+        [], "--entry-point", "-e", help=ch.HELP_DEADCODE_ENTRY_POINT
+    ),
+    decorator_root: list[str] = typer.Option(
+        [], "--decorator-root", help=ch.HELP_DEADCODE_DECORATOR_ROOT
+    ),
+    include_tests: bool = typer.Option(
+        True,
+        "--include-tests/--no-include-tests",
+        help=ch.HELP_DEADCODE_INCLUDE_TESTS,
+    ),
+    output_format: cs.DeadCodeFormat = typer.Option(
+        cs.DeadCodeFormat.TABLE, "--format", help=ch.HELP_DEADCODE_FORMAT
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help=ch.HELP_DEADCODE_OUTPUT
+    ),
+    fail_on_found: bool = typer.Option(
+        False, "--fail-on-found", help=ch.HELP_DEADCODE_FAIL_ON_FOUND
+    ),
+) -> None:
+    from .cypher_queries import build_dead_code_query
+
+    show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
+    if show_progress:
+        app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
+
+    projects: list[str] = []
+    resolved: str | None = None
+    rows: list[ResultRow] = []
+    try:
+        with connect_memgraph(batch_size=1) as ingestor:
+            projects = ingestor.list_projects()
+            resolved = _resolve_dead_code_project(project_name, projects)
+            if resolved is not None:
+                logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
+                rows = ingestor.fetch_all(
+                    build_dead_code_query(include_tests),
+                    _dead_code_params(
+                        resolved, entry_point, decorator_root, include_tests
+                    ),
+                )
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(ls.DEADCODE_ERROR.format(error=e))
+        raise typer.Exit(1) from e
+
+    if resolved is None:
+        message = (
+            cs.CLI_ERR_DEADCODE_NO_PROJECTS
+            if not projects
+            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
+        )
+        app_context.console.print(style(message, cs.Color.RED))
+        raise typer.Exit(1)
+
+    candidates = [_to_dead_code_row(row) for row in rows]
+    _emit_dead_code(candidates, output_format, output, resolved)
+
+    if fail_on_found and candidates:
+        raise typer.Exit(1)
 
 
 @app.command(name=ch.CLICommandName.DELETE_PROJECT, help=ch.CMD_DELETE_PROJECT)

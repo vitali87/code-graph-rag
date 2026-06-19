@@ -97,6 +97,37 @@ ORDER BY count DESC
 """
 
 
+_DEAD_CODE_TEST_ROOT_CLAUSE = (
+    "\n    OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
+)
+
+_DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:Function|Method)
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (
+    ANY(d IN n.decorators
+        WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
+              IN $root_decorators)
+    OR n.is_exported = true
+    OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e){test_clause}
+  )
+WITH collect(n) AS roots
+UNWIND roots AS r
+MATCH (r)-[:CALLS*0..]->(live)
+WITH collect(DISTINCT live) AS live_set
+MATCH (n:Function|Method)
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND NOT n IN live_set
+RETURN labels(n)[0] AS label, n.name AS name,
+       n.qualified_name AS qualified_name,
+       n.start_line AS start_line, n.end_line AS end_line
+ORDER BY qualified_name"""
+
+
+def build_dead_code_query(include_tests: bool) -> str:
+    test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE if include_tests else ""
+    return _DEAD_CODE_QUERY_TEMPLATE.format(test_clause=test_clause)
+
+
 def wrap_with_unwind(query: str) -> str:
     return f"UNWIND $batch AS row\n{query}"
 

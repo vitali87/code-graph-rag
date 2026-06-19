@@ -372,6 +372,8 @@ FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {pa
 UNEXPECTED = "An unexpected error occurred: {error}"
 EXPORT_ERROR = "Export error: {error}"
 STATS_ERROR = "Stats error: {error}"
+DEADCODE_SCANNING = "Scanning project '{project_name}' for dead code"
+DEADCODE_ERROR = "Dead code scan error: {error}"
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
     "Could not locate path token in user message for attachment: {path}"

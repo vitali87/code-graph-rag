@@ -166,6 +166,7 @@ KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
 KEY_NODE_ID = "node_id"
 KEY_LABELS = "labels"
+KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
@@ -293,6 +294,23 @@ CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
+
+CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
+CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
+CLI_DEADCODE_COL_KIND = "Kind"
+CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
+CLI_DEADCODE_COL_LINES = "Lines"
+CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
+CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
+CLI_DEADCODE_NONE = "No unreachable functions or methods found."
+CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
+CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
+CLI_ERR_DEADCODE_NO_PROJECTS = (
+    "No projects found in the graph. Index a repository first with 'cgr start'."
+)
+CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
+    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
+)
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."
@@ -372,6 +390,37 @@ class UniqueKeyType(StrEnum):
     NAME = KEY_NAME
     PATH = KEY_PATH
     QUALIFIED_NAME = KEY_QUALIFIED_NAME
+
+
+class DeadCodeFormat(StrEnum):
+    TABLE = "table"
+    JSON = "json"
+
+
+# Decorators whose presence marks a function/method as an implicit entry point
+# (web routes, task/flow handlers, fixtures, CLI commands, event listeners).
+DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
+    {
+        "route",
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "websocket",
+        "task",
+        "flow",
+        "fixture",
+        "command",
+        "cli",
+        "app",
+        "on_event",
+        "listener",
+    }
+)
+
+# Substrings in a node's file path that mark it as test code.
+TEST_PATH_PATTERNS: tuple[str, ...] = ("test_", "_test", "conftest", "/tests/")
 
 
 class NodeLabel(StrEnum):
