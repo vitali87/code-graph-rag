@@ -73,8 +73,8 @@ class _Capture:
         return None
 
 
-def _build(tmp_path: Path) -> _Capture:
-    (tmp_path / "m.py").write_text(MODULE_SRC)
+def _build(tmp_path: Path, src: str = MODULE_SRC) -> _Capture:
+    (tmp_path / "m.py").write_text(src)
     parsers, queries = load_parsers()
     cap = _Capture()
     GraphUpdater(
@@ -111,3 +111,74 @@ class TestDuplicateQualifiedNameDefinitions:
             and ".impl" in str(target)
         ]
         assert len(calls_to_impl) == 2, calls_to_impl
+
+
+CLASS_SRC = """import os
+
+
+if os.environ.get("FLAG"):
+
+    class Widget:
+        def render(self) -> str:
+            return "real"
+
+else:
+
+    class Widget:
+        def render(self) -> str:
+            return "stub"
+"""
+
+
+class TestDuplicateQualifiedNameClasses:
+    def test_both_branch_classes_become_distinct_nodes(self, tmp_path: Path) -> None:
+        cap = _build(tmp_path, CLASS_SRC)
+        widget_start_lines = sorted(
+            int(props[cs.KEY_START_LINE])
+            for (label, _uid), props in cap.nodes.items()
+            if label == cs.NodeLabel.CLASS
+            and props.get(cs.KEY_NAME) == "Widget"
+            and props.get(cs.KEY_START_LINE) is not None
+        )
+        assert widget_start_lines == [6, 12], widget_start_lines
+
+    def test_methods_of_both_branch_classes_survive(self, tmp_path: Path) -> None:
+        cap = _build(tmp_path, CLASS_SRC)
+        render_start_lines = sorted(
+            int(props[cs.KEY_START_LINE])
+            for (label, _uid), props in cap.nodes.items()
+            if label == cs.NodeLabel.METHOD
+            and props.get(cs.KEY_NAME) == "render"
+            and props.get(cs.KEY_START_LINE) is not None
+        )
+        assert render_start_lines == [7, 13], render_start_lines
+
+
+METHOD_DUP_SRC = """import os
+
+
+class Service:
+
+    if os.environ.get("FLAG"):
+
+        def run(self) -> str:
+            return "real"
+
+    else:
+
+        def run(self) -> str:
+            return "stub"
+"""
+
+
+class TestDuplicateQualifiedNameMethodsInOneClass:
+    def test_both_branch_methods_in_one_class_survive(self, tmp_path: Path) -> None:
+        cap = _build(tmp_path, METHOD_DUP_SRC)
+        run_start_lines = sorted(
+            int(props[cs.KEY_START_LINE])
+            for (label, _uid), props in cap.nodes.items()
+            if label == cs.NodeLabel.METHOD
+            and props.get(cs.KEY_NAME) == "run"
+            and props.get(cs.KEY_START_LINE) is not None
+        )
+        assert run_start_lines == [8, 13], run_start_lines

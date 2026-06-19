@@ -167,6 +167,9 @@ class ClassIngestMixin:
             return
 
         class_qn, class_name, is_exported = identity
+        class_qn = self.function_registry.register_unique_qn(
+            class_qn, class_node.start_point[0] + 1
+        )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
         class_props: PropertyDict = {

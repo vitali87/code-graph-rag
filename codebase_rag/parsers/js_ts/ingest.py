@@ -169,6 +169,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             if constructor_name and method_name:
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
                 method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
+                method_qn = self.function_registry.register_unique_qn(
+                    method_qn, func_node.start_point[0] + 1
+                )
 
                 method_props: PropertyDict = {
                     cs.KEY_QUALIFIED_NAME: method_qn,
@@ -310,6 +313,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         method_func_node: ASTNode,
         module_qn: str,
     ) -> None:
+        method_qn = self.function_registry.register_unique_qn(
+            method_qn, method_func_node.start_point[0] + 1
+        )
         method_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: method_qn,
             cs.KEY_NAME: method_name,
@@ -500,6 +506,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_node: ASTNode,
         log_message: str,
     ) -> None:
+        function_qn = self.function_registry.register_unique_qn(
+            function_qn, function_node.start_point[0] + 1
+        )
         function_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: function_qn,
             cs.KEY_NAME: function_name,

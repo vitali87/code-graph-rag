@@ -48,7 +48,7 @@ class FunctionCapturesResult(NamedTuple):
 
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
     # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
-    # across process invocations; sort by start_byte for reproducibility
+    # (H) across process invocations; sort by start_byte for reproducibility
     raw = cursor.captures(node)
     result: dict[str, list[ASTNode]] = {}
     for name, nodes in raw.items():
@@ -142,6 +142,10 @@ def ingest_method(
         method_name = text.decode(cs.ENCODING_UTF8)
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
+    if language != cs.SupportedLanguage.CPP:
+        method_qn = function_registry.register_unique_qn(
+            method_qn, method_node.start_point[0] + 1
+        )
 
     decorators = extract_decorators_func(method_node) if extract_decorators_func else []
 
@@ -186,6 +190,9 @@ def ingest_exported_function(
         return
 
     function_qn = f"{module_qn}.{function_name}"
+    function_qn = function_registry.register_unique_qn(
+        function_qn, function_node.start_point[0] + 1
+    )
 
     function_props = {
         cs.KEY_QUALIFIED_NAME: function_qn,
