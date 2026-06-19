@@ -19,6 +19,8 @@ def create_class_relationships(
     class_node: Node,
     class_qn: str,
     module_qn: str,
+    parent_label: str,
+    parent_qn: str,
     node_type: NodeType,
     is_exported: bool,
     language: cs.SupportedLanguage,
@@ -34,7 +36,7 @@ def create_class_relationships(
     class_inheritance[class_qn] = parent_classes
 
     ingestor.ensure_relationship_batch(
-        (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+        (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
         cs.RelationshipType.DEFINES,
         (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
     )

@@ -89,6 +89,15 @@ class ClassIngestMixin:
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
 
+    @abstractmethod
+    def _determine_function_parent(
+        self,
+        func_node: Node,
+        func_qn: str,
+        module_qn: str,
+        lang_config: LanguageSpec,
+    ) -> tuple[str, str]: ...
+
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
 
@@ -216,10 +225,15 @@ class ClassIngestMixin:
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)
 
+        parent_label, parent_qn = self._determine_function_parent(
+            class_node, class_qn, module_qn, lang_config
+        )
         rel.create_class_relationships(
             class_node,
             class_qn,
             module_qn,
+            parent_label,
+            parent_qn,
             node_type,
             is_exported,
             language,

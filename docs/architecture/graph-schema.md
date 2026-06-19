@@ -34,7 +34,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
-| Module | DEFINES | Class, Function |
+| Module, Function, Method | DEFINES | Class, Function |
 | Class | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module |
 | Module | EXPORTS | Class, Function |
@@ -46,6 +46,12 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Function, Method | CALLS | Function, Method |
+
+## Nested Definitions
+
+A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
+
+Methods and classes defined inside function bodies are captured only when `CGR_CAPTURE_LOCAL_DEFINITIONS` is enabled (see [Configuration](../getting-started/configuration.md)); function-local *classes* are captured by default, but their methods require the flag.
 
 ## Qualified Name Uniqueness
 

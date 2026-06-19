@@ -401,7 +401,7 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         parent_type, parent_qn = self._determine_function_parent(
-            func_node, module_qn, lang_config
+            func_node, resolution.qualified_name, module_qn, lang_config
         )
         self.ingestor.ensure_relationship_batch(
             (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
@@ -571,7 +571,11 @@ class FunctionIngestMixin:
         return is_method_node(func_node, lang_config)
 
     def _determine_function_parent(
-        self, func_node: Node, module_qn: str, lang_config: LanguageSpec
+        self,
+        func_node: Node,
+        func_qn: str,
+        module_qn: str,
+        lang_config: LanguageSpec,
     ) -> tuple[str, str]:
         current = func_node.parent
         if not isinstance(current, Node):
@@ -579,16 +583,15 @@ class FunctionIngestMixin:
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    parent_text = name_node.text
-                    if parent_text is None:
-                        continue
-                    if parent_func_name := safe_decode_text(name_node):
-                        if parent_func_qn := self._build_nested_qualified_name(
-                            current, module_qn, parent_func_name, lang_config
-                        ):
-                            return cs.NodeLabel.FUNCTION, parent_func_qn
-                break
+                parent_qn = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                if not parent_qn or parent_qn == func_qn:
+                    break
+                parent_label = (
+                    cs.NodeLabel.METHOD
+                    if self._is_method(current, lang_config)
+                    else cs.NodeLabel.FUNCTION
+                )
+                return parent_label, parent_qn
 
             current = current.parent
 
