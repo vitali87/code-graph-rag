@@ -424,6 +424,12 @@ class ImportProcessor:
         if module_name:
             target_parts.extend(module_name.split(cs.SEPARATOR_DOT))
 
+        # (H) A relative climb that lands at the project root (e.g. `from . import x`
+        # (H) in a top-level module) leaves no parts; resolve it to the project root
+        # (H) so the import is not silently dropped.
+        if not target_parts:
+            return self.project_name
+
         return cs.SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
