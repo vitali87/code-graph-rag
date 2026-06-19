@@ -479,7 +479,13 @@ class CallProcessor:
 
             callee_type, callee_qn = callee_info
             if callee_type == class_label:
-                continue
+                # (H) Instantiating a class is a call to its __init__ at runtime;
+                # (H) redirect to the constructor when the class defines one.
+                init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+                if init_qn not in resolver.function_registry:
+                    continue
+                callee_type = cs.NodeLabel.METHOD
+                callee_qn = init_qn
 
             for target_qn in resolver.function_registry.variants(callee_qn):
                 ensure_rel(
