@@ -26,12 +26,14 @@ SCORED_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
 )
 SCORED_EDGE_TYPE_VALUES: frozenset[str] = frozenset(e.value for e in SCORED_EDGE_TYPES)
 
-# (H) L2 dependency edges: target is a resolved qualified name / module string
-# (H) (often external), so they are scored by name rather than by node location.
-# (H) IMPORTS is deferred until the oracle resolves relative imports the way cgr does.
+# (H) L2 dependency edges scored by name/path rather than node location:
+# (H) INHERITS by base simple name; IMPORTS by in-repo target file path (internal
+# (H) module dependency graph only; external targets are DEPENDS_ON_EXTERNAL).
 SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
     cs.RelationshipType.INHERITS,
+    cs.RelationshipType.IMPORTS,
 )
+INIT_STEM = "__init__"
 SCORED_NAME_EDGE_TYPE_VALUES: frozenset[str] = frozenset(
     e.value for e in SCORED_NAME_EDGE_TYPES
 )

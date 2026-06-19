@@ -56,7 +56,7 @@ def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
         queries=queries,
         project_name=project_name,
     ).run(force=True)
-    return _to_graph_data(ingestor)
+    return _to_graph_data(ingestor, project_name)
 
 
 def _node_key(label: str, props: PropertyDict) -> NodeKey | None:
@@ -80,7 +80,17 @@ def _edge_allowed(rel_type: str, parent_kind: str) -> bool:
     return parent_kind == cs.NodeLabel.CLASS.value
 
 
-def _to_graph_data(ingestor: _CapturingIngestor) -> GraphData:
+def _internal_target_file(qn: str, internal_modules: dict[str, str]) -> str | None:
+    parts = qn.split(cs.SEPARATOR_DOT)
+    while parts:
+        candidate = cs.SEPARATOR_DOT.join(parts)
+        if candidate in internal_modules:
+            return internal_modules[candidate]
+        parts = parts[:-1]
+    return None
+
+
+def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData:
     nodes: dict[NodeKey, DefNode] = {}
     by_uid: dict[_NodeId, NodeKey] = {}
     for (label, uid), props in ingestor.nodes.items():
@@ -106,6 +116,15 @@ def _to_graph_data(ingestor: _CapturingIngestor) -> GraphData:
         if _edge_allowed(rel_type, parent.kind):
             edges.add(EdgeKey(rel_type, parent, child))
 
+    prefix = project_name + cs.SEPARATOR_DOT
+    internal_modules: dict[str, str] = {
+        str(uid): str(props[cs.KEY_PATH])
+        for (label, uid), props in ingestor.nodes.items()
+        if label == cs.NodeLabel.MODULE.value
+        and props.get(cs.KEY_PATH)
+        and (str(uid) == project_name or str(uid).startswith(prefix))
+    }
+
     name_edges: set[NameEdge] = set()
     for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
         if rel_type not in ec.SCORED_NAME_EDGE_TYPE_VALUES:
@@ -113,9 +132,12 @@ def _to_graph_data(ingestor: _CapturingIngestor) -> GraphData:
         source = by_uid.get((from_label, from_val))
         if source is None:
             continue
-        target = str(to_val)
         if rel_type == cs.RelationshipType.INHERITS.value:
-            target = target.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        name_edges.add(NameEdge(rel_type, source, target))
+            target = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            name_edges.add(NameEdge(rel_type, source, target))
+        elif rel_type == cs.RelationshipType.IMPORTS.value:
+            target_path = _internal_target_file(str(to_val), internal_modules)
+            if target_path is not None:
+                name_edges.add(NameEdge(rel_type, source, target_path))
 
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)

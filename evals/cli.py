@@ -39,7 +39,7 @@ def main(
     )
 
     logger.info(ls.EXTRACTING_ORACLE.format(target=target))
-    oracle_graph = extract_oracle_graph(target)
+    oracle_graph = extract_oracle_graph(target, project)
     logger.success(
         ls.ORACLE_GRAPH_DONE.format(
             nodes=len(oracle_graph.nodes), edges=len(oracle_graph.edges)

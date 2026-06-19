@@ -17,12 +17,16 @@ _METHOD = cs.NodeLabel.METHOD.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _INHERITS = cs.RelationshipType.INHERITS.value
+_IMPORTS = cs.RelationshipType.IMPORTS.value
 
 
-def extract_oracle_graph(target: Path) -> GraphData:
+def extract_oracle_graph(target: Path, project_name: str) -> GraphData:
     nodes: dict[NodeKey, DefNode] = {}
     edges: set[EdgeKey] = set()
     name_edges: set[NameEdge] = set()
+
+    parsed: list[tuple[str, ast.Module]] = []
+    module_index: dict[str, str] = {}
     for path in _iter_py_files(target):
         rel = path.relative_to(target).as_posix()
         try:
@@ -30,10 +34,64 @@ def extract_oracle_graph(target: Path) -> GraphData:
         except (SyntaxError, UnicodeDecodeError, ValueError) as error:
             logger.warning(ls.ORACLE_PARSE_FAILED.format(path=rel, error=error))
             continue
+        parsed.append((rel, tree))
+        module_index[_module_dotted(rel, project_name)] = rel
+
+    for rel, tree in parsed:
         module_key = NodeKey(_MODULE, rel, ec.MODULE_START_LINE)
-        nodes[module_key] = DefNode(module_key, path.stem, 0)
+        nodes[module_key] = DefNode(module_key, Path(rel).stem, 0)
         _walk_scope(tree.body, _MODULE, module_key, rel, nodes, edges, name_edges)
+        for target_file in _import_targets(tree, rel, module_index, project_name):
+            name_edges.add(NameEdge(_IMPORTS, module_key, target_file))
+
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
+
+
+def _module_dotted(rel: str, project_name: str) -> str:
+    parts = list(Path(rel).with_suffix("").parts)
+    if parts and parts[-1] == ec.INIT_STEM:
+        parts = parts[:-1]
+    return cs.SEPARATOR_DOT.join([project_name, *parts])
+
+
+def _from_base_parts(node: ast.ImportFrom, pkg_parts: list[str]) -> list[str] | None:
+    if node.level == 0:
+        return node.module.split(cs.SEPARATOR_DOT) if node.module else None
+    keep = len(pkg_parts) - (node.level - 1)
+    if keep < 0:
+        return None
+    parts = pkg_parts[:keep]
+    if node.module:
+        parts = parts + node.module.split(cs.SEPARATOR_DOT)
+    return parts
+
+
+def _import_targets(
+    tree: ast.Module, rel: str, module_index: dict[str, str], project_name: str
+) -> set[str]:
+    pkg_parts = [project_name, *Path(rel).parent.parts]
+    targets: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in module_index:
+                    targets.add(module_index[alias.name])
+        elif isinstance(node, ast.ImportFrom):
+            base_parts = _from_base_parts(node, pkg_parts)
+            if base_parts is None:
+                continue
+            base_dotted = cs.SEPARATOR_DOT.join(base_parts)
+            for alias in node.names:
+                if alias.name == "*":
+                    if base_dotted in module_index:
+                        targets.add(module_index[base_dotted])
+                    continue
+                sub = cs.SEPARATOR_DOT.join([*base_parts, alias.name])
+                if sub in module_index:
+                    targets.add(module_index[sub])
+                elif base_dotted in module_index:
+                    targets.add(module_index[base_dotted])
+    return targets
 
 
 def _base_name(expr: ast.expr) -> str | None:
