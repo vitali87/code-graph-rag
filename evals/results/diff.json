@@ -1,0 +1,34 @@
+{
+  "node:Module": {
+    "missing": [],
+    "extra": []
+  },
+  "node:Class": {
+    "missing": [],
+    "extra": []
+  },
+  "node:Function": {
+    "missing": [],
+    "extra": []
+  },
+  "node:Method": {
+    "missing": [],
+    "extra": []
+  },
+  "edge:DEFINES": {
+    "missing": [],
+    "extra": []
+  },
+  "edge:DEFINES_METHOD": {
+    "missing": [],
+    "extra": []
+  },
+  "name_edge:INHERITS": {
+    "missing": [],
+    "extra": []
+  },
+  "name_edge:IMPORTS": {
+    "missing": [],
+    "extra": []
+  }
+}
