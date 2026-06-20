@@ -569,7 +569,7 @@ class CallProcessor:
                 # (H) right-hand side and treat the alias call as a call to it.
                 if alias_map is None:
                     alias_map = self._build_local_alias_map(
-                        caller_node, queries[language][cs.QUERY_CONFIG]
+                        caller_node, queries[language][cs.QUERY_CONFIG], module_qn
                     )
                 if (rhs := alias_map.get(call_name)) is not None:
                     callee_info = resolve_func(
@@ -925,7 +925,7 @@ class CallProcessor:
             )
 
     def _build_local_alias_map(
-        self, caller_node: Node, lang_config: LanguageSpec
+        self, caller_node: Node, lang_config: LanguageSpec, module_qn: str
     ) -> dict[str, str]:
         identifier = cs.TS_PY_IDENTIFIER
         attribute = cs.TS_PY_ATTRIBUTE
@@ -951,7 +951,7 @@ class CallProcessor:
                     and right is not None
                     and (
                         target := self._alias_reference_text(
-                            right, identifier, attribute
+                            right, identifier, attribute, module_qn
                         )
                     )
                     is not None
@@ -961,17 +961,90 @@ class CallProcessor:
         return aliases
 
     def _alias_reference_text(
-        self, right: Node, identifier: str, attribute: str
+        self, right: Node, identifier: str, attribute: str, module_qn: str
     ) -> str | None:
-        # (H) An alias rhs is a plain name/attribute, or a conditional that picks one
-        # (H) (resolve_builtin_call if is_js_ts else None); take the name/attribute
-        # (H) branch (consequence or alternative, never the condition) as the target.
+        # (H) An alias rhs is a plain name/attribute, a conditional that picks one
+        # (H) (resolve_builtin_call if is_js_ts else None), or getattr(recv, name)
+        # (H) dynamic dispatch. Take the name/attribute branch (consequence or
+        # (H) alternative, never the condition) or build recv.<name> for getattr.
         if right.type in (identifier, attribute):
             return right.text.decode(cs.ENCODING_UTF8) if right.text else None
         if right.type == cs.TS_PY_CONDITIONAL_EXPRESSION and right.named_children:
             for branch in (right.named_children[0], right.named_children[-1]):
                 if branch.type in (identifier, attribute) and branch.text:
                     return branch.text.decode(cs.ENCODING_UTF8)
+        if right.type == cs.TS_PY_CALL:
+            return self._getattr_reference_text(right, identifier, attribute, module_qn)
+        return None
+
+    def _getattr_reference_text(
+        self, call: Node, identifier: str, attribute: str, module_qn: str
+    ) -> str | None:
+        func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if (
+            func is None
+            or safe_decode_text(func) != cs.PY_BUILTIN_GETATTR
+            or args is None
+            or len(args.named_children) < 2
+        ):
+            return None
+        receiver, name_node = args.named_children[0], args.named_children[1]
+        if receiver.type not in (identifier, attribute):
+            return None
+        if (name := self._resolve_str_const(name_node, module_qn)) is None:
+            return None
+        return f"{safe_decode_text(receiver)}{cs.SEPARATOR_DOT}{name}"
+
+    def _resolve_str_const(self, node: Node, module_qn: str) -> str | None:
+        # (H) Resolve a getattr name argument to its string value: a string literal
+        # (H) directly, or a module-level constant (cs.METHOD_X / METHOD_X) read from
+        # (H) the defining module's AST.
+        if node.type == cs.TS_PY_STRING:
+            content = next(
+                (c for c in node.children if c.type == cs.TS_PY_STRING_CONTENT), None
+            )
+            return safe_decode_text(content) if content is not None else None
+        if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            return None
+        name_text = safe_decode_text(node)
+        if not name_text:
+            return None
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn, {})
+        prefix, _, const_name = name_text.rpartition(cs.SEPARATOR_DOT)
+        if not prefix:
+            mapped = import_map.get(const_name)
+            const_module_qn = (
+                mapped.rsplit(cs.SEPARATOR_DOT, 1)[0] if mapped else module_qn
+            )
+        elif (mapped_module := import_map.get(prefix)) is not None:
+            const_module_qn = mapped_module
+        else:
+            const_module_qn = prefix
+        return self._module_string_constant(const_module_qn, const_name)
+
+    def _module_string_constant(self, module_qn: str, const_name: str) -> str | None:
+        type_inference = self._resolver.type_inference
+        file_path = type_inference.module_qn_to_file_path.get(module_qn)
+        if file_path is None or file_path not in type_inference.ast_cache:
+            return None
+        root_node, _ = type_inference.ast_cache[file_path]
+        for child in root_node.children:
+            if child.type != cs.TS_PY_EXPRESSION_STATEMENT or not child.children:
+                continue
+            assignment = child.children[0]
+            if assignment.type != cs.TS_PY_ASSIGNMENT:
+                continue
+            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if (
+                left is not None
+                and left.type == cs.TS_PY_IDENTIFIER
+                and safe_decode_text(left) == const_name
+                and right is not None
+                and right.type == cs.TS_PY_STRING
+            ):
+                return self._resolve_str_const(right, module_qn)
         return None
 
     def _ingest_property_accesses(

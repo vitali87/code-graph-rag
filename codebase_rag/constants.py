@@ -2443,6 +2443,8 @@ TS_FIELD_ARGUMENT = "argument"
 # (H) let the call extractor synthesize the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
 PY_BUILTIN_LEN = "len"
+PY_BUILTIN_GETATTR = "getattr"
+TS_PY_STRING_CONTENT = "string_content"
 PY_DUNDER_GETITEM = "__getitem__"
 PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
