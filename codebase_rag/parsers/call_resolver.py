@@ -270,6 +270,10 @@ class CallResolver:
             best_candidate_qn = min(
                 possible_matches,
                 key=lambda qn: (
+                    # (H) An @abstractmethod stub never runs when a concrete override
+                    # (H) exists, so prefer concrete candidates over abstract ones
+                    # (H) even when the abstract stub is closer by import distance.
+                    self.function_registry.is_abstract(qn),
                     self._import_distance_fast(
                         qn, caller_parts, caller_len, caller_parent_prefix
                     ),

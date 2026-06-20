@@ -50,6 +50,7 @@ class FunctionRegistryTrie:
         "_duplicates",
         "_properties",
         "_property_names",
+        "_abstracts",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -60,6 +61,7 @@ class FunctionRegistryTrie:
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
+        self._abstracts: set[QualifiedName] = set()
 
     def mark_property(self, qualified_name: QualifiedName) -> None:
         self._properties.add(qualified_name)
@@ -70,6 +72,12 @@ class FunctionRegistryTrie:
 
     def property_names(self) -> set[str]:
         return self._property_names
+
+    def mark_abstract(self, qualified_name: QualifiedName) -> None:
+        self._abstracts.add(qualified_name)
+
+    def is_abstract(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._abstracts
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int
@@ -142,6 +150,7 @@ class FunctionRegistryTrie:
                 for p in self._properties
             ):
                 self._property_names.discard(simple_name)
+        self._abstracts.discard(qualified_name)
 
         if self._ending_with_cache:
             self._ending_with_cache.pop(simple_name, None)
