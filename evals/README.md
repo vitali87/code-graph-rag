@@ -53,21 +53,22 @@ uv run python -m evals.go_l1 --target /path/to/go/repo --project-name myrepo
 
 How it works:
 
-- **Oracle** (`evals/oracles/go_ast.go`): a small Go program that walks the target with the standard library's `go/parser` + `go/ast` and emits one JSON record per top-level declaration. The `kind` field already uses cgr's `NodeLabel` vocabulary (`Function`, `Method`, `Class`, `Interface`, `Type`), so records join cgr's nodes directly on `(kind, file, start_line)`. Mapping: `func` → `Function`, `func` with a receiver → `Method`, `type … struct` → `Class`, `type … interface` → `Interface`, any other `type …` (defined types and aliases) → `Type`. Requires the `go` toolchain on `PATH`; `evals.go_l1` exits cleanly if it is missing.
+- **Oracle** (`evals/oracles/go_ast.go`): a small Go program that walks the target with the standard library's `go/parser` + `go/ast` and emits one JSON record per declaration (function-local type declarations included, via `ast.Inspect`, since cgr captures those too). The `kind` field already uses cgr's `NodeLabel` vocabulary (`Function`, `Method`, `Class`, `Interface`, `Type`), so records join cgr's nodes directly on `(kind, file, start_line)`. Mapping: `func` → `Function`, `func` with a receiver → `Method`, `type … struct` → `Class`, `type … interface` → `Interface`, any other `type …` (defined types and aliases) → `Type`. Requires the `go` toolchain on `PATH`; `evals.go_l1` exits cleanly if it is missing.
 - **cgr side** (`cgr_graph.extract_cgr_go_nodes`): builds cgr's graph over the target and keeps the Go (`.go`) definition nodes.
+- **Fair file set**: `run_go_oracle` drops oracle records under any directory in cgr's `IGNORE_PATTERNS` (e.g. `bin`, `vendor`, `build`), so the oracle grades exactly the files cgr indexes — single source of truth, no drift.
 - **Score**: per-kind precision/recall/F1 via `score.score_node_kinds`, written to `evals/results/go_scores.csv` and `evals/results/go_diff.json`.
 
-Validated on `apache/thrift` (1604 cgr Go nodes vs 1617 oracle nodes):
+Validated on `apache/thrift` (1604 cgr Go nodes vs 1604 oracle nodes — exact):
 
 | label | tp | fp | fn | precision | recall |
 |---|---|---|---|---|---|
-| Class | 106 | 0 | 1 | 1.0000 | 0.9907 |
+| Function | 535 | 0 | 0 | 1.0000 | 1.0000 |
+| Method | 907 | 0 | 0 | 1.0000 | 1.0000 |
+| Class | 106 | 0 | 0 | 1.0000 | 1.0000 |
 | Interface | 30 | 0 | 0 | 1.0000 | 1.0000 |
-| Type | 24 | 2 | 1 | 0.9231 | 0.9600 |
-| Function | 535 | 907 | 5 | 0.3710 | 0.9907 |
-| Method | 0 | 0 | 915 | 0.0000 | 0.0000 |
+| Type | 26 | 0 | 0 | 1.0000 | 1.0000 |
 
-Go `type` declarations (struct/interface/defined-type) are now captured (they were entirely missing before — see `codebase_rag/tests/test_go_type_declarations.py`). The oracle pinpoints the remaining gap: Go *receiver methods* are still labelled `Function` rather than `Method` (the 915 `Method` misses are also the bulk of `Function`'s false positives), tracked by the `xfail` `test_go_struct_methods_are_ingested`.
+Both gaps the oracle originally exposed are fixed: Go `type` declarations (struct/interface/defined-type) are captured (see `codebase_rag/tests/test_go_type_declarations.py`), and Go receiver methods are now `Method` nodes qualified by their receiver type with a `DEFINES_METHOD` edge from it (see `codebase_rag/tests/test_go_receiver_methods.py`), rather than being mislabelled `Function`.
 
 ## Latest results (target: `codebase_rag`)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -48,7 +49,7 @@ func NewPoint(x int, y int) Point {
     return project_path
 
 
-def _names(mock_ingestor: object, label: NodeLabel) -> set[str]:
+def _names(mock_ingestor: MagicMock, label: NodeLabel) -> set[str]:
     return {
         str(node[0][1].get(KEY_NAME))
         for node in get_nodes(mock_ingestor, label)
@@ -57,7 +58,7 @@ def _names(mock_ingestor: object, label: NodeLabel) -> set[str]:
 
 
 def test_go_struct_captured_as_class(
-    go_types_project: Path, mock_ingestor: object
+    go_types_project: Path, mock_ingestor: MagicMock
 ) -> None:
     create_and_run_updater(go_types_project, mock_ingestor, skip_if_missing="go")
     classes = _names(mock_ingestor, NodeLabel.CLASS)
@@ -68,7 +69,7 @@ def test_go_struct_captured_as_class(
 
 
 def test_go_interface_captured_as_interface(
-    go_types_project: Path, mock_ingestor: object
+    go_types_project: Path, mock_ingestor: MagicMock
 ) -> None:
     create_and_run_updater(go_types_project, mock_ingestor, skip_if_missing="go")
     interfaces = _names(mock_ingestor, NodeLabel.INTERFACE)
@@ -81,7 +82,7 @@ def test_go_interface_captured_as_interface(
 
 
 def test_go_type_alias_captured_as_type(
-    go_types_project: Path, mock_ingestor: object
+    go_types_project: Path, mock_ingestor: MagicMock
 ) -> None:
     create_and_run_updater(go_types_project, mock_ingestor, skip_if_missing="go")
     types = _names(mock_ingestor, NodeLabel.TYPE)

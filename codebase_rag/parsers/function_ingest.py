@@ -19,6 +19,7 @@ from ..types_defs import (
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .cpp import utils as cpp_utils
+from .go import utils as go_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
@@ -50,6 +51,14 @@ class _DeferredMethod(NamedTuple):
     method_props: PropertyDict
 
 
+class _DeferredGoMethod(NamedTuple):
+    """Go receiver method, linked to its receiver type once all types are known."""
+
+    method_node: Node
+    container_qn: str
+    file_path: Path | None
+
+
 class FunctionIngestMixin:
     __slots__ = ()
     _module_prefix_cache: dict[tuple[Path, int], str] = {}
@@ -61,6 +70,7 @@ class FunctionIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
+    _deferred_go_methods: list[_DeferredGoMethod]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -95,6 +105,11 @@ class FunctionIngestMixin:
             if language == cs.SupportedLanguage.CPP:
                 if self._handle_cpp_out_of_class_method(func_node, module_qn):
                     continue
+
+            if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
+                func_node, module_qn
+            ):
+                continue
 
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
@@ -287,6 +302,59 @@ class FunctionIngestMixin:
             ingested += 1
 
         self._deferred_cpp_methods = []
+        return ingested
+
+    def _defer_go_receiver_method(self, func_node: Node, module_qn: str) -> bool:
+        if not go_utils.is_receiver_method(func_node):
+            return False
+        receiver_type = go_utils.extract_receiver_type_name(func_node)
+        if not receiver_type:
+            return False
+        if not hasattr(self, "_deferred_go_methods"):
+            self._deferred_go_methods = []
+        self._deferred_go_methods.append(
+            _DeferredGoMethod(
+                method_node=func_node,
+                container_qn=f"{module_qn}.{receiver_type}",
+                file_path=self.module_qn_to_file_path.get(module_qn),
+            )
+        )
+        return True
+
+    def resolve_deferred_go_methods(self) -> int:
+        """Ingest Go receiver methods now that every receiver type is registered.
+
+        A Go method (``func (p Point) Area()``) is declared at file scope, not
+        inside its receiver type, so the receiver's node may not exist yet when
+        the method is first seen. Deferring to after Pass 2 lets the method bind
+        to the actual node label (``Class`` for structs, ``Type`` for defined
+        types, ``Interface`` for interfaces). Returns the number ingested.
+        """
+        deferred = getattr(self, "_deferred_go_methods", None)
+        if not deferred:
+            return 0
+
+        for entry in deferred:
+            container_type = self.function_registry.get(entry.container_qn)
+            container_label = (
+                cs.NodeLabel(container_type.value)
+                if container_type is not None
+                else cs.NodeLabel.CLASS
+            )
+            ingest_method(
+                method_node=entry.method_node,
+                container_qn=entry.container_qn,
+                container_type=container_label,
+                ingestor=self.ingestor,
+                function_registry=self.function_registry,
+                simple_name_lookup=self.simple_name_lookup,
+                get_docstring_func=self._get_docstring,
+                language=cs.SupportedLanguage.GO,
+                file_path=entry.file_path,
+                repo_path=self.repo_path,
+            )
+        ingested = len(deferred)
+        self._deferred_go_methods = []
         return ingested
 
     def _resolve_cpp_function(

@@ -1249,7 +1249,6 @@ func main() {
     return project_path
 
 
-@pytest.mark.xfail(reason="Go receiver-method ingestion not yet implemented")
 def test_go_struct_methods_are_ingested(
     go_struct_project: Path, mock_ingestor: MagicMock
 ) -> None:

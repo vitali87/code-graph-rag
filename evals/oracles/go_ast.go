@@ -64,28 +64,24 @@ func typeSpecKind(spec *ast.TypeSpec) string {
 	}
 }
 
+// collectFile visits the whole file (not just top-level Decls) so that
+// function-local type declarations are recorded too — cgr captures those by
+// default, so the oracle must as well to stay an apples-to-apples ground truth.
+// Go has no named nested functions, so every *ast.FuncDecl is top-level.
 func collectFile(fset *token.FileSet, file *ast.File, rel string, defs *[]Def) {
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch d := n.(type) {
 		case *ast.FuncDecl:
 			kind := kindFunction
 			if d.Recv != nil {
 				kind = kindMethod
 			}
 			*defs = append(*defs, Def{kind, rel, fset.Position(d.Name.Pos()).Line, d.Name.Name})
-		case *ast.GenDecl:
-			if d.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range d.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				*defs = append(*defs, Def{typeSpecKind(ts), rel, fset.Position(ts.Name.Pos()).Line, ts.Name.Name})
-			}
+		case *ast.TypeSpec:
+			*defs = append(*defs, Def{typeSpecKind(d), rel, fset.Position(d.Name.Pos()).Line, d.Name.Name})
 		}
-	}
+		return true
+	})
 }
 
 func main() {
