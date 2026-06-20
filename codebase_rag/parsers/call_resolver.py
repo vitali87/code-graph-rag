@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections import deque
+from collections import defaultdict, deque
 
 from loguru import logger
 from tree_sitter import Node
@@ -27,6 +27,7 @@ class CallResolver:
         "class_inheritance",
         "_simple_resolution_cache",
         "_wildcard_cache",
+        "_protocol_impl_cache",
     )
 
     def __init__(
@@ -44,6 +45,7 @@ class CallResolver:
             tuple[str, str], tuple[str, str] | None
         ] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
+        self._protocol_impl_cache: dict[str, str] | None = None
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
@@ -63,6 +65,63 @@ class CallResolver:
         return self._resolve_inherited_method(class_qn, method_name)
 
     def resolve_function_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+        class_context: str | None = None,
+    ) -> tuple[str, str] | None:
+        return self._redirect_protocol_method(
+            self._resolve_function_call(
+                call_name, module_qn, local_var_types, class_context
+            )
+        )
+
+    def _protocol_impl_map(self) -> dict[str, str]:
+        # (H) A Protocol stub never runs; the concrete implementer does. Map each
+        # (H) XxxProtocol to a unique non-Protocol class named Xxx (the suffix
+        # (H) convention disambiguates the real impl from test mocks or other
+        # (H) structural conformers, which structural matching alone cannot).
+        if self._protocol_impl_cache is not None:
+            return self._protocol_impl_cache
+        sep = cs.SEPARATOR_DOT
+        protocols: set[str] = set()
+        classes_by_simple: dict[str, list[str]] = defaultdict(list)
+        for qn, bases in self.class_inheritance.items():
+            classes_by_simple[qn.rsplit(sep, 1)[-1]].append(qn)
+            if any(base.rsplit(sep, 1)[-1] == cs.PY_PROTOCOL for base in bases):
+                protocols.add(qn)
+        impl: dict[str, str] = {}
+        for protocol_qn in protocols:
+            simple = protocol_qn.rsplit(sep, 1)[-1]
+            if simple == cs.PY_PROTOCOL or not simple.endswith(cs.PY_PROTOCOL):
+                continue
+            base_name = simple[: -len(cs.PY_PROTOCOL)]
+            candidates = [
+                qn for qn in classes_by_simple.get(base_name, []) if qn not in protocols
+            ]
+            if len(candidates) == 1:
+                impl[protocol_qn] = candidates[0]
+        self._protocol_impl_cache = impl
+        return impl
+
+    def _redirect_protocol_method(
+        self, result: tuple[str, str] | None
+    ) -> tuple[str, str] | None:
+        if result is None:
+            return result
+        class_qn, sep, method_name = result[1].rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return result
+        impl_qn = self._protocol_impl_map().get(class_qn)
+        if impl_qn is None:
+            return result
+        redirected = f"{impl_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if redirected in self.function_registry:
+            return self.function_registry[redirected], redirected
+        return result
+
+    def _resolve_function_call(
         self,
         call_name: str,
         module_qn: str,

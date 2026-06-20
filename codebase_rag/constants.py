@@ -2431,6 +2431,9 @@ TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"
+# (H) typing.Protocol base name and the conventional XxxProtocol class suffix
+# (H) used to map a Protocol to its concrete implementer.
+PY_PROTOCOL = "Protocol"
 PY_METHOD_INIT = "__init__"
 DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
