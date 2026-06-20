@@ -22,6 +22,7 @@ from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
+    callable_parameter_indices,
     get_function_captures,
     ingest_method,
     is_method_node,
@@ -365,6 +366,10 @@ class FunctionIngestMixin:
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        self.function_registry.mark_callable_params(
+            resolution.qualified_name,
+            callable_parameter_indices(func_node, language),
+        )
         if resolution.name:
             self.simple_name_lookup[resolution.name].add(resolution.qualified_name)
 

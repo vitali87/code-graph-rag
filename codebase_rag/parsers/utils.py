@@ -114,6 +114,97 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     )
 
 
+def _decorator_tail_names(decorators: list[str]) -> set[str]:
+    return {
+        decorator.lstrip(cs.DECORATOR_AT).split(cs.SEPARATOR_DOT)[-1]
+        for decorator in decorators
+    }
+
+
+def _is_property_decorator(decorators: list[str]) -> bool:
+    return bool(_decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
+
+
+def _is_abstract_decorator(decorators: list[str]) -> bool:
+    return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
+
+
+_PY_NAMED_PARAMETERS = frozenset(
+    {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
+)
+_PY_SCOPE_BOUNDARIES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_PY_DECORATED_DEFINITION,
+    }
+)
+
+
+def _python_parameter_name(param_node: Node) -> str | None:
+    if param_node.type == cs.TS_PY_IDENTIFIER:
+        return safe_decode_text(param_node)
+    if param_node.type in _PY_NAMED_PARAMETERS:
+        name_node = param_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER:
+            return safe_decode_text(name_node)
+        return None
+    if param_node.type == cs.TS_PY_TYPED_PARAMETER:
+        for child in param_node.children:
+            if child.type == cs.TS_PY_IDENTIFIER:
+                return safe_decode_text(child)
+    return None
+
+
+def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+    invoked: set[str] = set()
+    stack = [body_node]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CALL:
+            fn = node.child_by_field_name(cs.FIELD_FUNCTION)
+            if (
+                fn is not None
+                and fn.type == cs.TS_PY_IDENTIFIER
+                and (name := safe_decode_text(fn)) in candidates
+            ):
+                invoked.add(name)
+        for child in node.children:
+            # (H) Nested def/class bodies rebind the param name, so do not let an
+            # (H) inner call to a same-named local masquerade as the outer param.
+            if child.type not in _PY_SCOPE_BOUNDARIES:
+                stack.append(child)
+    return invoked
+
+
+def callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
+    # (H) Maps each parameter that is invoked as a call inside the function body
+    # (H) to its positional index in the call-site argument list (self/cls
+    # (H) dropped so the index lines up with how bound methods are invoked).
+    if language != cs.SupportedLanguage.PYTHON:
+        return {}
+    params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    body_node = func_node.child_by_field_name(cs.FIELD_BODY)
+    if params_node is None or body_node is None:
+        return {}
+
+    names: list[str] = []
+    for child in params_node.named_children:
+        if (name := _python_parameter_name(child)) is not None:
+            names.append(name)
+    if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+        names = names[1:]
+    if not names:
+        return {}
+
+    invoked = _python_invoked_parameter_names(body_node, set(names))
+    if not invoked:
+        return {}
+    return {name: index for index, name in enumerate(names) if name in invoked}
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -166,6 +257,13 @@ def ingest_method(
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     function_registry[method_qn] = NodeType.METHOD
+    if _is_property_decorator(decorators):
+        function_registry.mark_property(method_qn)
+    if _is_abstract_decorator(decorators):
+        function_registry.mark_abstract(method_qn)
+    function_registry.mark_callable_params(
+        method_qn, callable_parameter_indices(method_node, language)
+    )
     simple_name_lookup[method_name].add(method_qn)
 
     ingestor.ensure_relationship_batch(

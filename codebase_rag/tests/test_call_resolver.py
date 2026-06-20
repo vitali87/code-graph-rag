@@ -24,6 +24,9 @@ class MockFunctionRegistry:
     def __init__(self) -> None:
         self._data: dict[QualifiedName, NodeType] = {}
         self._suffix_index: dict[str, list[QualifiedName]] = defaultdict(list)
+        self._properties: set[QualifiedName] = set()
+        self._property_names: set[str] = set()
+        self._abstracts: set[QualifiedName] = set()
 
     def __contains__(self, qn: QualifiedName) -> bool:
         return qn in self._data
@@ -55,6 +58,28 @@ class MockFunctionRegistry:
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         return self._suffix_index.get(suffix, [])
+
+    def register_unique_qn(self, natural_qn: QualifiedName, start_line: int) -> str:
+        return natural_qn
+
+    def variants(self, qn: QualifiedName) -> list[QualifiedName]:
+        return [qn]
+
+    def mark_property(self, qn: QualifiedName) -> None:
+        self._properties.add(qn)
+        self._property_names.add(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+
+    def is_property(self, qn: QualifiedName) -> bool:
+        return qn in self._properties
+
+    def property_names(self) -> set[str]:
+        return self._property_names
+
+    def mark_abstract(self, qn: QualifiedName) -> None:
+        self._abstracts.add(qn)
+
+    def is_abstract(self, qn: QualifiedName) -> bool:
+        return qn in self._abstracts
 
 
 @pytest.fixture
@@ -1117,7 +1142,7 @@ class TestChainedMethodPattern:
 class TestDeterministicResolution:
     def test_trie_tiebreak_by_qualified_name(self, call_resolver: CallResolver) -> None:
         # (H) Register multiple functions with the same simple name in different modules
-        # at equal import distance from the caller
+        # (H) at equal import distance from the caller
         call_resolver.function_registry["proj.alpha.utils.helper"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.beta.utils.helper"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.gamma.utils.helper"] = NodeType.FUNCTION

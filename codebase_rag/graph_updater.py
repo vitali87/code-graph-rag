@@ -48,6 +48,10 @@ class FunctionRegistryTrie:
         "_simple_name_lookup",
         "_ending_with_cache",
         "_duplicates",
+        "_properties",
+        "_property_names",
+        "_abstracts",
+        "_callable_params",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -56,6 +60,35 @@ class FunctionRegistryTrie:
         self._simple_name_lookup = simple_name_lookup
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
+        self._properties: set[QualifiedName] = set()
+        self._property_names: set[str] = set()
+        self._abstracts: set[QualifiedName] = set()
+        self._callable_params: dict[QualifiedName, dict[str, int]] = {}
+
+    def mark_callable_params(
+        self, qualified_name: QualifiedName, params: dict[str, int]
+    ) -> None:
+        if params:
+            self._callable_params[qualified_name] = params
+
+    def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
+        return self._callable_params.get(qualified_name)
+
+    def mark_property(self, qualified_name: QualifiedName) -> None:
+        self._properties.add(qualified_name)
+        self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+
+    def is_property(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._properties
+
+    def property_names(self) -> set[str]:
+        return self._property_names
+
+    def mark_abstract(self, qualified_name: QualifiedName) -> None:
+        self._abstracts.add(qualified_name)
+
+    def is_abstract(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._abstracts
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int
@@ -120,6 +153,16 @@ class FunctionRegistryTrie:
                 if len(bucket) <= 1:
                     self._duplicates.pop(natural, None)
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+        if qualified_name in self._properties:
+            self._properties.discard(qualified_name)
+            if not any(
+                p.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple_name
+                for p in self._properties
+            ):
+                self._property_names.discard(simple_name)
+        self._abstracts.discard(qualified_name)
+        self._callable_params.pop(qualified_name, None)
 
         if self._ending_with_cache:
             self._ending_with_cache.pop(simple_name, None)
@@ -861,6 +904,14 @@ class GraphUpdater:
     def _process_function_calls(self) -> None:
         captures_cache = self.factory._func_class_captures_cache
         ast_cache_items = list(self.ast_cache.items())
+        for file_path, (root_node, language) in ast_cache_items:
+            self.factory.call_processor.collect_callable_field_bindings(
+                file_path,
+                root_node,
+                language,
+                self.queries,
+                func_class_captures_cache=captures_cache,
+            )
         for file_path, (root_node, language) in ast_cache_items:
             if captures_cache is not None and file_path in captures_cache:
                 cached = captures_cache[file_path]

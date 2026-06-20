@@ -17,7 +17,12 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
-from .utils import get_function_captures, is_method_node, sorted_captures
+from .utils import (
+    get_function_captures,
+    is_method_node,
+    safe_decode_text,
+    sorted_captures,
+)
 
 _TYPED_LANGUAGES = frozenset(
     {
@@ -88,6 +93,69 @@ class CallProcessor:
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
 
+    def _module_qn(self, relative_path: Path, file_name: str) -> str:
+        if file_name in (cs.INIT_PY, cs.MOD_RS):
+            return cs.SEPARATOR_DOT.join(
+                [self.project_name] + list(relative_path.parent.parts)
+            )
+        return cs.SEPARATOR_DOT.join(
+            [self.project_name] + list(relative_path.with_suffix("").parts)
+        )
+
+    def collect_callable_field_bindings(
+        self,
+        file_path: Path,
+        root_node: Node,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        func_class_captures_cache: dict[Path, dict] | None = None,
+    ) -> None:
+        # (H) Pre-pass: record which functions are bound to a class's callable
+        # (H) fields (FQNSpec(get_name=_python_get_name, ...)). Runs before call
+        # (H) resolution so a field invocation can resolve regardless of which
+        # (H) file the construction site lives in. Keyword bindings only;
+        # (H) positional callable args would need declared field order.
+        if language != cs.SupportedLanguage.PYTHON:
+            return
+        try:
+            module_qn = self._module_qn(
+                cached_relative_path(file_path, self.repo_path), file_path.name
+            )
+            if (
+                func_class_captures_cache is not None
+                and file_path in func_class_captures_cache
+            ):
+                call_nodes = func_class_captures_cache[file_path].get(cs.CAPTURE_CALL)
+            else:
+                call_nodes = None
+            if call_nodes is None:
+                call_nodes, _ = self._collect_all_call_nodes(
+                    root_node, language, queries
+                )
+            resolver = self._resolver
+            registry = resolver.function_registry
+            callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            for call_node in call_nodes:
+                _positional, keyword = self._parse_call_arguments(call_node)
+                if not keyword:
+                    continue
+                name = self._get_call_target_name(call_node)
+                if not name:
+                    continue
+                callee = resolver.resolve_function_call(name, module_qn)
+                if not callee or callee[0] != cs.NodeLabel.CLASS:
+                    continue
+                for field, value_node in keyword.items():
+                    if not (value_text := safe_decode_text(value_node)):
+                        continue
+                    bound = resolver.resolve_function_call(value_text, module_qn)
+                    if bound and bound[0] in callable_labels and bound[1] in registry:
+                        resolver.record_callable_field_binding(
+                            callee[1], field, bound[1]
+                        )
+        except Exception as e:
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+
     def process_calls_in_file(
         self,
         file_path: Path,
@@ -100,13 +168,7 @@ class CallProcessor:
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
-            module_qn = cs.SEPARATOR_DOT.join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
-            if file_path.name in (cs.INIT_PY, cs.MOD_RS):
-                module_qn = cs.SEPARATOR_DOT.join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
+            module_qn = self._module_qn(relative_path, file_path.name)
 
             call_name_cache: dict[int, str | None] = {}
 
@@ -424,6 +486,32 @@ class CallProcessor:
         else:
             local_var_types = None
 
+        caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
+
+        # (H) Runs independently of call_nodes: a getter access is an attribute, not
+        # (H) a call, so callers that read a property but make no other call must
+        # (H) still reach this pass before the early return below.
+        if language == cs.SupportedLanguage.PYTHON and (
+            prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_property_accesses(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                class_context,
+                queries[language][cs.QUERY_CONFIG],
+                prop_names,
+            )
+
+        # (H) Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
+        # (H) methods; emit those edges when the operand is a first-party type.
+        if language == cs.SupportedLanguage.PYTHON:
+            self._ingest_operator_dispatch_calls(
+                caller_node, caller_spec, module_qn, local_var_types
+            )
+
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
             if not calls_query:
@@ -449,7 +537,8 @@ class CallProcessor:
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
-        caller_spec = (caller_type, qn_key, caller_qn)
+        is_python = language == cs.SupportedLanguage.PYTHON
+        alias_map: dict[str, str] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -474,10 +563,74 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
+            if not callee_info and is_python and cs.SEPARATOR_DOT not in call_name:
+                # (H) A bare name that resolves to nothing may be a local alias of a
+                # (H) callable (do = self._start; do()). Resolve the assignment's
+                # (H) right-hand side and treat the alias call as a call to it.
+                if alias_map is None:
+                    alias_map = self._build_local_alias_map(
+                        caller_node, queries[language][cs.QUERY_CONFIG]
+                    )
+                if (rhs := alias_map.get(call_name)) is not None:
+                    callee_info = resolve_func(
+                        rhs, module_qn, local_var_types, class_context
+                    )
+
+            if not callee_info and is_python and cs.SEPARATOR_DOT in call_name:
+                # (H) recv.field(...) where field is a callable struct field:
+                # (H) resolve to the functions bound to it at construction sites.
+                self._ingest_callable_field_calls(
+                    call_name, caller_spec, local_var_types, ensure_rel
+                )
+
+            if is_python and call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in (
+                cs.HIGHER_ORDER_BUILTINS
+            ):
+                # (H) sorted(xs, key=f) and friends invoke f synchronously in this
+                # (H) frame, so the trace attributes the call to the enclosing fn.
+                self._ingest_higher_order_builtin_calls(
+                    call_node,
+                    caller_spec,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
             if not callee_info:
                 continue
 
             callee_type, callee_qn = callee_info
+
+            if is_python and (
+                dispatch_targets := resolver.protocol_dispatch_targets(callee_qn)
+            ):
+                # (H) The call resolved to a Protocol stub; the stub never runs, so emit
+                # (H) edges to the method on every conformer instead of the stub.
+                for conformer_type, conformer_qn in dispatch_targets:
+                    for target_qn in resolver.function_registry.variants(conformer_qn):
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (conformer_type, qn_key, target_qn),
+                        )
+                continue
+
+            if is_python:
+                # (H) f(...) invoked through a parameter: the edge runs from the
+                # (H) callee to whatever each call site binds to that parameter.
+                self._ingest_callable_param_calls(
+                    call_node,
+                    callee_type,
+                    callee_qn,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
             if callee_type == class_label:
                 # (H) Instantiating a class is a call to its __init__ at runtime;
                 # (H) redirect to the constructor when the class defines one.
@@ -493,6 +646,383 @@ class CallProcessor:
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+    def _ingest_operator_dispatch_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary:
+                continue
+            match node.type:
+                case cs.TS_PY_SUBSCRIPT:
+                    parent = node.parent
+                    left = (
+                        parent.child_by_field_name(cs.TS_FIELD_LEFT)
+                        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+                        else None
+                    )
+                    is_write = left is not None and left.id == node.id
+                    self._emit_operator_dunder(
+                        node.child_by_field_name(cs.FIELD_VALUE),
+                        cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case cs.TS_PY_COMPARISON_OPERATOR:
+                    operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
+                    if (
+                        operators is not None
+                        and (op_text := safe_decode_text(operators))
+                        and cs.PY_OP_IN in op_text.split()
+                        and node.named_children
+                    ):
+                        self._emit_operator_dunder(
+                            node.named_children[-1],
+                            cs.PY_DUNDER_CONTAINS,
+                            caller_spec,
+                            module_qn,
+                            local_var_types,
+                        )
+                case cs.TS_PY_CALL:
+                    func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+                    if (
+                        func is not None
+                        and safe_decode_text(func) == cs.PY_BUILTIN_LEN
+                        and args is not None
+                        and len(args.named_children) == 1
+                    ):
+                        self._emit_operator_dunder(
+                            args.named_children[0],
+                            cs.PY_DUNDER_LEN,
+                            caller_spec,
+                            module_qn,
+                            local_var_types,
+                        )
+                case cs.TS_PY_BOOLEAN_OPERATOR:
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_LEFT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_RIGHT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case cs.TS_PY_NOT_OPERATOR:
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_ARGUMENT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case (
+                    cs.TS_PY_IF_STATEMENT
+                    | cs.TS_PY_WHILE_STATEMENT
+                    | cs.TS_PY_ELIF_CLAUSE
+                    | cs.TS_PY_CONDITIONAL_EXPRESSION
+                ):
+                    # (H) A bare object as a condition is tested for truthiness; nested
+                    # (H) boolean/not operators are handled when the walk reaches them.
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_CONDITION),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+            stack.extend(node.children)
+
+    def _emit_truthiness(
+        self,
+        operand: Node | None,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # (H) Truthiness of an object calls __bool__ if defined, else __len__. Only a
+        # (H) bare name/attribute operand names an object (a comparison/call is already
+        # (H) a bool and is handled elsewhere); try __bool__ first, then __len__.
+        if operand is None or operand.type not in (
+            cs.TS_PY_IDENTIFIER,
+            cs.TS_PY_ATTRIBUTE,
+        ):
+            return
+        for dunder in (cs.PY_DUNDER_BOOL, cs.PY_DUNDER_LEN):
+            if self._emit_operator_dunder(
+                operand, dunder, caller_spec, module_qn, local_var_types
+            ):
+                return
+
+    def _emit_operator_dunder(
+        self,
+        operand: Node | None,
+        dunder: str,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        # (H) Resolve the implied <operand>.__dunder__ call; resolution only succeeds
+        # (H) for a first-party class that defines the dunder, so builtin containers
+        # (H) (dict/list) yield no edge. Restrict to simple attribute/name operands.
+        # (H) Returns whether an edge was emitted (truthiness tries __bool__ then __len__).
+        if operand is None or not (operand_text := safe_decode_text(operand)):
+            return False
+        if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
+            return False
+        targets = self._resolver.operator_dunder_targets(
+            operand_text, dunder, module_qn, local_var_types
+        )
+        if not targets:
+            return False
+        for callee_type, callee_qn in targets:
+            for target_qn in self._resolver.function_registry.variants(callee_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+        return True
+
+    def _parse_call_arguments(
+        self, call_node: Node
+    ) -> tuple[list[Node], dict[str, Node]]:
+        positional: list[Node] = []
+        keyword: dict[str, Node] = {}
+        args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if args_node is None:
+            return positional, keyword
+        for child in args_node.named_children:
+            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                name_node = child.child_by_field_name(cs.FIELD_NAME)
+                value_node = child.child_by_field_name(cs.FIELD_VALUE)
+                if (
+                    name_node is not None
+                    and value_node is not None
+                    and (name := safe_decode_text(name_node)) is not None
+                ):
+                    keyword[name] = value_node
+            else:
+                positional.append(child)
+        return positional, keyword
+
+    def _emit_callback_edge(
+        self,
+        source_spec: tuple[str, str, str],
+        arg_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        if not (arg_text := safe_decode_text(arg_node)):
+            return
+        if not (
+            resolved := resolve_func(
+                arg_text, module_qn, local_var_types, class_context
+            )
+        ):
+            return
+        res_type, res_qn = resolved
+        registry = self._resolver.function_registry
+        if res_type == cs.NodeLabel.CLASS:
+            init_qn = f"{res_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+            if init_qn not in registry:
+                return
+            res_type = cs.NodeLabel.METHOD
+            res_qn = init_qn
+        for target_qn in registry.variants(res_qn):
+            ensure_rel(
+                source_spec,
+                cs.RelationshipType.CALLS,
+                (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _ingest_callable_param_calls(
+        self,
+        call_node: Node,
+        callee_type: str,
+        callee_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        if not (params := self._resolver.function_registry.callable_params(callee_qn)):
+            return
+        positional, keyword = self._parse_call_arguments(call_node)
+        source_spec = (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn)
+        for param_name, index in params.items():
+            arg_node = keyword.get(param_name)
+            if arg_node is None and index < len(positional):
+                arg_node = positional[index]
+            if arg_node is not None:
+                self._emit_callback_edge(
+                    source_spec,
+                    arg_node,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
+    def _ingest_callable_field_calls(
+        self,
+        call_name: str,
+        caller_spec: tuple[str, str, str],
+        local_var_types: dict[str, str] | None,
+        ensure_rel,
+    ) -> None:
+        recv, sep, field = call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return
+        recv_type = local_var_types.get(recv) if local_var_types else None
+        targets = self._resolver.callable_field_targets(field, recv_type)
+        if not targets:
+            return
+        registry = self._resolver.function_registry
+        for target_qn in targets:
+            if target_qn in registry:
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _ingest_higher_order_builtin_calls(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        positional, keyword = self._parse_call_arguments(call_node)
+        for arg_node in (*positional, *keyword.values()):
+            self._emit_callback_edge(
+                caller_spec,
+                arg_node,
+                module_qn,
+                local_var_types,
+                class_context,
+                resolve_func,
+                ensure_rel,
+            )
+
+    def _build_local_alias_map(
+        self, caller_node: Node, lang_config: LanguageSpec
+    ) -> dict[str, str]:
+        identifier = cs.TS_PY_IDENTIFIER
+        attribute = cs.TS_PY_ATTRIBUTE
+        assignment = cs.TS_PY_ASSIGNMENT
+        left_field = cs.TS_FIELD_LEFT
+        right_field = cs.TS_FIELD_RIGHT
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        aliases: dict[str, str] = {}
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == assignment:
+                left = node.child_by_field_name(left_field)
+                right = node.child_by_field_name(right_field)
+                if (
+                    left is not None
+                    and left.type == identifier
+                    and (left_text := left.text) is not None
+                    and right is not None
+                    and right.type in (identifier, attribute)
+                    and (right_text := right.text) is not None
+                ):
+                    aliases.setdefault(
+                        left_text.decode(cs.ENCODING_UTF8),
+                        right_text.decode(cs.ENCODING_UTF8),
+                    )
+            stack.extend(node.children)
+        return aliases
+
+    def _ingest_property_accesses(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # (H) Accessing an @property getter invokes the getter method at runtime, but
+        # (H) tree-sitter sees a plain attribute, not a call. Resolve attribute
+        # (H) accesses whose tail names a known property and emit a CALLS edge to the
+        # (H) getter (skipping the attribute that is itself a call's function, which
+        # (H) the call path above already resolves).
+        resolver = self._resolver
+        resolve_func = resolver.resolve_function_call
+        registry = resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        calls_rel = cs.RelationshipType.CALLS
+        qn_key = cs.KEY_QUALIFIED_NAME
+        method_label = cs.NodeLabel.METHOD
+        attr_type = cs.TS_PY_ATTRIBUTE
+        call_type = cs.TS_PY_CALL
+        func_field = cs.TS_FIELD_FUNCTION
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        seen: set[str] = set()
+
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == attr_type and (text := node.text) is not None:
+                attr_text = text.decode(cs.ENCODING_UTF8)
+                if attr_text.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
+                    parent = node.parent
+                    is_call_target = (
+                        parent is not None
+                        and parent.type == call_type
+                        and parent.child_by_field_name(func_field) is node
+                    )
+                    if not is_call_target and (
+                        callee_info := resolve_func(
+                            attr_text, module_qn, local_var_types, class_context
+                        )
+                    ):
+                        callee_qn = callee_info[1]
+                        if (
+                            registry.is_property(callee_qn)
+                            and callee_qn != caller_qn
+                            and callee_qn not in seen
+                        ):
+                            seen.add(callee_qn)
+                            for target_qn in registry.variants(callee_qn):
+                                ensure_rel(
+                                    caller_spec,
+                                    calls_rel,
+                                    (method_label, qn_key, target_qn),
+                                )
+            stack.extend(node.children)
 
     def _build_nested_qualified_name(
         self,

@@ -46,6 +46,7 @@ class PythonTypeInferenceEngine(
         "_available_classes_cache",
         "_return_stmt_cache",
         "_self_assignment_cache",
+        "_class_member_type_cache",
     )
 
     def __init__(
@@ -77,6 +78,7 @@ class PythonTypeInferenceEngine(
         self._available_classes_cache: dict[str, list[str]] = {}
         self._return_stmt_cache: dict[int, list] = {}
         self._self_assignment_cache: dict[tuple[int, str], dict[str, str] | None] = {}
+        self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str
@@ -87,6 +89,13 @@ class PythonTypeInferenceEngine(
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
             # (H) Single-pass traversal avoids O(5*N) multiple traversals for type inference.
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
+            self._infer_instance_attributes_from_init(
+                caller_node, local_var_types, module_qn
+            )
+            self._infer_property_return_types(caller_node, local_var_types, module_qn)
+            self._infer_class_annotation_types(caller_node, local_var_types, module_qn)
+            aliases = self._collect_local_aliases(caller_node)
+            self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
 
         except Exception as e:
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)

@@ -10,6 +10,7 @@ from ... import logs as lg
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
+from .utils import resolve_class_name
 
 if TYPE_CHECKING:
 
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
         def _infer_type_from_expression(
             self, node: ASTNode, module_qn: str
         ) -> str | None: ...
+
+        def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
     _VarBase: type = _VariableAnalyzerDeps
 else:
@@ -29,6 +32,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     function_registry: FunctionRegistryTrieProtocol
     queries: dict[cs.SupportedLanguage, object]
     _available_classes_cache: dict[str, list[str]]
+    _class_member_type_cache: dict[str, dict[str, str]]
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -250,10 +254,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )
-            and (
-                assigned_type := self._infer_type_from_expression(right_node, module_qn)
-            )
         ):
+            return
+        assigned_type = self._infer_type_from_expression(right_node, module_qn)
+        if not assigned_type and right_node.type == cs.TS_PY_IDENTIFIER:
+            # (H) self.x = param: a bare identifier carries the type of the matching
+            # (H) (already-seeded) parameter or local, so flow it onto the attribute.
+            ident = safe_decode_text(right_node)
+            assigned_type = local_var_types.get(ident) if ident else None
+        if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
         logger.debug(lg.PY_INSTANCE_VAR_INFERRED, attr=attr_name, type=assigned_type)
@@ -281,6 +290,249 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if current.type == cs.TS_PY_ASSIGNMENT:
                 self._process_self_assignment(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
+
+    def _enclosing_class_node(self, node: ASTNode) -> ASTNode | None:
+        current = node.parent
+        while current is not None:
+            if current.type == cs.TS_PY_CLASS_DEFINITION:
+                return current
+            current = current.parent
+        return None
+
+    def _find_init_method_node(self, class_node: ASTNode) -> ASTNode | None:
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return None
+        for child in body.children:
+            if child.type == cs.TS_PY_DECORATED_DEFINITION:
+                func = next(
+                    (
+                        c
+                        for c in child.children
+                        if c.type == cs.TS_PY_FUNCTION_DEFINITION
+                    ),
+                    None,
+                )
+            elif child.type == cs.TS_PY_FUNCTION_DEFINITION:
+                func = child
+            else:
+                continue
+            if func is None:
+                continue
+            name_node = func.child_by_field_name(cs.FIELD_NAME)
+            if (
+                name_node
+                and (text := name_node.text)
+                and text.decode(cs.ENCODING_UTF8) == cs.PY_METHOD_INIT
+            ):
+                return func
+        return None
+
+    def _infer_instance_attributes_from_init(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) Instance attributes are assigned in __init__ (self.x = T()), so a method
+        # (H) that only reads self.x has no local assignment to infer from. Scan the
+        # (H) enclosing class's __init__ and seed the attribute types, letting any
+        # (H) reassignment in the calling method itself take precedence (setdefault).
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        init_node = self._find_init_method_node(class_node)
+        if init_node is None or init_node is caller_node:
+            return
+        init_types: dict[str, str] = {}
+        # (H) Seed __init__ parameter types first so self.x = param flows the
+        # (H) parameter annotation onto the attribute.
+        self._infer_parameter_types(init_node, init_types, module_qn)
+        self._analyze_self_assignments(init_node, init_types, module_qn)
+        for attr, attr_type in init_types.items():
+            if attr.startswith(cs.PY_SELF_PREFIX):
+                local_var_types.setdefault(attr, attr_type)
+
+    def _has_property_decorator(self, decorated_node: ASTNode) -> bool:
+        for child in decorated_node.children:
+            if child.type == cs.TS_PY_DECORATOR and (text := child.text):
+                tail = (
+                    text.decode(cs.ENCODING_UTF8)
+                    .lstrip(cs.DECORATOR_AT)
+                    .split(cs.SEPARATOR_DOT)[-1]
+                )
+                if tail in cs.PROPERTY_DECORATORS:
+                    return True
+        return False
+
+    def _infer_property_return_types(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) self.prop where prop is an @property has the property's declared return
+        # (H) type, so a chained call self.prop.method() can resolve against the
+        # (H) returned class rather than an ambiguous same-named method elsewhere.
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        self._collect_property_return_types(class_node, local_var_types)
+
+    def _collect_property_return_types(
+        self, class_node: ASTNode, out: dict[str, str]
+    ) -> None:
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return
+        for child in body.children:
+            if child.type != cs.TS_PY_DECORATED_DEFINITION:
+                continue
+            if not self._has_property_decorator(child):
+                continue
+            func = next(
+                (c for c in child.children if c.type == cs.TS_PY_FUNCTION_DEFINITION),
+                None,
+            )
+            if func is None:
+                continue
+            name_node = func.child_by_field_name(cs.FIELD_NAME)
+            return_node = func.child_by_field_name(cs.FIELD_RETURN_TYPE)
+            if not (
+                name_node
+                and (name_text := name_node.text)
+                and return_node
+                and (return_text := return_node.text)
+            ):
+                continue
+            # (H) The return_type field wraps a type node; only a bare class name (not
+            # (H) a union, subscripted generic, or string forward ref) seeds a type.
+            return_type = return_text.decode(cs.ENCODING_UTF8)
+            if return_type.isidentifier():
+                out.setdefault(
+                    f"{cs.PY_SELF_PREFIX}{name_text.decode(cs.ENCODING_UTF8)}",
+                    return_type,
+                )
+
+    def _infer_class_annotation_types(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) A class-level annotation (_handler: LanguageHandler) declares the type of
+        # (H) an instance attribute even when it is assigned from a factory call whose
+        # (H) return type cannot be inferred, so seed self.<name> from the annotation.
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        self._collect_class_annotation_types(class_node, local_var_types)
+
+    def _collect_class_annotation_types(
+        self, class_node: ASTNode, out: dict[str, str]
+    ) -> None:
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return
+        for child in body.children:
+            if child.type != cs.TS_PY_EXPRESSION_STATEMENT:
+                continue
+            assignment = child.children[0] if child.children else None
+            if assignment is None or assignment.type != cs.TS_PY_ASSIGNMENT:
+                continue
+            left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            type_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+            if not (
+                left_node
+                and left_node.type == cs.TS_PY_IDENTIFIER
+                and type_node
+                and (name := safe_decode_text(left_node))
+                and (type_text := safe_decode_text(type_node))
+                and type_text.isidentifier()
+            ):
+                continue
+            out.setdefault(f"{cs.PY_SELF_PREFIX}{name}", type_text)
+
+    def _expand_chained_attribute_types(
+        self,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        aliases: dict[str, str] | None = None,
+        max_depth: int = 4,
+    ) -> None:
+        # (H) A chained reference a.b.c needs the type of a.b (member b on a's class).
+        # (H) Each pass: (1) propagate local aliases (x = ref) from the referent's type,
+        # (H) then (2) for every typed ref, seed ref.member -> member type (full QN), so
+        # (H) deeper chains and aliases resolve on the next pass until a fixpoint.
+        aliases = aliases or {}
+        for _ in range(max_depth):
+            added = False
+            for local, referent in aliases.items():
+                if local not in local_var_types and (
+                    referent_type := local_var_types.get(referent)
+                ):
+                    local_var_types[local] = referent_type
+                    added = True
+            for ref, type_name in list(local_var_types.items()):
+                class_qn = self._class_qn_of_type(type_name, module_qn)
+                if not class_qn:
+                    continue
+                for member, member_type in self._class_member_types_by_qn(
+                    class_qn
+                ).items():
+                    key = f"{ref}{cs.SEPARATOR_DOT}{member}"
+                    if key not in local_var_types:
+                        local_var_types[key] = member_type
+                        added = True
+            if not added:
+                break
+
+    def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:
+        # (H) Record local-variable aliases (resolver = self._resolver) where the rhs is
+        # (H) a plain name/attribute reference, so its type can be propagated. Skip
+        # (H) nested scopes and any rhs that is a call/subscript/other expression.
+        aliases: dict[str, str] = {}
+        boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+        stack: list[ASTNode] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary:
+                continue
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if (
+                    left is not None
+                    and left.type == cs.TS_PY_IDENTIFIER
+                    and right is not None
+                    and right.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
+                    and (local := safe_decode_text(left))
+                    and (referent := safe_decode_text(right))
+                    and local not in aliases
+                ):
+                    aliases[local] = referent
+            stack.extend(node.children)
+        return aliases
+
+    def _class_qn_of_type(self, type_name: str, module_qn: str) -> str | None:
+        if cs.SEPARATOR_DOT in type_name:
+            return type_name
+        return resolve_class_name(
+            type_name, module_qn, self.import_processor, self.function_registry
+        )
+
+    def _class_member_types_by_qn(self, class_qn: str) -> dict[str, str]:
+        if class_qn in self._class_member_type_cache:
+            return self._class_member_type_cache[class_qn]
+        members: dict[str, str] = {}
+        class_node = self._find_class_node(class_qn)
+        if class_node is not None:
+            class_module_qn = class_qn.rpartition(cs.SEPARATOR_DOT)[0]
+            raw: dict[str, str] = {}
+            self._collect_property_return_types(class_node, raw)
+            self._collect_class_annotation_types(class_node, raw)
+            if (init_node := self._find_init_method_node(class_node)) is not None:
+                init_types: dict[str, str] = {}
+                self._infer_parameter_types(init_node, init_types, class_module_qn)
+                self._analyze_self_assignments(init_node, init_types, class_module_qn)
+                for attr, attr_type in init_types.items():
+                    raw.setdefault(attr, attr_type)
+            for attr, attr_type in raw.items():
+                if not attr.startswith(cs.PY_SELF_PREFIX):
+                    continue
+                member = attr[len(cs.PY_SELF_PREFIX) :]
+                resolved = self._class_qn_of_type(attr_type, class_module_qn)
+                members[member] = resolved or attr_type
+        self._class_member_type_cache[class_qn] = members
+        return members
 
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
