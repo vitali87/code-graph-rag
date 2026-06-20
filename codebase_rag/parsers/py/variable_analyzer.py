@@ -282,6 +282,60 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 self._process_self_assignment(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
 
+    def _enclosing_class_node(self, node: ASTNode) -> ASTNode | None:
+        current = node.parent
+        while current is not None:
+            if current.type == cs.TS_PY_CLASS_DEFINITION:
+                return current
+            current = current.parent
+        return None
+
+    def _find_init_method_node(self, class_node: ASTNode) -> ASTNode | None:
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return None
+        for child in body.children:
+            if child.type == cs.TS_PY_DECORATED_DEFINITION:
+                func = next(
+                    (
+                        c
+                        for c in child.children
+                        if c.type == cs.TS_PY_FUNCTION_DEFINITION
+                    ),
+                    None,
+                )
+            elif child.type == cs.TS_PY_FUNCTION_DEFINITION:
+                func = child
+            else:
+                continue
+            if func is None:
+                continue
+            name_node = func.child_by_field_name(cs.FIELD_NAME)
+            if (
+                name_node
+                and (text := name_node.text)
+                and text.decode(cs.ENCODING_UTF8) == cs.PY_METHOD_INIT
+            ):
+                return func
+        return None
+
+    def _infer_instance_attributes_from_init(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) Instance attributes are assigned in __init__ (self.x = T()), so a method
+        # (H) that only reads self.x has no local assignment to infer from. Scan the
+        # (H) enclosing class's __init__ and seed the attribute types, letting any
+        # (H) reassignment in the calling method itself take precedence (setdefault).
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        init_node = self._find_init_method_node(class_node)
+        if init_node is None or init_node is caller_node:
+            return
+        init_types: dict[str, str] = {}
+        self._analyze_self_assignments(init_node, init_types, module_qn)
+        for attr, attr_type in init_types.items():
+            local_var_types.setdefault(attr, attr_type)
+
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
