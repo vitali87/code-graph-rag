@@ -468,6 +468,8 @@ class CallProcessor:
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
+        is_python = language == cs.SupportedLanguage.PYTHON
+        alias_map: dict[str, str] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -492,6 +494,18 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
+            if not callee_info and is_python and cs.SEPARATOR_DOT not in call_name:
+                # (H) A bare name that resolves to nothing may be a local alias of a
+                # (H) callable (do = self._start; do()). Resolve the assignment's
+                # (H) right-hand side and treat the alias call as a call to it.
+                if alias_map is None:
+                    alias_map = self._build_local_alias_map(
+                        caller_node, queries[language][cs.QUERY_CONFIG]
+                    )
+                if (rhs := alias_map.get(call_name)) is not None:
+                    callee_info = resolve_func(
+                        rhs, module_qn, local_var_types, class_context
+                    )
             if not callee_info:
                 continue
 
@@ -511,6 +525,41 @@ class CallProcessor:
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+    def _build_local_alias_map(
+        self, caller_node: Node, lang_config: LanguageSpec
+    ) -> dict[str, str]:
+        identifier = cs.TS_PY_IDENTIFIER
+        attribute = cs.TS_PY_ATTRIBUTE
+        assignment = cs.TS_PY_ASSIGNMENT
+        left_field = cs.TS_FIELD_LEFT
+        right_field = cs.TS_FIELD_RIGHT
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        aliases: dict[str, str] = {}
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == assignment:
+                left = node.child_by_field_name(left_field)
+                right = node.child_by_field_name(right_field)
+                if (
+                    left is not None
+                    and left.type == identifier
+                    and (left_text := left.text) is not None
+                    and right is not None
+                    and right.type in (identifier, attribute)
+                    and (right_text := right.text) is not None
+                ):
+                    aliases.setdefault(
+                        left_text.decode(cs.ENCODING_UTF8),
+                        right_text.decode(cs.ENCODING_UTF8),
+                    )
+            stack.extend(node.children)
+        return aliases
 
     def _ingest_property_accesses(
         self,
