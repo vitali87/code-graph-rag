@@ -1249,7 +1249,6 @@ func main() {
     return project_path
 
 
-@pytest.mark.xfail(reason="Go struct/interface ingestion not fully implemented")
 def test_go_struct_methods_are_ingested(
     go_struct_project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -1278,7 +1277,6 @@ def test_go_struct_methods_are_ingested(
     )
 
 
-@pytest.mark.xfail(reason="Go struct/interface ingestion not fully implemented")
 def test_go_interface_nodes_created(
     go_struct_project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -1297,7 +1295,6 @@ def test_go_interface_nodes_created(
     )
 
 
-@pytest.mark.xfail(reason="Go struct/interface ingestion not fully implemented")
 def test_go_struct_nodes_created(
     go_struct_project: Path, mock_ingestor: MagicMock
 ) -> None:

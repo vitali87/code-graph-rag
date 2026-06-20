@@ -59,3 +59,10 @@ class ScoreResult(NamedTuple):
     rows: list[ScoreRow]
     location: LocationStats
     diff: dict[str, DiffBucket]
+
+
+class GoOracleRecord(TypedDict):
+    kind: str
+    file: str
+    line: int
+    name: str

@@ -46,7 +46,7 @@ class _CapturingIngestor:
         return None
 
 
-def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
+def _capture(target: Path, project_name: str) -> _CapturingIngestor:
     parsers, queries = load_parsers()
     ingestor = _CapturingIngestor()
     GraphUpdater(
@@ -56,25 +56,49 @@ def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
         queries=queries,
         project_name=project_name,
     ).run(force=True)
-    return _to_graph_data(ingestor, project_name)
+    return ingestor
+
+
+def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
+    return _to_graph_data(_capture(target, project_name), project_name)
 
 
 def extract_cgr_calls(target: Path, project_name: str) -> set[tuple[str, str]]:
-    parsers, queries = load_parsers()
-    ingestor = _CapturingIngestor()
-    GraphUpdater(
-        ingestor=ingestor,
-        repo_path=target,
-        parsers=parsers,
-        queries=queries,
-        project_name=project_name,
-    ).run(force=True)
+    ingestor = _capture(target, project_name)
     calls_value = cs.RelationshipType.CALLS.value
     return {
         (str(from_val), str(to_val))
         for from_label, from_val, rel_type, to_label, to_val in ingestor.rels
         if rel_type == calls_value
     }
+
+
+def _go_node_key(label: str, props: PropertyDict) -> NodeKey | None:
+    path = props.get(cs.KEY_PATH)
+    if path is None:
+        return None
+    file = str(path)
+    if not file.endswith(ec.GO_SUFFIX):
+        return None
+    raw_start = props.get(cs.KEY_START_LINE)
+    if not isinstance(raw_start, int | float):
+        return None
+    return NodeKey(label, file, int(raw_start))
+
+
+def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    ingestor = _capture(target, project_name)
+    nodes: dict[NodeKey, DefNode] = {}
+    for (label, _uid), props in ingestor.nodes.items():
+        if label not in ec.GO_SCORED_NODE_KIND_VALUES:
+            continue
+        key = _go_node_key(label, props)
+        if key is None:
+            continue
+        raw_end = props.get(cs.KEY_END_LINE)
+        end_line = int(raw_end) if isinstance(raw_end, int | float) else 0
+        nodes[key] = DefNode(key, str(props.get(cs.KEY_NAME, "")), end_line)
+    return nodes
 
 
 def _node_key(label: str, props: PropertyDict) -> NodeKey | None:

@@ -1,6 +1,8 @@
 from statistics import fmean
 from typing import TypeVar
 
+from codebase_rag import constants as cs
+
 from . import constants as ec
 from .types_defs import (
     DiffBucket,
@@ -73,6 +75,30 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
             )
 
     return ScoreResult(rows=rows, location=_location_stats(cgr, oracle), diff=diff)
+
+
+def score_node_kinds(
+    cgr: GraphData, oracle: GraphData, kinds: tuple[cs.NodeLabel, ...]
+) -> ScoreResult:
+    rows: list[ScoreRow] = []
+    diff: dict[str, DiffBucket] = {}
+    cgr_all: set[NodeKey] = set()
+    oracle_all: set[NodeKey] = set()
+    for kind in kinds:
+        cgr_set = {k for k in cgr.nodes if k.kind == kind.value}
+        oracle_set = {k for k in oracle.nodes if k.kind == kind.value}
+        cgr_all |= cgr_set
+        oracle_all |= oracle_set
+        row = _prf(ec.Category.NODE.value, kind.value, cgr_set, oracle_set)
+        if row is not None:
+            rows.append(row)
+            diff[ec.DIFF_NODE_PREFIX + kind.value] = _node_bucket(
+                cgr_set, oracle_set, cgr, oracle
+            )
+    aggregate = _prf(ec.Category.NODE.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
+    if aggregate is not None:
+        rows.append(aggregate)
+    return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
 
 
 def _fmt_name_edge(edge: NameEdge) -> str:

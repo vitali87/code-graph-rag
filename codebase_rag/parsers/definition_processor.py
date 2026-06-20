@@ -53,6 +53,7 @@ class DefinitionProcessor(
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
         self._deferred_cpp_methods: list = []
+        self._deferred_go_methods: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
