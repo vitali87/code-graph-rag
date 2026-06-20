@@ -185,7 +185,7 @@ class AppConfig(BaseSettings):
 
     TARGET_REPO_PATH: str = "."
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
-        False, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
+        True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
     SHELL_COMMAND_TIMEOUT: int = 30
