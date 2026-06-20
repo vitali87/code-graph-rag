@@ -1,7 +1,7 @@
 # (H) Finding #3 from the evals/ harness: methods of a class defined inside a
-# (H) function body (function-local class) were dropped. They are now captured
-# (H) when CAPTURE_FUNCTION_LOCAL_DEFINITIONS is on; default-off preserves the
-# (H) historical behaviour of skipping them.
+# (H) function body (function-local class) were dropped. They are now captured by
+# (H) default (CAPTURE_FUNCTION_LOCAL_DEFINITIONS=True); explicitly disabling the
+# (H) flag restores the historical behaviour of skipping them.
 from __future__ import annotations
 
 from pathlib import Path
@@ -91,14 +91,7 @@ def _local_method_lines(cap: _Capture) -> list[int]:
 
 
 class TestFunctionLocalDefinitions:
-    def test_default_off_skips_local_class_methods(self, tmp_path: Path) -> None:
-        cap = _build(tmp_path)
-        assert _local_method_lines(cap) == []
-
-    def test_flag_on_captures_local_class_methods(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", True)
+    def test_default_captures_local_class_methods(self, tmp_path: Path) -> None:
         cap = _build(tmp_path)
         assert _local_method_lines(cap) == [4]
 
@@ -109,3 +102,10 @@ class TestFunctionLocalDefinitions:
             and str(target).endswith(".Local.helper")
         ]
         assert len(defines_method_to_helper) == 1, defines_method_to_helper
+
+    def test_flag_off_skips_local_class_methods(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", False)
+        cap = _build(tmp_path)
+        assert _local_method_lines(cap) == []
