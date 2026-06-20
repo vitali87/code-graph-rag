@@ -53,6 +53,95 @@ def run() -> str:
 """
 
 
+FIXTURE_C = """import asyncio
+from dataclasses import dataclass
+from functools import wraps
+from typing import Iterator
+
+from .a import Animal, Dog
+
+
+def trace(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+@dataclass
+class Counter:
+    total: int = 0
+
+    def add(self, value: int) -> int:
+        self.total += value
+        return self.total
+
+    @property
+    def doubled(self) -> int:
+        return self.total * 2
+
+    @staticmethod
+    def zero() -> int:
+        return 0
+
+    @classmethod
+    def start(cls) -> "Counter":
+        return cls(total=cls.zero())
+
+
+class Shelter(Animal):
+    def __init__(self) -> None:
+        self.pets: list[Animal] = []
+
+    def admit(self, pet: Animal) -> None:
+        self.pets.append(pet)
+
+    def noises(self) -> list[str]:
+        return [pet.sound() for pet in self.pets]
+
+    def loud(self) -> dict[str, str]:
+        return {pet.sound(): pet.speak() for pet in self.pets}
+
+
+@trace
+def build_shelter(count: int) -> Shelter:
+    shelter = Shelter()
+    for _ in range(count):
+        shelter.admit(Dog())
+    return shelter
+
+
+def categorize(value: int) -> str:
+    match value:
+        case 0:
+            return Counter.zero.__name__
+        case n if n > 0:
+            return "positive"
+        case _:
+            return "negative"
+
+
+def stream(limit: int) -> Iterator[int]:
+    counter = Counter.start()
+    for i in range(limit):
+        yield counter.add(i)
+
+
+async def gather(limit: int) -> int:
+    counter = Counter()
+    await asyncio.sleep(0)
+    return counter.add(limit)
+
+
+def run_rich() -> int:
+    shelter = build_shelter(2)
+    total = sum(len(noise) for noise in shelter.noises())
+    apply = lambda c: c.doubled
+    return total + apply(Counter.start())
+"""
+
+
 class _NullIngestor:
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         return None
@@ -89,6 +178,7 @@ def _write_fixture(root: Path) -> None:
     (pkg / "__init__.py").touch()
     (pkg / "a.py").write_text(FIXTURE_A)
     (pkg / "b.py").write_text(FIXTURE_B)
+    (pkg / "c.py").write_text(FIXTURE_C)
 
 
 def main(
