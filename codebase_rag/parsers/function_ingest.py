@@ -209,10 +209,26 @@ class FunctionIngestMixin:
             for candidate_qn in self.simple_name_lookup[leaf_name]:
                 node_type = self.function_registry.get(candidate_qn)
                 if node_type in {NodeType.CLASS, NodeType.TYPE}:
-                    if candidate_qn.endswith(f".{class_name_normalized}"):
+                    if candidate_qn.endswith(
+                        f".{class_name_normalized}"
+                    ) and self._is_cpp_defined(candidate_qn):
                         return candidate_qn, True
 
         return f"{module_qn}.{class_name_normalized}", False
+
+    def _is_cpp_defined(self, qn: str) -> bool:
+        # (H) A C++ out-of-class method may only bind to a class defined in a
+        # (H) C/C++ source file; matching a same-named class in another language
+        # (H) would collide their qualified names. Resolve qn -> defining file by
+        # (H) the longest module-qn prefix and check its extension.
+        parts = qn.split(cs.SEPARATOR_DOT)
+        while parts:
+            if path := self.module_qn_to_file_path.get(cs.SEPARATOR_DOT.join(parts)):
+                return (
+                    path.suffix in cs.CPP_EXTENSIONS or path.suffix in cs.C_EXTENSIONS
+                )
+            parts = parts[:-1]
+        return False
 
     def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
         if not cpp_utils.is_out_of_class_method_definition(func_node):
