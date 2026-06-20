@@ -89,11 +89,25 @@ class CallResolver:
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
     ) -> str:
+        var_type = self._strip_optional(var_type)
         if cs.SEPARATOR_DOT in var_type:
             return self._follow_reexports(var_type)
         if var_type in import_map:
             return self._follow_reexports(import_map[var_type])
         return self._resolve_class_name(var_type, module_qn) or ""
+
+    def _strip_optional(self, var_type: str) -> str:
+        # (H) An Optional annotation (X | None) names a single concrete class; reduce it
+        # (H) so attribute/operator resolution can find that class. Genuine multi-type
+        # (H) unions stay unresolved (ambiguous).
+        if cs.PY_UNION_SEPARATOR not in var_type:
+            return var_type
+        non_none = [
+            member
+            for part in var_type.split(cs.PY_UNION_SEPARATOR)
+            if (member := part.strip()) and member != cs.PY_NONE
+        ]
+        return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
         # (H) `from .pkg import Cls` records the importer's name against the re-export
@@ -686,6 +700,27 @@ class CallResolver:
                     return inherited_method
 
         return None
+
+    def resolve_operator_dunder(
+        self,
+        operand_text: str,
+        dunder: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # (H) Operator syntax dispatches to a dunder on the operand's type. Resolve only
+        # (H) when the operand type is known and the dunder is defined on that class (or
+        # (H) inherited / its Protocol implementer); never via the name-only trie
+        # (H) fallback, so a builtin container does not borrow a first-party dunder.
+        if not local_var_types or not (var_type := local_var_types.get(operand_text)):
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        if not class_qn:
+            return None
+        return self._redirect_protocol_method(
+            self._try_resolve_method(class_qn, dunder)
+        )
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         if call_name in cs.JS_BUILTIN_PATTERNS:

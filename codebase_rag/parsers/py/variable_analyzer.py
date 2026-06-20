@@ -254,10 +254,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )
-            and (
-                assigned_type := self._infer_type_from_expression(right_node, module_qn)
-            )
         ):
+            return
+        assigned_type = self._infer_type_from_expression(right_node, module_qn)
+        if not assigned_type and right_node.type == cs.TS_PY_IDENTIFIER:
+            # (H) self.x = param: a bare identifier carries the type of the matching
+            # (H) (already-seeded) parameter or local, so flow it onto the attribute.
+            ident = safe_decode_text(right_node)
+            assigned_type = local_var_types.get(ident) if ident else None
+        if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
         logger.debug(lg.PY_INSTANCE_VAR_INFERRED, attr=attr_name, type=assigned_type)
@@ -336,9 +341,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if init_node is None or init_node is caller_node:
             return
         init_types: dict[str, str] = {}
+        # (H) Seed __init__ parameter types first so self.x = param flows the
+        # (H) parameter annotation onto the attribute.
+        self._infer_parameter_types(init_node, init_types, module_qn)
         self._analyze_self_assignments(init_node, init_types, module_qn)
         for attr, attr_type in init_types.items():
-            local_var_types.setdefault(attr, attr_type)
+            if attr.startswith(cs.PY_SELF_PREFIX):
+                local_var_types.setdefault(attr, attr_type)
 
     def _has_property_decorator(self, decorated_node: ASTNode) -> bool:
         for child in decorated_node.children:
@@ -476,6 +485,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             self._collect_class_annotation_types(class_node, raw)
             if (init_node := self._find_init_method_node(class_node)) is not None:
                 init_types: dict[str, str] = {}
+                self._infer_parameter_types(init_node, init_types, class_module_qn)
                 self._analyze_self_assignments(init_node, init_types, class_module_qn)
                 for attr, attr_type in init_types.items():
                     raw.setdefault(attr, attr_type)

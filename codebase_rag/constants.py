@@ -2427,6 +2427,24 @@ TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
+TS_PY_SUBSCRIPT = "subscript"
+TS_PY_COMPARISON_OPERATOR = "comparison_operator"
+TS_FIELD_OPERATORS = "operators"
+
+# (H) Python operator syntax dispatches to dunder methods at runtime; these names
+# (H) let the call extractor synthesize the implied <operand>.__dunder__ call.
+PY_OP_IN = "in"
+PY_BUILTIN_LEN = "len"
+PY_DUNDER_GETITEM = "__getitem__"
+PY_DUNDER_SETITEM = "__setitem__"
+PY_DUNDER_CONTAINS = "__contains__"
+PY_DUNDER_LEN = "__len__"
+# (H) Operands with these characters are not simple attribute/name chains (calls,
+# (H) nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
+PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
+# (H) Optional annotation handling: X | None names a single concrete class.
+PY_UNION_SEPARATOR = "|"
+PY_NONE = "None"
 
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"

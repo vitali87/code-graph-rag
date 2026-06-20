@@ -505,6 +505,13 @@ class CallProcessor:
                 prop_names,
             )
 
+        # (H) Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
+        # (H) methods; emit those edges when the operand is a first-party type.
+        if language == cs.SupportedLanguage.PYTHON:
+            self._ingest_operator_dispatch_calls(
+                caller_node, caller_spec, module_qn, local_var_types
+            )
+
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
             if not calls_query:
@@ -639,6 +646,96 @@ class CallProcessor:
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+    def _ingest_operator_dispatch_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary:
+                continue
+            match node.type:
+                case cs.TS_PY_SUBSCRIPT:
+                    parent = node.parent
+                    left = (
+                        parent.child_by_field_name(cs.TS_FIELD_LEFT)
+                        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+                        else None
+                    )
+                    is_write = left is not None and left.id == node.id
+                    self._emit_operator_dunder(
+                        node.child_by_field_name(cs.FIELD_VALUE),
+                        cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case cs.TS_PY_COMPARISON_OPERATOR:
+                    operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
+                    if (
+                        operators is not None
+                        and (op_text := safe_decode_text(operators))
+                        and cs.PY_OP_IN in op_text.split()
+                        and node.named_children
+                    ):
+                        self._emit_operator_dunder(
+                            node.named_children[-1],
+                            cs.PY_DUNDER_CONTAINS,
+                            caller_spec,
+                            module_qn,
+                            local_var_types,
+                        )
+                case cs.TS_PY_CALL:
+                    func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+                    if (
+                        func is not None
+                        and safe_decode_text(func) == cs.PY_BUILTIN_LEN
+                        and args is not None
+                        and len(args.named_children) == 1
+                    ):
+                        self._emit_operator_dunder(
+                            args.named_children[0],
+                            cs.PY_DUNDER_LEN,
+                            caller_spec,
+                            module_qn,
+                            local_var_types,
+                        )
+            stack.extend(node.children)
+
+    def _emit_operator_dunder(
+        self,
+        operand: Node | None,
+        dunder: str,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # (H) Resolve the implied <operand>.__dunder__ call; resolution only succeeds
+        # (H) for a first-party class that defines the dunder, so builtin containers
+        # (H) (dict/list) yield no edge. Restrict to simple attribute/name operands.
+        if operand is None or not (operand_text := safe_decode_text(operand)):
+            return
+        if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
+            return
+        resolved = self._resolver.resolve_operator_dunder(
+            operand_text, dunder, module_qn, local_var_types
+        )
+        if resolved is None:
+            return
+        callee_type, callee_qn = resolved
+        for target_qn in self._resolver.function_registry.variants(callee_qn):
+            self.ingestor.ensure_relationship_batch(
+                caller_spec,
+                cs.RelationshipType.CALLS,
+                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _parse_call_arguments(
         self, call_node: Node
