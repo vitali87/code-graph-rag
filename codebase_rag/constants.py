@@ -2430,6 +2430,14 @@ TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_SUBSCRIPT = "subscript"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
+TS_PY_IF_STATEMENT = "if_statement"
+TS_PY_WHILE_STATEMENT = "while_statement"
+TS_PY_ELIF_CLAUSE = "elif_clause"
+TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
+TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
+TS_PY_NOT_OPERATOR = "not_operator"
+TS_FIELD_CONDITION = "condition"
+TS_FIELD_ARGUMENT = "argument"
 
 # (H) Python operator syntax dispatches to dunder methods at runtime; these names
 # (H) let the call extractor synthesize the implied <operand>.__dunder__ call.
@@ -2439,6 +2447,7 @@ PY_DUNDER_GETITEM = "__getitem__"
 PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
+PY_DUNDER_BOOL = "__bool__"
 # (H) Operands with these characters are not simple attribute/name chains (calls,
 # (H) nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "

@@ -442,17 +442,26 @@ class PythonVariableAnalyzerMixin(_VarBase):
             out.setdefault(f"{cs.PY_SELF_PREFIX}{name}", type_text)
 
     def _expand_chained_attribute_types(
-        self, local_var_types: dict[str, str], module_qn: str, max_depth: int = 3
+        self,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        aliases: dict[str, str] | None = None,
+        max_depth: int = 4,
     ) -> None:
-        # (H) A chained call self.a.b.method() needs the type of self.a.b, which is the
-        # (H) type of member b on the class of self.a. Walk one hop per iteration: for
-        # (H) each known self.* -> Type, resolve Type's class and seed self.*.member ->
-        # (H) member type (as a full QN), so deeper chains resolve on the next pass.
+        # (H) A chained reference a.b.c needs the type of a.b (member b on a's class).
+        # (H) Each pass: (1) propagate local aliases (x = ref) from the referent's type,
+        # (H) then (2) for every typed ref, seed ref.member -> member type (full QN), so
+        # (H) deeper chains and aliases resolve on the next pass until a fixpoint.
+        aliases = aliases or {}
         for _ in range(max_depth):
             added = False
+            for local, referent in aliases.items():
+                if local not in local_var_types and (
+                    referent_type := local_var_types.get(referent)
+                ):
+                    local_var_types[local] = referent_type
+                    added = True
             for ref, type_name in list(local_var_types.items()):
-                if not ref.startswith(cs.PY_SELF_PREFIX):
-                    continue
                 class_qn = self._class_qn_of_type(type_name, module_qn)
                 if not class_qn:
                     continue
@@ -465,6 +474,33 @@ class PythonVariableAnalyzerMixin(_VarBase):
                         added = True
             if not added:
                 break
+
+    def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:
+        # (H) Record local-variable aliases (resolver = self._resolver) where the rhs is
+        # (H) a plain name/attribute reference, so its type can be propagated. Skip
+        # (H) nested scopes and any rhs that is a call/subscript/other expression.
+        aliases: dict[str, str] = {}
+        boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+        stack: list[ASTNode] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary:
+                continue
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if (
+                    left is not None
+                    and left.type == cs.TS_PY_IDENTIFIER
+                    and right is not None
+                    and right.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
+                    and (local := safe_decode_text(left))
+                    and (referent := safe_decode_text(right))
+                    and local not in aliases
+                ):
+                    aliases[local] = referent
+            stack.extend(node.children)
+        return aliases
 
     def _class_qn_of_type(self, type_name: str, module_qn: str) -> str | None:
         if cs.SEPARATOR_DOT in type_name:

@@ -32,6 +32,7 @@ class CallResolver:
         "_field_to_classes",
         "_subclass_map_cache",
         "_protocol_classes_cache",
+        "_struct_impl_cache",
     )
 
     def __init__(
@@ -54,6 +55,7 @@ class CallResolver:
         self._field_to_classes: dict[str, set[str]] = {}
         self._subclass_map_cache: dict[str, set[str]] | None = None
         self._protocol_classes_cache: set[str] | None = None
+        self._struct_impl_cache: dict[str, set[str]] = {}
 
     def record_callable_field_binding(
         self, class_qn: str, field: str, func_qn: str
@@ -701,26 +703,64 @@ class CallResolver:
 
         return None
 
-    def resolve_operator_dunder(
+    def operator_dunder_targets(
         self,
         operand_text: str,
         dunder: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
-    ) -> tuple[str, str] | None:
+    ) -> set[tuple[str, str]]:
         # (H) Operator syntax dispatches to a dunder on the operand's type. Resolve only
-        # (H) when the operand type is known and the dunder is defined on that class (or
-        # (H) inherited / its Protocol implementer); never via the name-only trie
-        # (H) fallback, so a builtin container does not borrow a first-party dunder.
+        # (H) when the operand type is known; never via the name-only trie fallback, so a
+        # (H) builtin container does not borrow a first-party dunder. A Protocol-typed
+        # (H) operand dispatches to the dunder on each structural implementer (which may
+        # (H) define the dunder even when the Protocol stub does not, e.g. __len__).
         if not local_var_types or not (var_type := local_var_types.get(operand_text)):
-            return None
+            return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
         if not class_qn:
-            return None
-        return self._redirect_protocol_method(
-            self._try_resolve_method(class_qn, dunder)
-        )
+            return set()
+        if class_qn in self._protocol_classes():
+            # (H) Naming convention (XxxProtocol -> Xxx) is robust when it applies;
+            # (H) structural conformance covers protocols whose implementer is named
+            # (H) differently. Union both so neither gap drops a concrete target.
+            classes = set(self._protocol_structural_implementers(class_qn))
+            if named_impl := self._protocol_impl_map().get(class_qn):
+                classes.add(named_impl)
+        else:
+            classes = {class_qn}
+        targets: set[tuple[str, str]] = set()
+        for candidate in classes:
+            if resolved := self._try_resolve_method(candidate, dunder):
+                targets.add(resolved)
+        return targets
+
+    def _protocol_structural_implementers(self, protocol_qn: str) -> set[str]:
+        # (H) Classes that define every method declared on the Protocol (own or
+        # (H) inherited). Used to dispatch operator dunders to the concrete type when the
+        # (H) Protocol/implementer names don't follow the XxxProtocol convention.
+        if protocol_qn in self._struct_impl_cache:
+            return self._struct_impl_cache[protocol_qn]
+        sep = cs.SEPARATOR_DOT
+        protocol_methods = {
+            qn.rsplit(sep, 1)[-1]
+            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
+            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
+        }
+        result: set[str] = set()
+        if protocol_methods:
+            protocols = self._protocol_classes()
+            for candidate in self.class_inheritance:
+                if candidate in protocols:
+                    continue
+                if all(
+                    self._try_resolve_method(candidate, method)
+                    for method in protocol_methods
+                ):
+                    result.add(candidate)
+        self._struct_impl_cache[protocol_qn] = result
+        return result
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         if call_name in cs.JS_BUILTIN_PATTERNS:

@@ -707,7 +707,62 @@ class CallProcessor:
                             module_qn,
                             local_var_types,
                         )
+                case cs.TS_PY_BOOLEAN_OPERATOR:
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_LEFT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_RIGHT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case cs.TS_PY_NOT_OPERATOR:
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_ARGUMENT),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
+                case (
+                    cs.TS_PY_IF_STATEMENT
+                    | cs.TS_PY_WHILE_STATEMENT
+                    | cs.TS_PY_ELIF_CLAUSE
+                    | cs.TS_PY_CONDITIONAL_EXPRESSION
+                ):
+                    # (H) A bare object as a condition is tested for truthiness; nested
+                    # (H) boolean/not operators are handled when the walk reaches them.
+                    self._emit_truthiness(
+                        node.child_by_field_name(cs.TS_FIELD_CONDITION),
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                    )
             stack.extend(node.children)
+
+    def _emit_truthiness(
+        self,
+        operand: Node | None,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # (H) Truthiness of an object calls __bool__ if defined, else __len__. Only a
+        # (H) bare name/attribute operand names an object (a comparison/call is already
+        # (H) a bool and is handled elsewhere); try __bool__ first, then __len__.
+        if operand is None or operand.type not in (
+            cs.TS_PY_IDENTIFIER,
+            cs.TS_PY_ATTRIBUTE,
+        ):
+            return
+        for dunder in (cs.PY_DUNDER_BOOL, cs.PY_DUNDER_LEN):
+            if self._emit_operator_dunder(
+                operand, dunder, caller_spec, module_qn, local_var_types
+            ):
+                return
 
     def _emit_operator_dunder(
         self,
@@ -716,26 +771,28 @@ class CallProcessor:
         caller_spec: tuple[str, str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
-    ) -> None:
+    ) -> bool:
         # (H) Resolve the implied <operand>.__dunder__ call; resolution only succeeds
         # (H) for a first-party class that defines the dunder, so builtin containers
         # (H) (dict/list) yield no edge. Restrict to simple attribute/name operands.
+        # (H) Returns whether an edge was emitted (truthiness tries __bool__ then __len__).
         if operand is None or not (operand_text := safe_decode_text(operand)):
-            return
+            return False
         if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
-            return
-        resolved = self._resolver.resolve_operator_dunder(
+            return False
+        targets = self._resolver.operator_dunder_targets(
             operand_text, dunder, module_qn, local_var_types
         )
-        if resolved is None:
-            return
-        callee_type, callee_qn = resolved
-        for target_qn in self._resolver.function_registry.variants(callee_qn):
-            self.ingestor.ensure_relationship_batch(
-                caller_spec,
-                cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+        if not targets:
+            return False
+        for callee_type, callee_qn in targets:
+            for target_qn in self._resolver.function_registry.variants(callee_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+        return True
 
     def _parse_call_arguments(
         self, call_node: Node
