@@ -905,6 +905,14 @@ class GraphUpdater:
         captures_cache = self.factory._func_class_captures_cache
         ast_cache_items = list(self.ast_cache.items())
         for file_path, (root_node, language) in ast_cache_items:
+            self.factory.call_processor.collect_callable_field_bindings(
+                file_path,
+                root_node,
+                language,
+                self.queries,
+                func_class_captures_cache=captures_cache,
+            )
+        for file_path, (root_node, language) in ast_cache_items:
             if captures_cache is not None and file_path in captures_cache:
                 cached = captures_cache[file_path]
                 if not cached.get(cs.CAPTURE_CALL) and not cached.get(

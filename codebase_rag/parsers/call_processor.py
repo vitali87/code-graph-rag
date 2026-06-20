@@ -93,6 +93,69 @@ class CallProcessor:
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
 
+    def _module_qn(self, relative_path: Path, file_name: str) -> str:
+        if file_name in (cs.INIT_PY, cs.MOD_RS):
+            return cs.SEPARATOR_DOT.join(
+                [self.project_name] + list(relative_path.parent.parts)
+            )
+        return cs.SEPARATOR_DOT.join(
+            [self.project_name] + list(relative_path.with_suffix("").parts)
+        )
+
+    def collect_callable_field_bindings(
+        self,
+        file_path: Path,
+        root_node: Node,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        func_class_captures_cache: dict[Path, dict] | None = None,
+    ) -> None:
+        # (H) Pre-pass: record which functions are bound to a class's callable
+        # (H) fields (FQNSpec(get_name=_python_get_name, ...)). Runs before call
+        # (H) resolution so a field invocation can resolve regardless of which
+        # (H) file the construction site lives in. Keyword bindings only;
+        # (H) positional callable args would need declared field order.
+        if language != cs.SupportedLanguage.PYTHON:
+            return
+        try:
+            module_qn = self._module_qn(
+                cached_relative_path(file_path, self.repo_path), file_path.name
+            )
+            if (
+                func_class_captures_cache is not None
+                and file_path in func_class_captures_cache
+            ):
+                call_nodes = func_class_captures_cache[file_path].get(cs.CAPTURE_CALL)
+            else:
+                call_nodes = None
+            if call_nodes is None:
+                call_nodes, _ = self._collect_all_call_nodes(
+                    root_node, language, queries
+                )
+            resolver = self._resolver
+            registry = resolver.function_registry
+            callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            for call_node in call_nodes:
+                _positional, keyword = self._parse_call_arguments(call_node)
+                if not keyword:
+                    continue
+                name = self._get_call_target_name(call_node)
+                if not name:
+                    continue
+                callee = resolver.resolve_function_call(name, module_qn)
+                if not callee or callee[0] != cs.NodeLabel.CLASS:
+                    continue
+                for field, value_node in keyword.items():
+                    if not (value_text := safe_decode_text(value_node)):
+                        continue
+                    bound = resolver.resolve_function_call(value_text, module_qn)
+                    if bound and bound[0] in callable_labels and bound[1] in registry:
+                        resolver.record_callable_field_binding(
+                            callee[1], field, bound[1]
+                        )
+        except Exception as e:
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+
     def process_calls_in_file(
         self,
         file_path: Path,
@@ -105,13 +168,7 @@ class CallProcessor:
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
-            module_qn = cs.SEPARATOR_DOT.join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
-            if file_path.name in (cs.INIT_PY, cs.MOD_RS):
-                module_qn = cs.SEPARATOR_DOT.join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
+            module_qn = self._module_qn(relative_path, file_path.name)
 
             call_name_cache: dict[int, str | None] = {}
 
@@ -512,6 +569,13 @@ class CallProcessor:
                         rhs, module_qn, local_var_types, class_context
                     )
 
+            if not callee_info and is_python and cs.SEPARATOR_DOT in call_name:
+                # (H) recv.field(...) where field is a callable struct field:
+                # (H) resolve to the functions bound to it at construction sites.
+                self._ingest_callable_field_calls(
+                    call_name, caller_spec, local_var_types, ensure_rel
+                )
+
             if is_python and call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in (
                 cs.HIGHER_ORDER_BUILTINS
             ):
@@ -645,6 +709,29 @@ class CallProcessor:
                     class_context,
                     resolve_func,
                     ensure_rel,
+                )
+
+    def _ingest_callable_field_calls(
+        self,
+        call_name: str,
+        caller_spec: tuple[str, str, str],
+        local_var_types: dict[str, str] | None,
+        ensure_rel,
+    ) -> None:
+        recv, sep, field = call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return
+        recv_type = local_var_types.get(recv) if local_var_types else None
+        targets = self._resolver.callable_field_targets(field, recv_type)
+        if not targets:
+            return
+        registry = self._resolver.function_registry
+        for target_qn in targets:
+            if target_qn in registry:
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
     def _ingest_higher_order_builtin_calls(

@@ -28,6 +28,8 @@ class CallResolver:
         "_simple_resolution_cache",
         "_wildcard_cache",
         "_protocol_impl_cache",
+        "_field_bindings",
+        "_field_to_classes",
     )
 
     def __init__(
@@ -46,6 +48,39 @@ class CallResolver:
         ] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
+        self._field_bindings: dict[tuple[str, str], set[str]] = {}
+        self._field_to_classes: dict[str, set[str]] = {}
+
+    def record_callable_field_binding(
+        self, class_qn: str, field: str, func_qn: str
+    ) -> None:
+        # (H) A NamedTuple/dataclass field holding a function reference: every
+        # (H) function bound to it at any construction site is a possible callee
+        # (H) when the field is invoked. Recording all of them is a sound call
+        # (H) graph (each runs for its own configuration), so recall is complete.
+        self._field_bindings.setdefault((class_qn, field), set()).add(func_qn)
+        self._field_to_classes.setdefault(field, set()).add(class_qn)
+
+    def callable_field_targets(
+        self, field: str, recv_type: str | None = None
+    ) -> set[str]:
+        classes = self._field_to_classes.get(field)
+        if not classes:
+            return set()
+        if recv_type:
+            simple = recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            matched = [
+                qn
+                for qn in classes
+                if qn == recv_type or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple
+            ]
+            if len(matched) == 1:
+                return self._field_bindings.get((matched[0], field), set())
+        # (H) Receiver type unknown or ambiguous: only resolve when exactly one
+        # (H) class declares this callable field, so the targets are unambiguous.
+        if len(classes) == 1:
+            return self._field_bindings.get((next(iter(classes)), field), set())
+        return set()
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
