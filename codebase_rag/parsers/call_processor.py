@@ -17,7 +17,12 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
-from .utils import get_function_captures, is_method_node, sorted_captures
+from .utils import (
+    get_function_captures,
+    is_method_node,
+    safe_decode_text,
+    sorted_captures,
+)
 
 _TYPED_LANGUAGES = frozenset(
     {
@@ -506,10 +511,41 @@ class CallProcessor:
                     callee_info = resolve_func(
                         rhs, module_qn, local_var_types, class_context
                     )
+
+            if is_python and call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in (
+                cs.HIGHER_ORDER_BUILTINS
+            ):
+                # (H) sorted(xs, key=f) and friends invoke f synchronously in this
+                # (H) frame, so the trace attributes the call to the enclosing fn.
+                self._ingest_higher_order_builtin_calls(
+                    call_node,
+                    caller_spec,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
             if not callee_info:
                 continue
 
             callee_type, callee_qn = callee_info
+
+            if is_python:
+                # (H) f(...) invoked through a parameter: the edge runs from the
+                # (H) callee to whatever each call site binds to that parameter.
+                self._ingest_callable_param_calls(
+                    call_node,
+                    callee_type,
+                    callee_qn,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
             if callee_type == class_label:
                 # (H) Instantiating a class is a call to its __init__ at runtime;
                 # (H) redirect to the constructor when the class defines one.
@@ -525,6 +561,113 @@ class CallProcessor:
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+    def _parse_call_arguments(
+        self, call_node: Node
+    ) -> tuple[list[Node], dict[str, Node]]:
+        positional: list[Node] = []
+        keyword: dict[str, Node] = {}
+        args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if args_node is None:
+            return positional, keyword
+        for child in args_node.named_children:
+            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                name_node = child.child_by_field_name(cs.FIELD_NAME)
+                value_node = child.child_by_field_name(cs.FIELD_VALUE)
+                if (
+                    name_node is not None
+                    and value_node is not None
+                    and (name := safe_decode_text(name_node)) is not None
+                ):
+                    keyword[name] = value_node
+            else:
+                positional.append(child)
+        return positional, keyword
+
+    def _emit_callback_edge(
+        self,
+        source_spec: tuple[str, str, str],
+        arg_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        if not (arg_text := safe_decode_text(arg_node)):
+            return
+        if not (
+            resolved := resolve_func(
+                arg_text, module_qn, local_var_types, class_context
+            )
+        ):
+            return
+        res_type, res_qn = resolved
+        registry = self._resolver.function_registry
+        if res_type == cs.NodeLabel.CLASS:
+            init_qn = f"{res_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+            if init_qn not in registry:
+                return
+            res_type = cs.NodeLabel.METHOD
+            res_qn = init_qn
+        for target_qn in registry.variants(res_qn):
+            ensure_rel(
+                source_spec,
+                cs.RelationshipType.CALLS,
+                (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _ingest_callable_param_calls(
+        self,
+        call_node: Node,
+        callee_type: str,
+        callee_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        if not (params := self._resolver.function_registry.callable_params(callee_qn)):
+            return
+        positional, keyword = self._parse_call_arguments(call_node)
+        source_spec = (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn)
+        for param_name, index in params.items():
+            arg_node = keyword.get(param_name)
+            if arg_node is None and index < len(positional):
+                arg_node = positional[index]
+            if arg_node is not None:
+                self._emit_callback_edge(
+                    source_spec,
+                    arg_node,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
+    def _ingest_higher_order_builtin_calls(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        positional, keyword = self._parse_call_arguments(call_node)
+        for arg_node in (*positional, *keyword.values()):
+            self._emit_callback_edge(
+                caller_spec,
+                arg_node,
+                module_qn,
+                local_var_types,
+                class_context,
+                resolve_func,
+                ensure_rel,
+            )
 
     def _build_local_alias_map(
         self, caller_node: Node, lang_config: LanguageSpec

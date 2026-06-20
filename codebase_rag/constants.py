@@ -2423,6 +2423,10 @@ TS_PY_EXPRESSION_STATEMENT = "expression_statement"
 TS_PY_STRING = "string"
 TS_PY_DECORATED_DEFINITION = "decorated_definition"
 TS_PY_DECORATOR = "decorator"
+TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
+TS_PY_DEFAULT_PARAMETER = "default_parameter"
+TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"
@@ -2431,6 +2435,13 @@ PY_METHOD_INIT = "__init__"
 DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
+
+# (H) Eager builtins that invoke a callable argument synchronously within the
+# (H) caller's own stack frame; a function passed to one is invoked there, so the
+# (H) trace attributes the call to the enclosing function (no Python frame exists
+# (H) for the builtin). Lazy higher-order builtins (map/filter) are excluded:
+# (H) they defer invocation until the result is consumed, which may be elsewhere.
+HIGHER_ORDER_BUILTINS: frozenset[str] = frozenset({"sorted", "min", "max", "reduce"})
 
 # (H) Python attribute prefixes
 PY_SELF_PREFIX = "self."

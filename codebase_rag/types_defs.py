@@ -111,6 +111,14 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_callable_params(
+        self, qualified_name: QualifiedName, params: dict[str, int]
+    ) -> None: ...
+
+    def callable_params(
+        self, qualified_name: QualifiedName
+    ) -> dict[str, int] | None: ...
+
 
 class ASTCacheProtocol(Protocol):
     def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...

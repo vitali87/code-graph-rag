@@ -51,6 +51,7 @@ class FunctionRegistryTrie:
         "_properties",
         "_property_names",
         "_abstracts",
+        "_callable_params",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -62,6 +63,16 @@ class FunctionRegistryTrie:
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._abstracts: set[QualifiedName] = set()
+        self._callable_params: dict[QualifiedName, dict[str, int]] = {}
+
+    def mark_callable_params(
+        self, qualified_name: QualifiedName, params: dict[str, int]
+    ) -> None:
+        if params:
+            self._callable_params[qualified_name] = params
+
+    def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
+        return self._callable_params.get(qualified_name)
 
     def mark_property(self, qualified_name: QualifiedName) -> None:
         self._properties.add(qualified_name)
@@ -151,6 +162,7 @@ class FunctionRegistryTrie:
             ):
                 self._property_names.discard(simple_name)
         self._abstracts.discard(qualified_name)
+        self._callable_params.pop(qualified_name, None)
 
         if self._ending_with_cache:
             self._ending_with_cache.pop(simple_name, None)
