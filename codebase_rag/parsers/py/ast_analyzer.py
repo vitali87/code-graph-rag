@@ -228,6 +228,32 @@ class PythonAstAnalyzerMixin(_AstBase):
             case _:
                 return None
 
+    def _find_class_node(self, class_qn: str) -> Node | None:
+        # (H) Locate a class definition node from its qualified name so cross-class
+        # (H) attribute/property types can be read when resolving chained calls.
+        module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
+        if not module_qn:
+            return None
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or file_path not in self.ast_cache:
+            return None
+        root_node, language = self.ast_cache[file_path]
+        if language != cs.SupportedLanguage.PYTHON:
+            return None
+        lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
+        class_query = lang_queries[cs.QUERY_KEY_CLASSES]
+        if not class_query:
+            return None
+        cursor = QueryCursor(class_query)
+        captures = sorted_captures(cursor, root_node)
+        for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
+            if not isinstance(class_node, Node):
+                continue
+            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
+            if name_node and safe_decode_text(name_node) == class_name:
+                return class_node
+        return None
+
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:

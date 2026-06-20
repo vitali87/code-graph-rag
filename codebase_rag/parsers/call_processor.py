@@ -596,6 +596,20 @@ class CallProcessor:
 
             callee_type, callee_qn = callee_info
 
+            if is_python and (
+                dispatch_targets := resolver.protocol_dispatch_targets(callee_qn)
+            ):
+                # (H) The call resolved to a Protocol stub; the stub never runs, so emit
+                # (H) edges to the method on every conformer instead of the stub.
+                for conformer_type, conformer_qn in dispatch_targets:
+                    for target_qn in resolver.function_registry.variants(conformer_qn):
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (conformer_type, qn_key, target_qn),
+                        )
+                continue
+
             if is_python:
                 # (H) f(...) invoked through a parameter: the edge runs from the
                 # (H) callee to whatever each call site binds to that parameter.

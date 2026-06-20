@@ -30,6 +30,8 @@ class CallResolver:
         "_protocol_impl_cache",
         "_field_bindings",
         "_field_to_classes",
+        "_subclass_map_cache",
+        "_protocol_classes_cache",
     )
 
     def __init__(
@@ -50,6 +52,8 @@ class CallResolver:
         self._protocol_impl_cache: dict[str, str] | None = None
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
         self._field_to_classes: dict[str, set[str]] = {}
+        self._subclass_map_cache: dict[str, set[str]] | None = None
+        self._protocol_classes_cache: set[str] | None = None
 
     def record_callable_field_binding(
         self, class_qn: str, field: str, func_qn: str
@@ -86,10 +90,34 @@ class CallResolver:
         self, var_type: str, import_map: dict[str, str], module_qn: str
     ) -> str:
         if cs.SEPARATOR_DOT in var_type:
-            return var_type
+            return self._follow_reexports(var_type)
         if var_type in import_map:
-            return import_map[var_type]
+            return self._follow_reexports(import_map[var_type])
         return self._resolve_class_name(var_type, module_qn) or ""
+
+    def _follow_reexports(self, class_qn: str) -> str:
+        # (H) `from .pkg import Cls` records the importer's name against the re-export
+        # (H) module (pkg.Cls), not the class's real definition (pkg.mod.Cls), so a
+        # (H) class_qn that is not itself registered may be a re-export. Follow the
+        # (H) module's own import map one hop at a time until a registered class is
+        # (H) reached, guarding against cycles.
+        seen: set[str] = set()
+        current = class_qn
+        while (
+            current
+            and current not in seen
+            and current not in self.function_registry
+            and cs.SEPARATOR_DOT in current
+        ):
+            seen.add(current)
+            module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
+            following = self.import_processor.import_mapping.get(module_qn, {}).get(
+                name
+            )
+            if not following or following == current:
+                break
+            current = following
+        return current
 
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
@@ -140,6 +168,32 @@ class CallResolver:
         self._protocol_impl_cache = impl
         return impl
 
+    def _protocol_classes(self) -> set[str]:
+        if self._protocol_classes_cache is None:
+            sep = cs.SEPARATOR_DOT
+            self._protocol_classes_cache = {
+                qn
+                for qn, bases in self.class_inheritance.items()
+                if any(base.rsplit(sep, 1)[-1] == cs.PY_PROTOCOL for base in bases)
+            }
+        return self._protocol_classes_cache
+
+    def protocol_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) A call resolved to a Protocol stub method (P.M) never runs the stub: the
+        # (H) runtime receiver is some conformer, so the sound call graph emits an edge
+        # (H) to M on every non-Protocol class that defines it. Gating on the resolved
+        # (H) target being a Protocol method keeps this from firing on ordinary calls.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or class_qn not in self._protocol_classes():
+            return set()
+        protocols = self._protocol_classes()
+        targets: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(method_name):
+            definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
+            if dot and name == method_name and definer not in protocols:
+                targets.add((self.function_registry[qn], qn))
+        return targets
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:
@@ -188,6 +242,11 @@ class CallResolver:
         if result := self._try_resolve_same_module(call_name, module_qn):
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
+            return result
+
+        if class_context and (
+            result := self._resolve_self_sibling_method(call_name, class_context)
+        ):
             return result
 
         result = self._try_resolve_via_trie(call_name, module_qn)
@@ -771,6 +830,75 @@ class CallResolver:
         )
         return None
 
+    def _resolve_self_sibling_method(
+        self, call_name: str, class_context: str
+    ) -> tuple[str, str] | None:
+        # (H) self.method() in a mixin may call a method defined on a SIBLING mixin
+        # (H) (neither is the other's base); both are combined into a concrete class.
+        # (H) Resolve through the concrete subclasses' MRO and accept the target only
+        # (H) when it is unambiguous, so an unrelated same-named method cannot win.
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2 or parts[0] != cs.KEYWORD_SELF:
+            return None
+        method_name = parts[1]
+        candidates: set[str] = set()
+        for subclass_qn in self._concrete_subclasses(class_context):
+            candidates |= self._mro_method_qns(subclass_qn, method_name)
+        if not candidates:
+            return None
+        # (H) An @abstractmethod stub never runs when a concrete sibling implements the
+        # (H) method, so prefer concrete candidates; resolve only when unambiguous.
+        chosen = {
+            qn for qn in candidates if not self.function_registry.is_abstract(qn)
+        } or candidates
+        if len(chosen) != 1:
+            return None
+        method_qn = next(iter(chosen))
+        logger.debug(
+            ls.CALL_INSTANCE_ATTR_INHERITED,
+            call_name=call_name,
+            method_qn=method_qn,
+            attr_ref=cs.KEYWORD_SELF,
+            var_type=class_context,
+        )
+        return self.function_registry[method_qn], method_qn
+
+    def _mro_method_qns(self, class_qn: str, method_name: str) -> set[str]:
+        results: set[str] = set()
+        visited: set[str] = set()
+        queue: deque[str] = deque([class_qn])
+        while queue:
+            current = self._follow_reexports(queue.popleft())
+            if current in visited:
+                continue
+            visited.add(current)
+            method_qn = f"{current}.{method_name}"
+            if method_qn in self.function_registry:
+                results.add(method_qn)
+            queue.extend(self.class_inheritance.get(current, ()))
+        return results
+
+    def _subclass_map(self) -> dict[str, set[str]]:
+        if self._subclass_map_cache is None:
+            mapping: dict[str, set[str]] = defaultdict(set)
+            for subclass_qn, bases in self.class_inheritance.items():
+                for base in bases:
+                    mapping[self._follow_reexports(base)].add(subclass_qn)
+            self._subclass_map_cache = mapping
+        return self._subclass_map_cache
+
+    def _concrete_subclasses(self, class_qn: str) -> set[str]:
+        subclass_map = self._subclass_map()
+        found: set[str] = set()
+        stack = list(subclass_map.get(class_qn, ()))
+        while stack:
+            current = stack.pop()
+            if current in found:
+                continue
+            found.add(current)
+            stack.extend(subclass_map.get(current, ()))
+        return found
+
     def _resolve_inherited_method(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
@@ -781,7 +909,11 @@ class CallResolver:
         visited = set(bfs_queue)
 
         while bfs_queue:
-            parent_class_qn = bfs_queue.popleft()
+            # (H) Base classes are recorded by the name the subclass imported, which
+            # (H) may be a package re-export (class_ingest.ClassIngestMixin) rather than
+            # (H) the real definition (class_ingest.mixin.ClassIngestMixin); follow the
+            # (H) re-export so the inherited method qn matches the registry.
+            parent_class_qn = self._follow_reexports(bfs_queue.popleft())
             parent_method_qn = f"{parent_class_qn}.{method_name}"
 
             if parent_method_qn in self.function_registry:
