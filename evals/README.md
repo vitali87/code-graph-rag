@@ -42,3 +42,31 @@ cgr's static graph instead "sees through" the decorator and records the single l
 To keep the trace and the static graph in agreement, `calls_trace._frame_qn` attributes a `wrapper` frame to the function it wraps (recovered from the wrapper's closed-over callable, following any `__wrapped__` chain). This turns `caller -> wrapper` into `caller -> the_real_method` and collapses `wrapper -> the_real_method` into a self-edge (which the tracer already drops). The decision is **normalize in the eval**, not model wrappers in cgr, so cgr's graph stays free of generic wrapper nodes.
 
 Covered by `codebase_rag/tests/test_l3_decorator_normalization.py`.
+
+## Latest results (target: `codebase_rag`)
+
+Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.
+
+### L1 — structure (`uv run python -m evals.cli`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| node | Module | 417 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| node | Class | 926 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| node | Function | 1955 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| node | Method | 3919 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | DEFINES | 2742 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | DEFINES_METHOD | 3919 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | INHERITS | 153 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | IMPORTS | 1274 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+Span (end_line) accuracy on matched defs: 6800/6800 exact.
+
+### L3 — CALLS recall (`uv run python -m evals.l3`)
+
+| scope | traced | captured | missed | recall |
+|---|---|---|---|---|
+| all calls | 634 | 634 | 0 | 1.0000 |
+| explicit (no dunders) | 580 | 580 | 0 | 1.0000 |
+
+The L3 fixture exercises rich Python plus all 11 supported languages; recall is a sound lower bound over the cgr code paths that fixture drives. These numbers are for the Python `codebase_rag` target — graded multi-language recall (JS/Rust/Go/Java/C/C++/Lua/PHP/Scala) is future work pending a SCIP-based oracle.

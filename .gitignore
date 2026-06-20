@@ -25,7 +25,7 @@ PROJECT.md
 .omc
 site/
 
-# Eval harness generated artifacts
-evals/results/
+# Eval harness scratch workspace (regenerated each run); result files are committed
+evals/results/l3_workspace/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json

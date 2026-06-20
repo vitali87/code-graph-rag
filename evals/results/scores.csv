@@ -1,0 +1,11 @@
+category,label,tp,fp,fn,precision,recall,f1
+node,Module,417,0,0,1.0,1.0,1.0
+node,Class,926,0,0,1.0,1.0,1.0
+node,Function,1955,0,0,1.0,1.0,1.0
+node,Method,3919,0,0,1.0,1.0,1.0
+node,ALL,7217,0,0,1.0,1.0,1.0
+edge,DEFINES,2742,0,0,1.0,1.0,1.0
+edge,DEFINES_METHOD,3919,0,0,1.0,1.0,1.0
+edge,ALL,6661,0,0,1.0,1.0,1.0
+edge,INHERITS,153,0,0,1.0,1.0,1.0
+edge,IMPORTS,1274,0,0,1.0,1.0,1.0
