@@ -90,6 +90,7 @@ class PythonTypeInferenceEngine(
             self._infer_instance_attributes_from_init(
                 caller_node, local_var_types, module_qn
             )
+            self._infer_property_return_types(caller_node, local_var_types, module_qn)
 
         except Exception as e:
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)

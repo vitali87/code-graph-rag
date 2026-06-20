@@ -336,6 +336,58 @@ class PythonVariableAnalyzerMixin(_VarBase):
         for attr, attr_type in init_types.items():
             local_var_types.setdefault(attr, attr_type)
 
+    def _has_property_decorator(self, decorated_node: ASTNode) -> bool:
+        for child in decorated_node.children:
+            if child.type == cs.TS_PY_DECORATOR and (text := child.text):
+                tail = (
+                    text.decode(cs.ENCODING_UTF8)
+                    .lstrip(cs.DECORATOR_AT)
+                    .split(cs.SEPARATOR_DOT)[-1]
+                )
+                if tail in cs.PROPERTY_DECORATORS:
+                    return True
+        return False
+
+    def _infer_property_return_types(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) self.prop where prop is an @property has the property's declared return
+        # (H) type, so a chained call self.prop.method() can resolve against the
+        # (H) returned class rather than an ambiguous same-named method elsewhere.
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return
+        for child in body.children:
+            if child.type != cs.TS_PY_DECORATED_DEFINITION:
+                continue
+            if not self._has_property_decorator(child):
+                continue
+            func = next(
+                (c for c in child.children if c.type == cs.TS_PY_FUNCTION_DEFINITION),
+                None,
+            )
+            if func is None:
+                continue
+            name_node = func.child_by_field_name(cs.FIELD_NAME)
+            return_node = func.child_by_field_name(cs.FIELD_RETURN_TYPE)
+            if not (
+                name_node
+                and (name_text := name_node.text)
+                and return_node
+                and (return_text := return_node.text)
+            ):
+                continue
+            # (H) The return_type field wraps a type node; only a bare class name (not
+            # (H) a union, subscripted generic, or string forward ref) seeds a type.
+            return_type = return_text.decode(cs.ENCODING_UTF8)
+            if return_type.isidentifier():
+                local_var_types.setdefault(
+                    f"{cs.PY_SELF_PREFIX}{name_text.decode(cs.ENCODING_UTF8)}",
+                    return_type,
+                )
+
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
