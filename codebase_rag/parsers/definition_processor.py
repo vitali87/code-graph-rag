@@ -57,6 +57,18 @@ class DefinitionProcessor(
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
+    def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # (H) Two files that share a basename but differ by extension (foo.py /
+        # (H) foo.cpp) strip to the same module qn. Append the extension to the
+        # (H) later one so their module nodes and all derived class/method qns stay
+        # (H) distinct instead of colliding under the qualified_name constraint.
+        existing = self.module_qn_to_file_path.get(module_qn)
+        if existing is None or existing == file_path:
+            return module_qn
+        return (
+            f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
+        )
+
     def process_file(
         self,
         file_path: Path,
@@ -105,6 +117,7 @@ class DefinitionProcessor(
                 module_qn = cs.SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+            module_qn = self._disambiguate_module_qn(module_qn, file_path)
             self.module_qn_to_file_path[module_qn] = file_path
 
             self.ingestor.ensure_node_batch(
