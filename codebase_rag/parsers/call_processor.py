@@ -949,15 +949,30 @@ class CallProcessor:
                     and left.type == identifier
                     and (left_text := left.text) is not None
                     and right is not None
-                    and right.type in (identifier, attribute)
-                    and (right_text := right.text) is not None
-                ):
-                    aliases.setdefault(
-                        left_text.decode(cs.ENCODING_UTF8),
-                        right_text.decode(cs.ENCODING_UTF8),
+                    and (
+                        target := self._alias_reference_text(
+                            right, identifier, attribute
+                        )
                     )
+                    is not None
+                ):
+                    aliases.setdefault(left_text.decode(cs.ENCODING_UTF8), target)
             stack.extend(node.children)
         return aliases
+
+    def _alias_reference_text(
+        self, right: Node, identifier: str, attribute: str
+    ) -> str | None:
+        # (H) An alias rhs is a plain name/attribute, or a conditional that picks one
+        # (H) (resolve_builtin_call if is_js_ts else None); take the name/attribute
+        # (H) branch (consequence or alternative, never the condition) as the target.
+        if right.type in (identifier, attribute):
+            return right.text.decode(cs.ENCODING_UTF8) if right.text else None
+        if right.type == cs.TS_PY_CONDITIONAL_EXPRESSION and right.named_children:
+            for branch in (right.named_children[0], right.named_children[-1]):
+                if branch.type in (identifier, attribute) and branch.text:
+                    return branch.text.decode(cs.ENCODING_UTF8)
+        return None
 
     def _ingest_property_accesses(
         self,
