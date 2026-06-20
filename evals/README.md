@@ -43,6 +43,32 @@ To keep the trace and the static graph in agreement, `calls_trace._frame_qn` att
 
 Covered by `codebase_rag/tests/test_l3_decorator_normalization.py`.
 
+## L1 (Go) — structure against a native `go/ast` oracle
+
+The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
+
+```bash
+uv run python -m evals.go_l1 --target /path/to/go/repo --project-name myrepo
+```
+
+How it works:
+
+- **Oracle** (`evals/oracles/go_ast.go`): a small Go program that walks the target with the standard library's `go/parser` + `go/ast` and emits one JSON record per top-level declaration. The `kind` field already uses cgr's `NodeLabel` vocabulary (`Function`, `Method`, `Class`, `Interface`, `Type`), so records join cgr's nodes directly on `(kind, file, start_line)`. Mapping: `func` → `Function`, `func` with a receiver → `Method`, `type … struct` → `Class`, `type … interface` → `Interface`, any other `type …` (defined types and aliases) → `Type`. Requires the `go` toolchain on `PATH`; `evals.go_l1` exits cleanly if it is missing.
+- **cgr side** (`cgr_graph.extract_cgr_go_nodes`): builds cgr's graph over the target and keeps the Go (`.go`) definition nodes.
+- **Score**: per-kind precision/recall/F1 via `score.score_node_kinds`, written to `evals/results/go_scores.csv` and `evals/results/go_diff.json`.
+
+Validated on `apache/thrift` (1604 cgr Go nodes vs 1617 oracle nodes):
+
+| label | tp | fp | fn | precision | recall |
+|---|---|---|---|---|---|
+| Class | 106 | 0 | 1 | 1.0000 | 0.9907 |
+| Interface | 30 | 0 | 0 | 1.0000 | 1.0000 |
+| Type | 24 | 2 | 1 | 0.9231 | 0.9600 |
+| Function | 535 | 907 | 5 | 0.3710 | 0.9907 |
+| Method | 0 | 0 | 915 | 0.0000 | 0.0000 |
+
+Go `type` declarations (struct/interface/defined-type) are now captured (they were entirely missing before — see `codebase_rag/tests/test_go_type_declarations.py`). The oracle pinpoints the remaining gap: Go *receiver methods* are still labelled `Function` rather than `Method` (the 915 `Method` misses are also the bulk of `Function`'s false positives), tracked by the `xfail` `test_go_struct_methods_are_ingested`.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.

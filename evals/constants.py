@@ -80,6 +80,7 @@ CSV_FIELDS: tuple[str, ...] = (
     "recall",
     "f1",
 )
+LEFT_COLUMNS: frozenset[str] = frozenset({"category", "label"})
 
 DEFAULT_TARGET = "codebase_rag"
 DEFAULT_OUT_DIR = "evals/results"
@@ -92,3 +93,30 @@ DIFF_NODE_PREFIX = "node:"
 DIFF_EDGE_PREFIX = "edge:"
 
 ROUND_DIGITS = 4
+
+# (H) Go structure eval: cgr nodes graded against the go/ast oracle
+# (H) (evals/oracles/go_ast.go), joined on (kind, file, start_line).
+GO_SUFFIX = ".go"
+GO_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.TYPE,
+)
+GO_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in GO_SCORED_NODE_KINDS
+)
+GO_ORACLE_DIRNAME = "oracles"
+GO_ORACLE_GO_FILE = "go_ast.go"
+GO_BIN = "go"
+GO_RUN = "run"
+GO_MODULE_ENV = "GO111MODULE"
+GO_MODULE_OFF = "off"
+GO_DEFAULT_TARGET = "."
+GO_SCORES_FILENAME = "go_scores.csv"
+GO_DIFF_FILENAME = "go_diff.json"
+ORACLE_KEY_KIND = "kind"
+ORACLE_KEY_FILE = "file"
+ORACLE_KEY_LINE = "line"
+ORACLE_KEY_NAME = "name"

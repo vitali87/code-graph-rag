@@ -16,6 +16,10 @@ def determine_node_type(
     language: cs.SupportedLanguage,
 ) -> NodeType:
     match class_node.type:
+        case cs.TS_GO_TYPE_SPEC | cs.TS_GO_TYPE_ALIAS if (
+            language == cs.SupportedLanguage.GO
+        ):
+            return _go_type_node_type(class_node, class_name, class_qn)
         case cs.TS_INTERFACE_DECLARATION | cs.TS_RS_TRAIT_ITEM:
             logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
             return NodeType.INTERFACE
@@ -50,6 +54,22 @@ def determine_node_type(
         case _:
             logger.info(logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn))
             return NodeType.CLASS
+
+
+def _go_type_node_type(
+    class_node: Node, class_name: str | None, class_qn: str
+) -> NodeType:
+    underlying = class_node.child_by_field_name(cs.FIELD_TYPE)
+    match underlying.type if underlying else None:
+        case cs.TS_GO_STRUCT_TYPE:
+            logger.info(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
+            return NodeType.CLASS
+        case cs.TS_GO_INTERFACE_TYPE:
+            logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
+            return NodeType.INTERFACE
+        case _:
+            logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
+            return NodeType.TYPE
 
 
 def log_exported_class_type(
