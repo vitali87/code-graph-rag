@@ -1,7 +1,8 @@
+import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import FrameType
+from types import CodeType, FrameType
 
 from . import constants as ec
 
@@ -15,9 +16,17 @@ _SYNTHETIC_QUALNAME_MARKERS = (
 )
 _LOCALS_SEGMENT = ".<locals>"
 
+# (H) functools.wraps decorator wrappers: the inner function is named "wrapper" and
+# (H) closes over the wrapped callable under one of these free-variable names. cgr
+# (H) resolves a call to a decorated function as a call to the function itself (it sees
+# (H) through the decorator), so the trace must attribute the generic wrapper frame to
+# (H) the function it wraps; otherwise calls would be credited to the recycled wrapper
+# (H) node. See evals/README.md ("Decorator-wrapper normalization").
+_WRAPPER_CODE_NAME = "wrapper"
+_WRAPPED_FREE_VARS = ("func", "fn", "wrapped", "method", "f")
 
-def _frame_qn(frame: FrameType, target: Path, project_name: str) -> str | None:
-    code = frame.f_code
+
+def _code_qn(code: CodeType, target: Path, project_name: str) -> str | None:
     try:
         file = Path(code.co_filename).resolve()
     except (OSError, ValueError):
@@ -39,6 +48,35 @@ def _frame_qn(frame: FrameType, target: Path, project_name: str) -> str | None:
         parts = parts[:-1]
     module_dotted = ec.SEP.join([project_name, *parts])
     return ec.SEP.join([module_dotted, qualname])
+
+
+def _wrapped_code(frame: FrameType) -> CodeType | None:
+    # (H) Recover the wrapped function's code from a @wraps wrapper frame via its
+    # (H) closed-over callable, following any __wrapped__ chain to the real function.
+    code = frame.f_code
+    if code.co_name != _WRAPPER_CODE_NAME:
+        return None
+    for name in _WRAPPED_FREE_VARS:
+        if name not in code.co_freevars:
+            continue
+        candidate = frame.f_locals.get(name)
+        if not callable(candidate):
+            continue
+        unwrapped = inspect.unwrap(candidate)
+        wrapped_code = getattr(unwrapped, "__code__", None) or getattr(
+            getattr(unwrapped, "__func__", None), "__code__", None
+        )
+        if isinstance(wrapped_code, CodeType):
+            return wrapped_code
+    return None
+
+
+def _frame_qn(frame: FrameType, target: Path, project_name: str) -> str | None:
+    if (wrapped := _wrapped_code(frame)) is not None and (
+        qn := _code_qn(wrapped, target, project_name)
+    ) is not None:
+        return qn
+    return _code_qn(frame.f_code, target, project_name)
 
 
 def trace_calls(

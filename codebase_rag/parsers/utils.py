@@ -177,6 +177,21 @@ def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> se
     return invoked
 
 
+def python_parameter_names(func_node: Node) -> list[str]:
+    # (H) Ordered parameter names with a leading self/cls dropped, so positions line
+    # (H) up with how call-site arguments map to parameters for bound methods.
+    params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params_node is None:
+        return []
+    names: list[str] = []
+    for child in params_node.named_children:
+        if (name := _python_parameter_name(child)) is not None:
+            names.append(name)
+    if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+        names = names[1:]
+    return names
+
+
 def callable_parameter_indices(
     func_node: Node, language: cs.SupportedLanguage | None
 ) -> dict[str, int]:
@@ -185,18 +200,8 @@ def callable_parameter_indices(
     # (H) dropped so the index lines up with how bound methods are invoked).
     if language != cs.SupportedLanguage.PYTHON:
         return {}
-    params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
-    if params_node is None or body_node is None:
-        return {}
-
-    names: list[str] = []
-    for child in params_node.named_children:
-        if (name := _python_parameter_name(child)) is not None:
-            names.append(name)
-    if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
-        names = names[1:]
-    if not names:
+    if body_node is None or not (names := python_parameter_names(func_node)):
         return {}
 
     invoked = _python_invoked_parameter_names(body_node, set(names))

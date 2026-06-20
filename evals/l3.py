@@ -53,6 +53,365 @@ def run() -> str:
 """
 
 
+FIXTURE_C = """import asyncio
+from dataclasses import dataclass
+from functools import wraps
+from typing import Iterator
+
+from .a import Animal, Dog
+
+
+def trace(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+@dataclass
+class Counter:
+    total: int = 0
+
+    def add(self, value: int) -> int:
+        self.total += value
+        return self.total
+
+    @property
+    def doubled(self) -> int:
+        return self.total * 2
+
+    @staticmethod
+    def zero() -> int:
+        return 0
+
+    @classmethod
+    def start(cls) -> "Counter":
+        return cls(total=cls.zero())
+
+
+class Shelter(Animal):
+    def __init__(self) -> None:
+        self.pets: list[Animal] = []
+
+    def admit(self, pet: Animal) -> None:
+        self.pets.append(pet)
+
+    def noises(self) -> list[str]:
+        return [pet.sound() for pet in self.pets]
+
+    def loud(self) -> dict[str, str]:
+        return {pet.sound(): pet.speak() for pet in self.pets}
+
+
+@trace
+def build_shelter(count: int) -> Shelter:
+    shelter = Shelter()
+    for _ in range(count):
+        shelter.admit(Dog())
+    return shelter
+
+
+def categorize(value: int) -> str:
+    match value:
+        case 0:
+            return Counter.zero.__name__
+        case n if n > 0:
+            return "positive"
+        case _:
+            return "negative"
+
+
+def stream(limit: int) -> Iterator[int]:
+    counter = Counter.start()
+    for i in range(limit):
+        yield counter.add(i)
+
+
+async def gather(limit: int) -> int:
+    counter = Counter()
+    await asyncio.sleep(0)
+    return counter.add(limit)
+
+
+def run_rich() -> int:
+    shelter = build_shelter(2)
+    total = sum(len(noise) for noise in shelter.noises())
+    apply = lambda c: c.doubled
+    return total + apply(Counter.start())
+"""
+
+
+FIXTURE_JS_UTIL = """export function greet(name) {
+  return "hi " + name;
+}
+
+
+export class Base {
+  speak() {
+    return this.sound();
+  }
+
+  sound() {
+    return "...";
+  }
+}
+"""
+
+FIXTURE_JS_APP = """import { greet, Base } from "./util.js";
+
+
+class Dog extends Base {
+  sound() {
+    return "woof";
+  }
+}
+
+
+function run() {
+  const d = new Dog();
+  return d.speak() + greet("dog");
+}
+
+
+const handler = () => run();
+
+export { run, handler };
+"""
+
+
+FIXTURE_TS_SHAPES = """export interface Shape {
+  area(): number;
+}
+
+
+export abstract class Base implements Shape {
+  abstract area(): number;
+
+  describe(): string {
+    return `area=${this.area()}`;
+  }
+}
+"""
+
+FIXTURE_TS_MAIN = """import { Base, Shape } from "./shapes";
+
+
+class Square extends Base {
+  constructor(private side: number) {
+    super();
+  }
+
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+
+function total(shapes: Shape[]): number {
+  return shapes.reduce((acc, s) => acc + s.area(), 0);
+}
+
+
+function run(): string {
+  const sq = new Square(3);
+  return sq.describe() + total([sq]);
+}
+
+export { run };
+"""
+
+FIXTURE_RS_SHAPES = """pub trait Shape {
+    fn area(&self) -> f64;
+}
+
+pub struct Square {
+    pub side: f64,
+}
+
+impl Square {
+    pub fn new(side: f64) -> Square {
+        Square { side }
+    }
+}
+
+impl Shape for Square {
+    fn area(&self) -> f64 {
+        self.side * self.side
+    }
+}
+
+pub fn describe(s: &dyn Shape) -> f64 {
+    s.area()
+}
+"""
+
+FIXTURE_RS_MAIN = """mod shapes;
+
+use shapes::{describe, Shape, Square};
+
+fn run() -> f64 {
+    let sq = Square::new(3.0);
+    describe(&sq) + sq.area()
+}
+
+fn main() {
+    run();
+}
+"""
+
+FIXTURE_GO_MAIN = """package fixture
+
+type Shape interface {
+	Area() float64
+}
+
+type Square struct {
+	Side float64
+}
+
+func (s Square) Area() float64 {
+	return s.Side * s.Side
+}
+
+func describe(s Shape) float64 {
+	return s.Area()
+}
+
+func Run() float64 {
+	sq := Square{Side: 3.0}
+	return describe(sq) + sq.Area()
+}
+"""
+
+
+FIXTURE_JAVA = """package fixture;
+
+interface Shape {
+    double area();
+}
+
+class Square implements Shape {
+    private double side;
+
+    Square(double side) {
+        this.side = side;
+    }
+
+    public double area() {
+        return this.side * this.side;
+    }
+}
+
+public class Service {
+    double describe(Shape s) {
+        return s.area();
+    }
+
+    double run() {
+        Square sq = new Square(3.0);
+        return describe(sq) + sq.area();
+    }
+}
+"""
+
+FIXTURE_C_HEADER = """int square(int x);
+int compute(int n);
+"""
+
+FIXTURE_C_SRC = """#include "calc.h"
+
+int square(int x) {
+    return x * x;
+}
+
+int compute(int n) {
+    return square(n) + square(n + 1);
+}
+"""
+
+FIXTURE_CPP = """class Shape {
+public:
+    virtual double area() const = 0;
+    double describe() const { return area(); }
+};
+
+class Square : public Shape {
+    double side;
+
+public:
+    Square(double s) : side(s) {}
+    double area() const override { return side * side; }
+};
+
+double run() {
+    Square sq(3.0);
+    return sq.describe() + sq.area();
+}
+"""
+
+FIXTURE_LUA = """local M = {}
+
+function M.square(x)
+  return x * x
+end
+
+function M.compute(n)
+  return M.square(n) + M.square(n + 1)
+end
+
+return M
+"""
+
+FIXTURE_PHP = """<?php
+
+interface Shape {
+    public function area(): float;
+}
+
+class Square implements Shape {
+    private float $side;
+
+    public function __construct(float $side) {
+        $this->side = $side;
+    }
+
+    public function area(): float {
+        return $this->side * $this->side;
+    }
+}
+
+function describe(Shape $s): float {
+    return $s->area();
+}
+
+function run(): float {
+    $sq = new Square(3.0);
+    return describe($sq) + $sq->area();
+}
+"""
+
+FIXTURE_SCALA = """package fixture
+
+trait Shape {
+  def area(): Double
+}
+
+class Square(side: Double) extends Shape {
+  def area(): Double = side * side
+}
+
+object Service {
+  def describe(s: Shape): Double = s.area()
+
+  def run(): Double = {
+    val sq = new Square(3.0)
+    describe(sq) + sq.area()
+  }
+}
+"""
+
+
 class _NullIngestor:
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         return None
@@ -89,6 +448,21 @@ def _write_fixture(root: Path) -> None:
     (pkg / "__init__.py").touch()
     (pkg / "a.py").write_text(FIXTURE_A)
     (pkg / "b.py").write_text(FIXTURE_B)
+    (pkg / "c.py").write_text(FIXTURE_C)
+    (pkg / "util.js").write_text(FIXTURE_JS_UTIL)
+    (pkg / "app.js").write_text(FIXTURE_JS_APP)
+    (pkg / "shapes.ts").write_text(FIXTURE_TS_SHAPES)
+    (pkg / "main.ts").write_text(FIXTURE_TS_MAIN)
+    (pkg / "shapes.rs").write_text(FIXTURE_RS_SHAPES)
+    (pkg / "main.rs").write_text(FIXTURE_RS_MAIN)
+    (pkg / "service.go").write_text(FIXTURE_GO_MAIN)
+    (pkg / "Service.java").write_text(FIXTURE_JAVA)
+    (pkg / "calc.h").write_text(FIXTURE_C_HEADER)
+    (pkg / "calc.c").write_text(FIXTURE_C_SRC)
+    (pkg / "shapes.cpp").write_text(FIXTURE_CPP)
+    (pkg / "module.lua").write_text(FIXTURE_LUA)
+    (pkg / "service.php").write_text(FIXTURE_PHP)
+    (pkg / "Shapes.scala").write_text(FIXTURE_SCALA)
 
 
 def main(
