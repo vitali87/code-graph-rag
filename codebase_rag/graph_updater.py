@@ -926,6 +926,7 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
+        self.factory.call_processor.finalize_callable_param_flow()
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

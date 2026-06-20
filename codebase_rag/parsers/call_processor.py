@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
+from collections import defaultdict
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -20,9 +22,23 @@ from .type_inference import TypeInferenceEngine
 from .utils import (
     get_function_captures,
     is_method_node,
+    python_parameter_names,
     safe_decode_text,
     sorted_captures,
 )
+
+
+class _CallableFlowArg(NamedTuple):
+    # (H) One call-site argument that may carry a callable: bound either to a concrete
+    # (H) function (source_concrete) or to a parameter of the caller (source_caller +
+    # (H) source_param), keyed to the callee parameter by position or keyword.
+    callee_qn: str
+    position: int
+    keyword: str
+    source_concrete: str
+    source_caller: str
+    source_param: str
+
 
 _TYPED_LANGUAGES = frozenset(
     {
@@ -36,7 +52,14 @@ _TYPED_LANGUAGES = frozenset(
 
 
 class CallProcessor:
-    __slots__ = ("ingestor", "repo_path", "project_name", "_resolver")
+    __slots__ = (
+        "ingestor",
+        "repo_path",
+        "project_name",
+        "_resolver",
+        "_flow_param_names",
+        "_flow_args",
+    )
 
     def __init__(
         self,
@@ -58,6 +81,10 @@ class CallProcessor:
             type_inference=type_inference,
             class_inheritance=class_inheritance,
         )
+        # (H) Inter-procedural callable-parameter flow: ordered params per function and
+        # (H) the per-call-site argument bindings, resolved to a fixpoint in finalize.
+        self._flow_param_names: dict[str, list[str]] = {}
+        self._flow_args: list[_CallableFlowArg] = []
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
@@ -488,6 +515,12 @@ class CallProcessor:
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
+        caller_params: frozenset[str] = frozenset()
+        if language == cs.SupportedLanguage.PYTHON:
+            ordered_params = python_parameter_names(caller_node)
+            self._flow_param_names[caller_qn] = ordered_params
+            caller_params = frozenset(ordered_params)
+
         # (H) Runs independently of call_nodes: a getter access is an attribute, not
         # (H) a call, so callers that read a property but make no other call must
         # (H) still reach this pass before the early return below.
@@ -602,6 +635,17 @@ class CallProcessor:
                 continue
 
             callee_type, callee_qn = callee_info
+
+            if is_python:
+                self._collect_callable_flow(
+                    call_node,
+                    callee_qn,
+                    caller_qn,
+                    caller_params,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                )
 
             if is_python and (
                 dispatch_targets := resolver.protocol_dispatch_targets(callee_qn)
@@ -878,6 +922,111 @@ class CallProcessor:
                     resolve_func,
                     ensure_rel,
                 )
+
+    def _collect_callable_flow(
+        self,
+        call_node: Node,
+        callee_qn: str,
+        caller_qn: str,
+        caller_params: frozenset[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        # (H) Record, for each call-site argument that names a callable, whether it is a
+        # (H) concrete function or a parameter of the caller (a pass-through). The
+        # (H) fixpoint in finalize propagates concretes through pass-through params to
+        # (H) the functions that actually invoke them.
+        positional, keyword = self._parse_call_arguments(call_node)
+        items: list[tuple[int, str, Node]] = [
+            (index, "", node) for index, node in enumerate(positional)
+        ]
+        items.extend((-1, name, node) for name, node in keyword.items())
+        callable_labels = (
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
+            cs.NodeLabel.CLASS,
+        )
+        for position, keyword_name, arg_node in items:
+            if arg_node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+                continue
+            arg_text = safe_decode_text(arg_node)
+            if not arg_text:
+                continue
+            if arg_node.type == cs.TS_PY_IDENTIFIER and arg_text in caller_params:
+                self._flow_args.append(
+                    _CallableFlowArg(
+                        callee_qn, position, keyword_name, "", caller_qn, arg_text
+                    )
+                )
+                continue
+            resolved = self._resolver.resolve_function_call(
+                arg_text, module_qn, local_var_types, class_context
+            )
+            if resolved is not None and resolved[0] in callable_labels:
+                self._flow_args.append(
+                    _CallableFlowArg(
+                        callee_qn, position, keyword_name, resolved[1], "", ""
+                    )
+                )
+
+    def finalize_callable_param_flow(self) -> None:
+        # (H) Resolve the recorded call-site argument bindings to a fixpoint and emit a
+        # (H) CALLS edge from every function that invokes a callable parameter to each
+        # (H) concrete function that can reach it (directly or via pass-through params).
+        registry = self._resolver.function_registry
+        seeds: dict[tuple[str, str], set[str]] = defaultdict(set)
+        edges: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
+        for arg in self._flow_args:
+            if arg.keyword:
+                param_name = arg.keyword
+            else:
+                callee_params = self._flow_param_names.get(arg.callee_qn)
+                if callee_params is None or not (
+                    0 <= arg.position < len(callee_params)
+                ):
+                    continue
+                param_name = callee_params[arg.position]
+            slot = (arg.callee_qn, param_name)
+            if arg.source_concrete:
+                seeds[slot].add(arg.source_concrete)
+            else:
+                edges[slot].add((arg.source_caller, arg.source_param))
+
+        bindings: dict[tuple[str, str], set[str]] = {
+            k: set(v) for k, v in seeds.items()
+        }
+        for slot in edges:
+            bindings.setdefault(slot, set())
+        changed = True
+        while changed:
+            changed = False
+            for slot, sources in edges.items():
+                for source in sources:
+                    if (reachable := bindings.get(source)) and not reachable.issubset(
+                        bindings[slot]
+                    ):
+                        bindings[slot] |= reachable
+                        changed = True
+
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for func_qn, invoked in (
+            (qn, registry.callable_params(qn)) for qn in self._flow_param_names
+        ):
+            if not invoked or (func_type := registry.get(func_qn)) is None:
+                continue
+            source_spec = (func_type, cs.KEY_QUALIFIED_NAME, func_qn)
+            for param_name in invoked:
+                for target_qn in bindings.get((func_qn, param_name), ()):
+                    target_type = registry.get(target_qn)
+                    if target_type is None:
+                        continue
+                    for variant in registry.variants(target_qn):
+                        ensure_rel(
+                            source_spec,
+                            cs.RelationshipType.CALLS,
+                            (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                        )
 
     def _ingest_callable_field_calls(
         self,
