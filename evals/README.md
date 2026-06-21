@@ -108,6 +108,19 @@ Same mapping as TypeScript, with two JS-specific points matching cgr: object-lit
 
 Validated on `apache/thrift`'s JavaScript (`lib/js`, `lib/nodejs`): 1087 cgr nodes vs 1087 oracle nodes — exact, all kinds 1.0. No cgr gap found.
 
+## L1 (Java) — structure against the JDK Compiler Tree API
+
+The sixth native oracle is Java, checked against the JDK's own parser (`com.sun.source` / `javax.tools`).
+
+```bash
+uv run python -m evals.java_l1 --target /path/to/java/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/java_oracle/Oracle.java`): parses every `.java` file with the JDK Compiler Tree API (`task.parse()` only parses, so missing dependencies are fine) and emits one JSON record per declaration. Mapping, matching how cgr models Java: `class` → `Class`, `interface` → `Interface` (+ its method signatures → `Method`), annotation type (`@interface`) → `Class`, `enum` → `Enum`, method/constructor → `Method`. A method declared inside an **anonymous class** (e.g. `new Runnable() { public void run() {...} }`) is modelled as a standalone `Function` — the same way cgr treats it (and JS object-literal methods); the oracle replicates cgr's rule (a member is a `Method` only when its nearest enclosing named class precedes any enclosing method/lambda body). Requires `javac`/`java`; the oracle is compiled on first run (the `.class` is gitignored, the source committed). `evals.java_l1` exits cleanly if the JDK is missing.
+- **cgr side** (`cgr_graph.extract_cgr_java_nodes`), **score** (`score.score_node_kinds`), output to `java_scores.csv` / `java_diff.json`.
+
+Validated on `apache/thrift`'s `lib/java`: 2861 cgr nodes vs 2861 oracle nodes — exact, all kinds 1.0 (including the 103 anonymous-class methods graded as `Function`). No cgr gap found.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.

@@ -183,3 +183,25 @@ JS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
 )
 JS_SCORES_FILENAME = "js_scores.csv"
 JS_DIFF_FILENAME = "js_diff.json"
+
+# (H) Java structure eval: cgr nodes graded against the JDK Compiler Tree API
+# (H) oracle (evals/oracles/java_oracle/Oracle.java), joined on (kind, file, line).
+JAVA_SUFFIX = ".java"
+JAVA_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+)
+JAVA_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in JAVA_SCORED_NODE_KINDS
+)
+JAVA_ORACLE_DIRNAME = "java_oracle"
+JAVA_ORACLE_SOURCE = "Oracle.java"
+JAVA_ORACLE_CLASS = "Oracle"
+JAVAC_BIN = "javac"
+JAVA_BIN = "java"
+JAVA_CP_FLAG = "-cp"
+JAVA_SCORES_FILENAME = "java_scores.csv"
+JAVA_DIFF_FILENAME = "java_diff.json"

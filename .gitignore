@@ -31,5 +31,7 @@ evals/results/l3_workspace/
 evals/oracles/rs_oracle/target/
 # TypeScript oracle deps (the source + package-lock.json are committed)
 evals/oracles/ts_oracle/node_modules/
+# Java oracle compiled classes (the source is committed)
+evals/oracles/java_oracle/*.class
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json
