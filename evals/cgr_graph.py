@@ -182,6 +182,18 @@ def extract_cgr_lang_graph(
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
 
+def extract_cgr_cpp_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.CPP_SUFFIXES, ec.CPP_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_cpp_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
+        target, project_name, ec.CPP_SUFFIXES, ec.CPP_SCORED_NODE_KIND_VALUES
+    )
+
+
 def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.GO_SUFFIX, ec.GO_SCORED_NODE_KIND_VALUES

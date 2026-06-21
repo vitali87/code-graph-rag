@@ -268,3 +268,29 @@ PHP_ORACLE_DIRNAME = "php_oracle"
 PHP_ORACLE_SCRIPT = "php_ast.js"
 PHP_SCORES_FILENAME = "php_scores.csv"
 PHP_DIFF_FILENAME = "php_diff.json"
+
+# (H) C/C++ structure eval: cgr nodes graded against a libclang oracle driven by a
+# (H) compile_commands.json, so includes and macros resolve to the true AST (which
+# (H) tree-sitter cannot do). Joined on (kind, file, start_line).
+CPP_SUFFIXES: tuple[str, ...] = (
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".c",
+    ".hpp",
+    ".hh",
+    ".hxx",
+    ".h",
+)
+CPP_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+)
+CPP_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in CPP_SCORED_NODE_KINDS
+)
+CPP_COMPDB_FILENAME = "compile_commands.json"
+CPP_SCORES_FILENAME = "cpp_scores.csv"
+CPP_DIFF_FILENAME = "cpp_diff.json"
+CPP_DEFAULT_TARGET = "."
