@@ -194,8 +194,6 @@ class ClassIngestMixin:
             language,
             lang_config,
             file_path,
-            self.repo_path,
-            self.project_name,
         )
         if not identity:
             return

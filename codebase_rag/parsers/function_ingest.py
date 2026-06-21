@@ -61,7 +61,6 @@ class _DeferredGoMethod(NamedTuple):
 
 class FunctionIngestMixin:
     __slots__ = ()
-    _module_prefix_cache: dict[tuple[Path, int], str] = {}
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -129,7 +128,9 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
         file_path: Path | None,
     ) -> FunctionResolution | None:
-        resolution = self._try_unified_fqn_resolution(func_node, language, file_path)
+        resolution = self._try_unified_fqn_resolution(
+            func_node, module_qn, language, file_path
+        )
         if resolution:
             return resolution
 
@@ -140,6 +141,7 @@ class FunctionIngestMixin:
     def _try_unified_fqn_resolution(
         self,
         func_node: Node,
+        module_qn: str,
         language: cs.SupportedLanguage,
         file_path: Path | None,
     ) -> FunctionResolution | None:
@@ -160,15 +162,10 @@ class FunctionIngestMixin:
             current = current.parent
         parts.reverse()
 
-        cache_key = (file_path, id(fqn_config))
-        if cache_key in self._module_prefix_cache:
-            module_prefix = self._module_prefix_cache[cache_key]
-        else:
-            module_parts = fqn_config.file_to_module_parts(file_path, self.repo_path)
-            module_prefix = cs.SEPARATOR_DOT.join([self.project_name] + module_parts)
-            self._module_prefix_cache[cache_key] = module_prefix
-
-        func_qn = module_prefix + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+        # (H) Prefix with the module's resolved (collision-disambiguated) qn rather
+        # (H) than recomputing from the path, so same-stem cross-language siblings
+        # (H) stay distinct.
+        func_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
         simple_name = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
         is_exported = (
