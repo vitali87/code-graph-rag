@@ -516,7 +516,7 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         parent_type, parent_qn = self._determine_function_parent(
-            func_node, resolution.qualified_name, module_qn, lang_config
+            func_node, resolution.qualified_name, module_qn, lang_config, language
         )
         self.ingestor.ensure_relationship_batch(
             (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
@@ -691,6 +691,7 @@ class FunctionIngestMixin:
         func_qn: str,
         module_qn: str,
         lang_config: LanguageSpec,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str]:
         current = func_node.parent
         if not isinstance(current, Node):
@@ -709,5 +710,14 @@ class FunctionIngestMixin:
                 return parent_label, parent_qn
 
             current = current.parent
+
+        # (H) A Rust item inside `mod inner` is contained by that inline module,
+        # (H) not the file module. Its enclosing module qn is the file module plus
+        # (H) the mod path; the inline Module node carries that exact qn.
+        if language == cs.SupportedLanguage.RUST and (
+            mod_parts := rs_utils.build_module_path(func_node)
+        ):
+            nested = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(mod_parts)
+            return cs.NodeLabel.MODULE, nested
 
         return cs.NodeLabel.MODULE, module_qn

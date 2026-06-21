@@ -58,7 +58,7 @@ def test_cgr_matches_syn_oracle_on_rust_structure(tmp_path: Path) -> None:
         edges=set(),
         name_edges=set(),
     )
-    oracle = GraphData(nodes=run_rust_oracle(project), edges=set(), name_edges=set())
+    oracle = run_rust_oracle(project)
 
     result = score_node_kinds(cgr, oracle, ec.RS_SCORED_NODE_KINDS)
     by_label = {row["label"]: row for row in result.rows}

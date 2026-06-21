@@ -96,6 +96,7 @@ class ClassIngestMixin:
         func_qn: str,
         module_qn: str,
         lang_config: LanguageSpec,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str]: ...
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
@@ -224,7 +225,7 @@ class ClassIngestMixin:
             self.simple_name_lookup[class_name].add(class_qn)
 
         parent_label, parent_qn = self._determine_function_parent(
-            class_node, class_qn, module_qn, lang_config
+            class_node, class_qn, module_qn, lang_config, language
         )
         rel.create_class_relationships(
             class_node,
@@ -263,7 +264,17 @@ class ClassIngestMixin:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
-        class_qn = f"{module_qn}.{impl_target}"
+        # (H) An impl block inside `mod inner` targets a type whose node lives
+        # (H) under the module path (proj...inner.Widget). Resolve the impl target
+        # (H) against its enclosing module so the method binds to the real type
+        # (H) node instead of a phantom under the file module.
+        mod_parts = rs_utils.build_module_path(class_node)
+        owner_module_qn = (
+            f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
+            if mod_parts
+            else module_qn
+        )
+        class_qn = f"{owner_module_qn}.{impl_target}"
         body_node = class_node.child_by_field_name("body")
 
         if not body_node:
@@ -379,6 +390,13 @@ class ClassIngestMixin:
             if not module_name_node.text:
                 continue
 
+            # (H) A bodyless `mod foo;` only declares that the file module foo.rs
+            # (H) belongs here; foo.rs already yields its own real-path Module node
+            # (H) with the same qn. Emitting a second synthetic-path node collides
+            # (H) on that qn and clobbers the file's real path, so skip it.
+            if module_node.child_by_field_name(cs.FIELD_BODY) is None:
+                continue
+
             module_name = safe_decode_text(module_name_node)
             nested_qn = id_.build_nested_qualified_name_for_class(
                 module_node, module_qn, module_name or "", lang_config
@@ -389,13 +407,34 @@ class ClassIngestMixin:
                 cs.KEY_QUALIFIED_NAME: inline_module_qn,
                 cs.KEY_NAME: module_name,
                 cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
+                cs.KEY_START_LINE: module_node.start_point[0] + 1,
+                cs.KEY_END_LINE: module_node.end_point[0] + 1,
             }
+            # (H) A bodied inline module is physically located in this file; give
+            # (H) it the real path so it joins containment on (file, line).
+            file_path = self.module_qn_to_file_path.get(module_qn)
+            if file_path is not None:
+                module_props[cs.KEY_PATH] = cached_relative_path(
+                    file_path, self.repo_path
+                ).as_posix()
+                module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
             logger.info(
                 logs.CLASS_FOUND_INLINE_MODULE.format(
                     name=module_name, qn=inline_module_qn
                 )
             )
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
+
+            # (H) Link the inline module into the containment tree: its enclosing
+            # (H) module (file module, or an outer mod) DEFINES it. Without this the
+            # (H) inline Module node is an orphan defining nothing.
+            parent_module_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if parent_module_qn and parent_module_qn != inline_module_qn:
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),
+                    cs.RelationshipType.DEFINES,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
+                )
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(

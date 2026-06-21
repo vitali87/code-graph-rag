@@ -6,11 +6,10 @@ from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import extract_cgr_rust_nodes
+from .cgr_graph import extract_cgr_rust_graph
 from .oracles import run_rust_oracle, rust_available
-from .score import score_node_kinds
+from .score import score_structure
 from .structure_report import render, write_outputs
-from .types_defs import GraphData
 
 _TITLE = "cgr L1 structure eval (Rust vs syn)"
 
@@ -34,16 +33,14 @@ def main(
     project = project_name or target.name
 
     logger.info(ls.RS_EXTRACTING_CGR.format(target=target, project=project))
-    cgr = GraphData(
-        nodes=extract_cgr_rust_nodes(target, project), edges=set(), name_edges=set()
-    )
+    cgr = extract_cgr_rust_graph(target, project)
     logger.success(ls.RS_CGR_DONE.format(count=len(cgr.nodes)))
 
     logger.info(ls.RS_EXTRACTING_ORACLE.format(binary=ec.CARGO_BIN, target=target))
-    oracle = GraphData(nodes=run_rust_oracle(target), edges=set(), name_edges=set())
+    oracle = run_rust_oracle(target)
     logger.success(ls.RS_ORACLE_DONE.format(count=len(oracle.nodes)))
 
-    result = score_node_kinds(cgr, oracle, ec.RS_SCORED_NODE_KINDS)
+    result = score_structure(cgr, oracle, ec.RS_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES)
     write_outputs(result, out_dir, ec.RS_SCORES_FILENAME, ec.RS_DIFF_FILENAME)
     render(result, _TITLE)
 
