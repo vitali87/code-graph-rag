@@ -182,6 +182,19 @@ def extract_cgr_lang_graph(
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
 
+def restrict_to_files(graph: GraphData, files: set[str]) -> GraphData:
+    # (H) Scope a graph to a file universe. A compile_commands.json oracle only
+    # (H) "sees" files its compiled TUs reach, while cgr indexes the whole tree
+    # (H) (bundled test deps, uncompiled sources). Grading cgr's out-of-universe
+    # (H) nodes against that oracle is meaningless, so restrict cgr to the files
+    # (H) the oracle actually parsed before scoring. Drops only false positives:
+    # (H) no oracle node lives outside its own universe, so recall is untouched.
+    nodes = {k: v for k, v in graph.nodes.items() if k.file in files}
+    edges = {e for e in graph.edges if e.parent.file in files and e.child.file in files}
+    name_edges = {n for n in graph.name_edges if n.source.file in files}
+    return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
+
+
 def extract_cgr_cpp_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.CPP_SUFFIXES, ec.CPP_SCORED_NODE_KIND_VALUES

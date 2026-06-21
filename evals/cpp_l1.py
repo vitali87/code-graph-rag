@@ -6,7 +6,7 @@ from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import extract_cgr_cpp_graph
+from .cgr_graph import extract_cgr_cpp_graph, restrict_to_files
 from .oracles import cpp_available, run_cpp_oracle
 from .score import score_structure
 from .structure_report import render, write_outputs
@@ -42,6 +42,13 @@ def main(
     logger.info(ls.CPP_EXTRACTING_ORACLE.format(target=target))
     oracle = run_cpp_oracle(target)
     logger.success(ls.CPP_ORACLE_DONE.format(count=len(oracle.nodes)))
+
+    # (H) The compile_commands.json defines the gradeable universe: the oracle only
+    # (H) sees files its compiled TUs reach, so scope cgr to those files before
+    # (H) scoring. Without this, cgr's whole-tree index (bundled test deps,
+    # (H) uncompiled sources) is graded as false positives against a partial oracle.
+    cgr = restrict_to_files(cgr, {key.file for key in oracle.nodes})
+    logger.success(ls.CPP_CGR_SCOPED.format(count=len(cgr.nodes)))
 
     result = score_structure(
         cgr, oracle, ec.CPP_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES, grade_spans=True
