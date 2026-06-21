@@ -134,6 +134,19 @@ uv run python -m evals.lua_l1 --target /path/to/lua/repo --project-name myrepo
 
 Validated on `apache/thrift`'s Lua (`lib/lua`, `test/lua`): 376 cgr nodes vs 376 oracle nodes — exact, 1.0. No cgr gap found.
 
+## L1 (PHP) — structure against a `php-parser` oracle
+
+The eighth native oracle is PHP, checked against `php-parser` (a pure-JS PHP parser, so no `php` binary is needed).
+
+```bash
+uv run python -m evals.php_l1 --target /path/to/php/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/php_oracle/`): a Node script that parses every `.php` file with `php-parser` and emits one record per declaration. Mapping, matching cgr: `class` → `Class`, `interface` → `Interface` (+ methods → `Method`), `trait` → `Class` (+ methods → `Method`), `enum` → `Enum`, `function` → `Function`, closure / arrow `fn` → `Function`. Methods of an **anonymous class** (`new class {...}`) are `Function`s (like Java/JS object-literal members), and a declaration's line is its first attribute (`#[Attr]`) line when present — both matching cgr's node span. Requires `node`/`npm` (the `php-parser` dependency installs on first run; `package-lock.json` committed, `node_modules/` gitignored).
+- **cgr side** (`cgr_graph.extract_cgr_php_nodes`), **score** (`score.score_node_kinds`), output to `php_scores.csv` / `php_diff.json`.
+
+Validated on `apache/thrift`'s PHP (`lib/php`): 1295 cgr nodes vs 1295 oracle nodes — exact, all kinds 1.0. No cgr gap found.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.
