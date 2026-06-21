@@ -80,6 +80,13 @@ class OracleEdge(TypedDict):
     child: OracleNodeRef
 
 
+class OracleNameEdge(TypedDict):
+    rel: str
+    source: OracleNodeRef
+    target_name: str
+
+
 class OraclePayload(TypedDict):
     nodes: list[OracleRecord]
     edges: list[OracleEdge]
+    name_edges: list[OracleNameEdge]

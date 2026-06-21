@@ -108,13 +108,38 @@ def extract_cpp_base_class_name(parent_text: str) -> str:
     return parent_text
 
 
+def java_base_type_identifier(type_node: Node) -> Node | None:
+    # (H) The base type in a Java extends/implements clause may be plain
+    # (H) (`Base`), generic (`Base<T>` -> generic_type), or qualified
+    # (H) (`pkg.Base` -> scoped_type_identifier). Unwrap to the base type's
+    # (H) type_identifier so generic/qualified bases are captured, not dropped.
+    if type_node.type == cs.TS_TYPE_IDENTIFIER:
+        return type_node
+    if type_node.type == cs.TS_GENERIC_TYPE:
+        for child in type_node.children:
+            if child.type in (
+                cs.TS_TYPE_IDENTIFIER,
+                cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+            ):
+                return java_base_type_identifier(child)
+    if type_node.type == cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+        # (H) `a.b.Base` -> the trailing type_identifier is the simple name.
+        last: Node | None = None
+        for child in type_node.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER:
+                last = child
+        return last
+    return None
+
+
 def resolve_superclass_from_type_identifier(
     type_identifier_node: Node,
     module_qn: str,
     resolve_to_qn: Callable[[str, str], str],
 ) -> str | None:
-    if type_identifier_node.text:
-        if parent_name := safe_decode_text(type_identifier_node):
+    base = java_base_type_identifier(type_identifier_node)
+    if base is not None and base.text:
+        if parent_name := safe_decode_text(base):
             return resolve_to_qn(parent_name, module_qn)
     return None
 
@@ -128,7 +153,12 @@ def extract_java_superclass(
     if not superclass_node:
         return []
 
-    if superclass_node.type == cs.TS_TYPE_IDENTIFIER:
+    _JAVA_BASE_TYPES = (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_GENERIC_TYPE,
+        cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+    )
+    if superclass_node.type in _JAVA_BASE_TYPES:
         if resolved := resolve_superclass_from_type_identifier(
             superclass_node, module_qn, resolve_to_qn
         ):
@@ -136,7 +166,7 @@ def extract_java_superclass(
         return []
 
     for child in superclass_node.children:
-        if child.type == cs.TS_TYPE_IDENTIFIER:
+        if child.type in _JAVA_BASE_TYPES:
             if resolved := resolve_superclass_from_type_identifier(
                 child, module_qn, resolve_to_qn
             ):
@@ -240,6 +270,13 @@ def extract_interface_parents(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
+    # (H) Java interface `extends A, B` is an `extends_interfaces` clause holding a
+    # (H) type_list; superinterfaces are inheritance, so emit them as INHERITS.
+    if java_extends := find_child_by_type(class_node, cs.TS_JAVA_EXTENDS_INTERFACES):
+        parents: list[str] = []
+        extract_java_interface_names(java_extends, parents, module_qn, resolve_to_qn)
+        return parents
+
     extends_clause = find_child_by_type(class_node, cs.TS_EXTENDS_TYPE_CLAUSE)
     if not extends_clause:
         return []
@@ -324,6 +361,10 @@ def extract_java_interface_names(
     for child in interfaces_node.children:
         if child.type == cs.TS_TYPE_LIST:
             for type_child in child.children:
-                if type_child.type == cs.TS_TYPE_IDENTIFIER and type_child.text:
-                    if interface_name := safe_decode_text(type_child):
+                # (H) Unwrap generic/qualified bases (`TBase<T>`, `pkg.IScheme`) to
+                # (H) the base type_identifier; plain identifiers pass straight
+                # (H) through. Skips list punctuation (commas).
+                base = java_base_type_identifier(type_child)
+                if base is not None and base.text:
+                    if interface_name := safe_decode_text(base):
                         interface_list.append(resolve_to_qn(interface_name, module_qn))

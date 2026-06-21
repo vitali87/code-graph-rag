@@ -161,15 +161,21 @@ def extract_cgr_lang_graph(
         nodes[endpoint] = DefNode(endpoint, str(props.get(cs.KEY_NAME, "")), end_line)
 
     edges: set[EdgeKey] = set()
+    name_edges: set[NameEdge] = set()
     for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
-        if rel_type not in ec.SCORED_EDGE_TYPE_VALUES:
-            continue
-        parent = by_uid.get((from_label, from_val))
-        child = by_uid.get((to_label, to_val))
-        if parent is None or child is None:
-            continue
-        edges.add(EdgeKey(rel_type, parent, child))
-    return GraphData(nodes=nodes, edges=edges, name_edges=set())
+        if rel_type in ec.SCORED_EDGE_TYPE_VALUES:
+            parent = by_uid.get((from_label, from_val))
+            child = by_uid.get((to_label, to_val))
+            if parent is not None and child is not None:
+                edges.add(EdgeKey(rel_type, parent, child))
+        elif rel_type in ec.INHERITANCE_NAME_EDGE_TYPE_VALUES:
+            # (H) Inheritance is graded by the base's SIMPLE NAME (cgr's to-value
+            # (H) is the resolved base qn, or the bare name when unresolved).
+            source = by_uid.get((from_label, from_val))
+            if source is not None:
+                target_name = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                name_edges.add(NameEdge(rel_type, source, target_name))
+    return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
 
 def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:

@@ -9,8 +9,10 @@ from ..types_defs import (
     DefNode,
     EdgeKey,
     GraphData,
+    NameEdge,
     NodeKey,
     OracleEdge,
+    OracleNameEdge,
     OracleNodeRef,
     OraclePayload,
     OracleRecord,
@@ -59,9 +61,25 @@ def records_to_edges(edges: list[OracleEdge]) -> set[EdgeKey]:
     return out
 
 
+def records_to_name_edges(name_edges: list[OracleNameEdge]) -> set[NameEdge]:
+    out: set[NameEdge] = set()
+    for edge in name_edges:
+        source = edge[ec.ORACLE_KEY_SOURCE]
+        if is_ignored(source[ec.ORACLE_KEY_FILE]):
+            continue
+        out.add(
+            NameEdge(
+                edge[ec.ORACLE_KEY_REL],
+                _ref_to_key(source),
+                edge[ec.ORACLE_KEY_TARGET_NAME],
+            )
+        )
+    return out
+
+
 def payload_to_graph(payload: OraclePayload) -> GraphData:
     return GraphData(
         nodes=records_to_nodes(payload.get(ec.ORACLE_KEY_NODES, [])),
         edges=records_to_edges(payload.get(ec.ORACLE_KEY_EDGES, [])),
-        name_edges=set(),
+        name_edges=records_to_name_edges(payload.get(ec.ORACLE_KEY_NAME_EDGES, [])),
     )
