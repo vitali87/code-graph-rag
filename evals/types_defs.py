@@ -61,7 +61,7 @@ class ScoreResult(NamedTuple):
     diff: dict[str, DiffBucket]
 
 
-class GoOracleRecord(TypedDict):
+class OracleRecord(TypedDict):
     kind: str
     file: str
     line: int

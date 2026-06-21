@@ -70,6 +70,19 @@ Validated on `apache/thrift` (1604 cgr Go nodes vs 1604 oracle nodes — exact):
 
 Both gaps the oracle originally exposed are fixed: Go `type` declarations (struct/interface/defined-type) are captured (see `codebase_rag/tests/test_go_type_declarations.py`), and Go receiver methods are now `Method` nodes qualified by their receiver type with a `DEFINES_METHOD` edge from it (see `codebase_rag/tests/test_go_receiver_methods.py`), rather than being mislabelled `Function`.
 
+## L1 (Rust) — structure against a native `syn` oracle
+
+The second native oracle is Rust, checked against `syn` (the de-facto standard Rust parser).
+
+```bash
+uv run python -m evals.rust_l1 --target /path/to/rust/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/rs_oracle/`): a small Rust program that parses every `.rs` file with `syn` and emits one JSON record per declaration, in cgr's `NodeLabel` vocabulary. A `syn::visit::Visit` walk recurses into function bodies (function-local defs), `impl`/`trait` associated types, and closures (which cgr models as anonymous `Function` nodes), so the comparison is apples-to-apples. Mapping: `struct` → `Class`, `enum` → `Enum`, `union` → `Union`, `trait` → `Interface` (+ its methods → `Method`), `type` (incl. associated types) → `Type`, `fn`/closure → `Function`, `impl` method → `Method`. Requires the `cargo` toolchain (`proc-macro2`'s `span-locations` feature gives real line numbers); `evals.rust_l1` exits cleanly if it is missing.
+- **cgr side** (`cgr_graph.extract_cgr_rust_nodes`), **score** (`score.score_node_kinds`), output to `rs_scores.csv` / `rs_diff.json`.
+
+Validated on `apache/thrift`'s `lib/rs` (758 cgr Rust nodes vs 758 oracle nodes — exact, all kinds 1.0). The oracle surfaced one cgr gap, now fixed: methods in an `impl Trait for <primitive>` block (e.g. `impl From<Foo> for u8`) were dropped because the `primitive_type` impl target was unhandled (see `codebase_rag/tests/test_rust_impl_primitive_target.py`).
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.
