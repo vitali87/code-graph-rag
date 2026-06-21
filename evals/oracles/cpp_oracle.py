@@ -9,6 +9,7 @@ from .. import constants as ec
 from ..types_defs import (
     GraphData,
     OracleEdge,
+    OracleNameEdge,
     OracleNodeRef,
     OraclePayload,
     OracleRecord,
@@ -29,9 +30,12 @@ _METHOD = cs.NodeLabel.METHOD.value
 _MODULE = cs.NodeLabel.MODULE.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
+_INHERITS = cs.RelationshipType.INHERITS.value
+_BASE_SPECIFIER = "CXX_BASE_SPECIFIER"
 
 _NodeId = tuple[str, str, int]
 _EdgeId = tuple[str, str, int, str, int]
+_NameEdgeId = tuple[str, str, int, str]
 
 # (H) libclang CursorKind members are registered dynamically (not static class
 # (H) attributes), so map by the kind's stable NAME string — exactly what
@@ -74,6 +78,7 @@ def run_cpp_oracle(target: Path) -> GraphData:
     index = ci.Index.create()
     nodes: dict[_NodeId, OracleRecord] = {}
     edges: dict[_EdgeId, OracleEdge] = {}
+    name_edges: dict[_NameEdgeId, OracleNameEdge] = {}
 
     for command in db.getAllCompileCommands():
         args = list(command.arguments)[1:]
@@ -81,10 +86,12 @@ def run_cpp_oracle(target: Path) -> GraphData:
             tu = index.parse(None, args=args)
         except ci.TranslationUnitLoadError:
             continue
-        _walk(tu.cursor, root, nodes, edges)
+        _walk(tu.cursor, root, nodes, edges, name_edges)
 
     payload = OraclePayload(
-        nodes=list(nodes.values()), edges=list(edges.values()), name_edges=[]
+        nodes=list(nodes.values()),
+        edges=list(edges.values()),
+        name_edges=list(name_edges.values()),
     )
     return payload_to_graph(payload)
 
@@ -94,10 +101,19 @@ def _walk(
     root: Path,
     nodes: dict[_NodeId, OracleRecord],
     edges: dict[_EdgeId, OracleEdge],
+    name_edges: dict[_NameEdgeId, OracleNameEdge],
 ) -> None:
     for child in cursor.get_children():
-        _emit(child, root, nodes, edges)
-        _walk(child, root, nodes, edges)
+        _emit(child, root, nodes, edges, name_edges)
+        _walk(child, root, nodes, edges, name_edges)
+
+
+def _base_simple_name(spelling: str) -> str:
+    # (H) Mirror cgr's base-name normalization (extract_cgr_lang_graph): collapse
+    # (H) `::` to `.` and take the last component, so the oracle and cgr agree on
+    # (H) the inheritance target spelling.
+    flat = spelling.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+    return flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
 
 def _emit(
@@ -105,6 +121,7 @@ def _emit(
     root: Path,
     nodes: dict[_NodeId, OracleRecord],
     edges: dict[_EdgeId, OracleEdge],
+    name_edges: dict[_NameEdgeId, OracleNameEdge],
 ) -> None:
     if not cursor.is_definition():
         return
@@ -132,8 +149,21 @@ def _emit(
         prel = _rel(parent.location.file.name, root)
         if prel is not None:
             _add_edge(edges, _DEFINES_METHOD, _CLASS, prel, parent.location.line, key)
-    else:
-        _add_edge(edges, _DEFINES, _MODULE, rel, ec.MODULE_START_LINE, key)
+        return
+
+    _add_edge(edges, _DEFINES, _MODULE, rel, ec.MODULE_START_LINE, key)
+    if kind == _CLASS:
+        for child in cursor.get_children():
+            if child.kind.name != _BASE_SPECIFIER:
+                continue
+            base = _base_simple_name(child.type.spelling)
+            nk: _NameEdgeId = (_INHERITS, rel, line, base)
+            if nk not in name_edges:
+                name_edges[nk] = OracleNameEdge(
+                    rel=_INHERITS,
+                    source=OracleNodeRef(kind=_CLASS, file=rel, line=line),
+                    target_name=base,
+                )
 
 
 def _add_edge(
