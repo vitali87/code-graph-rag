@@ -121,6 +121,19 @@ uv run python -m evals.java_l1 --target /path/to/java/repo --project-name myrepo
 
 Validated on `apache/thrift`'s `lib/java`: 2861 cgr nodes vs 2861 oracle nodes — exact, all kinds 1.0 (including the 103 anonymous-class methods graded as `Function`). No cgr gap found.
 
+## L1 (Lua) — structure against a `luaparse` oracle
+
+The seventh native oracle is Lua, checked against `luaparse`.
+
+```bash
+uv run python -m evals.lua_l1 --target /path/to/lua/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/lua_oracle/`): a Node script that parses every `.lua` file with `luaparse` (`luaVersion: "5.3"`, so bitwise operators / integer division parse) and emits a `Function` record per function declaration/expression. Lua has no classes, so cgr models every function — global, `local`, table (`t.f`), method (`t:m`), and anonymous function expressions — as a `Function`. Requires `node`/`npm` (the `luaparse` dependency installs on first run; `package-lock.json` committed, `node_modules/` gitignored).
+- **cgr side** (`cgr_graph.extract_cgr_lua_nodes`), **score** (`score.score_node_kinds`), output to `lua_scores.csv` / `lua_diff.json`.
+
+Validated on `apache/thrift`'s Lua (`lib/lua`, `test/lua`): 376 cgr nodes vs 376 oracle nodes — exact, 1.0. No cgr gap found.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.

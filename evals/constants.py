@@ -205,3 +205,15 @@ JAVA_BIN = "java"
 JAVA_CP_FLAG = "-cp"
 JAVA_SCORES_FILENAME = "java_scores.csv"
 JAVA_DIFF_FILENAME = "java_diff.json"
+
+# (H) Lua structure eval: cgr nodes graded against a luaparse oracle. Lua has no
+# (H) classes, so every function (global/local/table/method/anonymous) is Function.
+LUA_SUFFIX = ".lua"
+LUA_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (cs.NodeLabel.FUNCTION,)
+LUA_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in LUA_SCORED_NODE_KINDS
+)
+LUA_ORACLE_DIRNAME = "lua_oracle"
+LUA_ORACLE_SCRIPT = "lua_ast.js"
+LUA_SCORES_FILENAME = "lua_scores.csv"
+LUA_DIFF_FILENAME = "lua_diff.json"

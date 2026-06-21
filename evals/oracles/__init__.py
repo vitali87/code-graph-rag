@@ -1,5 +1,6 @@
 from .go_oracle import go_available, run_go_oracle
 from .java_oracle import java_available, run_java_oracle
+from .lua_oracle import lua_oracle_available, run_lua_oracle
 from .rust_oracle import run_rust_oracle, rust_available
 from .typescript_oracle import (
     run_javascript_oracle,
@@ -12,6 +13,8 @@ __all__ = [
     "run_go_oracle",
     "java_available",
     "run_java_oracle",
+    "lua_oracle_available",
+    "run_lua_oracle",
     "run_rust_oracle",
     "rust_available",
     "run_javascript_oracle",
