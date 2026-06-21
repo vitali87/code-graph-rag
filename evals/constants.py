@@ -12,12 +12,15 @@ SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.METHOD,
 )
 SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(k.value for k in SCORED_NODE_KINDS)
+# (H) Span (end_line) grading excludes Module: a module's end_line is the whole
+# (H) file, which the ast oracle records as 0, so it is not a meaningful def span.
+SPANNED_NODE_KINDS_TUPLE: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+)
 SPANNED_NODE_KINDS: frozenset[str] = frozenset(
-    {
-        cs.NodeLabel.CLASS.value,
-        cs.NodeLabel.FUNCTION.value,
-        cs.NodeLabel.METHOD.value,
-    }
+    k.value for k in SPANNED_NODE_KINDS_TUPLE
 )
 
 SCORED_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (

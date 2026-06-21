@@ -74,6 +74,12 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
                 cgr_set_n, oracle_set_n
             )
 
+    # (H) The Python ast oracle records real end_lineno, so spans are graded like
+    # (H) the native-oracle languages (Class/Function/Method; Module is excluded).
+    span_result = score_span(cgr, oracle, ec.SPANNED_NODE_KINDS_TUPLE)
+    rows.extend(span_result.rows)
+    diff.update(span_result.diff)
+
     return ScoreResult(rows=rows, location=_location_stats(cgr, oracle), diff=diff)
 
 
