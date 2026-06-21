@@ -12,6 +12,18 @@
 //   enum                   -> Enum
 //   method / constructor   -> Method
 //
+// Containment edges (matching how cgr models Java containment):
+//
+//   DEFINES        : the file module -> every named type (top-level OR nested)
+//   DEFINES_METHOD : the method's immediate enclosing named type -> Method
+//
+// cgr models a Java module per file (keyed at line 0) and DEFINES every named
+// type from it (containment is flat, not nested-type-scoped). A method binds to
+// its nearest enclosing named type. Methods of an anonymous class are Functions
+// (no DEFINES_METHOD), matching the node mapping.
+//
+// Output is a {nodes, edges} payload joining cgr on (kind, file, line).
+//
 // Compile: javac Oracle.java ; Run: java -cp <dir> Oracle <dir>
 
 import com.sun.source.tree.ClassTree;
@@ -45,6 +57,8 @@ public class Oracle {
     static final Set<String> IGNORED =
         new HashSet<>(Arrays.asList(".git", "target", "build", "node_modules", "vendor"));
     static final List<String> recs = new ArrayList<>();
+    static final List<String> edges = new ArrayList<>();
+    static final long MODULE_LINE = 0;
 
     static String esc(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
@@ -53,6 +67,26 @@ public class Oracle {
     static void emit(String kind, String file, long line, String name) {
         recs.add("{\"kind\":\"" + kind + "\",\"file\":\"" + esc(file)
             + "\",\"line\":" + line + ",\"name\":\"" + esc(name) + "\"}");
+    }
+
+    static void emitEdge(
+            String rel, String file, String pkind, long pline, String ckind, long cline) {
+        edges.add("{\"rel\":\"" + rel + "\",\"parent\":{\"kind\":\"" + pkind
+            + "\",\"file\":\"" + esc(file) + "\",\"line\":" + pline
+            + "},\"child\":{\"kind\":\"" + ckind + "\",\"file\":\"" + esc(file)
+            + "\",\"line\":" + cline + "}}");
+    }
+
+    static String classKind(ClassTree node) {
+        switch (node.getKind()) {
+            case INTERFACE:
+                return "Interface";
+            case ENUM:
+                return "Enum";
+            // (H) cgr models an annotation type (@interface) as a Class.
+            default:
+                return "Class";
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -75,7 +109,7 @@ public class Oracle {
             }
         });
         if (files.isEmpty()) {
-            System.out.print("[]");
+            System.out.print("{\"nodes\":[],\"edges\":[]}");
             return;
         }
 
@@ -91,22 +125,14 @@ public class Oracle {
             LineMap lm = unit.getLineMap();
             new TreePathScanner<Void, Void>() {
                 public Void visitClass(ClassTree node, Void p) {
-                    String kind;
-                    switch (node.getKind()) {
-                        case INTERFACE:
-                            kind = "Interface";
-                            break;
-                        case ENUM:
-                            kind = "Enum";
-                            break;
-                        // (H) cgr models an annotation type (@interface) as a Class.
-                        default:
-                            kind = "Class";
-                    }
                     long pos = sp.getStartPosition(unit, node);
                     // (H) Anonymous classes have an empty name and no cgr node.
                     if (pos >= 0 && node.getSimpleName().length() > 0) {
-                        emit(kind, rel, lm.getLineNumber(pos), node.getSimpleName().toString());
+                        long line = lm.getLineNumber(pos);
+                        emit(classKind(node), rel, line, node.getSimpleName().toString());
+                        // (H) Every named type is DEFINEd by the file module,
+                        // (H) including nested types (cgr keeps this flat).
+                        emitEdge("DEFINES", rel, "Module", MODULE_LINE, classKind(node), line);
                     }
                     return super.visitClass(node, p);
                 }
@@ -119,24 +145,37 @@ public class Oracle {
                         // (H) lambda body; members of an anonymous class (declared in
                         // (H) a method body) are modelled as standalone Functions.
                         String kind = "Function";
+                        ClassTree owner = null;
                         for (TreePath up = getCurrentPath().getParentPath();
                                 up != null; up = up.getParentPath()) {
                             Tree t = up.getLeaf();
                             if (t instanceof ClassTree
                                     && ((ClassTree) t).getSimpleName().length() > 0) {
                                 kind = "Method";
+                                owner = (ClassTree) t;
                                 break;
                             }
                             if (t instanceof MethodTree || t instanceof LambdaExpressionTree) {
                                 break;
                             }
                         }
-                        emit(kind, rel, lm.getLineNumber(pos), node.getName().toString());
+                        long line = lm.getLineNumber(pos);
+                        emit(kind, rel, line, node.getName().toString());
+                        // (H) A Method binds to its enclosing named type; an
+                        // (H) anonymous-class member (Function) has no such edge.
+                        if (owner != null) {
+                            long opos = sp.getStartPosition(unit, owner);
+                            if (opos >= 0) {
+                                emitEdge("DEFINES_METHOD", rel, classKind(owner),
+                                    lm.getLineNumber(opos), "Method", line);
+                            }
+                        }
                     }
                     return super.visitMethod(node, p);
                 }
             }.scan(unit, null);
         }
-        System.out.print("[" + String.join(",", recs) + "]");
+        System.out.print("{\"nodes\":[" + String.join(",", recs)
+            + "],\"edges\":[" + String.join(",", edges) + "]}");
     }
 }
