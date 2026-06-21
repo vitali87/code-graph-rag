@@ -28,7 +28,7 @@ function walk(node, file, parentRef) {
   }
   if (node.type === "FunctionDeclaration" && node.loc) {
     const line = node.loc.start.line;
-    nodes.push({ kind: "Function", file, line, name: "fn" });
+    nodes.push({ kind: "Function", file, line, end_line: node.loc.end.line, name: "fn" });
     edges.push({
       rel: "DEFINES",
       parent: { kind: parentRef.kind, file, line: parentRef.line },
