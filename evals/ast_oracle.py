@@ -122,10 +122,13 @@ def _end_line(node: ast.stmt) -> int:
 def _child_stmts(node: ast.stmt) -> list[ast.stmt]:
     out: list[ast.stmt] = []
     for _field, value in ast.iter_fields(node):
-        if isinstance(value, list):
-            out.extend(item for item in value if isinstance(item, ast.stmt))
-        elif isinstance(value, ast.stmt):
-            out.append(value)
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, ast.stmt):
+                out.append(item)
+            elif isinstance(item, ast.ExceptHandler | ast.match_case):
+                # (H) except handlers and match cases are not ast.stmt but hold
+                # (H) statement bodies that may define functions/classes.
+                out.extend(s for s in item.body if isinstance(s, ast.stmt))
     return out
 
 
