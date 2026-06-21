@@ -28,3 +28,8 @@ JS_EXTRACTING_CGR = "Building cgr JavaScript nodes for {target} (project={projec
 JS_CGR_DONE = "cgr JavaScript nodes: {count}"
 JS_EXTRACTING_ORACLE = "Running TypeScript compiler oracle ({binary}) over {target}"
 JS_ORACLE_DONE = "JavaScript oracle nodes: {count}"
+JAVA_EXTRACTING_CGR = "Building cgr Java nodes for {target} (project={project})"
+JAVA_CGR_DONE = "cgr Java nodes: {count}"
+JAVA_EXTRACTING_ORACLE = "Running JDK Compiler Tree API oracle ({binary}) over {target}"
+JAVA_ORACLE_DONE = "Java oracle nodes: {count}"
+JAVA_ORACLE_MISSING = "javac/java not found on PATH; cannot run the Java oracle"

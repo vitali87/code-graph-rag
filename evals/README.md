@@ -108,6 +108,19 @@ Same mapping as TypeScript, with two JS-specific points matching cgr: object-lit
 
 Validated on `apache/thrift`'s JavaScript (`lib/js`, `lib/nodejs`): 1087 cgr nodes vs 1087 oracle nodes — exact, all kinds 1.0. No cgr gap found.
 
+## L1 (Java) — structure against the JDK Compiler Tree API
+
+The sixth native oracle is Java, checked against the JDK's own parser (`com.sun.source` / `javax.tools`).
+
+```bash
+uv run python -m evals.java_l1 --target /path/to/java/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/java_oracle/Oracle.java`): parses every `.java` file with the JDK Compiler Tree API (`task.parse()` only parses, so missing dependencies are fine) and emits one JSON record per declaration. Mapping, matching cgr: `class` → `Class`, `interface` → `Interface` (+ its method signatures → `Method`), annotation type (`@interface`) → `Class`, `enum` → `Enum`, method/constructor → `Method`. Requires `javac`/`java`; the oracle is compiled on first run (the `.class` is gitignored, the source committed). `evals.java_l1` exits cleanly if the JDK is missing.
+- **cgr side** (`cgr_graph.extract_cgr_java_nodes`), **score** (`score.score_node_kinds`), output to `java_scores.csv` / `java_diff.json`.
+
+Validated on `apache/thrift`'s `lib/java`: Class/Interface/Enum all 1.0; **Method recall 0.96**. The oracle surfaced one cgr gap: **methods declared inside anonymous classes** (e.g. `new AsyncMethodCallback<Void>() { public void onComplete(...) {...} }`) are not indexed by cgr — its Java class capture (`SPEC_JAVA_CLASS_TYPES`) covers only named types (class/interface/enum/annotation/record), not `object_creation_expression` bodies. Capturing them requires synthesising identities for anonymous classes; it is the recommended next cgr fix. Named-type structure (the harness test `codebase_rag/tests/test_java_structure_oracle.py`) is exact.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.
