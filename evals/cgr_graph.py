@@ -208,6 +208,12 @@ def extract_cgr_php_nodes(target: Path, project_name: str) -> dict[NodeKey, DefN
     )
 
 
+def extract_cgr_php_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
+        target, project_name, ec.PHP_SUFFIX, ec.PHP_SCORED_NODE_KIND_VALUES
+    )
+
+
 def extract_cgr_java_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.JAVA_SUFFIX, ec.JAVA_SCORED_NODE_KIND_VALUES
