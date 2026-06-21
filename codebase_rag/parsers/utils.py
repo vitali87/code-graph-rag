@@ -271,8 +271,18 @@ def ingest_method(
     )
     simple_name_lookup[method_name].add(method_qn)
 
+    # (H) The DEFINES_METHOD parent is matched in the graph by LABEL +
+    # (H) qualified_name, so it must carry the container's real node label. Callers
+    # (H) pass Class by default, but a trait/interface (Interface) or enum (Enum)
+    # (H) container would then never match, dropping the containment edge. Prefer
+    # (H) the label the container was actually registered with.
+    container_label = container_type
+    registered = function_registry.get(container_qn)
+    if registered is not None and registered != NodeType.METHOD:
+        container_label = cs.NodeLabel(registered.value)
+
     ingestor.ensure_relationship_batch(
-        (container_type, cs.KEY_QUALIFIED_NAME, container_qn),
+        (container_label, cs.KEY_QUALIFIED_NAME, container_qn),
         cs.RelationshipType.DEFINES_METHOD,
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
     )
