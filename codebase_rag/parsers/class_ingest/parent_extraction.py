@@ -74,6 +74,15 @@ def extract_parent_classes(
             if parent_name := php_base_simple_name(child):
                 parent_classes.append(resolve_to_qn(parent_name, module_qn))
 
+    # (H) Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
+    if class_node.type == cs.TS_RS_TRAIT_ITEM:
+        if bounds := class_node.child_by_field_name(cs.FIELD_BOUNDS):
+            for child in bounds.children:
+                base = java_base_type_identifier(child)
+                if base is not None and base.text:
+                    if name := safe_decode_text(base):
+                        parent_classes.append(resolve_to_qn(name, module_qn))
+
     return parent_classes
 
 

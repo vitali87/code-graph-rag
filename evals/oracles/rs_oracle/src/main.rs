@@ -50,6 +50,8 @@ const KIND_METHOD: &str = "Method";
 const KIND_MODULE: &str = "Module";
 const REL_DEFINES: &str = "DEFINES";
 const REL_DEFINES_METHOD: &str = "DEFINES_METHOD";
+const REL_INHERITS: &str = "INHERITS";
+const REL_IMPLEMENTS: &str = "IMPLEMENTS";
 const MODULE_LINE: usize = 0;
 
 fn esc(s: &str) -> String {
@@ -84,6 +86,28 @@ fn edge_json(
         esc(file),
         cline
     )
+}
+
+fn name_edge_json(
+    rel: &str,
+    file: &str,
+    skind: &str,
+    sline: usize,
+    target_name: &str,
+) -> String {
+    format!(
+        "{{\"rel\":\"{}\",\"source\":{{\"kind\":\"{}\",\"file\":\"{}\",\"line\":{}}},\"target_name\":\"{}\"}}",
+        rel,
+        skind,
+        esc(file),
+        sline,
+        esc(target_name)
+    )
+}
+
+// (H) Last path segment of a trait reference (`a::b::Trait` / `Trait<T>` -> Trait).
+fn trait_path_name(path: &syn::Path) -> Option<String> {
+    path.segments.last().map(|s| s.ident.to_string())
 }
 
 // ---- node collection (every declaration, including nested/closures) ----
@@ -247,6 +271,7 @@ fn process_edges(
     modpath: &str,
     table: &HashMap<String, (String, usize)>,
     edges: &mut Vec<String>,
+    name_edges: &mut Vec<String>,
 ) {
     for item in items {
         match item {
@@ -270,6 +295,16 @@ fn process_edges(
                 edges.push(edge_json(
                     REL_DEFINES, file, KIND_MODULE, module_line, KIND_INTERFACE, tline,
                 ));
+                // (H) Supertrait bounds (`trait Sub: Super`) -> Sub INHERITS Super.
+                for bound in &tr.supertraits {
+                    if let syn::TypeParamBound::Trait(tb) = bound {
+                        if let Some(name) = trait_path_name(&tb.path) {
+                            name_edges.push(name_edge_json(
+                                REL_INHERITS, file, KIND_INTERFACE, tline, &name,
+                            ));
+                        }
+                    }
+                }
                 for ti in &tr.items {
                     match ti {
                         syn::TraitItem::Fn(m) => edges.push(edge_json(
@@ -289,6 +324,14 @@ fn process_edges(
             syn::Item::Impl(im) => {
                 let owner = impl_target_name(&im.self_ty)
                     .and_then(|name| resolve_type(modpath, &name, table));
+                // (H) `impl Trait for Type` -> Type IMPLEMENTS Trait.
+                if let (Some((kind, tline)), Some((_, path, _))) = (&owner, &im.trait_) {
+                    if let Some(name) = trait_path_name(path) {
+                        name_edges.push(name_edge_json(
+                            REL_IMPLEMENTS, file, kind, *tline, &name,
+                        ));
+                    }
+                }
                 for ii in &im.items {
                     match ii {
                         syn::ImplItem::Fn(m) => {
@@ -314,7 +357,7 @@ fn process_edges(
                         REL_DEFINES, file, KIND_MODULE, module_line, KIND_MODULE, mline,
                     ));
                     let child = child_modpath(modpath, &m.ident.to_string());
-                    process_edges(content, file, mline, &child, table, edges);
+                    process_edges(content, file, mline, &child, table, edges, name_edges);
                 }
             }
             _ => {}
@@ -322,7 +365,13 @@ fn process_edges(
     }
 }
 
-fn visit_dir(dir: &Path, root: &Path, nodes: &mut Vec<String>, edges: &mut Vec<String>) {
+fn visit_dir(
+    dir: &Path,
+    root: &Path,
+    nodes: &mut Vec<String>,
+    edges: &mut Vec<String>,
+    name_edges: &mut Vec<String>,
+) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
@@ -332,7 +381,7 @@ fn visit_dir(dir: &Path, root: &Path, nodes: &mut Vec<String>, edges: &mut Vec<S
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !IGNORED_DIRS.contains(&name) {
-                visit_dir(&path, root, nodes, edges);
+                visit_dir(&path, root, nodes, edges, name_edges);
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             if let Ok(src) = fs::read_to_string(&path) {
@@ -346,7 +395,9 @@ fn visit_dir(dir: &Path, root: &Path, nodes: &mut Vec<String>, edges: &mut Vec<S
                     collector.visit_file(&ast);
                     let mut table: HashMap<String, (String, usize)> = HashMap::new();
                     collect_types(&ast.items, "", &mut table);
-                    process_edges(&ast.items, &rel, MODULE_LINE, "", &table, edges);
+                    process_edges(
+                        &ast.items, &rel, MODULE_LINE, "", &table, edges, name_edges,
+                    );
                 }
             }
         }
@@ -358,10 +409,12 @@ fn main() {
     let root = Path::new(&root);
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
-    visit_dir(root, root, &mut nodes, &mut edges);
+    let mut name_edges = Vec::new();
+    visit_dir(root, root, &mut nodes, &mut edges, &mut name_edges);
     println!(
-        "{{\"nodes\":[{}],\"edges\":[{}]}}",
+        "{{\"nodes\":[{}],\"edges\":[{}],\"name_edges\":[{}]}}",
         nodes.join(","),
-        edges.join(",")
+        edges.join(","),
+        name_edges.join(",")
     );
 }

@@ -137,12 +137,9 @@ def _process_scoped_use_list(
                 _process_use_tree(child, final_base, imports)
 
 
-def extract_impl_target(impl_node: Node) -> str | None:
-    if impl_node.type != cs.TS_IMPL_ITEM:
-        return None
-
+def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
     for i in range(impl_node.child_count):
-        if impl_node.field_name_for_child(i) == cs.FIELD_TYPE:
+        if impl_node.field_name_for_child(i) == field:
             type_node = impl_node.child(i)
             if type_node is None:
                 continue
@@ -160,6 +157,20 @@ def extract_impl_target(impl_node: Node) -> str | None:
                                 return name
 
     return None
+
+
+def extract_impl_target(impl_node: Node) -> str | None:
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    return _impl_field_type_name(impl_node, cs.FIELD_TYPE)
+
+
+def extract_impl_trait(impl_node: Node) -> str | None:
+    # (H) The `trait` field of `impl Trait for Type` -> the implemented trait's
+    # (H) simple name (a trait impl means Type IMPLEMENTS Trait).
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    return _impl_field_type_name(impl_node, cs.FIELD_TRAIT)
 
 
 def extract_use_imports(use_node: Node) -> dict[str, str]:
