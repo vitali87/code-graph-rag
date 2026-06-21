@@ -87,9 +87,10 @@ public class Oracle {
             + "},\"target_name\":\"" + esc(targetName) + "\"}");
     }
 
-    static void emit(String kind, String file, long line, String name) {
+    static void emit(String kind, String file, long line, long endLine, String name) {
         recs.add("{\"kind\":\"" + kind + "\",\"file\":\"" + esc(file)
-            + "\",\"line\":" + line + ",\"name\":\"" + esc(name) + "\"}");
+            + "\",\"line\":" + line + ",\"end_line\":" + endLine
+            + ",\"name\":\"" + esc(name) + "\"}");
     }
 
     static void emitEdge(
@@ -152,8 +153,9 @@ public class Oracle {
                     // (H) Anonymous classes have an empty name and no cgr node.
                     if (pos >= 0 && node.getSimpleName().length() > 0) {
                         long line = lm.getLineNumber(pos);
+                        long endLine = lm.getLineNumber(sp.getEndPosition(unit, node));
                         String kind = classKind(node);
-                        emit(kind, rel, line, node.getSimpleName().toString());
+                        emit(kind, rel, line, endLine, node.getSimpleName().toString());
                         // (H) Every named type is DEFINEd by the file module,
                         // (H) including nested types (cgr keeps this flat).
                         emitEdge("DEFINES", rel, "Module", MODULE_LINE, kind, line);
@@ -197,7 +199,8 @@ public class Oracle {
                             }
                         }
                         long line = lm.getLineNumber(pos);
-                        emit(kind, rel, line, node.getName().toString());
+                        long endLine = lm.getLineNumber(sp.getEndPosition(unit, node));
+                        emit(kind, rel, line, endLine, node.getName().toString());
                         // (H) A Method binds to its enclosing named type; an
                         // (H) anonymous-class member (Function) has no such edge.
                         if (owner != null) {
