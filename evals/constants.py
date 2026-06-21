@@ -120,3 +120,28 @@ ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"
 ORACLE_KEY_NAME = "name"
+
+# (H) Rust structure eval: cgr nodes graded against the syn oracle
+# (H) (evals/oracles/rs_oracle), joined on (kind, file, start_line).
+RS_SUFFIX = ".rs"
+RS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+    cs.NodeLabel.UNION,
+    cs.NodeLabel.TYPE,
+)
+RS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in RS_SCORED_NODE_KINDS
+)
+RS_ORACLE_DIRNAME = "rs_oracle"
+CARGO_BIN = "cargo"
+CARGO_RUN = "run"
+CARGO_RELEASE = "--release"
+CARGO_MANIFEST = "--manifest-path"
+CARGO_QUIET = "-q"
+CARGO_ARG_SEP = "--"
+RS_SCORES_FILENAME = "rs_scores.csv"
+RS_DIFF_FILENAME = "rs_diff.json"

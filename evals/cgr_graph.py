@@ -73,12 +73,12 @@ def extract_cgr_calls(target: Path, project_name: str) -> set[tuple[str, str]]:
     }
 
 
-def _go_node_key(label: str, props: PropertyDict) -> NodeKey | None:
+def _lang_node_key(label: str, props: PropertyDict, suffix: str) -> NodeKey | None:
     path = props.get(cs.KEY_PATH)
     if path is None:
         return None
     file = str(path)
-    if not file.endswith(ec.GO_SUFFIX):
+    if not file.endswith(suffix):
         return None
     raw_start = props.get(cs.KEY_START_LINE)
     if not isinstance(raw_start, int | float):
@@ -86,19 +86,33 @@ def _go_node_key(label: str, props: PropertyDict) -> NodeKey | None:
     return NodeKey(label, file, int(raw_start))
 
 
-def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+def extract_cgr_lang_nodes(
+    target: Path, project_name: str, suffix: str, kind_values: frozenset[str]
+) -> dict[NodeKey, DefNode]:
     ingestor = _capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
     for (label, _uid), props in ingestor.nodes.items():
-        if label not in ec.GO_SCORED_NODE_KIND_VALUES:
+        if label not in kind_values:
             continue
-        key = _go_node_key(label, props)
+        key = _lang_node_key(label, props, suffix)
         if key is None:
             continue
         raw_end = props.get(cs.KEY_END_LINE)
         end_line = int(raw_end) if isinstance(raw_end, int | float) else 0
         nodes[key] = DefNode(key, str(props.get(cs.KEY_NAME, "")), end_line)
     return nodes
+
+
+def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.GO_SUFFIX, ec.GO_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_rust_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.RS_SUFFIX, ec.RS_SCORED_NODE_KIND_VALUES
+    )
 
 
 def _node_key(label: str, props: PropertyDict) -> NodeKey | None:

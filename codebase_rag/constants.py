@@ -2674,6 +2674,7 @@ CAPTURE_EXPORT_FUNCTION = "export_function"
 
 # (H) Tree-sitter Rust node types
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
+TS_RS_PRIMITIVE_TYPE = "primitive_type"
 TS_RS_USE_AS_CLAUSE = "use_as_clause"
 TS_RS_USE_WILDCARD = "use_wildcard"
 TS_RS_USE_LIST = "use_list"

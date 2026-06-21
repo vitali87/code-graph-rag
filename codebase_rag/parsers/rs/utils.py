@@ -151,7 +151,7 @@ def extract_impl_target(impl_node: Node) -> str | None:
                     for child in type_node.children:
                         if child.type == cs.TS_TYPE_IDENTIFIER:
                             return safe_decode_text(child)
-                case cs.TS_TYPE_IDENTIFIER:
+                case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
                     return safe_decode_text(type_node)
                 case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
                     for child in type_node.children:

@@ -27,5 +27,7 @@ site/
 
 # Eval harness scratch workspace (regenerated each run); result files are committed
 evals/results/l3_workspace/
+# Rust oracle build artifacts (the source + Cargo.lock are committed)
+evals/oracles/rs_oracle/target/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json
