@@ -82,6 +82,14 @@ def _rust_get_name(node: Node) -> str | None:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
+    elif node.type == cs.TS_IMPL_ITEM:
+        # (H) An `impl Foo` block is an FQN scope, but it has no `name` field; its
+        # (H) target type is the segment that anchors its methods' qns
+        # (H) (owner_module.Foo.method). Without this the scope walk drops `Foo`, so
+        # (H) a closure/nested fn in an impl method binds to a phantom parent qn.
+        from .parsers.rs import utils as rs_utils
+
+        return rs_utils.extract_impl_target(node)
 
     return _generic_get_name(node)
 

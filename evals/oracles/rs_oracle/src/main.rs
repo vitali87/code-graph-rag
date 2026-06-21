@@ -170,6 +170,62 @@ impl<'ast, 'a> Visit<'ast> for NodeCollector<'a> {
     }
 }
 
+// ---- closure containment ----
+//
+// (H) A closure is DEFINEd by the nearest enclosing function-like scope: a free
+// (H) fn or another closure (Function), or an impl/trait method (Method); at item
+// (H) scope it falls back to the enclosing module. This mirrors cgr, which routes
+// (H) every closure through its free-function path and binds it to its lexical
+// (H) parent. The walk keeps a stack of enclosing function-likes so nested
+// (H) closures bind to the closure that contains them, not the outer method.
+
+struct ClosureEdges<'a> {
+    file: &'a str,
+    edges: &'a mut Vec<String>,
+    stack: Vec<(&'static str, usize)>,
+    module_line: usize,
+}
+
+impl<'ast, 'a> Visit<'ast> for ClosureEdges<'a> {
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        if node.content.is_some() {
+            let saved = self.module_line;
+            self.module_line = node.ident.span().start().line;
+            syn::visit::visit_item_mod(self, node);
+            self.module_line = saved;
+        }
+    }
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        self.stack.push((KIND_FUNCTION, node.sig.ident.span().start().line));
+        syn::visit::visit_item_fn(self, node);
+        self.stack.pop();
+    }
+    fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+        self.stack.push((KIND_METHOD, node.sig.ident.span().start().line));
+        syn::visit::visit_impl_item_fn(self, node);
+        self.stack.pop();
+    }
+    fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
+        self.stack.push((KIND_METHOD, node.sig.ident.span().start().line));
+        syn::visit::visit_trait_item_fn(self, node);
+        self.stack.pop();
+    }
+    fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
+        let cline = node.span().start().line;
+        let (pkind, pline) = self
+            .stack
+            .last()
+            .copied()
+            .unwrap_or((KIND_MODULE, self.module_line));
+        self.edges.push(edge_json(
+            REL_DEFINES, self.file, pkind, pline, KIND_FUNCTION, cline,
+        ));
+        self.stack.push((KIND_FUNCTION, cline));
+        syn::visit::visit_expr_closure(self, node);
+        self.stack.pop();
+    }
+}
+
 // ---- edge collection (containment) ----
 
 fn type_table_key(modpath: &str, name: &str) -> String {
@@ -398,6 +454,13 @@ fn visit_dir(
                     process_edges(
                         &ast.items, &rel, MODULE_LINE, "", &table, edges, name_edges,
                     );
+                    let mut closures = ClosureEdges {
+                        file: &rel,
+                        edges,
+                        stack: Vec::new(),
+                        module_line: MODULE_LINE,
+                    };
+                    closures.visit_file(&ast);
                 }
             }
         }
