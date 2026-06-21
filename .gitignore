@@ -29,5 +29,7 @@ site/
 evals/results/l3_workspace/
 # Rust oracle build artifacts (the source + Cargo.lock are committed)
 evals/oracles/rs_oracle/target/
+# TypeScript oracle deps (the source + package-lock.json are committed)
+evals/oracles/ts_oracle/node_modules/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json
