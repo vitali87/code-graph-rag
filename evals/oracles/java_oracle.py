@@ -6,8 +6,8 @@ import subprocess
 from pathlib import Path
 
 from .. import constants as ec
-from ..types_defs import DefNode, NodeKey, OracleRecord
-from ._common import records_to_nodes
+from ..types_defs import GraphData, OraclePayload
+from ._common import payload_to_graph
 
 _ORACLE_DIR = Path(__file__).parent / ec.JAVA_ORACLE_DIRNAME
 _SOURCE = _ORACLE_DIR / ec.JAVA_ORACLE_SOURCE
@@ -35,16 +35,16 @@ def _ensure_compiled() -> None:
     )
 
 
-def run_java_oracle(target: Path) -> dict[NodeKey, DefNode]:
+def run_java_oracle(target: Path) -> GraphData:
     _ensure_compiled()
     java = shutil.which(ec.JAVA_BIN)
     if java is None:
-        return {}
+        return GraphData(nodes={}, edges=set(), name_edges=set())
     proc = subprocess.run(
         [java, ec.JAVA_CP_FLAG, str(_ORACLE_DIR), ec.JAVA_ORACLE_CLASS, str(target)],
         capture_output=True,
         text=True,
         check=True,
     )
-    records: list[OracleRecord] = json.loads(proc.stdout or "[]")
-    return records_to_nodes(records)
+    payload: OraclePayload = json.loads(proc.stdout or "{}")
+    return payload_to_graph(payload)
