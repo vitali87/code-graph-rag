@@ -115,6 +115,29 @@ def extract_cgr_rust_nodes(target: Path, project_name: str) -> dict[NodeKey, Def
     )
 
 
+def extract_cgr_ts_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    ingestor = _capture(target, project_name)
+    nodes: dict[NodeKey, DefNode] = {}
+    for (label, _uid), props in ingestor.nodes.items():
+        if label not in ec.TS_SCORED_NODE_KIND_VALUES:
+            continue
+        path = props.get(cs.KEY_PATH)
+        if path is None:
+            continue
+        file = str(path)
+        # (H) Match the oracle: real .ts/.tsx sources, excluding .d.ts type stubs.
+        if not file.endswith(ec.TS_SUFFIXES) or file.endswith(ec.TS_DTS_SUFFIX):
+            continue
+        raw_start = props.get(cs.KEY_START_LINE)
+        if not isinstance(raw_start, int | float):
+            continue
+        key = NodeKey(label, file, int(raw_start))
+        raw_end = props.get(cs.KEY_END_LINE)
+        end_line = int(raw_end) if isinstance(raw_end, int | float) else 0
+        nodes[key] = DefNode(key, str(props.get(cs.KEY_NAME, "")), end_line)
+    return nodes
+
+
 def _node_key(label: str, props: PropertyDict) -> NodeKey | None:
     path = props.get(cs.KEY_PATH)
     if path is None:

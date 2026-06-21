@@ -145,3 +145,28 @@ CARGO_QUIET = "-q"
 CARGO_ARG_SEP = "--"
 RS_SCORES_FILENAME = "rs_scores.csv"
 RS_DIFF_FILENAME = "rs_diff.json"
+
+# (H) TypeScript structure eval: cgr nodes graded against the TS-compiler-API
+# (H) oracle (evals/oracles/ts_oracle), joined on (kind, file, start_line).
+TS_SUFFIXES: tuple[str, ...] = (".ts", ".tsx")
+TS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+    cs.NodeLabel.TYPE,
+)
+TS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in TS_SCORED_NODE_KINDS
+)
+TS_ORACLE_DIRNAME = "ts_oracle"
+TS_ORACLE_SCRIPT = "ts_ast.js"
+NODE_BIN = "node"
+NPM_BIN = "npm"
+NPM_INSTALL = "install"
+NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")
+NODE_MODULES_DIRNAME = "node_modules"
+TS_DTS_SUFFIX = ".d.ts"
+TS_SCORES_FILENAME = "ts_scores.csv"
+TS_DIFF_FILENAME = "ts_diff.json"

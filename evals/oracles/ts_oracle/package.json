@@ -1,0 +1,10 @@
+{
+  "name": "ts_oracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authoritative TypeScript structure oracle for the cgr eval harness",
+  "bin": { "ts_oracle": "ts_ast.js" },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  }
+}
