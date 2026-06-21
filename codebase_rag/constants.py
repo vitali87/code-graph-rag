@@ -2043,6 +2043,8 @@ TS_ACCESS_SPECIFIER = "access_specifier"
 TS_VIRTUAL = "virtual"
 TS_TYPE_LIST = "type_list"
 TS_CLASS_HERITAGE = "class_heritage"
+# (H) TS class `implements I, J` clause (a child of class_heritage).
+TS_IMPLEMENTS_CLAUSE = "implements_clause"
 TS_EXTENDS_CLAUSE = "extends_clause"
 TS_MEMBER_EXPRESSION = "member_expression"
 TS_EXTENDS = "extends"

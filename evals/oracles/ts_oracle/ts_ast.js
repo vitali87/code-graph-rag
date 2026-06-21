@@ -37,6 +37,7 @@ const IGNORED = new Set([".git", "node_modules", "vendor", "dist", "build", "out
 const MODULE_LINE = 0;
 const nodes = [];
 const edges = [];
+const nameEdges = [];
 
 function emit(kind, file, line, name) {
   nodes.push({ kind, file, line, name });
@@ -48,6 +49,37 @@ function emitEdge(rel, file, pkind, pline, ckind, cline) {
     parent: { kind: pkind, file, line: pline },
     child: { kind: ckind, file, line: cline },
   });
+}
+
+function emitNameEdge(rel, file, skind, sline, targetName) {
+  nameEdges.push({
+    rel,
+    source: { kind: skind, file, line: sline },
+    target_name: targetName,
+  });
+}
+
+// (H) Simple name of an extends/implements entry: the base expression's last
+// (H) identifier (type arguments live separately, so they're already excluded).
+function heritageSimpleName(typeNode) {
+  let expr = typeNode.expression || typeNode;
+  while (expr && expr.name && expr.expression) {
+    expr = expr.name; // (H) a.b.Base -> Base
+  }
+  return expr && expr.text ? expr.text : expr.getText();
+}
+
+// (H) A class's extends -> INHERITS, implements -> IMPLEMENTS; an interface's
+// (H) extends -> INHERITS (cgr models superinterfaces as inheritance).
+function emitHeritage(node, sf, file, kind, line) {
+  if (!node.heritageClauses) return;
+  for (const clause of node.heritageClauses) {
+    const isExtends = clause.token === ts.SyntaxKind.ExtendsKeyword;
+    const rel = isExtends ? "INHERITS" : "IMPLEMENTS";
+    for (const t of clause.types) {
+      emitNameEdge(rel, file, kind, line, heritageSimpleName(t));
+    }
+  }
 }
 
 function lineOf(sf, node) {
@@ -77,6 +109,7 @@ function walk(node, sf, file, container, ctx) {
     const line = lineOf(sf, node);
     emit("Class", file, line, node.name.text);
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+    emitHeritage(node, sf, file, "Class", line);
     const sub = { typeRef: { kind: "Class", line }, funcRef: null };
     node.members.forEach((m) => walk(m, sf, file, "class", sub));
     return;
@@ -85,6 +118,7 @@ function walk(node, sf, file, container, ctx) {
     const line = lineOf(sf, node);
     emit("Interface", file, line, node.name.text);
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
+    emitHeritage(node, sf, file, "Interface", line);
     return;
   }
   if (ts.isEnumDeclaration(node) && node.name) {
@@ -171,4 +205,4 @@ function visitDir(dir, root, exts) {
 const root = process.argv[2] || ".";
 const exts = process.argv.slice(3);
 visitDir(root, root, exts.length ? exts : [".ts", ".tsx"]);
-process.stdout.write(JSON.stringify({ nodes, edges }));
+process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges }));
