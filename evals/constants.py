@@ -188,6 +188,7 @@ JS_DIFF_FILENAME = "js_diff.json"
 # (H) oracle (evals/oracles/java_oracle/Oracle.java), joined on (kind, file, line).
 JAVA_SUFFIX = ".java"
 JAVA_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
     cs.NodeLabel.CLASS,
     cs.NodeLabel.INTERFACE,

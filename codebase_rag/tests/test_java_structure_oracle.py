@@ -1,9 +1,8 @@
 # (H) Covers the Java structure oracle harness (evals/oracles/java_oracle +
 # (H) evals/java_l1.py): the JDK Compiler Tree API oracle is authoritative ground
 # (H) truth, and cgr's captured Java nodes are graded against it on
-# (H) (kind, file, start_line). The fixture uses only named types (classes,
-# (H) interfaces, enums, methods) where cgr is fully correct; anonymous-class
-# (H) members are a separate, documented cgr gap (see evals/README.md).
+# (H) (kind, file, start_line). Includes an anonymous class, whose methods cgr
+# (H) models as standalone Functions (like JS object-literal methods).
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,6 +29,13 @@ public class Sample {
     interface Shape { double area(); }
     enum Color { RED, GREEN }
     static class Inner { void helper() {} }
+
+    Runnable callback() {
+        return new Runnable() {
+            public void run() { helper2(); }
+            void helper2() {}
+        };
+    }
 }
 
 interface Drawable { void draw(); }
@@ -60,7 +66,7 @@ def test_cgr_matches_jdk_oracle_on_java_structure(tmp_path: Path) -> None:
 
     result = score_node_kinds(cgr, oracle, ec.JAVA_SCORED_NODE_KINDS)
     by_label = {row["label"]: row for row in result.rows}
-    for label in ("Class", "Interface", "Enum", "Method"):
+    for label in ("Class", "Interface", "Enum", "Method", "Function"):
         row = by_label.get(label)
         assert row is not None, (label, by_label)
         assert row["precision"] == 1.0 and row["recall"] == 1.0, (label, row)
