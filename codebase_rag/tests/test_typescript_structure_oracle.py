@@ -51,9 +51,7 @@ def test_cgr_matches_tsc_oracle_on_typescript_structure(tmp_path: Path) -> None:
         edges=set(),
         name_edges=set(),
     )
-    oracle = GraphData(
-        nodes=run_typescript_oracle(project), edges=set(), name_edges=set()
-    )
+    oracle = run_typescript_oracle(project)
 
     result = score_node_kinds(cgr, oracle, ec.TS_SCORED_NODE_KINDS)
     by_label = {row["label"]: row for row in result.rows}

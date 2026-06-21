@@ -109,7 +109,10 @@ def extract_cgr_lang_nodes(
 
 
 def _lang_endpoint_key(
-    label: str, props: PropertyDict, suffix: str | tuple[str, ...]
+    label: str,
+    props: PropertyDict,
+    suffix: str | tuple[str, ...],
+    exclude_suffix: str | None = None,
 ) -> NodeKey | None:
     # (H) Resolve any node (incl. the per-file Module, which carries no
     # (H) start_line) to a NodeKey so containment edges can join on it. cgr keys
@@ -120,6 +123,8 @@ def _lang_endpoint_key(
         return None
     file = str(path)
     if not file.endswith(suffix):
+        return None
+    if exclude_suffix is not None and file.endswith(exclude_suffix):
         return None
     raw_start = props.get(cs.KEY_START_LINE)
     if label == cs.NodeLabel.MODULE.value:
@@ -139,12 +144,13 @@ def extract_cgr_lang_graph(
     project_name: str,
     suffix: str | tuple[str, ...],
     kind_values: frozenset[str],
+    exclude_suffix: str | None = None,
 ) -> GraphData:
     ingestor = _capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
     by_uid: dict[_NodeId, NodeKey] = {}
     for (label, uid), props in ingestor.nodes.items():
-        endpoint = _lang_endpoint_key(label, props, suffix)
+        endpoint = _lang_endpoint_key(label, props, suffix, exclude_suffix)
         if endpoint is None:
             continue
         by_uid[(label, uid)] = endpoint
@@ -217,6 +223,22 @@ def extract_cgr_java_graph(target: Path, project_name: str) -> GraphData:
 def extract_cgr_js_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.JS_SUFFIXES, ec.JS_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_js_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
+        target, project_name, ec.JS_SUFFIXES, ec.JS_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_ts_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
+        target,
+        project_name,
+        ec.TS_SUFFIXES,
+        ec.TS_SCORED_NODE_KIND_VALUES,
+        exclude_suffix=ec.TS_DTS_SUFFIX,
     )
 
 
