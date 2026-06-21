@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 _NodeKey = tuple[str, str]
 _EdgeKey = tuple[str, str, str, str, str]
+_Scope = tuple[str, str] | None
 
 _COMPILE_COMMANDS = "compile_commands.json"
 _BUILD_DIR = "build"
@@ -121,20 +122,25 @@ class _Collector:
     ) -> None:
         self.edges.add((rel_type, from_label, from_qn, to_label, to_qn))
 
-    def process(self, cursor: Cursor) -> None:
+    def process(self, cursor: Cursor, enclosing: _Scope) -> _Scope:
+        # (H) Returns the scope its subtree should attribute calls to: the node's
+        # (H) own (label, qn) when it is a function/method, else the unchanged
+        # (H) enclosing scope.
+        if cursor.kind.name == fc.KIND_CALL_EXPR:
+            self._process_call(cursor, enclosing)
+            return None
         label = _classify(cursor)
         if label is None or cursor.location.file is None:
-            return
+            return None
         if label == fc.LABEL_CLASS and not cursor.is_definition():
-            return  # (H) forward declarations are not nodes
+            return None  # (H) forward declarations are not nodes
         rel = self.resolver.rel_path(cursor.location.file.name)
         module_qn = self.resolver.module_qn(cursor.location.file.name)
         if rel is None or module_qn is None:
-            return  # (H) outside the indexed repo (system headers, etc.)
+            return None  # (H) outside the indexed repo (system headers, etc.)
 
         if label == fc.LABEL_METHOD:
-            self._process_method(cursor, rel)
-            return
+            return self._process_method(cursor, rel)
 
         qn = (
             self.resolver.class_qn(cursor)
@@ -142,7 +148,7 @@ class _Collector:
             else self.resolver.function_qn(cursor)
         )
         if qn is None:
-            return
+            return None
         self.covered.add(rel)
         self._add_module(module_qn, rel, cursor.location.file.name)
         self._add_node(
@@ -156,15 +162,17 @@ class _Collector:
         )
         if label == fc.LABEL_CLASS:
             self._emit_inheritance(cursor, qn)
+            return None
+        return (label, qn)
 
-    def _process_method(self, cursor: Cursor, rel: str) -> None:
+    def _process_method(self, cursor: Cursor, rel: str) -> _Scope:
         qn = self.resolver.method_qn(cursor)
         parent = cursor.semantic_parent
         if qn is None or parent is None:
-            return
+            return None
         class_qn = self.resolver.class_qn(parent)
         if class_qn is None:
-            return
+            return None
         self.covered.add(rel)
         name = self.resolver.member_name(cursor)
         self._add_node(
@@ -179,6 +187,32 @@ class _Collector:
             class_qn,
             fc.LABEL_METHOD,
             qn,
+        )
+        return (fc.LABEL_METHOD, qn)
+
+    def _process_call(self, cursor: Cursor, enclosing: _Scope) -> None:
+        # (H) Resolve the callee semantically via cursor.referenced (libclang did
+        # (H) the overload/name resolution already), preferring its definition so
+        # (H) the edge targets the node the frontend emitted for the body.
+        if enclosing is None:
+            return
+        referenced = cursor.referenced
+        if referenced is None:
+            return
+        callee = referenced.get_definition() or referenced
+        callee_label = _classify(callee)
+        if callee_label is None or callee_label == fc.LABEL_CLASS:
+            return
+        callee_qn = (
+            self.resolver.method_qn(callee)
+            if callee_label == fc.LABEL_METHOD
+            else self.resolver.function_qn(callee)
+        )
+        if callee_qn is None:
+            return  # (H) callee outside the indexed repo (stdlib, etc.)
+        caller_label, caller_qn = enclosing
+        self._add_edge(
+            cs.RelationshipType.CALLS, caller_label, caller_qn, callee_label, callee_qn
         )
 
     def _emit_inheritance(self, cursor: Cursor, derived_qn: str) -> None:
@@ -244,10 +278,10 @@ class _Collector:
             )
 
 
-def _walk(cursor: Cursor, collector: _Collector) -> None:
+def _walk(cursor: Cursor, collector: _Collector, enclosing: _Scope = None) -> None:
     for child in cursor.get_children():
-        collector.process(child)
-        _walk(child, collector)
+        produced = collector.process(child, enclosing)
+        _walk(child, collector, produced or enclosing)
 
 
 def run_cpp_frontend(
