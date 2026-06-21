@@ -2845,11 +2845,14 @@ FQN_JS_FUNCTION_TYPES = (
     TS_FUNCTION_EXPRESSION,
 )
 
-# (H) FQN node type tuples for TS
+# (H) FQN node type tuples for TS. The grammar emits `internal_module` for a
+# (H) `namespace`/`module` block; without it a class declared inside a namespace
+# (H) loses the namespace from its qn and collides with a top-level same name.
 FQN_TS_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_NAMESPACE_DEFINITION,
+    TS_INTERNAL_MODULE,
     TS_PROGRAM,
     TS_FUNCTION_DECLARATION,
     TS_FUNCTION_EXPRESSION,
@@ -2968,6 +2971,8 @@ JS_NAME_NODE_TYPES = (
     TS_FUNCTION_DECLARATION,
     TS_CLASS_DECLARATION,
     TS_METHOD_DEFINITION,
+    # (H) TS `namespace`/`module` block; its `name` field scopes nested classes.
+    TS_INTERNAL_MODULE,
 )
 
 # (H) Derived node types for _rust_get_name
