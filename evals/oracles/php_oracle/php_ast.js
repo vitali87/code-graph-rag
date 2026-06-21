@@ -19,6 +19,17 @@
 // present, matching cgr's node span; anonymous classes (`new class {...}`) get
 // no Class node, like cgr.
 //
+// Containment edges (matching how cgr models PHP containment):
+//
+//   DEFINES        : the file module -> every named type and top-level function
+//   DEFINES_METHOD : the enclosing named type -> Method
+//
+// cgr keeps type containment flat (the file module DEFINES every named type,
+// keyed at line 0); a Method binds to its enclosing class/interface/trait/enum;
+// a Function/closure binds to its nearest enclosing function, else the module.
+// An anonymous-class member is a Function (no DEFINES_METHOD). Output is a
+// {nodes, edges} payload joining cgr on (kind, file, line).
+//
 // Run: node php_ast.js <dir>
 
 const phpParser = require("php-parser");
@@ -26,10 +37,20 @@ const fs = require("fs");
 const path = require("path");
 
 const IGNORED = new Set([".git", "node_modules", "vendor"]);
-const out = [];
+const MODULE_LINE = 0;
+const nodes = [];
+const edges = [];
 
 function emit(kind, file, line) {
-  out.push({ kind, file, line, name: "decl" });
+  nodes.push({ kind, file, line, name: "decl" });
+}
+
+function emitEdge(rel, file, pkind, pline, ckind, cline) {
+  edges.push({
+    rel,
+    parent: { kind: pkind, file, line: pline },
+    child: { kind: ckind, file, line: cline },
+  });
 }
 
 function declLine(node) {
@@ -46,55 +67,94 @@ function isAnonymous(node) {
   return node.isAnonymous === true || node.name === null;
 }
 
-function walkChildren(node, file, container) {
+function walkChildren(node, file, ctx) {
   for (const k of Object.keys(node)) {
     if (k === "loc") continue;
-    walk(node[k], file, container);
+    walk(node[k], file, ctx);
   }
 }
 
-function walk(node, file, container) {
+// ctx: { container, typeRef, funcRef }
+//   container: "module" | "class" | "anon" | "function"
+//   typeRef:   enclosing named type {kind,line} (DEFINES_METHOD parent)
+//   funcRef:   enclosing function {kind,line} (DEFINES parent for nested fns)
+function defineFunctionEdge(file, ctx, kind, line) {
+  if (kind === "Method") {
+    if (ctx.typeRef) {
+      emitEdge("DEFINES_METHOD", file, ctx.typeRef.kind, ctx.typeRef.line, "Method", line);
+    }
+  } else {
+    const parent = ctx.funcRef || { kind: "Module", line: MODULE_LINE };
+    emitEdge("DEFINES", file, parent.kind, parent.line, "Function", line);
+  }
+}
+
+function walk(node, file, ctx) {
   if (node === null || typeof node !== "object") return;
   if (Array.isArray(node)) {
-    for (const c of node) walk(c, file, container);
+    for (const c of node) walk(c, file, ctx);
     return;
   }
   switch (node.kind) {
-    case "class":
+    case "class": {
       if (isAnonymous(node)) {
-        walkChildren(node, file, "anon");
+        // (H) Anonymous class: no node; its methods are Functions bound to the
+        // (H) enclosing function/module, so keep funcRef and mark the container.
+        walkChildren(node, file, { container: "anon", typeRef: null, funcRef: ctx.funcRef });
       } else {
-        emit("Class", file, declLine(node));
-        walkChildren(node, file, "class");
+        const line = declLine(node);
+        emit("Class", file, line);
+        emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+        walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       }
       return;
-    case "interface":
-      emit("Interface", file, declLine(node));
-      walkChildren(node, file, "class");
+    }
+    case "interface": {
+      const line = declLine(node);
+      emit("Interface", file, line);
+      emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
+      walkChildren(node, file, { container: "class", typeRef: { kind: "Interface", line }, funcRef: null });
       return;
-    case "trait":
-      emit("Class", file, declLine(node));
-      walkChildren(node, file, "class");
+    }
+    case "trait": {
+      const line = declLine(node);
+      emit("Class", file, line);
+      emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+      walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       return;
-    case "enum":
-      emit("Enum", file, declLine(node));
-      walkChildren(node, file, "class");
+    }
+    case "enum": {
+      const line = declLine(node);
+      emit("Enum", file, line);
+      emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
+      walkChildren(node, file, { container: "class", typeRef: { kind: "Enum", line }, funcRef: null });
       return;
-    case "method":
-      emit(container === "anon" ? "Function" : "Method", file, declLine(node));
-      walkChildren(node, file, "function");
+    }
+    case "method": {
+      const kind = ctx.container === "anon" ? "Function" : "Method";
+      const line = declLine(node);
+      emit(kind, file, line);
+      defineFunctionEdge(file, ctx, kind, line);
+      walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind, line } });
       return;
-    case "function":
-      emit("Function", file, declLine(node));
-      walkChildren(node, file, "function");
+    }
+    case "function": {
+      const line = declLine(node);
+      emit("Function", file, line);
+      defineFunctionEdge(file, ctx, "Function", line);
+      walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
       return;
+    }
     case "closure":
-    case "arrowfunc":
-      emit("Function", file, node.loc.start.line);
-      walkChildren(node, file, "function");
+    case "arrowfunc": {
+      const line = node.loc.start.line;
+      emit("Function", file, line);
+      defineFunctionEdge(file, ctx, "Function", line);
+      walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
       return;
+    }
     default:
-      walkChildren(node, file, container);
+      walkChildren(node, file, ctx);
   }
 }
 
@@ -107,7 +167,7 @@ function visitDir(dir, root, parser) {
       try {
         const ast = parser.parseCode(fs.readFileSync(p, "utf8"));
         const rel = path.relative(root, p).split(path.sep).join("/");
-        walk(ast, rel, "module");
+        walk(ast, rel, { container: "module", typeRef: null, funcRef: null });
       } catch (e) {
         // skip files php-parser cannot parse
       }
@@ -121,4 +181,4 @@ const parser = new phpParser.Engine({
   ast: { withPositions: true },
 });
 visitDir(root, root, parser);
-process.stdout.write(JSON.stringify(out));
+process.stdout.write(JSON.stringify({ nodes, edges }));
