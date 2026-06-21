@@ -121,9 +121,14 @@ def _lang_endpoint_key(
     file = str(path)
     if not file.endswith(suffix):
         return None
-    if label == cs.NodeLabel.MODULE.value:
-        return NodeKey(label, file, ec.MODULE_START_LINE)
     raw_start = props.get(cs.KEY_START_LINE)
+    if label == cs.NodeLabel.MODULE.value:
+        # (H) The per-file module carries no start line (keyed at line 0); an
+        # (H) inline module (Rust `mod`) carries its declaration line, which keeps
+        # (H) it distinct from the file module so nested containment can join.
+        if isinstance(raw_start, int | float):
+            return NodeKey(label, file, int(raw_start))
+        return NodeKey(label, file, ec.MODULE_START_LINE)
     if not isinstance(raw_start, int | float):
         return None
     return NodeKey(label, file, int(raw_start))
@@ -175,6 +180,12 @@ def extract_cgr_go_graph(target: Path, project_name: str) -> GraphData:
 
 def extract_cgr_rust_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
+        target, project_name, ec.RS_SUFFIX, ec.RS_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_rust_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
         target, project_name, ec.RS_SUFFIX, ec.RS_SCORED_NODE_KIND_VALUES
     )
 
