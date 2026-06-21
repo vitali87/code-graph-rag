@@ -15,6 +15,11 @@ from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers.cpp_frontend import (
+    cpp_frontend_available,
+    find_compile_commands,
+    run_cpp_frontend,
+)
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import IngestorProtocol, QueryProtocol
@@ -436,6 +441,7 @@ class GraphUpdater:
         self.exclude_paths = exclude_paths
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
+        self._cpp_frontend_covered: frozenset[str] = frozenset()
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -447,6 +453,36 @@ class GraphUpdater:
             ast_cache=self.ast_cache,
             unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
+        )
+
+    def _run_cpp_frontend(self) -> None:
+        # (H) Optional libclang C++ pre-pass: when CPP_FRONTEND=libclang and a
+        # (H) compile_commands.json is discoverable, emit macro-accurate C/C++
+        # (H) nodes/edges directly (tree-sitter cannot expand macros). Covered
+        # (H) files are then skipped by the tree-sitter definition pass. Missing
+        # (H) either condition falls back to tree-sitter with no change.
+        self._cpp_frontend_covered = frozenset()
+        if settings.CPP_FRONTEND != cs.CppFrontend.LIBCLANG:
+            return
+        if not cpp_frontend_available():
+            logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
+            return
+        compdb_dir = find_compile_commands(self.repo_path)
+        if compdb_dir is None:
+            logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
+            return
+        logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
+        self._cpp_frontend_covered = run_cpp_frontend(
+            self.ingestor,
+            self.repo_path,
+            self.project_name,
+            compdb_dir,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            structural_elements=self.factory.structure_processor.structural_elements,
+        )
+        logger.info(
+            ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
@@ -475,6 +511,8 @@ class GraphUpdater:
 
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
+
+        self._run_cpp_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
@@ -883,6 +921,16 @@ class GraphUpdater:
         file_bytes: bytes | None = None,
         pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
     ) -> None:
+        if self._cpp_frontend_covered:
+            rel = cached_relative_path(filepath, self.repo_path).as_posix()
+            if rel in self._cpp_frontend_covered:
+                # (H) The libclang frontend already emitted this file's
+                # (H) definitions; keep only the generic File node.
+                self.factory.structure_processor.process_generic_file(
+                    filepath, filepath.name
+                )
+                return
+
         lang_config = get_language_spec(filepath.suffix)
         if (
             lang_config
