@@ -34,7 +34,8 @@ def records_to_nodes(records: list[OracleRecord]) -> dict[NodeKey, DefNode]:
             continue
         line = int(rec[ec.ORACLE_KEY_LINE])
         key = NodeKey(rec[ec.ORACLE_KEY_KIND], rel_file, line)
-        nodes[key] = DefNode(key, rec[ec.ORACLE_KEY_NAME], line)
+        end_line = int(rec.get(ec.ORACLE_KEY_END_LINE, line))
+        nodes[key] = DefNode(key, rec[ec.ORACLE_KEY_NAME], end_line)
     return nodes
 
 

@@ -151,21 +151,78 @@ def score_name_edge_types(
     return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
 
 
+_SpanKey = tuple[str, str, int, int]
+
+
+def score_span(
+    cgr: GraphData, oracle: GraphData, kinds: tuple[cs.NodeLabel, ...]
+) -> ScoreResult:
+    # (H) Grade node SPANS (end_line) only on nodes both sides identify by
+    # (H) (kind, file, start), so an end_line disagreement is not masked by, nor
+    # (H) conflated with, a node-identity miss. Restricted to the shared key set,
+    # (H) fp and fn each count one end_line mismatch (precision == recall).
+    rows: list[ScoreRow] = []
+    diff: dict[str, DiffBucket] = {}
+    cgr_all: set[_SpanKey] = set()
+    oracle_all: set[_SpanKey] = set()
+    shared = cgr.nodes.keys() & oracle.nodes.keys()
+    for kind in kinds:
+        keys = {k for k in shared if k.kind == kind.value}
+        cgr_set = {(k.kind, k.file, k.start_line, cgr.nodes[k].end_line) for k in keys}
+        oracle_set = {
+            (k.kind, k.file, k.start_line, oracle.nodes[k].end_line) for k in keys
+        }
+        cgr_all |= cgr_set
+        oracle_all |= oracle_set
+        row = _prf(ec.Category.SPAN.value, kind.value, cgr_set, oracle_set)
+        if row is not None:
+            rows.append(row)
+            diff[ec.DIFF_SPAN_PREFIX + kind.value] = _span_bucket(cgr_set, oracle_set)
+    aggregate = _prf(ec.Category.SPAN.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
+    if aggregate is not None:
+        rows.append(aggregate)
+    return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
+
+
+def _fmt_span(span: _SpanKey) -> str:
+    kind, file, start, end = span
+    return ec.SPAN_REPR.format(kind=kind, file=file, start=start, end=end)
+
+
+def _span_bucket(cgr_set: set[_SpanKey], oracle_set: set[_SpanKey]) -> DiffBucket:
+    missing = [_fmt_span(s) for s in sorted(oracle_set - cgr_set)]
+    extra = [_fmt_span(s) for s in sorted(cgr_set - oracle_set)]
+    return DiffBucket(missing=missing, extra=extra)
+
+
 def score_structure(
     cgr: GraphData,
     oracle: GraphData,
     node_kinds: tuple[cs.NodeLabel, ...],
     edge_types: tuple[cs.RelationshipType, ...],
+    grade_spans: bool = False,
 ) -> ScoreResult:
     node_result = score_node_kinds(cgr, oracle, node_kinds)
     edge_result = score_edge_types(cgr, oracle, edge_types)
     # (H) Inheritance name-edges only produce rows when a side has them, so this
     # (H) is a no-op for languages without inheritance (Go, Lua).
     name_result = score_name_edge_types(cgr, oracle, ec.INHERITANCE_NAME_EDGE_TYPES)
+    # (H) Spans are opt-in per language: only oracles that emit end_line can grade
+    # (H) them, else every multi-line node reads as a mismatch against the start.
+    span_result = (
+        score_span(cgr, oracle, node_kinds)
+        if grade_spans
+        else ScoreResult(rows=[], location=LocationStats(0, 0, 0, 0.0, 0), diff={})
+    )
     return ScoreResult(
-        rows=node_result.rows + edge_result.rows + name_result.rows,
+        rows=node_result.rows + edge_result.rows + name_result.rows + span_result.rows,
         location=node_result.location,
-        diff={**node_result.diff, **edge_result.diff, **name_result.diff},
+        diff={
+            **node_result.diff,
+            **edge_result.diff,
+            **name_result.diff,
+            **span_result.diff,
+        },
     )
 
 
