@@ -41,7 +41,7 @@ def main(
     logger.success(ls.LUA_ORACLE_DONE.format(count=len(oracle.nodes)))
 
     result = score_structure(
-        cgr, oracle, ec.LUA_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES
+        cgr, oracle, ec.LUA_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES, grade_spans=True
     )
     write_outputs(result, out_dir, ec.LUA_SCORES_FILENAME, ec.LUA_DIFF_FILENAME)
     render(result, _TITLE)
