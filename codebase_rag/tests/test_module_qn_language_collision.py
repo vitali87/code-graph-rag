@@ -65,3 +65,15 @@ def test_same_stem_methods_do_not_collide(
     cpp_area = area.get("pkg/shape.cpp")
     assert py_area and cpp_area, f"both area methods expected: {area}"
     assert py_area != cpp_area, f"method qn collision across languages: {area}"
+
+    # (H) The method qn must derive from its own (disambiguated) module qn, not a
+    # (H) bare recomputed prefix patched up by register_unique_qn's @N dedup.
+    modules = {
+        str(node[0][1].get(KEY_PATH)): str(node[0][1].get(KEY_QUALIFIED_NAME))
+        for node in get_nodes(mock_ingestor, NodeLabel.MODULE)
+    }
+    py_mod = modules["pkg/shape.py"]
+    assert py_area.startswith(f"{py_mod}."), (
+        f"python method qn {py_area} not derived from its module {py_mod}"
+    )
+    assert "@" not in py_area, f"method qn collided and was @N-deduped: {py_area}"

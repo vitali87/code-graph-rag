@@ -14,8 +14,6 @@ from ..utils import safe_decode_text
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
 
-_CLASS_MODULE_PREFIX_CACHE: dict[tuple[Path, int], str] = {}
-
 
 def resolve_class_identity(
     class_node: Node,
@@ -23,8 +21,6 @@ def resolve_class_identity(
     language: cs.SupportedLanguage,
     lang_config: LanguageSpec,
     file_path: Path | None,
-    repo_path: Path,
-    project_name: str,
 ) -> tuple[str, str, bool] | None:
     if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
         class_name = fqn_config.get_name(class_node)
@@ -38,15 +34,10 @@ def resolve_class_identity(
                 current = current.parent
             parts.reverse()
 
-            cache_key = (file_path, id(fqn_config))
-            if cache_key in _CLASS_MODULE_PREFIX_CACHE:
-                module_prefix = _CLASS_MODULE_PREFIX_CACHE[cache_key]
-            else:
-                module_parts = fqn_config.file_to_module_parts(file_path, repo_path)
-                module_prefix = cs.SEPARATOR_DOT.join([project_name] + module_parts)
-                _CLASS_MODULE_PREFIX_CACHE[cache_key] = module_prefix
-
-            class_qn = module_prefix + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+            # (H) Use the module's already-resolved (and collision-disambiguated)
+            # (H) qualified name as the prefix rather than recomputing from the path,
+            # (H) so same-stem cross-language siblings get distinct class/method qns.
+            class_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
             is_exported = language == cs.SupportedLanguage.CPP and (
                 class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
                 or cpp_utils.is_exported(class_node)
