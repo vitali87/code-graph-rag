@@ -304,6 +304,34 @@ class CallProcessor:
                 func_name = self._get_node_name(func_node)
             if not func_name:
                 continue
+            # (H) An out-of-line C++ method definition (`Ret Class::method() {...}`
+            # (H) at namespace/file scope) is bound by the definition pass to its
+            # (H) class node (qn `class_qn.method`). Attribute its body's calls to
+            # (H) that method node, not a phantom module-rooted free-function qn,
+            # (H) so the CALLS edges join to a real node.
+            if language == cs.SupportedLanguage.CPP and (
+                bound := self._cpp_out_of_class_method_caller(
+                    func_node, func_name, module_qn
+                )
+            ):
+                caller_qn, class_qn = bound
+                filtered = (
+                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+                    if all_call_nodes is not None and call_starts is not None
+                    else None
+                )
+                self._ingest_function_calls(
+                    func_node,
+                    caller_qn,
+                    cs.NodeLabel.METHOD,
+                    module_qn,
+                    language,
+                    queries,
+                    class_qn,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
+                continue
             if func_qn := self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             ):
@@ -322,6 +350,30 @@ class CallProcessor:
                     call_nodes=filtered,
                     call_name_cache=call_name_cache,
                 )
+
+    def _cpp_out_of_class_method_caller(
+        self, func_node: Node, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) Resolve an out-of-line C++ method definition to its (method_qn,
+        # (H) class_qn), mirroring the definition pass's class binding. The leaf
+        # (H) class name resolves the class across files (header-declared classes);
+        # (H) `endswith(normalized)` guards against a leaf collision binding to the
+        # (H) wrong class, and the registry membership check ensures the method node
+        # (H) actually exists before overriding the default attribution.
+        if not cpp_utils.is_out_of_class_method_definition(func_node):
+            return None
+        class_name = cpp_utils.extract_class_name_from_out_of_class_method(func_node)
+        if not class_name:
+            return None
+        normalized = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        leaf = normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        class_qn = self._resolver._resolve_class_name(leaf, module_qn)
+        if not class_qn or not class_qn.endswith(normalized):
+            return None
+        caller_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if caller_qn in self._resolver.function_registry:
+            return caller_qn, class_qn
+        return None
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
         class_name = self._get_node_name(class_node, cs.FIELD_TYPE)
