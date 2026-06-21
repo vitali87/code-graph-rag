@@ -5,7 +5,16 @@ from pathlib import PurePosixPath
 from codebase_rag import constants as cs
 
 from .. import constants as ec
-from ..types_defs import DefNode, NodeKey, OracleRecord
+from ..types_defs import (
+    DefNode,
+    EdgeKey,
+    GraphData,
+    NodeKey,
+    OracleEdge,
+    OracleNodeRef,
+    OraclePayload,
+    OracleRecord,
+)
 
 
 def is_ignored(rel_file: str) -> bool:
@@ -25,3 +34,34 @@ def records_to_nodes(records: list[OracleRecord]) -> dict[NodeKey, DefNode]:
         key = NodeKey(rec[ec.ORACLE_KEY_KIND], rel_file, line)
         nodes[key] = DefNode(key, rec[ec.ORACLE_KEY_NAME], line)
     return nodes
+
+
+def _ref_to_key(ref: OracleNodeRef) -> NodeKey:
+    return NodeKey(
+        ref[ec.ORACLE_KEY_KIND],
+        ref[ec.ORACLE_KEY_FILE],
+        int(ref[ec.ORACLE_KEY_LINE]),
+    )
+
+
+def records_to_edges(edges: list[OracleEdge]) -> set[EdgeKey]:
+    out: set[EdgeKey] = set()
+    for edge in edges:
+        parent = edge[ec.ORACLE_KEY_PARENT]
+        child = edge[ec.ORACLE_KEY_CHILD]
+        if is_ignored(parent[ec.ORACLE_KEY_FILE]) or is_ignored(
+            child[ec.ORACLE_KEY_FILE]
+        ):
+            continue
+        out.add(
+            EdgeKey(edge[ec.ORACLE_KEY_REL], _ref_to_key(parent), _ref_to_key(child))
+        )
+    return out
+
+
+def payload_to_graph(payload: OraclePayload) -> GraphData:
+    return GraphData(
+        nodes=records_to_nodes(payload.get(ec.ORACLE_KEY_NODES, [])),
+        edges=records_to_edges(payload.get(ec.ORACLE_KEY_EDGES, [])),
+        name_edges=set(),
+    )

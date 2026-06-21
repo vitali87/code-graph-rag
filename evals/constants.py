@@ -120,6 +120,14 @@ ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"
 ORACLE_KEY_NAME = "name"
+# (H) Edge-payload keys: an oracle that grades containment edges emits a
+# (H) {nodes: [...], edges: [...]} object, each edge carrying rel + parent/child
+# (H) node references joined against cgr on (kind, file, line).
+ORACLE_KEY_NODES = "nodes"
+ORACLE_KEY_EDGES = "edges"
+ORACLE_KEY_REL = "rel"
+ORACLE_KEY_PARENT = "parent"
+ORACLE_KEY_CHILD = "child"
 
 # (H) Rust structure eval: cgr nodes graded against the syn oracle
 # (H) (evals/oracles/rs_oracle), joined on (kind, file, start_line).

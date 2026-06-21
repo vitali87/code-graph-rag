@@ -101,6 +101,45 @@ def score_node_kinds(
     return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
 
 
+def score_edge_types(
+    cgr: GraphData, oracle: GraphData, edge_types: tuple[cs.RelationshipType, ...]
+) -> ScoreResult:
+    rows: list[ScoreRow] = []
+    diff: dict[str, DiffBucket] = {}
+    cgr_all: set[EdgeKey] = set()
+    oracle_all: set[EdgeKey] = set()
+    for edge_type in edge_types:
+        cgr_set = {e for e in cgr.edges if e.rel_type == edge_type.value}
+        oracle_set = {e for e in oracle.edges if e.rel_type == edge_type.value}
+        cgr_all |= cgr_set
+        oracle_all |= oracle_set
+        row = _prf(ec.Category.EDGE.value, edge_type.value, cgr_set, oracle_set)
+        if row is not None:
+            rows.append(row)
+            diff[ec.DIFF_EDGE_PREFIX + edge_type.value] = _edge_bucket(
+                cgr_set, oracle_set
+            )
+    aggregate = _prf(ec.Category.EDGE.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
+    if aggregate is not None:
+        rows.append(aggregate)
+    return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
+
+
+def score_structure(
+    cgr: GraphData,
+    oracle: GraphData,
+    node_kinds: tuple[cs.NodeLabel, ...],
+    edge_types: tuple[cs.RelationshipType, ...],
+) -> ScoreResult:
+    node_result = score_node_kinds(cgr, oracle, node_kinds)
+    edge_result = score_edge_types(cgr, oracle, edge_types)
+    return ScoreResult(
+        rows=node_result.rows + edge_result.rows,
+        location=node_result.location,
+        diff={**node_result.diff, **edge_result.diff},
+    )
+
+
 def _fmt_name_edge(edge: NameEdge) -> str:
     return ec.NAME_EDGE_REPR.format(
         rel=edge.rel_type,

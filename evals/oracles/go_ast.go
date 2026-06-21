@@ -1,9 +1,9 @@
 // Authoritative Go structure oracle for the cgr eval harness.
 //
 // Walks a directory of Go sources with the standard library's own go/parser
-// and go/ast, and emits one JSON record per top-level declaration. The "kind"
-// field uses cgr's NodeLabel vocabulary (Function, Method, Class, Interface,
-// Type) so the emitted records can be joined directly against cgr's graph on
+// and go/ast, and emits a JSON payload {nodes, edges}. Node "kind" fields use
+// cgr's NodeLabel vocabulary (Function, Method, Class, Interface, Type) and
+// edges use cgr's RelationshipType vocabulary, so both join cgr's graph on
 // (kind, file, line).
 //
 // Mapping (Go declaration -> cgr NodeLabel):
@@ -13,6 +13,15 @@
 //	type ... struct {}    -> Class
 //	type ... interface {} -> Interface
 //	type ... (other)      -> Type   (defined types and aliases alike)
+//
+// Containment edges (matching how cgr models Go containment):
+//
+//	DEFINES        : Module(file, line 0) -> top-level Function / Class / Interface / Type
+//	DEFINES_METHOD : receiver type's node -> Method   (cross-file within a package)
+//
+// cgr models a Go module per file, so a DEFINES parent is the file's module
+// keyed at line 0. A receiver method's parent is the node of its receiver type,
+// resolved package-wide (a method may sit in a different file than its type).
 //
 // Run: GO111MODULE=off go run go_ast.go <dir>
 package main
@@ -27,13 +36,32 @@ import (
 	"strings"
 )
 
-// Def is a single declaration record. Field order and json tags mirror what
-// evals/oracles/go_oracle.py expects.
+// Def is a single declaration record.
 type Def struct {
 	Kind string `json:"kind"`
 	File string `json:"file"`
 	Line int    `json:"line"`
 	Name string `json:"name"`
+}
+
+// NodeRef identifies an edge endpoint by (kind, file, line).
+type NodeRef struct {
+	Kind string `json:"kind"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+// Edge is a containment relationship between two node references.
+type Edge struct {
+	Rel    string  `json:"rel"`
+	Parent NodeRef `json:"parent"`
+	Child  NodeRef `json:"child"`
+}
+
+// Payload is the oracle's stdout shape.
+type Payload struct {
+	Nodes []Def  `json:"nodes"`
+	Edges []Edge `json:"edges"`
 }
 
 // ignoredDirs are skipped during the walk; they never hold first-party sources.
@@ -45,12 +73,16 @@ var ignoredDirs = map[string]bool{
 }
 
 const (
-	kindFunction  = "Function"
-	kindMethod    = "Method"
-	kindClass     = "Class"
-	kindInterface = "Interface"
-	kindType      = "Type"
-	goSuffix      = ".go"
+	kindFunction   = "Function"
+	kindMethod     = "Method"
+	kindClass      = "Class"
+	kindInterface  = "Interface"
+	kindType       = "Type"
+	kindModule     = "Module"
+	relDefines     = "DEFINES"
+	relDefinesMeth = "DEFINES_METHOD"
+	moduleLine     = 0
+	goSuffix       = ".go"
 )
 
 func typeSpecKind(spec *ast.TypeSpec) string {
@@ -64,29 +96,120 @@ func typeSpecKind(spec *ast.TypeSpec) string {
 	}
 }
 
-// collectFile visits the whole file (not just top-level Decls) so that
-// function-local type declarations are recorded too — cgr captures those by
-// default, so the oracle must as well to stay an apples-to-apples ground truth.
-// Go has no named nested functions, so every *ast.FuncDecl is top-level.
-func collectFile(fset *token.FileSet, file *ast.File, rel string, defs *[]Def) {
-	ast.Inspect(file, func(n ast.Node) bool {
+// baseTypeName strips pointer and generic instantiation wrappers off a receiver
+// type expression, leaving the bare type name (e.g. *Point[T] -> "Point").
+func baseTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		return baseTypeName(t.X)
+	case *ast.IndexExpr:
+		return baseTypeName(t.X)
+	case *ast.IndexListExpr:
+		return baseTypeName(t.X)
+	case *ast.Ident:
+		return t.Name
+	}
+	return ""
+}
+
+func recvTypeName(recv *ast.FieldList) string {
+	if recv == nil || len(recv.List) == 0 {
+		return ""
+	}
+	return baseTypeName(recv.List[0].Type)
+}
+
+// parsedFile bundles a parsed source with its location data for the two passes.
+type parsedFile struct {
+	fset *token.FileSet
+	file *ast.File
+	rel  string
+	dir  string
+}
+
+// collectNodes records every declaration (including function-local types) so the
+// node set is an apples-to-apples ground truth for cgr's node capture.
+func collectNodes(pf parsedFile, defs *[]Def) {
+	ast.Inspect(pf.file, func(n ast.Node) bool {
 		switch d := n.(type) {
 		case *ast.FuncDecl:
 			kind := kindFunction
 			if d.Recv != nil {
 				kind = kindMethod
 			}
-			*defs = append(*defs, Def{kind, rel, fset.Position(d.Name.Pos()).Line, d.Name.Name})
+			*defs = append(*defs, Def{kind, pf.rel, pf.fset.Position(d.Name.Pos()).Line, d.Name.Name})
 		case *ast.TypeSpec:
-			*defs = append(*defs, Def{typeSpecKind(d), rel, fset.Position(d.Name.Pos()).Line, d.Name.Name})
+			*defs = append(*defs, Def{typeSpecKind(d), pf.rel, pf.fset.Position(d.Name.Pos()).Line, d.Name.Name})
 		}
 		return true
 	})
 }
 
+// typeKey scopes a type name to its package directory; methods resolve their
+// receiver type within the same package, which Go keeps in one directory.
+func typeKey(dir, name string) string {
+	return dir + "\x00" + name
+}
+
+// collectTypes records each top-level type's node so receiver methods can later
+// point DEFINES_METHOD at the right (kind, file, line).
+func collectTypes(pf parsedFile, types map[string]Def) {
+	for _, decl := range pf.file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+			line := pf.fset.Position(ts.Name.Pos()).Line
+			types[typeKey(pf.dir, ts.Name.Name)] = Def{typeSpecKind(ts), pf.rel, line, ts.Name.Name}
+		}
+	}
+}
+
+// collectEdges emits DEFINES for top-level funcs/types and DEFINES_METHOD for
+// receiver methods, mirroring cgr's per-file module containment.
+func collectEdges(pf parsedFile, types map[string]Def, edges *[]Edge) {
+	module := NodeRef{kindModule, pf.rel, moduleLine}
+	for _, decl := range pf.file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			line := pf.fset.Position(d.Name.Pos()).Line
+			if d.Recv == nil {
+				child := NodeRef{kindFunction, pf.rel, line}
+				*edges = append(*edges, Edge{relDefines, module, child})
+				continue
+			}
+			owner, ok := types[typeKey(pf.dir, recvTypeName(d.Recv))]
+			if !ok {
+				continue
+			}
+			parent := NodeRef{owner.Kind, owner.File, owner.Line}
+			child := NodeRef{kindMethod, pf.rel, line}
+			*edges = append(*edges, Edge{relDefinesMeth, parent, child})
+		case *ast.GenDecl:
+			if d.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range d.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				line := pf.fset.Position(ts.Name.Pos()).Line
+				child := NodeRef{typeSpecKind(ts), pf.rel, line}
+				*edges = append(*edges, Edge{relDefines, module, child})
+			}
+		}
+	}
+}
+
 func main() {
 	root := os.Args[1]
-	defs := []Def{}
+	var parsed []parsedFile
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -109,8 +232,21 @@ func main() {
 		if rerr != nil {
 			rel = path
 		}
-		collectFile(fset, file, filepath.ToSlash(rel), &defs)
+		rel = filepath.ToSlash(rel)
+		parsed = append(parsed, parsedFile{fset, file, rel, filepath.ToSlash(filepath.Dir(rel))})
 		return nil
 	})
-	_ = json.NewEncoder(os.Stdout).Encode(defs)
+
+	types := map[string]Def{}
+	for _, pf := range parsed {
+		collectTypes(pf, types)
+	}
+
+	defs := []Def{}
+	edges := []Edge{}
+	for _, pf := range parsed {
+		collectNodes(pf, &defs)
+		collectEdges(pf, types, &edges)
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(Payload{Nodes: defs, Edges: edges})
 }
