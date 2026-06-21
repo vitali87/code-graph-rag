@@ -6,8 +6,8 @@ import subprocess
 from pathlib import Path
 
 from .. import constants as ec
-from ..types_defs import DefNode, NodeKey, OracleRecord
-from ._common import records_to_nodes
+from ..types_defs import GraphData, OraclePayload
+from ._common import payload_to_graph
 
 _ORACLE_DIR = Path(__file__).parent / ec.LUA_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.LUA_ORACLE_SCRIPT
@@ -35,16 +35,16 @@ def _ensure_deps() -> None:
     )
 
 
-def run_lua_oracle(target: Path) -> dict[NodeKey, DefNode]:
+def run_lua_oracle(target: Path) -> GraphData:
     _ensure_deps()
     node = shutil.which(ec.NODE_BIN)
     if node is None:
-        return {}
+        return GraphData(nodes={}, edges=set(), name_edges=set())
     proc = subprocess.run(
         [node, str(_SCRIPT), str(target)],
         capture_output=True,
         text=True,
         check=True,
     )
-    records: list[OracleRecord] = json.loads(proc.stdout or "[]")
-    return records_to_nodes(records)
+    payload: OraclePayload = json.loads(proc.stdout or "{}")
+    return payload_to_graph(payload)

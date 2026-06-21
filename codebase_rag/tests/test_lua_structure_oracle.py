@@ -45,7 +45,7 @@ def test_cgr_matches_luaparse_oracle_on_lua_structure(tmp_path: Path) -> None:
         edges=set(),
         name_edges=set(),
     )
-    oracle = GraphData(nodes=run_lua_oracle(project), edges=set(), name_edges=set())
+    oracle = run_lua_oracle(project)
 
     result = score_node_kinds(cgr, oracle, ec.LUA_SCORED_NODE_KINDS)
     by_label = {row["label"]: row for row in result.rows}
