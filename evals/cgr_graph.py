@@ -120,6 +120,12 @@ def extract_cgr_rust_nodes(target: Path, project_name: str) -> dict[NodeKey, Def
     )
 
 
+def extract_cgr_lua_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.LUA_SUFFIX, ec.LUA_SCORED_NODE_KIND_VALUES
+    )
+
+
 def extract_cgr_java_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.JAVA_SUFFIX, ec.JAVA_SCORED_NODE_KIND_VALUES
