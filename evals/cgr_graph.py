@@ -73,7 +73,9 @@ def extract_cgr_calls(target: Path, project_name: str) -> set[tuple[str, str]]:
     }
 
 
-def _lang_node_key(label: str, props: PropertyDict, suffix: str) -> NodeKey | None:
+def _lang_node_key(
+    label: str, props: PropertyDict, suffix: str | tuple[str, ...]
+) -> NodeKey | None:
     path = props.get(cs.KEY_PATH)
     if path is None:
         return None
@@ -87,7 +89,10 @@ def _lang_node_key(label: str, props: PropertyDict, suffix: str) -> NodeKey | No
 
 
 def extract_cgr_lang_nodes(
-    target: Path, project_name: str, suffix: str, kind_values: frozenset[str]
+    target: Path,
+    project_name: str,
+    suffix: str | tuple[str, ...],
+    kind_values: frozenset[str],
 ) -> dict[NodeKey, DefNode]:
     ingestor = _capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
@@ -112,6 +117,12 @@ def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNo
 def extract_cgr_rust_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.RS_SUFFIX, ec.RS_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_js_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.JS_SUFFIXES, ec.JS_SCORED_NODE_KIND_VALUES
     )
 
 

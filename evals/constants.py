@@ -170,3 +170,16 @@ NODE_MODULES_DIRNAME = "node_modules"
 TS_DTS_SUFFIX = ".d.ts"
 TS_SCORES_FILENAME = "ts_scores.csv"
 TS_DIFF_FILENAME = "ts_diff.json"
+
+# (H) JavaScript structure eval: same TS-compiler-API oracle, run over .js/.jsx.
+JS_SUFFIXES: tuple[str, ...] = (".js", ".jsx")
+JS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+)
+JS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in JS_SCORED_NODE_KINDS
+)
+JS_SCORES_FILENAME = "js_scores.csv"
+JS_DIFF_FILENAME = "js_diff.json"

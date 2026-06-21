@@ -72,7 +72,10 @@ function walk(node, sf, file, container) {
       : node.name && ts.isIdentifier(node.name)
         ? node.name.text
         : node.name && node.name.text;
-    if (nm) emit("Method", file, lineOf(sf, node), nm);
+    // (H) Class members are Methods; object-literal shorthand methods are modelled
+    // (H) by cgr as standalone Functions.
+    const kind = container === "class" ? "Method" : "Function";
+    if (nm) emit(kind, file, lineOf(sf, node), nm);
     if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "function"));
     return;
   }
@@ -87,12 +90,16 @@ function walk(node, sf, file, container) {
   node.forEachChild((c) => walk(c, sf, file, container));
 }
 
-function visitDir(dir, root) {
+function hasExt(name, exts) {
+  return exts.some((e) => name.endsWith(e)) && !name.endsWith(".d.ts");
+}
+
+function visitDir(dir, root, exts) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!IGNORED.has(entry.name)) visitDir(p, root);
-    } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.d\.ts$/.test(entry.name)) {
+      if (!IGNORED.has(entry.name)) visitDir(p, root, exts);
+    } else if (hasExt(entry.name, exts)) {
       const src = fs.readFileSync(p, "utf8");
       const sf = ts.createSourceFile(p, src, ts.ScriptTarget.Latest, true);
       const rel = path.relative(root, p).split(path.sep).join("/");
@@ -102,5 +109,6 @@ function visitDir(dir, root) {
 }
 
 const root = process.argv[2] || ".";
-visitDir(root, root);
+const exts = process.argv.slice(3);
+visitDir(root, root, exts.length ? exts : [".ts", ".tsx"]);
 process.stdout.write(JSON.stringify(out));
