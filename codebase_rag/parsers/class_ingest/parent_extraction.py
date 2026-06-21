@@ -349,6 +349,17 @@ def extract_implemented_interfaces(
             interfaces_node, implemented_interfaces, module_qn, resolve_to_qn
         )
 
+    # (H) TypeScript `class C implements I, J` lives in class_heritage >
+    # (H) implements_clause (no `interfaces` field), holding type_identifiers.
+    if class_heritage := find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
+        if implements_clause := find_child_by_type(
+            class_heritage, cs.TS_IMPLEMENTS_CLAUSE
+        ):
+            for child in implements_clause.children:
+                if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+                    if name := safe_decode_text(child):
+                        implemented_interfaces.append(resolve_to_qn(name, module_qn))
+
     return implemented_interfaces
 
 
