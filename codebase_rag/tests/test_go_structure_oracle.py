@@ -58,7 +58,7 @@ def _names(nodes: dict, kind: cs.NodeLabel) -> set[str]:
 
 def test_oracle_labels_go_declarations(tmp_path: Path) -> None:
     _require_go()
-    oracle = run_go_oracle(_go_project(tmp_path))
+    oracle = run_go_oracle(_go_project(tmp_path)).nodes
     assert _names(oracle, cs.NodeLabel.CLASS) == {"Point"}
     assert _names(oracle, cs.NodeLabel.INTERFACE) == {"Shape"}
     assert _names(oracle, cs.NodeLabel.TYPE) == {"Celsius"}
@@ -73,7 +73,7 @@ def test_cgr_matches_oracle_on_type_declarations(tmp_path: Path) -> None:
     cgr = GraphData(
         nodes=extract_cgr_go_nodes(project, project.name), edges=set(), name_edges=set()
     )
-    oracle = GraphData(nodes=run_go_oracle(project), edges=set(), name_edges=set())
+    oracle = run_go_oracle(project)
 
     result = score_node_kinds(
         cgr,

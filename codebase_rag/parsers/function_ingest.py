@@ -55,8 +55,15 @@ class _DeferredGoMethod(NamedTuple):
     """Go receiver method, linked to its receiver type once all types are known."""
 
     method_node: Node
-    container_qn: str
+    module_qn: str
+    receiver_type: str
     file_path: Path | None
+
+
+# (H) Go node labels a receiver type can resolve to (struct -> Class, defined
+# (H) type/alias -> Type, interface -> Interface); used to pick the declaring
+# (H) type out of same-named candidates when binding a cross-file method.
+_GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFACE})
 
 
 class FunctionIngestMixin:
@@ -328,11 +335,30 @@ class FunctionIngestMixin:
         self._deferred_go_methods.append(
             _DeferredGoMethod(
                 method_node=func_node,
-                container_qn=f"{module_qn}.{receiver_type}",
+                module_qn=module_qn,
+                receiver_type=receiver_type,
                 file_path=self.module_qn_to_file_path.get(module_qn),
             )
         )
         return True
+
+    def _resolve_go_container_qn(self, module_qn: str, receiver_type: str) -> str:
+        # (H) A method binds to its receiver type. Prefer the same-file type, but
+        # (H) a Go package spans every file in its directory, so fall back to a
+        # (H) sibling-file type with the same name in the same package. This keeps
+        # (H) the method's qn and DEFINES_METHOD parent anchored to the real type
+        # (H) node instead of a phantom under the method's own module.
+        same_file = f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
+        if self.function_registry.get(same_file) is not None:
+            return same_file
+        package = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        for qn in self.simple_name_lookup.get(receiver_type, set()):
+            if self.function_registry.get(qn) not in _GO_TYPE_NODE_TYPES:
+                continue
+            type_module = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if type_module.rsplit(cs.SEPARATOR_DOT, 1)[0] == package:
+                return qn
+        return same_file
 
     def resolve_deferred_go_methods(self) -> int:
         """Ingest Go receiver methods now that every receiver type is registered.
@@ -348,7 +374,10 @@ class FunctionIngestMixin:
             return 0
 
         for entry in deferred:
-            container_type = self.function_registry.get(entry.container_qn)
+            container_qn = self._resolve_go_container_qn(
+                entry.module_qn, entry.receiver_type
+            )
+            container_type = self.function_registry.get(container_qn)
             container_label = (
                 cs.NodeLabel(container_type.value)
                 if container_type is not None
@@ -356,7 +385,7 @@ class FunctionIngestMixin:
             )
             ingest_method(
                 method_node=entry.method_node,
-                container_qn=entry.container_qn,
+                container_qn=container_qn,
                 container_type=container_label,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,

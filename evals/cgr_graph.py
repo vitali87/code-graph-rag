@@ -108,8 +108,67 @@ def extract_cgr_lang_nodes(
     return nodes
 
 
+def _lang_endpoint_key(
+    label: str, props: PropertyDict, suffix: str | tuple[str, ...]
+) -> NodeKey | None:
+    # (H) Resolve any node (incl. the per-file Module, which carries no
+    # (H) start_line) to a NodeKey so containment edges can join on it. cgr keys
+    # (H) module-level DEFINES parents at the module node; mirror the ast oracle
+    # (H) by placing the module at MODULE_START_LINE.
+    path = props.get(cs.KEY_PATH)
+    if path is None:
+        return None
+    file = str(path)
+    if not file.endswith(suffix):
+        return None
+    if label == cs.NodeLabel.MODULE.value:
+        return NodeKey(label, file, ec.MODULE_START_LINE)
+    raw_start = props.get(cs.KEY_START_LINE)
+    if not isinstance(raw_start, int | float):
+        return None
+    return NodeKey(label, file, int(raw_start))
+
+
+def extract_cgr_lang_graph(
+    target: Path,
+    project_name: str,
+    suffix: str | tuple[str, ...],
+    kind_values: frozenset[str],
+) -> GraphData:
+    ingestor = _capture(target, project_name)
+    nodes: dict[NodeKey, DefNode] = {}
+    by_uid: dict[_NodeId, NodeKey] = {}
+    for (label, uid), props in ingestor.nodes.items():
+        endpoint = _lang_endpoint_key(label, props, suffix)
+        if endpoint is None:
+            continue
+        by_uid[(label, uid)] = endpoint
+        if label not in kind_values:
+            continue
+        raw_end = props.get(cs.KEY_END_LINE)
+        end_line = int(raw_end) if isinstance(raw_end, int | float) else 0
+        nodes[endpoint] = DefNode(endpoint, str(props.get(cs.KEY_NAME, "")), end_line)
+
+    edges: set[EdgeKey] = set()
+    for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
+        if rel_type not in ec.SCORED_EDGE_TYPE_VALUES:
+            continue
+        parent = by_uid.get((from_label, from_val))
+        child = by_uid.get((to_label, to_val))
+        if parent is None or child is None:
+            continue
+        edges.add(EdgeKey(rel_type, parent, child))
+    return GraphData(nodes=nodes, edges=edges, name_edges=set())
+
+
 def extract_cgr_go_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
+        target, project_name, ec.GO_SUFFIX, ec.GO_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_go_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
         target, project_name, ec.GO_SUFFIX, ec.GO_SCORED_NODE_KIND_VALUES
     )
 

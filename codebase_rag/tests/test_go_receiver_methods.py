@@ -115,3 +115,39 @@ def test_go_method_defined_by_receiver_type(
         f"{project}.shapes.Celsius",
         f"{project}.shapes.Celsius.ToFahrenheit",
     ) in pairs
+
+
+@pytest.fixture
+def go_crossfile_project(temp_repo: Path) -> Path:
+    # (H) Same Go package split across two files: the receiver type lives in
+    # (H) types.go, a method on it lives in ops.go. A Go package spans every
+    # (H) file in its directory, so the method must bind to the type's node.
+    project_path = temp_repo / "go_xfile_test"
+    project_path.mkdir()
+    (project_path / "go.mod").write_text(
+        encoding="utf-8", data="module go_xfile_test\n\ngo 1.22\n"
+    )
+    (project_path / "types.go").write_text(
+        encoding="utf-8",
+        data="package shapes\n\ntype Point struct {\n\tX int\n}\n",
+    )
+    (project_path / "ops.go").write_text(
+        encoding="utf-8",
+        data="package shapes\n\nfunc (p Point) Scale(k int) int {\n\treturn p.X * k\n}\n",
+    )
+    return project_path
+
+
+def test_go_crossfile_method_binds_to_declaring_type(
+    go_crossfile_project: Path, mock_ingestor: MagicMock
+) -> None:
+    create_and_run_updater(go_crossfile_project, mock_ingestor, skip_if_missing="go")
+    project = go_crossfile_project.name
+    # (H) Point is declared in types.go, so its Class node and the method's qn
+    # (H) are anchored to the types module, not the ops module that holds Scale.
+    assert f"{project}.types.Point.Scale" in _method_qns(mock_ingestor)
+    defines_method = get_relationships(
+        mock_ingestor, RelationshipType.DEFINES_METHOD.value
+    )
+    pairs = {(call[0][0][2], call[0][2][2]) for call in defines_method}
+    assert (f"{project}.types.Point", f"{project}.types.Point.Scale") in pairs

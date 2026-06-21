@@ -66,3 +66,20 @@ class OracleRecord(TypedDict):
     file: str
     line: int
     name: str
+
+
+class OracleNodeRef(TypedDict):
+    kind: str
+    file: str
+    line: int
+
+
+class OracleEdge(TypedDict):
+    rel: str
+    parent: OracleNodeRef
+    child: OracleNodeRef
+
+
+class OraclePayload(TypedDict):
+    nodes: list[OracleRecord]
+    edges: list[OracleEdge]
