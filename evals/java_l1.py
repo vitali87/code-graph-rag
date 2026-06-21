@@ -41,7 +41,7 @@ def main(
     logger.success(ls.JAVA_ORACLE_DONE.format(count=len(oracle.nodes)))
 
     result = score_structure(
-        cgr, oracle, ec.JAVA_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES
+        cgr, oracle, ec.JAVA_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES, grade_spans=True
     )
     write_outputs(result, out_dir, ec.JAVA_SCORES_FILENAME, ec.JAVA_DIFF_FILENAME)
     render(result, _TITLE)
