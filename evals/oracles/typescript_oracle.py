@@ -35,16 +35,24 @@ def _ensure_deps() -> None:
     )
 
 
-def run_typescript_oracle(target: Path) -> dict[NodeKey, DefNode]:
+def _run(target: Path, suffixes: tuple[str, ...]) -> dict[NodeKey, DefNode]:
     _ensure_deps()
     node = shutil.which(ec.NODE_BIN)
     if node is None:
         return {}
     proc = subprocess.run(
-        [node, str(_SCRIPT), str(target)],
+        [node, str(_SCRIPT), str(target), *suffixes],
         capture_output=True,
         text=True,
         check=True,
     )
     records: list[OracleRecord] = json.loads(proc.stdout or "[]")
     return records_to_nodes(records)
+
+
+def run_typescript_oracle(target: Path) -> dict[NodeKey, DefNode]:
+    return _run(target, ec.TS_SUFFIXES)
+
+
+def run_javascript_oracle(target: Path) -> dict[NodeKey, DefNode]:
+    return _run(target, ec.JS_SUFFIXES)
