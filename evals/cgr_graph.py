@@ -159,11 +159,17 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
             edges.add(EdgeKey(rel_type, parent, child))
 
     prefix = project_name + cs.SEPARATOR_DOT
+    # (H) Only real in-repo Python modules count as internal import targets. cgr
+    # (H) also emits placeholder MODULE nodes for unresolved imports whose path is
+    # (H) the dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a
+    # (H) .py path excludes those so IMPORTS is graded against real files only,
+    # (H) consistent with the .py node filter and the ast oracle.
     internal_modules: dict[str, str] = {
         str(uid): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()
         if label == cs.NodeLabel.MODULE.value
         and props.get(cs.KEY_PATH)
+        and str(props[cs.KEY_PATH]).endswith(ec.PY_SUFFIX)
         and (str(uid) == project_name or str(uid).startswith(prefix))
     }
 
