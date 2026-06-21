@@ -2048,6 +2048,8 @@ TS_MEMBER_EXPRESSION = "member_expression"
 TS_EXTENDS = "extends"
 TS_ARGUMENTS = "arguments"
 TS_EXTENDS_TYPE_CLAUSE = "extends_type_clause"
+# (H) Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
+TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
 TS_METHOD_DEFINITION = "method_definition"
 TS_DECORATOR = "decorator"
 TS_ERROR = "ERROR"

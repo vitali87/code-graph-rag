@@ -128,6 +128,21 @@ ORACLE_KEY_EDGES = "edges"
 ORACLE_KEY_REL = "rel"
 ORACLE_KEY_PARENT = "parent"
 ORACLE_KEY_CHILD = "child"
+# (H) Name-edge payload keys: an inheritance edge carries its source node ref and
+# (H) the base type's SIMPLE NAME (cgr resolves bases by simple name, not qn).
+ORACLE_KEY_NAME_EDGES = "name_edges"
+ORACLE_KEY_SOURCE = "source"
+ORACLE_KEY_TARGET_NAME = "target_name"
+
+# (H) Inheritance edges graded by base simple name: INHERITS (extends/superclass
+# (H) and superinterface) and IMPLEMENTS (a class implementing an interface).
+INHERITANCE_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
+    cs.RelationshipType.INHERITS,
+    cs.RelationshipType.IMPLEMENTS,
+)
+INHERITANCE_NAME_EDGE_TYPE_VALUES: frozenset[str] = frozenset(
+    e.value for e in INHERITANCE_NAME_EDGE_TYPES
+)
 
 # (H) Rust structure eval: cgr nodes graded against the syn oracle
 # (H) (evals/oracles/rs_oracle), joined on (kind, file, start_line).

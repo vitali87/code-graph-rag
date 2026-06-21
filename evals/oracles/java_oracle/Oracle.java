@@ -58,10 +58,33 @@ public class Oracle {
         new HashSet<>(Arrays.asList(".git", "target", "build", "node_modules", "vendor"));
     static final List<String> recs = new ArrayList<>();
     static final List<String> edges = new ArrayList<>();
+    static final List<String> nameEdges = new ArrayList<>();
     static final long MODULE_LINE = 0;
 
     static String esc(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    // (H) Simple name of an extends/implements type: drop generics and any
+    // (H) package/outer qualifier, matching how cgr resolves bases by simple name.
+    static String simpleName(Object typeTree) {
+        String s = typeTree.toString();
+        int lt = s.indexOf('<');
+        if (lt >= 0) {
+            s = s.substring(0, lt);
+        }
+        int dot = s.lastIndexOf('.');
+        if (dot >= 0) {
+            s = s.substring(dot + 1);
+        }
+        return s.trim();
+    }
+
+    static void emitNameEdge(
+            String rel, String file, String skind, long sline, String targetName) {
+        nameEdges.add("{\"rel\":\"" + rel + "\",\"source\":{\"kind\":\"" + skind
+            + "\",\"file\":\"" + esc(file) + "\",\"line\":" + sline
+            + "},\"target_name\":\"" + esc(targetName) + "\"}");
     }
 
     static void emit(String kind, String file, long line, String name) {
@@ -109,7 +132,7 @@ public class Oracle {
             }
         });
         if (files.isEmpty()) {
-            System.out.print("{\"nodes\":[],\"edges\":[]}");
+            System.out.print("{\"nodes\":[],\"edges\":[],\"name_edges\":[]}");
             return;
         }
 
@@ -129,10 +152,24 @@ public class Oracle {
                     // (H) Anonymous classes have an empty name and no cgr node.
                     if (pos >= 0 && node.getSimpleName().length() > 0) {
                         long line = lm.getLineNumber(pos);
-                        emit(classKind(node), rel, line, node.getSimpleName().toString());
+                        String kind = classKind(node);
+                        emit(kind, rel, line, node.getSimpleName().toString());
                         // (H) Every named type is DEFINEd by the file module,
                         // (H) including nested types (cgr keeps this flat).
-                        emitEdge("DEFINES", rel, "Module", MODULE_LINE, classKind(node), line);
+                        emitEdge("DEFINES", rel, "Module", MODULE_LINE, kind, line);
+                        // (H) extends superclass -> INHERITS (a class only).
+                        if (node.getExtendsClause() != null) {
+                            emitNameEdge("INHERITS", rel, kind, line,
+                                simpleName(node.getExtendsClause()));
+                        }
+                        // (H) The implements clause holds a class/enum's interfaces
+                        // (H) (-> IMPLEMENTS) but an interface's superinterfaces
+                        // (H) (-> INHERITS, like cgr).
+                        String hrel = node.getKind() == Tree.Kind.INTERFACE
+                            ? "INHERITS" : "IMPLEMENTS";
+                        for (Tree it : node.getImplementsClause()) {
+                            emitNameEdge(hrel, rel, kind, line, simpleName(it));
+                        }
                     }
                     return super.visitClass(node, p);
                 }
@@ -176,6 +213,7 @@ public class Oracle {
             }.scan(unit, null);
         }
         System.out.print("{\"nodes\":[" + String.join(",", recs)
-            + "],\"edges\":[" + String.join(",", edges) + "]}");
+            + "],\"edges\":[" + String.join(",", edges)
+            + "],\"name_edges\":[" + String.join(",", nameEdges) + "]}");
     }
 }
