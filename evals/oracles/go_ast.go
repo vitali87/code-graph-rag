@@ -36,12 +36,14 @@ import (
 	"strings"
 )
 
-// Def is a single declaration record.
+// Def is a single declaration record. Line is the identifier line (the node's
+// start, matching cgr); EndLine is the line of the declaration's last token.
 type Def struct {
-	Kind string `json:"kind"`
-	File string `json:"file"`
-	Line int    `json:"line"`
-	Name string `json:"name"`
+	Kind    string `json:"kind"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	EndLine int    `json:"end_line"`
+	Name    string `json:"name"`
 }
 
 // NodeRef identifies an edge endpoint by (kind, file, line).
@@ -137,9 +139,13 @@ func collectNodes(pf parsedFile, defs *[]Def) {
 			if d.Recv != nil {
 				kind = kindMethod
 			}
-			*defs = append(*defs, Def{kind, pf.rel, pf.fset.Position(d.Name.Pos()).Line, d.Name.Name})
+			line := pf.fset.Position(d.Name.Pos()).Line
+			end := pf.fset.Position(d.End()).Line
+			*defs = append(*defs, Def{kind, pf.rel, line, end, d.Name.Name})
 		case *ast.TypeSpec:
-			*defs = append(*defs, Def{typeSpecKind(d), pf.rel, pf.fset.Position(d.Name.Pos()).Line, d.Name.Name})
+			line := pf.fset.Position(d.Name.Pos()).Line
+			end := pf.fset.Position(d.End()).Line
+			*defs = append(*defs, Def{typeSpecKind(d), pf.rel, line, end, d.Name.Name})
 		}
 		return true
 	})
@@ -165,7 +171,8 @@ func collectTypes(pf parsedFile, types map[string]Def) {
 				continue
 			}
 			line := pf.fset.Position(ts.Name.Pos()).Line
-			types[typeKey(pf.dir, ts.Name.Name)] = Def{typeSpecKind(ts), pf.rel, line, ts.Name.Name}
+			end := pf.fset.Position(ts.End()).Line
+			types[typeKey(pf.dir, ts.Name.Name)] = Def{typeSpecKind(ts), pf.rel, line, end, ts.Name.Name}
 		}
 	}
 }
