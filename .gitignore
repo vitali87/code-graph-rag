@@ -35,5 +35,7 @@ evals/oracles/ts_oracle/node_modules/
 evals/oracles/java_oracle/*.class
 # Lua oracle deps (the source + package-lock.json are committed)
 evals/oracles/lua_oracle/node_modules/
+# PHP oracle deps (the source + package-lock.json are committed)
+evals/oracles/php_oracle/node_modules/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json

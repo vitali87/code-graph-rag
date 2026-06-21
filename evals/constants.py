@@ -217,3 +217,20 @@ LUA_ORACLE_DIRNAME = "lua_oracle"
 LUA_ORACLE_SCRIPT = "lua_ast.js"
 LUA_SCORES_FILENAME = "lua_scores.csv"
 LUA_DIFF_FILENAME = "lua_diff.json"
+
+# (H) PHP structure eval: cgr nodes graded against a php-parser oracle.
+PHP_SUFFIX = ".php"
+PHP_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+)
+PHP_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in PHP_SCORED_NODE_KINDS
+)
+PHP_ORACLE_DIRNAME = "php_oracle"
+PHP_ORACLE_SCRIPT = "php_ast.js"
+PHP_SCORES_FILENAME = "php_scores.csv"
+PHP_DIFF_FILENAME = "php_diff.json"
