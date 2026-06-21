@@ -173,7 +173,11 @@ def extract_cgr_lang_graph(
             # (H) is the resolved base qn, or the bare name when unresolved).
             source = by_uid.get((from_label, from_val))
             if source is not None:
-                target_name = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                # (H) Base simple name: cgr's resolved target may be a dotted qn
+                # (H) (`module.Base`) or a Rust path (`std::io::Read`), so split on
+                # (H) both `.` and `::`.
+                flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 

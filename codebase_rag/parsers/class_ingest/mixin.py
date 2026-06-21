@@ -275,6 +275,27 @@ class ClassIngestMixin:
             else module_qn
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
+
+        # (H) `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
+        # (H) node label may be Class/Enum/Type, so match the relationship source
+        # (H) to its registered label (else the IMPLEMENTS edge never resolves).
+        if trait_name := rs_utils.extract_impl_trait(class_node):
+            owner_type = self.function_registry.get(class_qn)
+            owner_label = (
+                cs.NodeLabel(owner_type.value)
+                if owner_type is not None
+                else cs.NodeLabel.CLASS
+            )
+            self.ingestor.ensure_relationship_batch(
+                (owner_label, cs.KEY_QUALIFIED_NAME, class_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (
+                    cs.NodeLabel.INTERFACE,
+                    cs.KEY_QUALIFIED_NAME,
+                    self._resolve_to_qn(trait_name, owner_module_qn),
+                ),
+            )
+
         body_node = class_node.child_by_field_name("body")
 
         if not body_node:
