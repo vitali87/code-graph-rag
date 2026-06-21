@@ -42,8 +42,8 @@ const nodes = [];
 const edges = [];
 const nameEdges = [];
 
-function emit(kind, file, line) {
-  nodes.push({ kind, file, line, name: "decl" });
+function emit(kind, file, line, endLine) {
+  nodes.push({ kind, file, line, end_line: endLine, name: "decl" });
 }
 
 function emitEdge(rel, file, pkind, pline, ckind, cline) {
@@ -136,7 +136,7 @@ function walk(node, file, ctx) {
         walkChildren(node, file, { container: "anon", typeRef: null, funcRef: ctx.funcRef });
       } else {
         const line = declLine(node);
-        emit("Class", file, line);
+        emit("Class", file, line, node.loc.end.line);
         emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
         emitInheritance(node, file, "Class", line);
         walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
@@ -145,7 +145,7 @@ function walk(node, file, ctx) {
     }
     case "interface": {
       const line = declLine(node);
-      emit("Interface", file, line);
+      emit("Interface", file, line, node.loc.end.line);
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
       emitInheritance(node, file, "Interface", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Interface", line }, funcRef: null });
@@ -153,14 +153,14 @@ function walk(node, file, ctx) {
     }
     case "trait": {
       const line = declLine(node);
-      emit("Class", file, line);
+      emit("Class", file, line, node.loc.end.line);
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       return;
     }
     case "enum": {
       const line = declLine(node);
-      emit("Enum", file, line);
+      emit("Enum", file, line, node.loc.end.line);
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
       emitInheritance(node, file, "Enum", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Enum", line }, funcRef: null });
@@ -169,14 +169,14 @@ function walk(node, file, ctx) {
     case "method": {
       const kind = ctx.container === "anon" ? "Function" : "Method";
       const line = declLine(node);
-      emit(kind, file, line);
+      emit(kind, file, line, node.loc.end.line);
       defineFunctionEdge(file, ctx, kind, line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind, line } });
       return;
     }
     case "function": {
       const line = declLine(node);
-      emit("Function", file, line);
+      emit("Function", file, line, node.loc.end.line);
       defineFunctionEdge(file, ctx, "Function", line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
       return;
@@ -184,7 +184,7 @@ function walk(node, file, ctx) {
     case "closure":
     case "arrowfunc": {
       const line = node.loc.start.line;
-      emit("Function", file, line);
+      emit("Function", file, line, node.loc.end.line);
       defineFunctionEdge(file, ctx, "Function", line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
       return;
