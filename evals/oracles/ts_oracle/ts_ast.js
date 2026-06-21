@@ -39,8 +39,8 @@ const nodes = [];
 const edges = [];
 const nameEdges = [];
 
-function emit(kind, file, line, name) {
-  nodes.push({ kind, file, line, name });
+function emit(kind, file, line, name, endLine) {
+  nodes.push({ kind, file, line, end_line: endLine, name });
 }
 
 function emitEdge(rel, file, pkind, pline, ckind, cline) {
@@ -86,6 +86,12 @@ function lineOf(sf, node) {
   return sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
 }
 
+// (H) Last line of a node's full span (its end position), for span/end_line
+// (H) grading against cgr's end_line.
+function endLineOf(sf, node) {
+  return sf.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+}
+
 function methodKind(container) {
   return container === "namespace" || container === "class" ? "Method" : "Function";
 }
@@ -107,7 +113,7 @@ function defineFunction(node, sf, file, container, ctx, kind, line) {
 function walk(node, sf, file, container, ctx) {
   if (ts.isClassDeclaration(node) && node.name) {
     const line = lineOf(sf, node);
-    emit("Class", file, line, node.name.text);
+    emit("Class", file, line, node.name.text, endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
     emitHeritage(node, sf, file, "Class", line);
     const sub = { typeRef: { kind: "Class", line }, funcRef: null };
@@ -116,26 +122,26 @@ function walk(node, sf, file, container, ctx) {
   }
   if (ts.isInterfaceDeclaration(node) && node.name) {
     const line = lineOf(sf, node);
-    emit("Interface", file, line, node.name.text);
+    emit("Interface", file, line, node.name.text, endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
     emitHeritage(node, sf, file, "Interface", line);
     return;
   }
   if (ts.isEnumDeclaration(node) && node.name) {
     const line = lineOf(sf, node);
-    emit("Enum", file, line, node.name.text);
+    emit("Enum", file, line, node.name.text, endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
     return;
   }
   if (ts.isTypeAliasDeclaration(node) && node.name) {
     const line = lineOf(sf, node);
-    emit("Type", file, line, node.name.text);
+    emit("Type", file, line, node.name.text, endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Type", line);
     return;
   }
   if (ts.isModuleDeclaration(node) && node.name) {
     const line = lineOf(sf, node);
-    emit("Class", file, line, node.name.text || "");
+    emit("Class", file, line, node.name.text || "", endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
     const sub = { typeRef: { kind: "Class", line }, funcRef: null };
     if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "namespace", sub));
@@ -144,7 +150,7 @@ function walk(node, sf, file, container, ctx) {
   if (ts.isFunctionDeclaration(node) && node.name) {
     const kind = methodKind(container);
     const line = lineOf(sf, node);
-    emit(kind, file, line, node.name.text);
+    emit(kind, file, line, node.name.text, endLineOf(sf, node));
     defineFunction(node, sf, file, container, ctx, kind, line);
     const sub = { typeRef: null, funcRef: { kind, line } };
     if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "function", sub));
@@ -161,7 +167,7 @@ function walk(node, sf, file, container, ctx) {
     const kind = container === "class" ? "Method" : "Function";
     const line = lineOf(sf, node);
     if (nm) {
-      emit(kind, file, line, nm);
+      emit(kind, file, line, nm, endLineOf(sf, node));
       defineFunction(node, sf, file, container, ctx, kind, line);
     }
     const sub = { typeRef: null, funcRef: { kind, line } };
@@ -174,7 +180,7 @@ function walk(node, sf, file, container, ctx) {
     // line. The name is irrelevant to the (kind, file, line) join.
     const kind = methodKind(container);
     const line = lineOf(sf, node);
-    emit(kind, file, line, "anonymous");
+    emit(kind, file, line, "anonymous", endLineOf(sf, node));
     defineFunction(node, sf, file, container, ctx, kind, line);
     const sub = { typeRef: null, funcRef: { kind, line } };
     node.forEachChild((c) => walk(c, sf, file, "function", sub));
