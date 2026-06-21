@@ -1987,6 +1987,15 @@ TS_SCALA_IMPORT_DECLARATION = "import_declaration"
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
 TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
+# (H) PHP inheritance clauses: `extends ...` (base_clause, for class AND
+# (H) interface) and `implements ...` (class_interface_clause); each lists `name`
+# (H) nodes naming the base types.
+TS_PHP_BASE_CLAUSE = "base_clause"
+TS_PHP_CLASS_INTERFACE_CLAUSE = "class_interface_clause"
+TS_PHP_NAME = "name"
+# (H) PHP fully-qualified base (`\Exception`, `\App\Base`); its trailing `name`
+# (H) child is the simple name cgr resolves against.
+TS_PHP_QUALIFIED_NAME = "qualified_name"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
 TS_PHP_ARROW_FUNCTION = "arrow_function"
