@@ -6,11 +6,10 @@ from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import extract_cgr_ts_nodes
+from .cgr_graph import extract_cgr_ts_graph
 from .oracles import run_typescript_oracle, typescript_available
-from .score import score_node_kinds
+from .score import score_structure
 from .structure_report import render, write_outputs
-from .types_defs import GraphData
 
 _TITLE = "cgr L1 structure eval (TypeScript vs tsc)"
 
@@ -34,18 +33,14 @@ def main(
     project = project_name or target.name
 
     logger.info(ls.TS_EXTRACTING_CGR.format(target=target, project=project))
-    cgr = GraphData(
-        nodes=extract_cgr_ts_nodes(target, project), edges=set(), name_edges=set()
-    )
+    cgr = extract_cgr_ts_graph(target, project)
     logger.success(ls.TS_CGR_DONE.format(count=len(cgr.nodes)))
 
     logger.info(ls.TS_EXTRACTING_ORACLE.format(binary=ec.NODE_BIN, target=target))
-    oracle = GraphData(
-        nodes=run_typescript_oracle(target), edges=set(), name_edges=set()
-    )
+    oracle = run_typescript_oracle(target)
     logger.success(ls.TS_ORACLE_DONE.format(count=len(oracle.nodes)))
 
-    result = score_node_kinds(cgr, oracle, ec.TS_SCORED_NODE_KINDS)
+    result = score_structure(cgr, oracle, ec.TS_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES)
     write_outputs(result, out_dir, ec.TS_SCORES_FILENAME, ec.TS_DIFF_FILENAME)
     render(result, _TITLE)
 

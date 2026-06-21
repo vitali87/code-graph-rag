@@ -697,16 +697,33 @@ class FunctionIngestMixin:
         if not isinstance(current, Node):
             return cs.NodeLabel.MODULE, module_qn
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                parent_qn = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                if not parent_qn or parent_qn == func_qn:
-                    break
                 parent_label = (
                     cs.NodeLabel.METHOD
                     if self._is_method(current, lang_config)
                     else cs.NodeLabel.FUNCTION
                 )
+                # (H) Bind to the enclosing function's OWN qn, recomputed from its
+                # (H) node. A function nested in an anonymous callback otherwise
+                # (H) loses that callback: anonymous scopes contribute no segment to
+                # (H) the child qn, so trimming the child qn would skip the callback
+                # (H) and hoist the child to the nearest named ancestor.
+                resolution = (
+                    self._resolve_function_identity(
+                        current, module_qn, language, lang_config, file_path
+                    )
+                    if language is not None
+                    else None
+                )
+                parent_qn = (
+                    resolution.qualified_name
+                    if resolution
+                    else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                )
+                if not parent_qn or parent_qn == func_qn:
+                    break
                 return parent_label, parent_qn
 
             current = current.parent
