@@ -40,6 +40,7 @@ const IGNORED = new Set([".git", "node_modules", "vendor"]);
 const MODULE_LINE = 0;
 const nodes = [];
 const edges = [];
+const nameEdges = [];
 
 function emit(kind, file, line) {
   nodes.push({ kind, file, line, name: "decl" });
@@ -51,6 +52,38 @@ function emitEdge(rel, file, pkind, pline, ckind, cline) {
     parent: { kind: pkind, file, line: pline },
     child: { kind: ckind, file, line: cline },
   });
+}
+
+function emitNameEdge(rel, file, skind, sline, targetName) {
+  nameEdges.push({
+    rel,
+    source: { kind: skind, file, line: sline },
+    target_name: targetName,
+  });
+}
+
+// (H) Simple name of a php-parser Name ref: its last namespace segment, matching
+// (H) how cgr resolves bases by simple name (e.g. \App\Base -> Base).
+function phpSimpleName(ref) {
+  const n = ref && ref.name ? ref.name : "";
+  return n.split("\\").pop();
+}
+
+function asList(refs) {
+  if (!refs) return [];
+  return Array.isArray(refs) ? refs : [refs];
+}
+
+// (H) class extends -> INHERITS, implements -> IMPLEMENTS; interface extends
+// (H) (an array) -> INHERITS (cgr models superinterfaces as inheritance).
+function emitInheritance(node, file, kind, line) {
+  const extendsRel = "INHERITS";
+  for (const ref of asList(node.extends)) {
+    emitNameEdge(extendsRel, file, kind, line, phpSimpleName(ref));
+  }
+  for (const ref of asList(node.implements)) {
+    emitNameEdge("IMPLEMENTS", file, kind, line, phpSimpleName(ref));
+  }
 }
 
 function declLine(node) {
@@ -105,6 +138,7 @@ function walk(node, file, ctx) {
         const line = declLine(node);
         emit("Class", file, line);
         emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+        emitInheritance(node, file, "Class", line);
         walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       }
       return;
@@ -113,6 +147,7 @@ function walk(node, file, ctx) {
       const line = declLine(node);
       emit("Interface", file, line);
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
+      emitInheritance(node, file, "Interface", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Interface", line }, funcRef: null });
       return;
     }
@@ -127,6 +162,7 @@ function walk(node, file, ctx) {
       const line = declLine(node);
       emit("Enum", file, line);
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
+      emitInheritance(node, file, "Enum", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Enum", line }, funcRef: null });
       return;
     }
@@ -181,4 +217,4 @@ const parser = new phpParser.Engine({
   ast: { withPositions: true },
 });
 visitDir(root, root, parser);
-process.stdout.write(JSON.stringify({ nodes, edges }));
+process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges }));

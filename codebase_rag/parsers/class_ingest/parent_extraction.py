@@ -16,6 +16,21 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def php_base_simple_name(node: Node) -> str | None:
+    # (H) A PHP base type is a plain `name` (`Base`) or a `qualified_name`
+    # (H) (`\Exception`, `\App\Base`) whose trailing `name` child is the simple
+    # (H) name; cgr resolves bases by simple name.
+    if node.type == cs.TS_PHP_NAME and node.text:
+        return safe_decode_text(node)
+    if node.type == cs.TS_PHP_QUALIFIED_NAME:
+        last: Node | None = None
+        for child in node.children:
+            if child.type == cs.TS_PHP_NAME:
+                last = child
+        return safe_decode_text(last) if last and last.text else None
+    return None
+
+
 def extract_parent_classes(
     class_node: Node,
     module_qn: str,
@@ -51,6 +66,13 @@ def extract_parent_classes(
                 class_node, module_qn, import_processor, resolve_to_qn
             )
         )
+
+    # (H) PHP `extends` (a class's superclass or an interface's superinterfaces)
+    # (H) is a base_clause listing `name` nodes; both are inheritance.
+    if base_clause := find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE):
+        for child in base_clause.children:
+            if parent_name := php_base_simple_name(child):
+                parent_classes.append(resolve_to_qn(parent_name, module_qn))
 
     return parent_classes
 
@@ -359,6 +381,12 @@ def extract_implemented_interfaces(
                 if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
                     if name := safe_decode_text(child):
                         implemented_interfaces.append(resolve_to_qn(name, module_qn))
+
+    # (H) PHP `class C implements I, J` is a class_interface_clause of `name` nodes.
+    if php_impl := find_child_by_type(class_node, cs.TS_PHP_CLASS_INTERFACE_CLAUSE):
+        for child in php_impl.children:
+            if name := php_base_simple_name(child):
+                implemented_interfaces.append(resolve_to_qn(name, module_qn))
 
     return implemented_interfaces
 
