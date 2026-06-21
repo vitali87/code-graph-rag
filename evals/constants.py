@@ -66,9 +66,16 @@ EGG_INFO_SUFFIX = ".egg-info"
 class Category(StrEnum):
     NODE = "node"
     EDGE = "edge"
+    SPAN = "span"
 
 
 AGGREGATE_LABEL = "ALL"
+
+# (H) Span grading: among nodes matched by (kind, file, start), how often cgr's
+# (H) end_line agrees with the oracle's. Surfaced as its own category so a wrong
+# (H) node span is visible even when node identity is already 1.0.
+DIFF_SPAN_PREFIX = "span:"
+SPAN_REPR = "{kind} {file}:{start}-{end}"
 
 CSV_FIELDS: tuple[str, ...] = (
     "category",
@@ -119,6 +126,7 @@ GO_DIFF_FILENAME = "go_diff.json"
 ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"
+ORACLE_KEY_END_LINE = "end_line"
 ORACLE_KEY_NAME = "name"
 # (H) Edge-payload keys: an oracle that grades containment edges emits a
 # (H) {nodes: [...], edges: [...]} object, each edge carrying rel + parent/child

@@ -58,12 +58,13 @@ fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn node_json(kind: &str, file: &str, line: usize, name: &str) -> String {
+fn node_json(kind: &str, file: &str, line: usize, end_line: usize, name: &str) -> String {
     format!(
-        "{{\"kind\":\"{}\",\"file\":\"{}\",\"line\":{},\"name\":\"{}\"}}",
+        "{{\"kind\":\"{}\",\"file\":\"{}\",\"line\":{},\"end_line\":{},\"name\":\"{}\"}}",
         kind,
         esc(file),
         line,
+        end_line,
         esc(name)
     )
 }
@@ -118,54 +119,54 @@ struct NodeCollector<'a> {
 }
 
 impl<'a> NodeCollector<'a> {
-    fn emit(&mut self, kind: &str, line: usize, name: &str) {
-        self.out.push(node_json(kind, self.file, line, name));
+    fn emit(&mut self, kind: &str, line: usize, end_line: usize, name: &str) {
+        self.out.push(node_json(kind, self.file, line, end_line, name));
     }
 }
 
 impl<'ast, 'a> Visit<'ast> for NodeCollector<'a> {
     fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-        self.emit(KIND_CLASS, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_CLASS, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_item_struct(self, node);
     }
     fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
-        self.emit(KIND_ENUM, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_ENUM, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_item_enum(self, node);
     }
     fn visit_item_union(&mut self, node: &'ast syn::ItemUnion) {
-        self.emit(KIND_UNION, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_UNION, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_item_union(self, node);
     }
     fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
-        self.emit(KIND_TYPE, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_TYPE, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_item_type(self, node);
     }
     fn visit_impl_item_type(&mut self, node: &'ast syn::ImplItemType) {
-        self.emit(KIND_TYPE, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_TYPE, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_impl_item_type(self, node);
     }
     fn visit_trait_item_type(&mut self, node: &'ast syn::TraitItemType) {
-        self.emit(KIND_TYPE, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_TYPE, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_trait_item_type(self, node);
     }
     fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
-        self.emit(KIND_FUNCTION, node.span().start().line, "closure");
+        self.emit(KIND_FUNCTION, node.span().start().line, node.span().end().line, "closure");
         syn::visit::visit_expr_closure(self, node);
     }
     fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-        self.emit(KIND_INTERFACE, node.ident.span().start().line, &node.ident.to_string());
+        self.emit(KIND_INTERFACE, node.ident.span().start().line, node.span().end().line, &node.ident.to_string());
         syn::visit::visit_item_trait(self, node);
     }
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.emit(KIND_FUNCTION, node.sig.ident.span().start().line, &node.sig.ident.to_string());
+        self.emit(KIND_FUNCTION, node.sig.ident.span().start().line, node.span().end().line, &node.sig.ident.to_string());
         syn::visit::visit_item_fn(self, node);
     }
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.emit(KIND_METHOD, node.sig.ident.span().start().line, &node.sig.ident.to_string());
+        self.emit(KIND_METHOD, node.sig.ident.span().start().line, node.span().end().line, &node.sig.ident.to_string());
         syn::visit::visit_impl_item_fn(self, node);
     }
     fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
-        self.emit(KIND_METHOD, node.sig.ident.span().start().line, &node.sig.ident.to_string());
+        self.emit(KIND_METHOD, node.sig.ident.span().start().line, node.span().end().line, &node.sig.ident.to_string());
         syn::visit::visit_trait_item_fn(self, node);
     }
 }

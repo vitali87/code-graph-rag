@@ -40,7 +40,9 @@ def main(
     oracle = run_rust_oracle(target)
     logger.success(ls.RS_ORACLE_DONE.format(count=len(oracle.nodes)))
 
-    result = score_structure(cgr, oracle, ec.RS_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES)
+    result = score_structure(
+        cgr, oracle, ec.RS_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES, grade_spans=True
+    )
     write_outputs(result, out_dir, ec.RS_SCORES_FILENAME, ec.RS_DIFF_FILENAME)
     render(result, _TITLE)
 

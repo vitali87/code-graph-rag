@@ -1,4 +1,4 @@
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 
 class NodeKey(NamedTuple):
@@ -66,6 +66,9 @@ class OracleRecord(TypedDict):
     file: str
     line: int
     name: str
+    # (H) Optional so oracles that have not yet adopted span emission keep working
+    # (H) (records_to_nodes falls back to the start line).
+    end_line: NotRequired[int]
 
 
 class OracleNodeRef(TypedDict):
