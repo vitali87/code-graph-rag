@@ -13,6 +13,14 @@ PASS_2_FILES = (
 )
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
+CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
+CPP_FRONTEND_UNAVAILABLE = (
+    "CPP_FRONTEND=libclang but libclang is unavailable; using tree-sitter"
+)
+CPP_FRONTEND_NO_COMPDB = (
+    "CPP_FRONTEND=libclang but no compile_commands.json found; using tree-sitter"
+)
+CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )

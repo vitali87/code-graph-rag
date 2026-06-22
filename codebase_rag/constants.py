@@ -149,6 +149,11 @@ class GoogleProviderType(StrEnum):
     VERTEX = "vertex"
 
 
+class CppFrontend(StrEnum):
+    TREESITTER = "treesitter"
+    LIBCLANG = "libclang"
+
+
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
