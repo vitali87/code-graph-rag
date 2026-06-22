@@ -104,6 +104,11 @@ nav:
     - Troubleshooting: advanced/troubleshooting.md
   - Contributing: contributing.md
 
+# Internal analysis artifacts kept in the repo but not published to the doc site nav.
+not_in_nav: |
+  /reports/
+  /TODO.md
+
 extra_css:
   - stylesheets/extra.css
 
