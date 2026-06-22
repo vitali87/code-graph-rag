@@ -27,8 +27,13 @@ FUNCTION_KIND_NAMES: frozenset[str] = frozenset({"FUNCTION_DECL", "FUNCTION_TEMP
 METHOD_KIND_NAMES: frozenset[str] = frozenset(
     {"CXX_METHOD", "CONSTRUCTOR", "DESTRUCTOR", "CONVERSION_FUNCTION"}
 )
+# (H) `using Alias = T;` (TYPE_ALIAS_DECL) and `typedef T Alias;` (TYPEDEF_DECL)
+# (H) -> a Type node, matching how the tree-sitter path maps C++ alias/typedef
+# (H) declarations (TS_TYPE_ALIAS_DECLARATION) and Go/Rust type decls.
+TYPE_KIND_NAMES: frozenset[str] = frozenset({"TYPE_ALIAS_DECL", "TYPEDEF_DECL"})
 
 LABEL_MODULE = cs.NodeLabel.MODULE.value
 LABEL_CLASS = cs.NodeLabel.CLASS.value
 LABEL_FUNCTION = cs.NodeLabel.FUNCTION.value
 LABEL_METHOD = cs.NodeLabel.METHOD.value
+LABEL_TYPE = cs.NodeLabel.TYPE.value

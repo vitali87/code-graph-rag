@@ -140,6 +140,24 @@ class CppQnResolver:
         parts = [module_qn, *self._namespace_chain(cursor), self.member_name(cursor)]
         return cs.SEPARATOR_DOT.join(parts)
 
+    def type_qn(self, cursor: Cursor) -> str | None:
+        # (H) A class-scoped `using`/`typedef` is anchored to its enclosing class
+        # (H) (e.g. proj.Box.Handle); a namespace/file-scoped one mirrors a free
+        # (H) function's qn (module + namespace chain + name).
+        parent = cursor.semantic_parent
+        if parent is not None and parent.kind.name in fc.CLASS_KIND_NAMES:
+            class_qn = self.class_qn(parent)
+            if class_qn is None:
+                return None
+            return cs.SEPARATOR_DOT.join([class_qn, cursor.spelling])
+        if cursor.location.file is None:
+            return None
+        module_qn = self.module_qn(cursor.location.file.name)
+        if module_qn is None:
+            return None
+        parts = [module_qn, *self._namespace_chain(cursor), cursor.spelling]
+        return cs.SEPARATOR_DOT.join(parts)
+
     def method_qn(self, cursor: Cursor) -> str | None:
         # (H) A method's qn is anchored to its CLASS's declaring file (the header),
         # (H) via semantic_parent, NOT the out-of-line definition file. This mirrors

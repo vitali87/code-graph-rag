@@ -58,6 +58,8 @@ def _classify(cursor: Cursor) -> str | None:
     kind = cursor.kind.name
     if kind in fc.CLASS_KIND_NAMES:
         return fc.LABEL_CLASS
+    if kind in fc.TYPE_KIND_NAMES:
+        return fc.LABEL_TYPE
     if kind in fc.METHOD_KIND_NAMES:
         return fc.LABEL_METHOD
     if kind in fc.FUNCTION_KIND_NAMES:
@@ -141,6 +143,9 @@ class _Collector:
 
         if label == fc.LABEL_METHOD:
             return self._process_method(cursor, rel)
+        if label == fc.LABEL_TYPE:
+            self._process_type(cursor, rel, module_qn)
+            return None
 
         qn = (
             self.resolver.class_qn(cursor)
@@ -189,6 +194,37 @@ class _Collector:
             qn,
         )
         return (fc.LABEL_METHOD, qn)
+
+    def _process_type(self, cursor: Cursor, rel: str, module_qn: str) -> None:
+        # (H) A `using`/`typedef` alias becomes a Type node, DEFINED by its
+        # (H) enclosing Class (member alias) or its Module (namespace/file scope),
+        # (H) matching the tree-sitter alias path and Go/Rust type decls.
+        qn = self.resolver.type_qn(cursor)
+        if qn is None:
+            return
+        self.covered.add(rel)
+        self._add_module(module_qn, rel, cursor.location.file.name)
+        self._add_node(
+            fc.LABEL_TYPE,
+            qn,
+            self._node_props(cursor, qn, cursor.spelling, rel),
+            cursor.is_definition(),
+        )
+        parent = cursor.semantic_parent
+        if parent is not None and parent.kind.name in fc.CLASS_KIND_NAMES:
+            class_qn = self.resolver.class_qn(parent)
+            if class_qn is not None:
+                self._add_edge(
+                    cs.RelationshipType.DEFINES,
+                    fc.LABEL_CLASS,
+                    class_qn,
+                    fc.LABEL_TYPE,
+                    qn,
+                )
+                return
+        self._add_edge(
+            cs.RelationshipType.DEFINES, fc.LABEL_MODULE, module_qn, fc.LABEL_TYPE, qn
+        )
 
     def _process_call(self, cursor: Cursor, enclosing: _Scope) -> None:
         # (H) Resolve the callee semantically via cursor.referenced (libclang did
