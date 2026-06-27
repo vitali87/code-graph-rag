@@ -54,6 +54,12 @@ dependencies = [
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
     "huggingface-hub[hf-xet]>=1.7.2",
+    # TODO: remove once pydantic-ai is upgraded to a release whose code and
+    # metadata agree on the griffe package. pydantic-ai-slim 1.102.0 imports
+    # `griffe` at runtime but only declares the renamed `griffelib`, so a clean
+    # `uv sync` omits griffe and leaves codebase_rag unimportable; declare it
+    # explicitly to keep the environment reproducible.
+    "griffe>=1.0,<2",
 ]
 
 [project.scripts]
