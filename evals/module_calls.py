@@ -66,6 +66,14 @@ class _ModuleCallVisitor(ast.NodeVisitor):
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for decorator in node.decorator_list:
+            if self._func_depth == 0:
+                # (H) a bare decorator `@task` is a Name (not a Call), so record
+                # (H) its callee name explicitly; applying it runs at module load.
+                target = (
+                    decorator.func if isinstance(decorator, ast.Call) else decorator
+                )
+                if name := _callee_name(target):
+                    self.names.add(name)
             self.visit(decorator)
         if self._count_annotations:
             args = node.args

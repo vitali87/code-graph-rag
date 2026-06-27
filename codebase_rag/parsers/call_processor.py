@@ -148,6 +148,59 @@ class CallProcessor:
                 nested_starts.add(call.start_byte)
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
 
+    def _bare_decorator_name(self, decorator_node: Node) -> str | None:
+        # (H) A bare decorator `@task` / `@pkg.deco` (no call parens) is not a
+        # (H) `call` node, so the normal call pass misses it even though applying
+        # (H) it runs `task(func)` at module load. A call decorator `@deco(...)`
+        # (H) IS a call node and is already captured, so skip it here.
+        named = decorator_node.named_children
+        if not named:
+            return None
+        expr = named[0]
+        if expr.type in (cs.TS_IDENTIFIER, cs.TS_ATTRIBUTE) and expr.text is not None:
+            return expr.text.decode(cs.ENCODING_UTF8)
+        return None
+
+    def _runs_at_module_load(self, node: Node) -> bool:
+        # (H) A definition runs at module load only when it is at module or
+        # (H) class-body scope; nested inside a function body it runs at that
+        # (H) function's call time, so its decorator is not a module-load call.
+        ancestor = node.parent
+        while ancestor is not None:
+            if ancestor.type == cs.TS_PY_FUNCTION_DEFINITION:
+                return False
+            ancestor = ancestor.parent
+        return True
+
+    def _ingest_decorator_calls(self, func_nodes: list[Node], module_qn: str) -> None:
+        # (H) Emit `(Module)->decorator` CALLS for bare decorators: the decoration
+        # (H) executes at module-load time, so the module is the caller. Only
+        # (H) first-party callables produce an edge.
+        resolver = self._resolver
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        qn_key = cs.KEY_QUALIFIED_NAME
+        module_spec = (cs.NodeLabel.MODULE, qn_key, module_qn)
+        callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+        for func_node in func_nodes:
+            parent = func_node.parent
+            if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+                continue
+            if not self._runs_at_module_load(parent):
+                continue
+            for child in parent.children:
+                if child.type != cs.TS_PY_DECORATOR:
+                    continue
+                name = self._bare_decorator_name(child)
+                if not name:
+                    continue
+                callee = resolver.resolve_function_call(name, module_qn)
+                if callee and callee[0] in callable_labels:
+                    ensure_rel(
+                        module_spec,
+                        cs.RelationshipType.CALLS,
+                        (callee[0], qn_key, callee[1]),
+                    )
+
     def _module_qn(self, relative_path: Path, file_name: str) -> str:
         if file_name in (cs.INIT_PY, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
@@ -272,6 +325,11 @@ class CallProcessor:
                 call_name_cache=call_name_cache,
                 combined_captures=combined_captures or None,
             )
+            # (H) Bare decorators (`@task`) are not call nodes; emit their
+            # (H) module-load CALLS before the empty-`all_call_nodes` early return,
+            # (H) since a file may have decorators but no other calls.
+            if language == cs.SupportedLanguage.PYTHON and sorted_func_nodes:
+                self._ingest_decorator_calls(sorted_func_nodes, module_qn)
             if not all_call_nodes:
                 return
             self._process_calls_in_classes(
