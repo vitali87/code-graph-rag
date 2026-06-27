@@ -127,8 +127,14 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
             # (H) point resolution at the wrong class.
             return safe_decode_text(node)
         case cs.TS_GENERIC_TYPE:
+            # (H) The base of a generic type is its first type_identifier/scoped child
+            # (H) (e.g. `Box<T>` -> Box, `Outer.Base<T>` -> Outer.Base); ignore the
+            # (H) type_arguments that follow.
             for child in node.children:
-                if child.type == cs.TS_TYPE_IDENTIFIER:
+                if child.type in (
+                    cs.TS_TYPE_IDENTIFIER,
+                    cs.TS_SCOPED_TYPE_IDENTIFIER,
+                ):
                     return safe_decode_text(child)
             return None
         case _:

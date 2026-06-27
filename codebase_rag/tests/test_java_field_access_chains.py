@@ -369,3 +369,21 @@ public class Child extends Outer.Base {
         f"super.address.city with a nested superclass (Outer.Base) should resolve to "
         f"City.ping(); got {sorted(targets)}"
     )
+
+
+def test_generic_scoped_superclass_extraction() -> None:
+    generic_scoped = extract_class_info(
+        _class_node("class Child extends Outer.Base<String> {}")
+    )
+    assert generic_scoped.get("superclass") == "Outer.Base", (
+        f"generic scoped superclass should extract the base name; "
+        f"got {generic_scoped.get('superclass')!r}"
+    )
+
+    generic_simple = extract_class_info(
+        _class_node("class Child extends Box<String> {}")
+    )
+    assert generic_simple.get("superclass") == "Box", (
+        f"generic superclass should extract the base name; "
+        f"got {generic_simple.get('superclass')!r}"
+    )
