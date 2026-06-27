@@ -339,3 +339,33 @@ public class Child extends Outer.Base {
         f"this.address.city with a same-file nested superclass (Outer.Base) should "
         f"resolve to City.ping(); got {sorted(targets)}"
     )
+
+
+def test_super_rooted_chain_with_nested_superclass(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Outer {
+    static class Base { public Address address = new Address(); }
+}
+public class Child extends Outer.Base {
+    public void run() {
+        var c = super.address.city;
+        c.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"super.address.city with a nested superclass (Outer.Base) should resolve to "
+        f"City.ping(); got {sorted(targets)}"
+    )

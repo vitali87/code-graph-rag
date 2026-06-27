@@ -425,9 +425,19 @@ class JavaVariableAnalyzerMixin:
             if not (class_node := self._find_containing_java_class(field_access_node)):
                 return None
             class_info = extract_class_info(class_node)
-            if object_name == cs.JAVA_KEYWORD_SUPER:
-                return class_info.get(cs.FIELD_SUPERCLASS)
-            return class_info.get(cs.FIELD_NAME)
+            class_name = class_info.get(cs.FIELD_NAME)
+            if object_name == cs.JAVA_KEYWORD_THIS:
+                return class_name
+            # (H) `super`: return the fully-qualified parent from class_inheritance so a
+            # (H) nested superclass (`Outer.Base`) resolves; the relative name from the
+            # (H) AST would be treated as an absolute class key by the field lookup.
+            if class_name:
+                own_qn = self._resolve_java_type_name(class_name, module_qn)
+                if cs.SEPARATOR_DOT not in own_qn:
+                    own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{own_qn}"
+                if parents := self.class_inheritance.get(own_qn):
+                    return parents[0]
+            return class_info.get(cs.FIELD_SUPERCLASS)
         return self._lookup_variable_type(object_name, module_qn)
 
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None:
