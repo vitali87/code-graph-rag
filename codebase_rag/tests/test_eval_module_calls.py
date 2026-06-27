@@ -92,6 +92,19 @@ class TestModuleCallEval:
         )
         assert "helper" not in names
 
+    def test_generator_outermost_iterable_is_eager(self, tmp_path: Path) -> None:
+        # (H) the first iterable of a generator is evaluated when the generator is
+        # (H) created (at import), so `load_items` is a module call but the lazy
+        # (H) body call `helper` is not.
+        names = self._oracle_for(
+            tmp_path,
+            "def helper():\n    return 1\n\n\n"
+            "def load_items():\n    return [1]\n\n\n"
+            "gen = (helper(x) for x in load_items())\n",
+        )
+        assert "load_items" in names
+        assert "helper" not in names
+
     def test_list_comprehension_call_is_module_attributed(self, tmp_path: Path) -> None:
         # (H) a list comprehension runs eagerly at import, so its call counts.
         names = self._oracle_for(

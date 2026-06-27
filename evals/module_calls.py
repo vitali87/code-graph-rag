@@ -103,8 +103,18 @@ class _ModuleCallVisitor(ast.NodeVisitor):
         self._func_depth -= 1
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        # (H) the outermost iterable is evaluated eagerly when the generator is
+        # (H) created (enclosing scope); the element, conditions, and any further
+        # (H) iterables are lazy (run during consumption).
+        if node.generators:
+            self.visit(node.generators[0].iter)
         self._func_depth += 1
-        self.generic_visit(node)
+        self.visit(node.elt)
+        for index, comprehension in enumerate(node.generators):
+            if index > 0:
+                self.visit(comprehension.iter)
+            for condition in comprehension.ifs:
+                self.visit(condition)
         self._func_depth -= 1
 
 
