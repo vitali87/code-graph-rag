@@ -215,3 +215,61 @@ public class Main {
         f"obj.address.city (address inherited from Base) should resolve to "
         f"City.ping(); got {sorted(targets)}"
     )
+
+
+def test_direct_this_field_chain_method_call_multiclass(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Aardvark { public void unused() {} }
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+public class Container {
+    public Address address = new Address();
+    public void run() {
+        this.address.city.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"direct this.address.city.ping() in a multi-class file should resolve to "
+        f"City.ping(); got {sorted(targets)}"
+    )
+
+
+def test_direct_super_field_chain_method_call_multiclass(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Aardvark { public void unused() {} }
+class Other {}
+class Wrong extends Other { public void unused() {} }
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Base { public Address address = new Address(); }
+public class Derived extends Base {
+    public void run() {
+        super.address.city.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"direct super.address.city.ping() in a multi-class file should resolve to "
+        f"City.ping(); got {sorted(targets)}"
+    )
