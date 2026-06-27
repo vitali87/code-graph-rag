@@ -121,6 +121,11 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
     match node.type:
         case cs.TS_TYPE_IDENTIFIER:
             return safe_decode_text(node)
+        case cs.TS_SCOPED_TYPE_IDENTIFIER:
+            # (H) `Outer.Base`/`pkg.Base`: keep the full scoped name rather than
+            # (H) descending to the first segment (the outer/package), which would
+            # (H) point resolution at the wrong class.
+            return safe_decode_text(node)
         case cs.TS_GENERIC_TYPE:
             for child in node.children:
                 if child.type == cs.TS_TYPE_IDENTIFIER:

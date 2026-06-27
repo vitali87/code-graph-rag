@@ -3,13 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import tree_sitter_java as tsjava
+from tree_sitter import Language, Node, Parser
+
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.java.utils import extract_class_info
 from codebase_rag.tests.conftest import get_relationships
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
     return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+
+
+def _class_node(java_source: str) -> Node:
+    tree = Parser(Language(tsjava.language())).parse(java_source.encode())
+
+    def walk(node: Node) -> Node | None:
+        if node.type == "class_declaration":
+            return node
+        for child in node.children:
+            if found := walk(child):
+                return found
+        return None
+
+    found = walk(tree.root_node)
+    assert found is not None
+    return found
 
 
 def _run(project_path: Path, mock_ingestor: MagicMock) -> None:
@@ -273,3 +293,20 @@ public class Derived extends Base {
         f"direct super.address.city.ping() in a multi-class file should resolve to "
         f"City.ping(); got {sorted(targets)}"
     )
+
+
+def test_scoped_superclass_extraction_keeps_actual_class() -> None:
+    nested = extract_class_info(_class_node("class Child extends Outer.Base {}"))
+    assert nested.get("superclass") == "Outer.Base", (
+        f"scoped superclass should keep the full name, not the outer/package "
+        f"segment; got {nested.get('superclass')!r}"
+    )
+
+    qualified = extract_class_info(_class_node("class Child extends pkg.Base {}"))
+    assert qualified.get("superclass") == "pkg.Base", (
+        f"package-qualified superclass should keep the full name; "
+        f"got {qualified.get('superclass')!r}"
+    )
+
+    simple = extract_class_info(_class_node("class Child extends Base {}"))
+    assert simple.get("superclass") == "Base"
