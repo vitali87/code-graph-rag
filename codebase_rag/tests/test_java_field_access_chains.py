@@ -310,3 +310,32 @@ def test_scoped_superclass_extraction_keeps_actual_class() -> None:
 
     simple = extract_class_info(_class_node("class Child extends Base {}"))
     assert simple.get("superclass") == "Base"
+
+
+def test_inherited_field_chain_via_nested_superclass(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Outer {
+    static class Base { public Address address = new Address(); }
+}
+public class Child extends Outer.Base {
+    public void run() {
+        this.address.city.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"this.address.city with a same-file nested superclass (Outer.Base) should "
+        f"resolve to City.ping(); got {sorted(targets)}"
+    )

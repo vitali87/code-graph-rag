@@ -26,6 +26,7 @@ class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
     module_qn_to_file_path: dict[str, Path]
+    class_inheritance: dict[str, list[str]]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
 
@@ -468,73 +469,82 @@ class JavaVariableAnalyzerMixin:
         if not class_type or not field_name:
             return None
 
-        # (H) Walk the inheritance chain: a field accessed on a subclass may be declared
-        # (H) on a superclass, so when it is not in the class body, continue up to the
-        # (H) parent (seen-guarded against cyclic hierarchies).
+        resolved = self._resolve_java_type_name(class_type, module_qn)
+        class_qn: str | None = (
+            resolved
+            if cs.SEPARATOR_DOT in resolved
+            else f"{module_qn}{cs.SEPARATOR_DOT}{resolved}"
+        )
+
+        # (H) Walk the inheritance chain using authoritative qualified parents from
+        # (H) class_inheritance: a field accessed on a subclass may be declared on a
+        # (H) superclass, including a nested one like `Outer.Base`. Seen-guarded.
         seen: set[str] = set()
-        current_type: str | None = class_type
-        current_module = module_qn
-
-        while current_type:
-            resolved_class_type = self._resolve_java_type_name(
-                current_type, current_module
-            )
-            class_qn = (
-                resolved_class_type
-                if cs.SEPARATOR_DOT in resolved_class_type
-                else f"{current_module}{cs.SEPARATOR_DOT}{resolved_class_type}"
-            )
-            if class_qn in seen:
-                return None
+        while class_qn and class_qn not in seen:
             seen.add(class_qn)
-
-            parts = class_qn.split(cs.SEPARATOR_DOT)
-            if len(parts) < 2:
-                return None
-
-            target_module_qn = cs.SEPARATOR_DOT.join(parts[:-1])
-            target_class_name = parts[-1]
-
-            file_path = self.module_qn_to_file_path.get(target_module_qn)
-            if file_path is None or file_path not in self.ast_cache:
-                return None
-
-            root_node, _ = self.ast_cache[file_path]
-
-            if field_type := self._find_field_type_in_class(
-                root_node, target_class_name, field_name, target_module_qn
-            ):
-                return field_type
-
-            current_type = self._find_superclass_in_class(root_node, target_class_name)
-            current_module = target_module_qn
+            if located := self._locate_class(class_qn):
+                root_node, class_path, target_module_qn = located
+                if field_type := self._find_field_type_in_nested_class(
+                    root_node, class_path, field_name, target_module_qn
+                ):
+                    return field_type
+            parents = self.class_inheritance.get(class_qn)
+            class_qn = parents[0] if parents else None
 
         return None
 
-    def _find_superclass_in_class(
-        self, root_node: ASTNode, class_name: str
-    ) -> str | None:
-        for child in root_node.children:
-            if child.type == cs.TS_CLASS_DECLARATION:
-                class_info = extract_class_info(child)
-                if class_info.get(cs.FIELD_NAME) == class_name:
-                    return class_info.get(cs.FIELD_SUPERCLASS)
+    def _locate_class(self, class_qn: str) -> tuple[ASTNode, list[str], str] | None:
+        # (H) The file module is the longest registered prefix of the class qn; the
+        # (H) remaining segments are the (possibly nested) class path within that file,
+        # (H) so `proj.pkg.Outer.Base` resolves to file `proj.pkg` + path [Outer, Base].
+        parts = class_qn.split(cs.SEPARATOR_DOT)
+        for split in range(len(parts) - 1, 0, -1):
+            module_candidate = cs.SEPARATOR_DOT.join(parts[:split])
+            file_path = self.module_qn_to_file_path.get(module_candidate)
+            if file_path is not None and file_path in self.ast_cache:
+                root_node, _ = self.ast_cache[file_path]
+                return root_node, parts[split:], module_candidate
         return None
 
     def _find_field_type_in_class(
         self, root_node: ASTNode, class_name: str, field_name: str, module_qn: str
     ) -> str | None:
-        for child in root_node.children:
-            if child.type == cs.TS_CLASS_DECLARATION:
-                class_info = extract_class_info(child)
-                if class_info.get(cs.FIELD_NAME) == class_name:
-                    if class_body := child.child_by_field_name(cs.FIELD_BODY):
-                        for field_child in class_body.children:
-                            if field_child.type == cs.TS_FIELD_DECLARATION:
-                                field_info = extract_field_info(field_child)
-                                if field_info.get(cs.FIELD_NAME) == field_name:
-                                    if field_type := field_info.get(cs.FIELD_TYPE):
-                                        return self._resolve_java_type_name(
-                                            str(field_type), module_qn
-                                        )
+        return self._find_field_type_in_nested_class(
+            root_node, [class_name], field_name, module_qn
+        )
+
+    def _find_field_type_in_nested_class(
+        self,
+        root_node: ASTNode,
+        class_path: list[str],
+        field_name: str,
+        module_qn: str,
+    ) -> str | None:
+        children = root_node.children
+        body: ASTNode | None = None
+        for class_name in class_path:
+            class_node = next(
+                (
+                    child
+                    for child in children
+                    if child.type == cs.TS_CLASS_DECLARATION
+                    and extract_class_info(child).get(cs.FIELD_NAME) == class_name
+                ),
+                None,
+            )
+            if class_node is None or not (
+                body := class_node.child_by_field_name(cs.FIELD_BODY)
+            ):
+                return None
+            children = body.children
+
+        if body is None:
+            return None
+
+        for field_child in body.children:
+            if field_child.type == cs.TS_FIELD_DECLARATION:
+                field_info = extract_field_info(field_child)
+                if field_info.get(cs.FIELD_NAME) == field_name:
+                    if field_type := field_info.get(cs.FIELD_TYPE):
+                        return self._resolve_java_type_name(str(field_type), module_qn)
         return None
