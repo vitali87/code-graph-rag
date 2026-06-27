@@ -120,6 +120,23 @@ class CallProcessor:
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
 
+    def _filter_top_level_calls(
+        self,
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+        func_nodes: list[Node],
+    ) -> list[Node]:
+        # (H) Calls lexically inside a function/method belong to that function,
+        # (H) not the module; only genuine top-level calls (module-load time,
+        # (H) including `if __name__ == "__main__"` blocks) are module-attributed.
+        nested_starts: set[int] = set()
+        for func_node in func_nodes:
+            for call in self._filter_calls_in_node(
+                all_call_nodes, call_starts, func_node
+            ):
+                nested_starts.add(call.start_byte)
+        return [c for c in all_call_nodes if c.start_byte not in nested_starts]
+
     def _module_qn(self, relative_path: Path, file_name: str) -> str:
         if file_name in (cs.INIT_PY, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
@@ -258,6 +275,12 @@ class CallProcessor:
                 sorted_func_nodes=sorted_func_nodes,
                 func_node_starts=func_node_starts,
             )
+            if sorted_func_nodes and call_starts is not None:
+                module_calls = self._filter_top_level_calls(
+                    all_call_nodes, call_starts, sorted_func_nodes
+                )
+            else:
+                module_calls = all_call_nodes
             self._ingest_function_calls(
                 root_node,
                 module_qn,
@@ -265,7 +288,7 @@ class CallProcessor:
                 module_qn,
                 language,
                 queries,
-                call_nodes=all_call_nodes,
+                call_nodes=module_calls,
                 call_name_cache=call_name_cache,
             )
 
@@ -491,6 +514,10 @@ class CallProcessor:
                 )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
+        # (H) A macro-internal call (Rust `name(args)` inside a token_tree) is
+        # (H) captured as the bare identifier node; its text is the callee name.
+        if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
+            return call_node.text.decode(cs.ENCODING_UTF8)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -502,6 +529,11 @@ class CallProcessor:
                 ):
                     if func_child.text is not None:
                         return func_child.text.decode(cs.ENCODING_UTF8)
+                case cs.TS_GENERIC_FUNCTION:
+                    # (H) turbofish: unwrap to the underlying callee identifier
+                    inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                    if inner and inner.text:
+                        return inner.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:

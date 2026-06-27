@@ -621,9 +621,23 @@ end
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
         calls_rels = get_relationships(mock_ingestor, "CALLS")
+        call_edges = {(c.args[0][2], c.args[2][2]) for c in calls_rels}
 
-        assert len(calls_rels) >= 10, (
-            f"Expected at least 10 CALLS, got {len(calls_rels)}"
+        # (H) stdlib calls (math.*, string.*, table.*, io.*, os.*) are not
+        # (H) first-party, so the only CALLS edges are between StdLib methods:
+        # (H) run_all_tests fans out to the six test_* methods, and the
+        # (H) top-level `StdLib.run_all_tests()` in main.lua is attributed to
+        # (H) the main module (not duplicated onto every nested call site).
+        run_all = f"{stdlib_qn}.StdLib.run_all_tests"
+        main_qn = f"{project.name}.main"
+        for method in expected_functions:
+            if method == run_all:
+                continue
+            assert (run_all, method) in call_edges, (
+                f"Missing CALLS edge {run_all} -> {method}"
+            )
+        assert (main_qn, run_all) in call_edges, (
+            f"Missing module-level CALLS edge {main_qn} -> {run_all}"
         )
 
         print("✅ Lua 5.4 enhanced standard library test PASSED")

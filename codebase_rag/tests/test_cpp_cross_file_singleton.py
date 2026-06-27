@@ -147,15 +147,21 @@ def test_cpp_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
+    # (H) Calls are attributed to the enclosing method/function, not the file:
+    # the singleton calls live inside SceneController's methods and
+    # Application.start(), so those are the callers (not the module nodes).
+    sc = "controllers.SceneController.SceneController"
     expected_calls = [
-        ("controllers.SceneController", "storage.Storage.Storage.getInstance"),
-        ("controllers.SceneController", "storage.Storage.Storage.clearAll"),
-        ("controllers.SceneController", "storage.Storage.Storage.save"),
-        ("controllers.SceneController", "storage.Storage.Storage.load"),
-        ("main", "controllers.SceneController.SceneController.loadMenuScene"),
-        ("main", "controllers.SceneController.SceneController.loadGameScene"),
-        ("main", "storage.Storage.Storage.getInstance"),
-        ("main", "storage.Storage.Storage.load"),
+        (f"{sc}.loadMenuScene", "storage.Storage.Storage.getInstance"),
+        (f"{sc}.loadMenuScene", "storage.Storage.Storage.clearAll"),
+        (f"{sc}.loadMenuScene", "storage.Storage.Storage.save"),
+        (f"{sc}.loadMenuScene", "storage.Storage.Storage.load"),
+        (f"{sc}.loadGameScene", "storage.Storage.Storage.getInstance"),
+        (f"{sc}.loadGameScene", "storage.Storage.Storage.save"),
+        ("main.Application.start", f"{sc}.loadMenuScene"),
+        ("main.Application.start", f"{sc}.loadGameScene"),
+        ("main.Application.start", "storage.Storage.Storage.getInstance"),
+        ("main.Application.start", "storage.Storage.Storage.load"),
         ("main.main", "main.Application.start"),
     ]
 
