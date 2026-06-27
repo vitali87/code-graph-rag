@@ -12,6 +12,52 @@ uv run python -m evals.cli --target codebase_rag
 
 Writes `evals/results/scores.csv` and `evals/results/diff.json`. Node identity join is `(kind, file, start_line)`.
 
+## L2 — module-call attribution (ast oracle)
+
+Scores whether cgr attributes the right calls to the *module* (caller side). A
+call runs at module-load time -- and so belongs to the module -- iff it is a
+top-level statement, a decorator, or a default-argument expression, i.e. it is
+NOT inside a function body. The L3 execution trace cannot measure this: it
+records the innermost *function* frame as the caller and drops `<module>`
+frames, so module-level attribution is its structural blind spot. An `ast`
+oracle fills it.
+
+```bash
+uv run python -m evals.module_calls --target codebase_rag
+```
+
+How it works:
+
+- **Oracle** (`module_calls.oracle_module_calls`): walks each file's AST modelling
+  import-time execution. A call counts when it runs at module load: top-level
+  statements, list/set/dict comprehensions (eager), decorators, argument
+  defaults, and -- only when the file does not `from __future__ import
+  annotations` -- argument/return annotations. It does NOT count function/method
+  bodies, lambda bodies, or generator expressions (deferred until called or
+  consumed). Class bodies stay at module scope. It collects the simple name of
+  every such call whose callee is first-party (a name defined in the target),
+  excluding dunders.
+- **cgr side** (`module_calls.cgr_module_calls`): every `CALLS` edge whose caller
+  is a `Module` node, keyed by `(module_file, callee_simple_name)`; a constructor
+  call resolved to a `Class.__init__` *method* is credited to `Class` (a bare
+  first-party function named `__init__` is left as a filtered dunder).
+- **Score**: precision/recall over `(module_file, callee_simple_name)` edges.
+
+The exact-attribution guarantee is covered by `test_eval_module_calls.py`
+(precision == recall == 1.0 on a controlled fixture: a top-level call, a
+default-argument call, a `__main__` call, and a nested call that must NOT be
+module-attributed).
+
+On the whole `codebase_rag` target the metric is a lower bound that surfaces two
+real, separate cgr gaps (not attribution errors):
+
+- **Recall** is bounded by constructor calls to first-party classes with no
+  explicit `__init__` (NamedTuple/dataclass/pydantic) -- cgr has no method node
+  to point the call at, so no edge is emitted. Closing this needs constructor
+  calls to target the class node (tracked with the dead-code Class work).
+- **Precision** is bounded by the trie suffix-match fallback occasionally
+  resolving a module-level call to an unrelated first-party name.
+
 ## L3 — CALLS recall (execution-traced)
 
 Measures whether cgr's static `CALLS` graph contains the call edges that actually fire at runtime.
