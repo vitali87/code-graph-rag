@@ -404,13 +404,30 @@ class JavaVariableAnalyzerMixin:
         if object_node.type == cs.TS_FIELD_ACCESS:
             object_type = self._infer_java_field_access_type(object_node, module_qn)
         elif object_name := safe_decode_text(object_node):
-            object_type = self._lookup_variable_type(object_name, module_qn)
+            object_type = self._resolve_field_access_base_type(
+                object_name, field_access_node, module_qn
+            )
         else:
             object_type = None
 
         if object_type:
             return self._lookup_java_field_type(object_type, field_name, module_qn)
         return None
+
+    def _resolve_field_access_base_type(
+        self, object_name: str, field_access_node: ASTNode, module_qn: str
+    ) -> str | None:
+        # (H) `this`/`super` are receiver keywords, not variables: resolve them to the
+        # (H) containing class (or its superclass) so nested chains rooted at them
+        # (H) (e.g. `var c = this.address.city`) infer a type instead of failing.
+        if object_name in (cs.JAVA_KEYWORD_THIS, cs.JAVA_KEYWORD_SUPER):
+            if not (class_node := self._find_containing_java_class(field_access_node)):
+                return None
+            class_info = extract_class_info(class_node)
+            if object_name == cs.JAVA_KEYWORD_SUPER:
+                return class_info.get(cs.FIELD_SUPERCLASS)
+            return class_info.get(cs.FIELD_NAME)
+        return self._lookup_variable_type(object_name, module_qn)
 
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None:
         if not var_name or not module_qn:

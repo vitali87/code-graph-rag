@@ -102,3 +102,59 @@ public class Main {
         f"var c = obj.address.city; c.ping() should resolve to City.ping(); "
         f"got {sorted(targets)}"
     )
+
+
+def test_this_rooted_nested_field_access_via_var(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+public class Container {
+    public Address address = new Address();
+    public void run() {
+        var c = this.address.city;
+        c.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"var c = this.address.city; c.ping() should resolve to City.ping(); "
+        f"got {sorted(targets)}"
+    )
+
+
+def test_super_rooted_nested_field_access_via_var(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Base { public Address address = new Address(); }
+public class Derived extends Base {
+    public void run() {
+        var c = super.address.city;
+        c.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"var c = super.address.city; c.ping() should resolve to City.ping(); "
+        f"got {sorted(targets)}"
+    )

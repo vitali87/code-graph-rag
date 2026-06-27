@@ -114,15 +114,25 @@ def _extract_superclass(class_node: ASTNode) -> str | None:
     superclass_node = class_node.child_by_field_name(cs.TS_FIELD_SUPERCLASS)
     if not superclass_node:
         return None
+    return _extract_type_identifier_name(superclass_node)
 
-    match superclass_node.type:
+
+def _extract_type_identifier_name(node: ASTNode) -> str | None:
+    match node.type:
         case cs.TS_TYPE_IDENTIFIER:
-            return safe_decode_text(superclass_node)
+            return safe_decode_text(node)
         case cs.TS_GENERIC_TYPE:
-            for child in superclass_node.children:
+            for child in node.children:
                 if child.type == cs.TS_TYPE_IDENTIFIER:
                     return safe_decode_text(child)
-    return None
+            return None
+        case _:
+            # (H) `extends X` exposes a `superclass` wrapper node, not the type itself;
+            # (H) descend into it to reach the type_identifier/generic_type.
+            for child in node.children:
+                if name := _extract_type_identifier_name(child):
+                    return name
+            return None
 
 
 def _extract_interface_name(type_child: ASTNode) -> str | None:
