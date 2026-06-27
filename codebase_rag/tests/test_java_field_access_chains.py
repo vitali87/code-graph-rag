@@ -158,3 +158,60 @@ public class Derived extends Base {
         f"var c = super.address.city; c.ping() should resolve to City.ping(); "
         f"got {sorted(targets)}"
     )
+
+
+def test_inherited_field_chain_via_this(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Base { public Address address = new Address(); }
+public class Derived extends Base {
+    public void run() {
+        var c = this.address.city;
+        c.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"this.address.city (address inherited from Base) should resolve to "
+        f"City.ping(); got {sorted(targets)}"
+    )
+
+
+def test_inherited_field_chain_via_object(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class City { public void ping() { System.out.println("ping"); } }
+class Address { public City city = new City(); }
+class Base { public Address address = new Address(); }
+class Derived extends Base {}
+public class Main {
+    public static void main(String[] args) {
+        Derived obj = new Derived();
+        obj.address.city.ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith(".City.ping()") for t in targets), (
+        f"obj.address.city (address inherited from Base) should resolve to "
+        f"City.ping(); got {sorted(targets)}"
+    )
