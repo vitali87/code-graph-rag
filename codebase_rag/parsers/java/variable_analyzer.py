@@ -394,13 +394,21 @@ class JavaVariableAnalyzerMixin:
         if not object_node or not field_node:
             return None
 
-        object_name = safe_decode_text(object_node)
         field_name = safe_decode_text(field_node)
-
-        if not object_name or not field_name:
+        if not field_name:
             return None
 
-        if object_type := self._lookup_variable_type(object_name, module_qn):
+        # (H) A nested receiver (`obj.address.zipCode`) has a field_access as its object;
+        # (H) recurse to infer that inner type before looking up the outer field, so
+        # (H) multi-level field access resolves rather than failing on a non-variable name.
+        if object_node.type == cs.TS_FIELD_ACCESS:
+            object_type = self._infer_java_field_access_type(object_node, module_qn)
+        elif object_name := safe_decode_text(object_node):
+            object_type = self._lookup_variable_type(object_name, module_qn)
+        else:
+            object_type = None
+
+        if object_type:
             return self._lookup_java_field_type(object_type, field_name, module_qn)
         return None
 

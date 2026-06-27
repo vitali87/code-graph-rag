@@ -55,6 +55,11 @@ class JavaMethodResolverMixin:
     @abstractmethod
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None: ...
 
+    @abstractmethod
+    def _lookup_java_field_type(
+        self, class_type: str, field_name: str, module_qn: str
+    ) -> str | None: ...
+
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
@@ -94,7 +99,38 @@ class JavaMethodResolverMixin:
         ):
             return simple_class_qn
 
+        # (H) A receiver like `obj.engine` (field access on a typed variable) is not a
+        # (H) single name: resolve the base, then walk each field's declared type across
+        # (H) classes so `obj.engine.start()` and deeper chains resolve to a method.
+        if cs.SEPARATOR_DOT in object_ref:
+            return self._resolve_field_access_chain_type(
+                object_ref, local_var_types, module_qn
+            )
+
         return None
+
+    def _resolve_field_access_chain_type(
+        self, object_ref: str, local_var_types: dict[str, str], module_qn: str
+    ) -> str | None:
+        parts = object_ref.split(cs.SEPARATOR_DOT)
+        if len(parts) < 2:
+            return None
+
+        current_type = self._resolve_java_object_type(
+            parts[0], local_var_types, module_qn
+        )
+        if not current_type:
+            return None
+
+        for field_name in parts[1:]:
+            next_type = self._lookup_java_field_type(
+                current_type, field_name, module_qn
+            )
+            if not next_type:
+                return None
+            current_type = next_type
+
+        return current_type
 
     def _find_parent_class(self, class_qn: str) -> str | None:
         parent_classes = self.class_inheritance.get(class_qn, [])
