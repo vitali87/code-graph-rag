@@ -791,6 +791,7 @@ my_build_output
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **griffe**: Signatures for entire Python programs. Extract the structure, the frame, the skeleton of your project, to generate API documentation or find breaking changes in your API.
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools

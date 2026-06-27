@@ -11,7 +11,11 @@ from ... import logs as ls
 from ...decorators import recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
-from .utils import extract_method_call_info, get_class_context_from_qn
+from .utils import (
+    extract_class_info,
+    extract_method_call_info,
+    get_class_context_from_qn,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,14 +59,29 @@ class JavaMethodResolverMixin:
     @abstractmethod
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None: ...
 
+    @abstractmethod
+    def _lookup_java_field_type(
+        self, class_type: str, field_name: str, module_qn: str
+    ) -> str | None: ...
+
+    @abstractmethod
+    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
+
     def _resolve_java_object_type(
-        self, object_ref: str, local_var_types: dict[str, str], module_qn: str
+        self,
+        object_ref: str,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        context_node: ASTNode | None = None,
     ) -> str | None:
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # (H) Check for 'this' reference - find the containing class (using trie for O(k) lookup)
+        # (H) Check for 'this' reference - prefer the lexical containing class (precise in
+        # (H) multi-class files); fall back to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
+            if lexical := self._lexical_class_qn(context_node, module_qn):
+                return lexical
             return next(
                 (
                     str(qn)
@@ -74,8 +93,13 @@ class JavaMethodResolverMixin:
                 None,
             )
 
-        # (H) Check for 'super' reference - for super calls, look at parent classes (using trie for O(k) lookup)
+        # (H) Check for 'super' reference - resolve the lexical class then its parent when
+        # (H) available; otherwise fall back to the first class under the module with a parent.
         if object_ref == cs.JAVA_KEYWORD_SUPER:
+            if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
+                parent_qn := self._find_parent_class(lexical)
+            ):
+                return parent_qn
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
                 if entity_type == NodeType.CLASS:
                     if parent_qn := self._find_parent_class(qn):
@@ -94,7 +118,53 @@ class JavaMethodResolverMixin:
         ):
             return simple_class_qn
 
+        # (H) A receiver like `obj.engine` (field access on a typed variable) is not a
+        # (H) single name: resolve the base, then walk each field's declared type across
+        # (H) classes so `obj.engine.start()` and deeper chains resolve to a method.
+        if cs.SEPARATOR_DOT in object_ref:
+            return self._resolve_field_access_chain_type(
+                object_ref, local_var_types, module_qn, context_node
+            )
+
         return None
+
+    def _lexical_class_qn(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        if context_node is None:
+            return None
+        if not (class_node := self._find_containing_java_class(context_node)):
+            return None
+        if not (class_name := extract_class_info(class_node).get(cs.FIELD_NAME)):
+            return None
+        return self._resolve_java_type_name(class_name, module_qn)
+
+    def _resolve_field_access_chain_type(
+        self,
+        object_ref: str,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        context_node: ASTNode | None = None,
+    ) -> str | None:
+        parts = object_ref.split(cs.SEPARATOR_DOT)
+        if len(parts) < 2:
+            return None
+
+        current_type = self._resolve_java_object_type(
+            parts[0], local_var_types, module_qn, context_node
+        )
+        if not current_type:
+            return None
+
+        for field_name in parts[1:]:
+            next_type = self._lookup_java_field_type(
+                current_type, field_name, module_qn
+            )
+            if not next_type:
+                return None
+            current_type = next_type
+
+        return current_type
 
     def _find_parent_class(self, class_qn: str) -> str | None:
         parent_classes = self.class_inheritance.get(class_qn, [])
@@ -370,7 +440,7 @@ class JavaMethodResolverMixin:
         logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE, object=object_ref)
         if not (
             object_type := self._resolve_java_object_type(
-                str(object_ref), local_var_types, module_qn
+                str(object_ref), local_var_types, module_qn, call_node
             )
         ):
             logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=object_ref)

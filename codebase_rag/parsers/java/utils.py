@@ -114,15 +114,36 @@ def _extract_superclass(class_node: ASTNode) -> str | None:
     superclass_node = class_node.child_by_field_name(cs.TS_FIELD_SUPERCLASS)
     if not superclass_node:
         return None
+    return _extract_type_identifier_name(superclass_node)
 
-    match superclass_node.type:
+
+def _extract_type_identifier_name(node: ASTNode) -> str | None:
+    match node.type:
         case cs.TS_TYPE_IDENTIFIER:
-            return safe_decode_text(superclass_node)
+            return safe_decode_text(node)
+        case cs.TS_SCOPED_TYPE_IDENTIFIER:
+            # (H) `Outer.Base`/`pkg.Base`: keep the full scoped name rather than
+            # (H) descending to the first segment (the outer/package), which would
+            # (H) point resolution at the wrong class.
+            return safe_decode_text(node)
         case cs.TS_GENERIC_TYPE:
-            for child in superclass_node.children:
-                if child.type == cs.TS_TYPE_IDENTIFIER:
+            # (H) The base of a generic type is its first type_identifier/scoped child
+            # (H) (e.g. `Box<T>` -> Box, `Outer.Base<T>` -> Outer.Base); ignore the
+            # (H) type_arguments that follow.
+            for child in node.children:
+                if child.type in (
+                    cs.TS_TYPE_IDENTIFIER,
+                    cs.TS_SCOPED_TYPE_IDENTIFIER,
+                ):
                     return safe_decode_text(child)
-    return None
+            return None
+        case _:
+            # (H) `extends X` exposes a `superclass` wrapper node, not the type itself;
+            # (H) descend into it to reach the type_identifier/generic_type.
+            for child in node.children:
+                if name := _extract_type_identifier_name(child):
+                    return name
+            return None
 
 
 def _extract_interface_name(type_child: ASTNode) -> str | None:

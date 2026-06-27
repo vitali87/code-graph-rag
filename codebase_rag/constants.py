@@ -2250,6 +2250,7 @@ TS_FALSE = "false"
 # (H) Tree-sitter field names for child_by_field_name
 TS_FIELD_NAME = "name"
 TS_FIELD_TYPE = "type"
+TS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
 TS_FIELD_SUPERCLASS = "superclass"
 TS_FIELD_INTERFACES = "interfaces"
 TS_FIELD_TYPE_PARAMETERS = "type_parameters"
