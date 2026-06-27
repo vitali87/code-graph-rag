@@ -50,6 +50,11 @@ _TYPED_LANGUAGES = frozenset(
     }
 )
 
+# (H) C and C++ share the function_definition/declarator shape, so the callee
+# (H) name lives in a nested declarator (no `name` field). Both need the libclang
+# (H) declarator-aware extractor rather than a plain child_by_field_name("name").
+_C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+
 
 class CallProcessor:
     __slots__ = (
@@ -321,7 +326,7 @@ class CallProcessor:
             if has_classes and self._is_method(func_node, lang_config):
                 continue
 
-            if language == cs.SupportedLanguage.CPP:
+            if language in _C_FAMILY_LANGUAGES:
                 func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)
@@ -447,7 +452,7 @@ class CallProcessor:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
-            if language == cs.SupportedLanguage.CPP:
+            if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
             else:
                 method_name = self._get_node_name(method_node)
