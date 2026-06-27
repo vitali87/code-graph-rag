@@ -28,14 +28,19 @@ uv run python -m evals.module_calls --target codebase_rag
 
 How it works:
 
-- **Oracle** (`module_calls.oracle_module_calls`): walks each file's AST, visiting
-  decorators and argument defaults in the enclosing scope but function bodies as
-  function scope (class bodies stay at module scope). It collects the simple name
-  of every module-level call whose callee is first-party (a name defined in the
-  target), excluding dunders.
+- **Oracle** (`module_calls.oracle_module_calls`): walks each file's AST modelling
+  import-time execution. A call counts when it runs at module load: top-level
+  statements, list/set/dict comprehensions (eager), decorators, argument
+  defaults, and -- only when the file does not `from __future__ import
+  annotations` -- argument/return annotations. It does NOT count function/method
+  bodies, lambda bodies, or generator expressions (deferred until called or
+  consumed). Class bodies stay at module scope. It collects the simple name of
+  every such call whose callee is first-party (a name defined in the target),
+  excluding dunders.
 - **cgr side** (`module_calls.cgr_module_calls`): every `CALLS` edge whose caller
   is a `Module` node, keyed by `(module_file, callee_simple_name)`; a constructor
-  call resolved to `Class.__init__` is credited to `Class`.
+  call resolved to a `Class.__init__` *method* is credited to `Class` (a bare
+  first-party function named `__init__` is left as a filtered dunder).
 - **Score**: precision/recall over `(module_file, callee_simple_name)` edges.
 
 The exact-attribution guarantee is covered by `test_eval_module_calls.py`

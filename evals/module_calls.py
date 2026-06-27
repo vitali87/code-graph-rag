@@ -1,16 +1,10 @@
-"""L2 module-call attribution: does cgr attribute the right calls to the module?
-
-The L3 trace (calls_trace) records the innermost *function* frame as the caller
-and drops `<module>` frames, so it is structurally blind to module-level call
-attribution. This eval fills that gap with a sound AST oracle: a call is
-module-attributed iff it runs at module-load time -- a top-level statement, a
-decorator, or a default-argument expression -- i.e. it is NOT inside a function
-body. Both sides are compared as (module_file, callee_simple_name) name-edges,
-restricted to first-party callees (names defined somewhere in the target) and
-excluding dunders, since cgr only emits first-party CALLS and resolves
-constructors to `__init__`.
-"""
-
+# (H) L2 module-call attribution: does cgr attribute the right calls to the
+# (H) module? The L3 trace records the innermost function frame as the caller and
+# (H) drops <module> frames, so it is structurally blind to module-level call
+# (H) attribution. This eval fills that gap with an AST oracle that models
+# (H) import-time execution. Both sides are compared as (module_file,
+# (H) callee_simple_name) name-edges, restricted to first-party callees and
+# (H) excluding dunders, since cgr only emits first-party CALLS.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -44,15 +38,26 @@ def _callee_name(func: ast.expr) -> str | None:
     return None
 
 
+def _has_future_annotations(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            if any(alias.name == "annotations" for alias in node.names):
+                return True
+    return False
+
+
 class _ModuleCallVisitor(ast.NodeVisitor):
     # (H) Collect callee names of calls that execute at module-load time. A
-    # (H) function's decorators and argument defaults run in the enclosing scope,
-    # (H) so they are visited at the current depth; only its body is function
-    # (H) scope. Class bodies execute at definition time, so they stay at the
-    # (H) enclosing depth (their method bodies are entered as functions).
-    def __init__(self) -> None:
+    # (H) function's decorators, argument defaults, and (unless postponed)
+    # (H) annotations run in the enclosing scope, so they are visited at the
+    # (H) current depth; only its body is function scope. Class bodies execute at
+    # (H) definition time, so they stay at the enclosing depth. Lambda bodies and
+    # (H) generator expressions are deferred (run when called/consumed), so their
+    # (H) calls are not import-time and are entered as a nested (function) scope.
+    def __init__(self, count_annotations: bool) -> None:
         self.names: set[str] = set()
         self._func_depth = 0
+        self._count_annotations = count_annotations
 
     def visit_Call(self, node: ast.Call) -> None:
         if self._func_depth == 0 and (name := _callee_name(node.func)):
@@ -62,6 +67,19 @@ class _ModuleCallVisitor(ast.NodeVisitor):
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for decorator in node.decorator_list:
             self.visit(decorator)
+        if self._count_annotations:
+            args = node.args
+            for arg in (
+                *args.posonlyargs,
+                *args.args,
+                *args.kwonlyargs,
+                args.vararg,
+                args.kwarg,
+            ):
+                if arg is not None and arg.annotation is not None:
+                    self.visit(arg.annotation)
+            if node.returns is not None:
+                self.visit(node.returns)
         for default in (*node.args.defaults, *node.args.kw_defaults):
             if default is not None:
                 self.visit(default)
@@ -75,6 +93,19 @@ class _ModuleCallVisitor(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_function(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        self._func_depth += 1
+        self.visit(node.body)
+        self._func_depth -= 1
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._func_depth += 1
+        self.generic_visit(node)
+        self._func_depth -= 1
 
 
 def _first_party_names(trees: list[ast.Module]) -> set[str]:
@@ -98,7 +129,9 @@ def oracle_module_calls(target: Path, project_name: str) -> set[NameEdge]:
 
     edges: set[NameEdge] = set()
     for rel, tree in parsed:
-        visitor = _ModuleCallVisitor()
+        visitor = _ModuleCallVisitor(
+            count_annotations=not _has_future_annotations(tree)
+        )
         visitor.visit(tree)
         module_key = NodeKey(cs.NodeLabel.MODULE.value, rel, ec.MODULE_START_LINE)
         for name in visitor.names:
@@ -118,8 +151,9 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
         and str(props[cs.KEY_PATH]).endswith(ec.PY_SUFFIX)
     }
 
+    method_label = cs.NodeLabel.METHOD.value
     edges: set[NameEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+    for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
         if rel_type != _CALLS or from_label != module_label:
             continue
         path = module_paths.get(str(from_val))
@@ -127,9 +161,11 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
             continue
         segments = str(to_val).split(ec.SEP)
         name = segments[-1]
-        # (H) A constructor call `X()` resolves to `X.__init__`; the oracle sees
-        # (H) the class name `X`, so credit it to the class, not the dunder.
-        if name == ec.INIT_STEM and len(segments) >= 2:
+        # (H) A constructor call `X()` resolves to the `X.__init__` METHOD; the
+        # (H) oracle sees the class name `X`, so credit it to the class. A bare
+        # (H) first-party FUNCTION named `__init__` is left as a dunder (filtered
+        # (H) below), not remapped to its module segment.
+        if name == ec.INIT_STEM and to_label == method_label and len(segments) >= 2:
             name = segments[-2]
         if _is_dunder(name):
             continue

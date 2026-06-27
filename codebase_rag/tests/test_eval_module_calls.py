@@ -47,9 +47,9 @@ class TestModuleCallEval:
         proj = self._write(tmp_path)
         oracle = oracle_module_calls(proj, "proj")
 
-        # make_default runs at module load (CONFIG = ... and the default arg);
-        # main runs from the `if __name__` block; helper only runs inside main's
-        # body, so it is NOT a module-level call.
+        # (H) make_default runs at module load (CONFIG = ... and the default arg);
+        # (H) main runs from the `if __name__` block; helper only runs inside main's
+        # (H) body, so it is NOT a module-level call.
         assert _names(oracle) == {"make_default", "main"}
 
     def test_cgr_matches_oracle_module_calls(self, tmp_path: Path) -> None:
@@ -69,3 +69,52 @@ class TestModuleCallEval:
         cgr = cgr_module_calls(proj, "proj")
 
         assert "helper" not in _names(cgr)
+
+    def _oracle_for(self, tmp_path: Path, source: str) -> set[str]:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "app.py").write_text(source, encoding="utf-8")
+        return _names(oracle_module_calls(proj, "proj"))
+
+    def test_lambda_body_call_is_deferred(self, tmp_path: Path) -> None:
+        # (H) `helper` runs only when `work()` is called, not at import.
+        names = self._oracle_for(
+            tmp_path,
+            "def helper():\n    return 1\n\n\nwork = lambda: helper()\n",
+        )
+        assert "helper" not in names
+
+    def test_generator_expression_call_is_deferred(self, tmp_path: Path) -> None:
+        # (H) a generator is lazy: `helper` runs only when the generator is consumed.
+        names = self._oracle_for(
+            tmp_path,
+            "def helper():\n    return 1\n\n\ngen = (helper() for _ in range(2))\n",
+        )
+        assert "helper" not in names
+
+    def test_list_comprehension_call_is_module_attributed(self, tmp_path: Path) -> None:
+        # (H) a list comprehension runs eagerly at import, so its call counts.
+        names = self._oracle_for(
+            tmp_path,
+            "def helper():\n    return 1\n\n\nout = [helper() for _ in range(2)]\n",
+        )
+        assert "helper" in names
+
+    def test_return_annotation_counted_without_future_import(
+        self, tmp_path: Path
+    ) -> None:
+        # (H) without postponed annotations, `Result()` runs at import.
+        names = self._oracle_for(
+            tmp_path,
+            "def Result():\n    return 1\n\n\ndef route() -> Result():\n    return 1\n",
+        )
+        assert "Result" in names
+
+    def test_annotation_not_counted_with_future_import(self, tmp_path: Path) -> None:
+        # (H) with postponed annotations, the annotation is a string and never runs.
+        names = self._oracle_for(
+            tmp_path,
+            "from __future__ import annotations\n\n\n"
+            "def Result():\n    return 1\n\n\ndef route() -> Result():\n    return 1\n",
+        )
+        assert "Result" not in names

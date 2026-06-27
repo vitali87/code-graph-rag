@@ -61,7 +61,7 @@ class TestRustMacroCalls:
     def test_bare_identifier_in_macro_is_not_a_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # a plain value interpolated into a macro must not become a CALLS edge
+        # (H) a plain value interpolated into a macro must not become a CALLS edge
         (temp_repo / "mac2.rs").write_text(
             "fn value() -> i32 { 1 }\n"
             "\n"
@@ -83,8 +83,8 @@ class TestRustMacroCalls:
     def test_struct_literal_in_macro_is_not_a_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # `Widget { ... }` (token_tree starting with `{`) and `arr[..]` (starting
-        # with `[`) inside a macro are not calls; only `name(...)` is.
+        # (H) `Widget { ... }` (token_tree starting with `{`) and `arr[..]` (starting
+        # (H) with `[`) inside a macro are not calls; only `name(...)` is.
         (temp_repo / "mac3.rs").write_text(
             "struct Widget { n: i32 }\n"
             "fn helper() -> i32 { 1 }\n"
@@ -98,12 +98,12 @@ class TestRustMacroCalls:
         run_updater(temp_repo, mock_ingestor, skip_if_missing="rust")
         calls = _calls(mock_ingestor)
 
-        # the real call inside the macro is still captured
+        # (H) the real call inside the macro is still captured
         assert any(
             caller.endswith(".caller") and callee.endswith(".helper")
             for caller, callee in calls
         ), f"macro call not captured; calls={sorted(calls)}"
-        # the struct literal `Widget { ... }` must not be a call
+        # (H) the struct literal `Widget { ... }` must not be a call
         assert not any(
             caller.endswith(".caller") and callee.endswith(".Widget")
             for caller, callee in calls
