@@ -131,14 +131,15 @@ class CallProcessor:
         call_starts: list[int],
         func_nodes: list[Node],
     ) -> list[Node]:
-        # (H) Calls lexically inside a function/method belong to that function,
-        # (H) not the module; only genuine top-level calls (module-load time,
-        # (H) including `if __name__ == "__main__"` blocks) are module-attributed.
+        # (H) Calls inside a function's BODY belong to that function, not the
+        # (H) module; only genuine top-level calls are module-attributed. The body
+        # (H) (not the whole node) is the boundary so def-time calls in the
+        # (H) signature -- default args like `def f(x=make_default())` and
+        # (H) decorators -- run at module load and stay module-attributed.
         nested_starts: set[int] = set()
         for func_node in func_nodes:
-            for call in self._filter_calls_in_node(
-                all_call_nodes, call_starts, func_node
-            ):
+            scope = func_node.child_by_field_name(cs.FIELD_BODY) or func_node
+            for call in self._filter_calls_in_node(all_call_nodes, call_starts, scope):
                 nested_starts.add(call.start_byte)
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
 

@@ -8,7 +8,7 @@ from codebase_rag.tests.conftest import run_updater
 
 
 def _calls(mock_ingestor: MagicMock) -> list[tuple[str, str, str]]:
-    """Return CALLS edges as (caller_label, caller_qn, callee_qn)."""
+    # CALLS edges as (caller_label, caller_qn, callee_qn).
     out: list[tuple[str, str, str]] = []
     for c in mock_ingestor.ensure_relationship_batch.call_args_list:
         if c.args[1] == cs.RelationshipType.CALLS:
@@ -101,3 +101,23 @@ class TestModuleCallAttribution:
         assert "setup" in module_callees
         # helper is never called at all -> no module edge to it
         assert "helper" not in module_callees
+
+    def test_default_argument_call_attributed_to_module(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # a default-argument expression runs at module-load (definition) time,
+        # not when the function body executes, so it is a module-level call.
+        (temp_repo / "app.py").write_text(
+            "def make_default():\n"
+            "    return 1\n"
+            "\n"
+            "\n"
+            "def with_default(x=make_default()):\n"
+            "    return x\n",
+            encoding="utf-8",
+        )
+
+        run_updater(temp_repo, mock_ingestor, skip_if_missing="python")
+        module_callees = _module_callees(_calls(mock_ingestor))
+
+        assert "make_default" in module_callees

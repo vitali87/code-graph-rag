@@ -332,7 +332,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (token_tree
             (identifier) @name @call
             .
-            (token_tree))
+            (token_tree . "("))
         """,
     ),
     cs.SupportedLanguage.GO: LanguageSpec(
