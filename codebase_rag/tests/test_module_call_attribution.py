@@ -121,3 +121,27 @@ class TestModuleCallAttribution:
         module_callees = _module_callees(_calls(mock_ingestor))
 
         assert "make_default" in module_callees
+
+    def test_cpp_file_scope_initializer_call_attributed_to_module(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # a C++ file-scope initializer runs at load time, so its call is
+        # module-attributed; a call inside a function body is not.
+        (temp_repo / "app.cpp").write_text(
+            "int nested_cpp() { return 1; }\n"
+            "int top_cpp() { return 2; }\n"
+            "int run_cpp() { return nested_cpp(); }\n"
+            "int module_value = top_cpp();\n",
+            encoding="utf-8",
+        )
+
+        run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+        calls = _calls(mock_ingestor)
+        module_callees = _module_callees(calls)
+
+        assert "top_cpp" in module_callees
+        assert "nested_cpp" not in module_callees
+        assert any(
+            caller.endswith(".run_cpp") and callee.endswith(".nested_cpp")
+            for _label, caller, callee in calls
+        )

@@ -135,11 +135,16 @@ class CallProcessor:
         # (H) module; only genuine top-level calls are module-attributed. The body
         # (H) (not the whole node) is the boundary so def-time calls in the
         # (H) signature -- default args like `def f(x=make_default())` and
-        # (H) decorators -- run at module load and stay module-attributed.
+        # (H) decorators -- run at module load and stay module-attributed. A node
+        # (H) with no body is not a real function scope (e.g. a file-scope
+        # (H) declaration `int x = top();` that the grammar captures as a
+        # (H) function); its calls run at load time, so it excludes nothing.
         nested_starts: set[int] = set()
         for func_node in func_nodes:
-            scope = func_node.child_by_field_name(cs.FIELD_BODY) or func_node
-            for call in self._filter_calls_in_node(all_call_nodes, call_starts, scope):
+            body = func_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                continue
+            for call in self._filter_calls_in_node(all_call_nodes, call_starts, body):
                 nested_starts.add(call.start_byte)
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
 
