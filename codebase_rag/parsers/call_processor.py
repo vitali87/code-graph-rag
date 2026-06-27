@@ -50,6 +50,11 @@ _TYPED_LANGUAGES = frozenset(
     }
 )
 
+# (H) C and C++ share the function_definition/declarator shape, so the callee
+# (H) name lives in a nested declarator (no `name` field). Both need the libclang
+# (H) declarator-aware extractor rather than a plain child_by_field_name("name").
+_C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+
 
 class CallProcessor:
     __slots__ = (
@@ -119,6 +124,29 @@ class CallProcessor:
         lo = bisect_left(call_starts, start)
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
+
+    def _filter_top_level_calls(
+        self,
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+        func_nodes: list[Node],
+    ) -> list[Node]:
+        # (H) Calls inside a function's BODY belong to that function, not the
+        # (H) module; only genuine top-level calls are module-attributed. The body
+        # (H) (not the whole node) is the boundary so def-time calls in the
+        # (H) signature -- default args like `def f(x=make_default())` and
+        # (H) decorators -- run at module load and stay module-attributed. A node
+        # (H) with no body is not a real function scope (e.g. a file-scope
+        # (H) declaration `int x = top();` that the grammar captures as a
+        # (H) function); its calls run at load time, so it excludes nothing.
+        nested_starts: set[int] = set()
+        for func_node in func_nodes:
+            body = func_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                continue
+            for call in self._filter_calls_in_node(all_call_nodes, call_starts, body):
+                nested_starts.add(call.start_byte)
+        return [c for c in all_call_nodes if c.start_byte not in nested_starts]
 
     def _module_qn(self, relative_path: Path, file_name: str) -> str:
         if file_name in (cs.INIT_PY, cs.MOD_RS):
@@ -258,6 +286,12 @@ class CallProcessor:
                 sorted_func_nodes=sorted_func_nodes,
                 func_node_starts=func_node_starts,
             )
+            if sorted_func_nodes and call_starts is not None:
+                module_calls = self._filter_top_level_calls(
+                    all_call_nodes, call_starts, sorted_func_nodes
+                )
+            else:
+                module_calls = all_call_nodes
             self._ingest_function_calls(
                 root_node,
                 module_qn,
@@ -265,7 +299,7 @@ class CallProcessor:
                 module_qn,
                 language,
                 queries,
-                call_nodes=all_call_nodes,
+                call_nodes=module_calls,
                 call_name_cache=call_name_cache,
             )
 
@@ -298,7 +332,7 @@ class CallProcessor:
             if has_classes and self._is_method(func_node, lang_config):
                 continue
 
-            if language == cs.SupportedLanguage.CPP:
+            if language in _C_FAMILY_LANGUAGES:
                 func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)
@@ -424,7 +458,7 @@ class CallProcessor:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
-            if language == cs.SupportedLanguage.CPP:
+            if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
             else:
                 method_name = self._get_node_name(method_node)
@@ -491,6 +525,10 @@ class CallProcessor:
                 )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
+        # (H) A macro-internal call (Rust `name(args)` inside a token_tree) is
+        # (H) captured as the bare identifier node; its text is the callee name.
+        if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
+            return call_node.text.decode(cs.ENCODING_UTF8)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -502,6 +540,11 @@ class CallProcessor:
                 ):
                     if func_child.text is not None:
                         return func_child.text.decode(cs.ENCODING_UTF8)
+                case cs.TS_GENERIC_FUNCTION:
+                    # (H) turbofish: unwrap to the underlying callee identifier
+                    inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                    if inner and inner.text:
+                        return inner.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:

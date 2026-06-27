@@ -325,8 +325,14 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             function: (scoped_identifier
                 "::"
                 name: (identifier) @name)) @call
+        (call_expression
+            function: (generic_function) @name) @call
         (macro_invocation
             macro: (identifier) @name) @call
+        (token_tree
+            (identifier) @name @call
+            .
+            (token_tree . "("))
         """,
     ),
     cs.SupportedLanguage.GO: LanguageSpec(
