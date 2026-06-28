@@ -116,11 +116,12 @@ _DEAD_CODE_MODULE_ROOT_NON_TEST = (
 )
 
 # (H) Reachability walks CALLS only by default. With classes included it also
-# (H) walks INSTANTIATES (construction keeps a class live) and INHERITS (a live
-# (H) subclass keeps its base live), so a class is reported only when nothing
-# (H) instantiates or subclasses it. Classes referenced solely via type
-# (H) annotations / isinstance / dynamic lookups are not modelled as edges, so
-# (H) class candidates are review hints, not a delete list.
+# (H) walks INSTANTIATES (construction keeps a class live) and INHERITS forward
+# (H) from subclass to base, so a base is kept live only by a REACHABLE subclass.
+# (H) A base whose sole subclass is itself unreachable is therefore reported as
+# (H) part of the dead cluster (the subclass is reported too). Classes referenced
+# (H) solely via type annotations / isinstance / dynamic lookups are not modelled
+# (H) as edges, so class candidates are review hints, not a delete list.
 _DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (

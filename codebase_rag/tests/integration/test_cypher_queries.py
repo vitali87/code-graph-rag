@@ -563,6 +563,41 @@ class TestBuildDeadCodeQueryIntegration:
             "proj.mod.DeadClass",
         }
 
+    def test_subclass_only_base_is_reported_when_subclass_is_unreachable(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) Base is subclassed by Derived, but nothing instantiates Derived, so
+        # (H) the traversal never reaches Derived and therefore never reaches Base
+        # (H) via INHERITS. The whole dead cluster (both classes) is reported: a
+        # (H) base kept alive only by an unreachable subclass is itself dead.
+        # (H) Live is present purely so the query has a reachable root to anchor.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(live:Class {qualified_name: 'proj.mod.Live', name: 'Live', "
+            "  start_line: 1, end_line: 2, decorators: [], path: 'proj/mod.py'}), "
+            "(base:Class {qualified_name: 'proj.mod.Base', name: 'Base', "
+            "  start_line: 4, end_line: 5, decorators: [], path: 'proj/mod.py'}), "
+            "(der:Class {qualified_name: 'proj.mod.Derived', name: 'Derived', "
+            "  start_line: 7, end_line: 8, decorators: [], path: 'proj/mod.py'}), "
+            "(der)-[:INHERITS]->(base), "
+            "(m)-[:INSTANTIATES]->(live)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        with_classes = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False, include_classes=True), params
+        )
+        assert {r["qualified_name"] for r in with_classes} == {
+            "proj.mod.Base",
+            "proj.mod.Derived",
+        }
+
     def test_module_load_callee_is_a_root(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
