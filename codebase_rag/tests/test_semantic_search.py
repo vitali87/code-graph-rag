@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.utils.dependencies import has_semantic_dependencies
 
 
@@ -90,6 +91,28 @@ def test_semantic_code_search_reuses_injected_ingestor(
     ingestor._execute_query.assert_not_called()
     assert [r["qualified_name"] for r in results] == ["pkg.mod.foo", "pkg.mod.Bar"]
     assert results[0]["score"] == 0.99
+
+
+@patch("codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True)
+@patch("codebase_rag.vector_store.search_embeddings")
+@patch("codebase_rag.embedder.embed_code")
+def test_semantic_code_search_tolerates_missing_result_fields(
+    mock_embed: MagicMock, mock_search: MagicMock, _deps: MagicMock
+) -> None:
+    from codebase_rag.tools.semantic_search import semantic_code_search
+
+    mock_embed.return_value = [0.0]
+    mock_search.return_value = [(1, 0.99)]
+
+    ingestor = MagicMock()
+    ingestor.fetch_all.return_value = [{"node_id": 1}]
+
+    results = semantic_code_search(ingestor, "find foo", top_k=1)
+
+    assert len(results) == 1
+    assert results[0]["qualified_name"] == ""
+    assert results[0]["name"] == ""
+    assert results[0]["type"] == cs.SEMANTIC_TYPE_UNKNOWN
 
 
 @pytest.mark.skipif(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -17,11 +18,11 @@ from ..utils.dependencies import has_semantic_dependencies
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
-    from ..services.graph_service import MemgraphIngestor
+    from ..services import QueryProtocol
 
 
 def semantic_code_search(
-    ingestor: MemgraphIngestor, query: str, top_k: int = 5
+    ingestor: QueryProtocol, query: str, top_k: int = 5
 ) -> list[SemanticSearchResult]:
     if not has_semantic_dependencies():
         logger.warning(ex.SEMANTIC_EXTRA)
@@ -45,13 +46,17 @@ def semantic_code_search(
         params = {str(i): node_id for i, node_id in enumerate(node_ids)}
         results = ingestor.fetch_all(cypher_query, params)
 
-        results_map = {res["node_id"]: res for res in results}
+        results_map = {
+            node_id: res
+            for res in results
+            if isinstance((node_id := res.get("node_id")), int)
+        }
 
         formatted_results: list[SemanticSearchResult] = []
         for node_id, score in search_results:
             if node_id in results_map:
                 result = results_map[node_id]
-                result_type = result["type"]
+                result_type = result.get("type")
                 type_str = (
                     result_type[0]
                     if isinstance(result_type, list) and result_type
@@ -60,8 +65,8 @@ def semantic_code_search(
                 formatted_results.append(
                     SemanticSearchResult(
                         node_id=node_id,
-                        qualified_name=str(result["qualified_name"]),
-                        name=str(result["name"]),
+                        qualified_name=str(result.get("qualified_name", "")),
+                        name=str(result.get("name", "")),
                         type=type_str,
                         score=round(score, 3),
                     )
@@ -77,7 +82,7 @@ def semantic_code_search(
         return []
 
 
-def get_function_source_code(ingestor: MemgraphIngestor, node_id: int) -> str | None:
+def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | None:
     try:
         from ..utils.source_extraction import (
             extract_source_lines,
@@ -111,11 +116,13 @@ def get_function_source_code(ingestor: MemgraphIngestor, node_id: int) -> str | 
         return None
 
 
-def create_semantic_search_tool(ingestor: MemgraphIngestor) -> Tool:
+def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
-        results = semantic_code_search(ingestor, query, top_k)
+        results = await asyncio.to_thread(
+            semantic_code_search, ingestor, query, top_k
+        )
 
         if not results:
             return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)
@@ -139,11 +146,13 @@ def create_semantic_search_tool(ingestor: MemgraphIngestor) -> Tool:
     )
 
 
-def create_get_function_source_tool(ingestor: MemgraphIngestor) -> Tool:
+def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
     async def get_function_source_by_id(node_id: int) -> str:
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
-        source_code = get_function_source_code(ingestor, node_id)
+        source_code = await asyncio.to_thread(
+            get_function_source_code, ingestor, node_id
+        )
 
         if source_code is None:
             return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
