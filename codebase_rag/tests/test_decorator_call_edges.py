@@ -63,6 +63,53 @@ class TestDecoratorCallEdges:
             for label, caller, callee in calls
         ), f"no module->register decorator edge; calls={sorted(calls)}"
 
+    def test_class_decorator_emits_module_call(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # (H) a bare decorator on a class also runs at module load.
+        (temp_repo / "app.py").write_text(
+            "def deco(cls):\n    return cls\n\n\n@deco\nclass MyClass:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        run_updater(temp_repo, mock_ingestor, skip_if_missing="python")
+        calls = _calls(mock_ingestor)
+
+        assert any(
+            label == cs.NodeLabel.MODULE
+            and caller.endswith(".app")
+            and callee.endswith(".deco")
+            for label, caller, callee in calls
+        ), f"no module->deco class decorator edge; calls={sorted(calls)}"
+
+    def test_alias_decorator_resolves_to_first_party(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # (H) `@alias` where `alias = task` still calls task at module load.
+        (temp_repo / "app.py").write_text(
+            "def task(fn):\n"
+            "    return fn\n"
+            "\n"
+            "\n"
+            "alias = task\n"
+            "\n"
+            "\n"
+            "@alias\n"
+            "def handler():\n"
+            "    return 1\n",
+            encoding="utf-8",
+        )
+
+        run_updater(temp_repo, mock_ingestor, skip_if_missing="python")
+        calls = _calls(mock_ingestor)
+
+        assert any(
+            label == cs.NodeLabel.MODULE
+            and caller.endswith(".app")
+            and callee.endswith(".task")
+            for label, caller, callee in calls
+        ), f"alias decorator not resolved; calls={sorted(calls)}"
+
     def test_decorator_on_nested_function_not_module_attributed(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:

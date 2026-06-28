@@ -172,17 +172,24 @@ class CallProcessor:
             ancestor = ancestor.parent
         return True
 
-    def _ingest_decorator_calls(self, func_nodes: list[Node], module_qn: str) -> None:
-        # (H) Emit `(Module)->decorator` CALLS for bare decorators: the decoration
-        # (H) executes at module-load time, so the module is the caller. Only
-        # (H) first-party callables produce an edge.
+    def _ingest_decorator_calls(
+        self,
+        nodes: list[Node],
+        module_qn: str,
+        root_node: Node,
+        lang_config: LanguageSpec,
+    ) -> None:
+        # (H) Emit `(Module)->decorator` CALLS for bare decorators on functions,
+        # (H) methods, AND classes: the decoration executes at module-load time,
+        # (H) so the module is the caller. Only first-party callables get an edge.
         resolver = self._resolver
         ensure_rel = self.ingestor.ensure_relationship_batch
         qn_key = cs.KEY_QUALIFIED_NAME
         module_spec = (cs.NodeLabel.MODULE, qn_key, module_qn)
         callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
-        for func_node in func_nodes:
-            parent = func_node.parent
+        alias_map: dict[str, str] | None = None
+        for node in nodes:
+            parent = node.parent
             if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
                 continue
             if not self._runs_at_module_load(parent):
@@ -194,6 +201,15 @@ class CallProcessor:
                 if not name:
                     continue
                 callee = resolver.resolve_function_call(name, module_qn)
+                if not callee and cs.SEPARATOR_DOT not in name:
+                    # (H) `@alias` where `alias = task` still calls task at load;
+                    # (H) reuse the local-alias fallback the call pass uses.
+                    if alias_map is None:
+                        alias_map = self._build_local_alias_map(
+                            root_node, lang_config, module_qn
+                        )
+                    if (rhs := alias_map.get(name)) is not None:
+                        callee = resolver.resolve_function_call(rhs, module_qn)
                 if callee and callee[0] in callable_labels:
                     ensure_rel(
                         module_spec,
@@ -327,9 +343,21 @@ class CallProcessor:
             )
             # (H) Bare decorators (`@task`) are not call nodes; emit their
             # (H) module-load CALLS before the empty-`all_call_nodes` early return,
-            # (H) since a file may have decorators but no other calls.
-            if language == cs.SupportedLanguage.PYTHON and sorted_func_nodes:
-                self._ingest_decorator_calls(sorted_func_nodes, module_qn)
+            # (H) since a file may have decorators but no other calls. Classes can
+            # (H) be decorated too, so include captured class nodes.
+            if language == cs.SupportedLanguage.PYTHON:
+                decorator_targets = list(sorted_func_nodes or [])
+                if combined_captures and (
+                    class_nodes := combined_captures.get(cs.CAPTURE_CLASS)
+                ):
+                    decorator_targets.extend(class_nodes)
+                if decorator_targets:
+                    self._ingest_decorator_calls(
+                        decorator_targets,
+                        module_qn,
+                        root_node,
+                        queries[language][cs.QUERY_CONFIG],
+                    )
             if not all_call_nodes:
                 return
             self._process_calls_in_classes(
