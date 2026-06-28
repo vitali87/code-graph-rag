@@ -202,3 +202,25 @@ class TestDeadCodeCommand:
         # (H) module-load roots), but test functions themselves are not roots.
         assert "test_patterns" in params
         assert "n.path CONTAINS" not in query
+
+    def test_classes_flag_includes_class_candidates(
+        self, runner: CliRunner, dead_rows: list[ResultRow]
+    ) -> None:
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["dead-code", "--classes"])
+
+        assert result.exit_code == 0
+        query, _params = mock_ingestor.fetch_all.call_args.args
+        assert "Function|Method|Class" in query
+
+    def test_classes_off_by_default(
+        self, runner: CliRunner, dead_rows: list[ResultRow]
+    ) -> None:
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["dead-code"])
+
+        assert result.exit_code == 0
+        query, _params = mock_ingestor.fetch_all.call_args.args
+        assert "Function|Method|Class" not in query

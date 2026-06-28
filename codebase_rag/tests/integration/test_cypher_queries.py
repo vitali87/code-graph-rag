@@ -376,6 +376,17 @@ class TestBuildDeadCodeQueryUnit:
         assert "Module" in query
         assert "[:CALLS]-(" in query
 
+    def test_include_classes_adds_class_candidates(self) -> None:
+        with_classes = build_dead_code_query(include_tests=False, include_classes=True)
+        assert "Function|Method|Class" in with_classes
+        assert "INHERITS" in with_classes
+
+        without_classes = build_dead_code_query(
+            include_tests=False, include_classes=False
+        )
+        assert "Function|Method|Class" not in without_classes
+        assert "INHERITS" not in without_classes
+
 
 @pytest.mark.integration
 class TestBuildDeadCodeQueryIntegration:
@@ -495,6 +506,97 @@ class TestBuildDeadCodeQueryIntegration:
             build_dead_code_query(include_tests=True), params
         )
         assert {r["qualified_name"] for r in included} == set()
+
+    def test_class_candidates_when_classes_included(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) used is a module-load root that instantiates WithInit (INSTANTIATES
+        # (H) the class plus CALLS its __init__), NoInit (INSTANTIATES only, no
+        # (H) __init__) and Derived (INSTANTIATES; Derived INHERITS Base, so Base
+        # (H) is live too). Only DeadClass (and the orphan function) is unreachable.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(used:Function {qualified_name: 'proj.mod.used', name: 'used', "
+            "  start_line: 1, end_line: 2, decorators: [], path: 'proj/mod.py'}), "
+            "(orphan_fn:Function {qualified_name: 'proj.mod.orphan_fn', "
+            "  name: 'orphan_fn', start_line: 4, end_line: 5, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(wi:Class {qualified_name: 'proj.mod.WithInit', name: 'WithInit', "
+            "  start_line: 7, end_line: 9, decorators: [], path: 'proj/mod.py'}), "
+            "(wii:Method {qualified_name: 'proj.mod.WithInit.__init__', "
+            "  name: '__init__', start_line: 8, end_line: 9, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(ni:Class {qualified_name: 'proj.mod.NoInit', name: 'NoInit', "
+            "  start_line: 11, end_line: 12, decorators: [], path: 'proj/mod.py'}), "
+            "(base:Class {qualified_name: 'proj.mod.Base', name: 'Base', "
+            "  start_line: 14, end_line: 15, decorators: [], path: 'proj/mod.py'}), "
+            "(der:Class {qualified_name: 'proj.mod.Derived', name: 'Derived', "
+            "  start_line: 17, end_line: 18, decorators: [], path: 'proj/mod.py'}), "
+            "(dead:Class {qualified_name: 'proj.mod.DeadClass', name: 'DeadClass', "
+            "  start_line: 20, end_line: 21, decorators: [], path: 'proj/mod.py'}), "
+            "(wi)-[:DEFINES_METHOD]->(wii), "
+            "(der)-[:INHERITS]->(base), "
+            "(m)-[:CALLS]->(used), "
+            "(used)-[:INSTANTIATES]->(wi), "
+            "(used)-[:CALLS]->(wii), "
+            "(used)-[:INSTANTIATES]->(ni), "
+            "(used)-[:INSTANTIATES]->(der)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        without_classes = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False, include_classes=False), params
+        )
+        assert {r["qualified_name"] for r in without_classes} == {"proj.mod.orphan_fn"}
+
+        with_classes = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False, include_classes=True), params
+        )
+        assert {r["qualified_name"] for r in with_classes} == {
+            "proj.mod.orphan_fn",
+            "proj.mod.DeadClass",
+        }
+
+    def test_subclass_only_base_is_reported_when_subclass_is_unreachable(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) Base is subclassed by Derived, but nothing instantiates Derived, so
+        # (H) the traversal never reaches Derived and therefore never reaches Base
+        # (H) via INHERITS. The whole dead cluster (both classes) is reported: a
+        # (H) base kept alive only by an unreachable subclass is itself dead.
+        # (H) Live is present purely so the query has a reachable root to anchor.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(live:Class {qualified_name: 'proj.mod.Live', name: 'Live', "
+            "  start_line: 1, end_line: 2, decorators: [], path: 'proj/mod.py'}), "
+            "(base:Class {qualified_name: 'proj.mod.Base', name: 'Base', "
+            "  start_line: 4, end_line: 5, decorators: [], path: 'proj/mod.py'}), "
+            "(der:Class {qualified_name: 'proj.mod.Derived', name: 'Derived', "
+            "  start_line: 7, end_line: 8, decorators: [], path: 'proj/mod.py'}), "
+            "(der)-[:INHERITS]->(base), "
+            "(m)-[:INSTANTIATES]->(live)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        with_classes = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False, include_classes=True), params
+        )
+        assert {r["qualified_name"] for r in with_classes} == {
+            "proj.mod.Base",
+            "proj.mod.Derived",
+        }
 
     def test_module_load_callee_is_a_root(
         self, memgraph_ingestor: MemgraphIngestor

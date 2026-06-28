@@ -24,6 +24,7 @@ from .types_defs import NameEdge, NodeKey
 console = Console()
 
 _CALLS = cs.RelationshipType.CALLS.value
+_INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 
 
 def _is_dunder(name: str) -> bool:
@@ -184,17 +185,21 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
     method_label = cs.NodeLabel.METHOD.value
     edges: set[NameEdge] = set()
     for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
-        if rel_type != _CALLS or from_label != module_label:
+        # (H) A module-scope construction `X()` is an INSTANTIATES edge to the
+        # (H) class node (callee is the class name directly); a function/method
+        # (H) call is a CALLS edge. The oracle records both as a bare callee name,
+        # (H) so credit both kinds of module-caller edge.
+        if rel_type not in (_CALLS, _INSTANTIATES) or from_label != module_label:
             continue
         path = module_paths.get(str(from_val))
         if path is None:
             continue
         segments = str(to_val).split(ec.SEP)
         name = segments[-1]
-        # (H) A constructor call `X()` resolves to the `X.__init__` METHOD; the
-        # (H) oracle sees the class name `X`, so credit it to the class. A bare
-        # (H) first-party FUNCTION named `__init__` is left as a dunder (filtered
-        # (H) below), not remapped to its module segment.
+        # (H) A constructor call `X()` on a class WITH __init__ resolves to the
+        # (H) `X.__init__` METHOD via CALLS; the oracle sees the class name `X`, so
+        # (H) credit it to the class. A bare first-party FUNCTION named `__init__`
+        # (H) is left as a dunder (filtered below), not remapped to its segment.
         if name == ec.INIT_STEM and to_label == method_label and len(segments) >= 2:
             name = segments[-2]
         if _is_dunder(name):
