@@ -894,20 +894,20 @@ def _dead_code_params(
     project_name: str,
     entry_points: list[str],
     decorator_roots: list[str],
-    include_tests: bool,
 ) -> dict[str, PropertyValue]:
     root_decorators = sorted(
         {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
         | {d.lower() for d in decorator_roots}
     )
-    params: dict[str, PropertyValue] = {
+    # (H) test_patterns is always passed: with tests included it makes test
+    # (H) functions roots; with tests excluded it filters test modules out of the
+    # (H) module-load root clause so test-only code is not kept alive.
+    return {
         "project_prefix": f"{project_name}{cs.SEPARATOR_DOT}",
         "root_decorators": root_decorators,
         "entry_points": list(entry_points),
+        "test_patterns": list(cs.TEST_PATH_PATTERNS),
     }
-    if include_tests:
-        params["test_patterns"] = list(cs.TEST_PATH_PATTERNS)
-    return params
 
 
 def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
@@ -1029,9 +1029,7 @@ def dead_code(
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows = ingestor.fetch_all(
                     build_dead_code_query(include_tests),
-                    _dead_code_params(
-                        resolved, entry_point, decorator_root, include_tests
-                    ),
+                    _dead_code_params(resolved, entry_point, decorator_root),
                 )
     except Exception as e:
         app_context.console.print(

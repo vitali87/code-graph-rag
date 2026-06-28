@@ -101,6 +101,17 @@ _DEAD_CODE_TEST_ROOT_CLAUSE = (
     "\n    OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
 )
 
+# (H) A function called by a Module node runs at import (top-level statement,
+# (H) `if __name__ == "__main__"`, or a bare decorator), so it is a root.
+# (H) `size([...])` avoids the non-standard `exists(pattern)`. When tests are
+# (H) excluded, a CALLS edge from a test module must NOT keep project code alive,
+# (H) so the test-module variant filters the calling module by path.
+_DEAD_CODE_MODULE_ROOT_ANY = "size([(n)<-[:CALLS]-(:Module) | 1]) > 0"
+_DEAD_CODE_MODULE_ROOT_NON_TEST = (
+    "size([(n)<-[:CALLS]-(m:Module)"
+    " WHERE NOT ANY(p IN $test_patterns WHERE m.path CONTAINS p) | 1]) > 0"
+)
+
 _DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:Function|Method)
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (
@@ -109,7 +120,7 @@ WHERE n.qualified_name STARTS WITH $project_prefix
               IN $root_decorators)
     OR n.is_exported = true
     OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
-    OR exists((n)<-[:CALLS]-(:Module)){test_clause}
+    OR {module_clause}{test_clause}
   )
 WITH collect(n) AS roots
 UNWIND roots AS r
@@ -125,8 +136,15 @@ ORDER BY qualified_name"""
 
 
 def build_dead_code_query(include_tests: bool) -> str:
-    test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE if include_tests else ""
-    return _DEAD_CODE_QUERY_TEMPLATE.format(test_clause=test_clause)
+    if include_tests:
+        module_clause = _DEAD_CODE_MODULE_ROOT_ANY
+        test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE
+    else:
+        module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST
+        test_clause = ""
+    return _DEAD_CODE_QUERY_TEMPLATE.format(
+        module_clause=module_clause, test_clause=test_clause
+    )
 
 
 def wrap_with_unwind(query: str) -> str:
