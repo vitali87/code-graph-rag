@@ -261,6 +261,25 @@ def _delete_hash_cache(repo_path: Path) -> None:
     dir_mtimes_path.unlink(missing_ok=True)
 
 
+def _resolve_and_validate_repo(repo_path: str | None) -> Path:
+    resolved = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
+    if not resolved.exists():
+        app_context.console.print(
+            style(cs.CLI_ERR_PATH_NOT_EXISTS.format(path=resolved), cs.Color.RED)
+        )
+        raise typer.Exit(1)
+    if not resolved.is_dir():
+        app_context.console.print(
+            style(cs.CLI_ERR_PATH_NOT_DIR.format(path=resolved), cs.Color.RED)
+        )
+        raise typer.Exit(1)
+    if not (resolved / cs.GIT_DIR_NAME).is_dir():
+        app_context.console.print(
+            style(cs.CLI_WARN_NOT_GIT_REPO.format(path=resolved), cs.Color.YELLOW)
+        )
+    return resolved
+
+
 def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
     rows = ingestor.fetch_all(
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
@@ -366,7 +385,7 @@ def start(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    resolved_repo = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
+    resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
     resolved_project_name = project_name or derive_project_name(resolved_repo)
 
@@ -499,7 +518,7 @@ def index(
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
-    repo_to_index = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
+    repo_to_index = _resolve_and_validate_repo(repo_path)
     _info(style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN))
 
     _info(style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN))
@@ -619,7 +638,7 @@ def optimize(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    target_repo_path = str(resolve_repo_path(repo_path, settings.TARGET_REPO_PATH))
+    target_repo_path = str(_resolve_and_validate_repo(repo_path))
 
     _update_and_validate_models(orchestrator, cypher)
 
