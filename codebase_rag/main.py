@@ -1544,8 +1544,8 @@ def _initialize_services_and_agent(
     file_editor_tool = create_file_editor_tool(file_editor)
     shell_command_tool = create_shell_command_tool(shell_commander)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
-    semantic_search_tool = create_semantic_search_tool()
-    function_source_tool = create_get_function_source_tool()
+    semantic_search_tool = create_semantic_search_tool(ingestor)
+    function_source_tool = create_get_function_source_tool(ingestor)
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,

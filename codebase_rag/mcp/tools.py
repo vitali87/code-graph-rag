@@ -93,7 +93,7 @@ class MCPToolsRegistry:
                 create_semantic_search_tool,
             )
 
-            self._semantic_search_tool = create_semantic_search_tool()
+            self._semantic_search_tool = create_semantic_search_tool(self.ingestor)
             self._semantic_search_available = True
         else:
             logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
@@ -344,7 +344,7 @@ class MCPToolsRegistry:
                 self._file_editor_tool,
                 self._shell_command_tool,
                 self._directory_lister_tool,
-                create_get_function_source_tool(),
+                create_get_function_source_tool(self.ingestor),
             ]
             if self._semantic_search_tool is not None:
                 tools.append(self._semantic_search_tool)
