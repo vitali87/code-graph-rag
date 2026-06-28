@@ -108,7 +108,8 @@ WHERE n.qualified_name STARTS WITH $project_prefix
         WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
               IN $root_decorators)
     OR n.is_exported = true
-    OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e){test_clause}
+    OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
+    OR exists((n)<-[:CALLS]-(:Module)){test_clause}
   )
 WITH collect(n) AS roots
 UNWIND roots AS r

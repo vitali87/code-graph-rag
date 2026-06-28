@@ -362,14 +362,21 @@ class TestBuildDeadCodeQueryUnit:
         assert "$test_patterns" not in query
         assert "$project_prefix" in query
 
+    def test_module_load_callees_are_roots(self) -> None:
+        query = build_dead_code_query(include_tests=False)
+
+        # (H) a function called by a Module node runs at import, so it is a root
+        assert "Module" in query
+        assert "CALLS]-(" in query or "]-(:Module" in query
+
 
 @pytest.mark.integration
 class TestBuildDeadCodeQueryIntegration:
     def _seed(self, ingestor: MemgraphIngestor) -> None:
-        # called -> live; orphan -> dead; handler is a @task root;
-        # routed is a @app.route root calling routed_callee (decorators are
-        # stored @-prefixed and dotted, exactly as the parser emits them);
-        # test_runs is a test root that calls helper (so helper is live)
+        # (H) called -> live; orphan -> dead; handler is a @task root;
+        # (H) routed is a @app.route root calling routed_callee (decorators are
+        # (H) stored @-prefixed and dotted, exactly as the parser emits them);
+        # (H) test_runs is a test root that calls helper (so helper is live)
         ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -429,7 +436,7 @@ class TestBuildDeadCodeQueryIntegration:
         )
 
         names = {r["qualified_name"] for r in results}
-        # without test roots, the test fn and its helper are no longer reachable
+        # (H) without test roots, the test fn and its helper are no longer reachable
         assert names == {
             "proj.mod.orphan",
             "proj.tests.test_runs",
@@ -449,6 +456,37 @@ class TestBuildDeadCodeQueryIntegration:
         assert row["name"] == "orphan"
         assert row["start_line"] == 9
         assert row["end_line"] == 11
+
+    def test_module_load_callee_is_a_root(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) a function called by a Module (e.g. `if __name__ == "__main__": main()`
+        # (H) or a bare decorator) runs at import, so it and its callees are live even
+        # (H) with no entry-point/decorator/export root.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(main:Function {qualified_name: 'proj.mod.main', name: 'main', "
+            "  start_line: 1, end_line: 2, decorators: [], path: 'proj/mod.py'}), "
+            "(used:Function {qualified_name: 'proj.mod.used', name: 'used', "
+            "  start_line: 4, end_line: 5, decorators: [], path: 'proj/mod.py'}), "
+            "(orphan:Function {qualified_name: 'proj.mod.orphan', name: 'orphan', "
+            "  start_line: 7, end_line: 8, decorators: [], path: 'proj/mod.py'}), "
+            "(m)-[:CALLS]->(main), "
+            "(main)-[:CALLS]->(used)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+        }
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), params
+        )
+        names = {r["qualified_name"] for r in results}
+
+        assert names == {"proj.mod.orphan"}
 
 
 @pytest.mark.integration
