@@ -113,6 +113,14 @@ class TestModuleCallEval:
         )
         assert "helper" in names
 
+    def test_class_decorator_is_module_attributed(self, tmp_path: Path) -> None:
+        # (H) a bare class decorator runs at module load -> a module call.
+        names = self._oracle_for(
+            tmp_path,
+            "def deco(cls):\n    return cls\n\n\n@deco\nclass Widget:\n    pass\n",
+        )
+        assert "deco" in names
+
     def test_return_annotation_counted_without_future_import(
         self, tmp_path: Path
     ) -> None:
