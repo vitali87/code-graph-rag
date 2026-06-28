@@ -1021,6 +1021,11 @@ def dead_code(
         "--include-tests/--no-include-tests",
         help=ch.HELP_DEADCODE_INCLUDE_TESTS,
     ),
+    include_classes: bool = typer.Option(
+        False,
+        "--classes/--no-classes",
+        help=ch.HELP_DEADCODE_CLASSES,
+    ),
     output_format: cs.DeadCodeFormat = typer.Option(
         cs.DeadCodeFormat.TABLE, "--format", help=ch.HELP_DEADCODE_FORMAT
     ),
@@ -1047,7 +1052,7 @@ def dead_code(
             if resolved is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows = ingestor.fetch_all(
-                    build_dead_code_query(include_tests),
+                    build_dead_code_query(include_tests, include_classes),
                     _dead_code_params(resolved, entry_point, decorator_root),
                 )
     except Exception as e:

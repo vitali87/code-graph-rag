@@ -857,8 +857,17 @@ class CallProcessor:
                 )
 
             if callee_type == class_label:
-                # (H) Instantiating a class is a call to its __init__ at runtime;
-                # (H) redirect to the constructor when the class defines one.
+                # (H) Record construction as INSTANTIATES -> the class node (keeps
+                # (H) CALLS function/method-only). When the class defines __init__,
+                # (H) ALSO redirect a CALLS edge to it (the constructor runs); when
+                # (H) it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
+                # (H) the only edge.
+                for class_variant in resolver.function_registry.variants(callee_qn):
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.INSTANTIATES,
+                        (class_label, qn_key, class_variant),
+                    )
                 init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
                 if init_qn not in resolver.function_registry:
                     continue

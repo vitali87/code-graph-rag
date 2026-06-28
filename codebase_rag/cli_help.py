@@ -190,6 +190,11 @@ HELP_DEADCODE_INCLUDE_TESTS = (
     "Treat test code as reachable roots so production code it exercises is "
     "not reported. On by default."
 )
+HELP_DEADCODE_CLASSES = (
+    "Also report unreachable classes (instantiation and inheritance count as "
+    "use). Off by default: classes referenced only via type annotations, "
+    "isinstance, or dynamic lookups are not tracked and may be false positives."
+)
 HELP_DEADCODE_FORMAT = "Output format: 'table' (default) or 'json'."
 HELP_DEADCODE_OUTPUT = "Write the report to this file instead of stdout."
 HELP_DEADCODE_FAIL_ON_FOUND = (

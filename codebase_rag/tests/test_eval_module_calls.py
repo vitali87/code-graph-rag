@@ -121,6 +121,25 @@ class TestModuleCallEval:
         )
         assert "deco" in names
 
+    def _cgr_for(self, tmp_path: Path, source: str) -> set[str]:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "app.py").write_text(source, encoding="utf-8")
+        return _names(cgr_module_calls(proj, "proj"))
+
+    def test_classless_module_construction_credited_via_instantiates(
+        self, tmp_path: Path
+    ) -> None:
+        # (H) a dataclass has no explicit __init__, so cgr emits no CALLS for its
+        # (H) construction, only INSTANTIATES -> the class. The eval must still
+        # (H) credit the module-scope `Config(1)` so L2 recall stays 1.0.
+        source = (
+            "from dataclasses import dataclass\n\n\n"
+            "@dataclass\nclass Config:\n    n: int\n\n\n"
+            "CONFIG = Config(1)\n"
+        )
+        assert "Config" in self._cgr_for(tmp_path, source)
+
     def test_return_annotation_counted_without_future_import(
         self, tmp_path: Path
     ) -> None:

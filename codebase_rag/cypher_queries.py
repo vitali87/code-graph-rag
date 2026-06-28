@@ -101,18 +101,27 @@ _DEAD_CODE_TEST_ROOT_CLAUSE = (
     "\n    OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
 )
 
-# (H) A function called by a Module node runs at import (top-level statement,
-# (H) `if __name__ == "__main__"`, or a bare decorator), so it is a root.
-# (H) `size([...])` avoids the non-standard `exists(pattern)`. When tests are
-# (H) excluded, a CALLS edge from a test module must NOT keep project code alive,
-# (H) so the test-module variant filters the calling module by path.
-_DEAD_CODE_MODULE_ROOT_ANY = "size([(n)<-[:CALLS]-(:Module) | 1]) > 0"
+# (H) A node reached by a Module node runs at import (top-level statement,
+# (H) `if __name__ == "__main__"`, a bare decorator, or a module-scope
+# (H) construction), so it is a root. `size([...])` avoids the non-standard
+# (H) `exists(pattern)`. When tests are excluded, an edge from a test module must
+# (H) NOT keep project code alive, so the test-module variant filters by path.
+# (H) `{module_rels}` is the relationship set walked from the module (CALLS, plus
+# (H) INSTANTIATES when classes are included so module-scope construction roots a
+# (H) class).
+_DEAD_CODE_MODULE_ROOT_ANY = "size([(n)<-[:{module_rels}]-(:Module) | 1]) > 0"
 _DEAD_CODE_MODULE_ROOT_NON_TEST = (
-    "size([(n)<-[:CALLS]-(m:Module)"
+    "size([(n)<-[:{module_rels}]-(m:Module)"
     " WHERE NOT ANY(p IN $test_patterns WHERE m.path CONTAINS p) | 1]) > 0"
 )
 
-_DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:Function|Method)
+# (H) Reachability walks CALLS only by default. With classes included it also
+# (H) walks INSTANTIATES (construction keeps a class live) and INHERITS (a live
+# (H) subclass keeps its base live), so a class is reported only when nothing
+# (H) instantiates or subclasses it. Classes referenced solely via type
+# (H) annotations / isinstance / dynamic lookups are not modelled as edges, so
+# (H) class candidates are review hints, not a delete list.
+_DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (
     ANY(d IN n.decorators
@@ -124,9 +133,9 @@ WHERE n.qualified_name STARTS WITH $project_prefix
   )
 WITH collect(n) AS roots
 UNWIND roots AS r
-MATCH (r)-[:CALLS*0..]->(live)
+MATCH (r)-[:{traversal}*0..]->(live)
 WITH collect(DISTINCT live) AS live_set
-MATCH (n:Function|Method)
+MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set
 RETURN labels(n)[0] AS label, n.name AS name,
@@ -135,15 +144,26 @@ RETURN labels(n)[0] AS label, n.name AS name,
 ORDER BY qualified_name"""
 
 
-def build_dead_code_query(include_tests: bool) -> str:
+def build_dead_code_query(include_tests: bool, include_classes: bool = False) -> str:
+    if include_classes:
+        labels = "Function|Method|Class"
+        traversal = "CALLS|INSTANTIATES|INHERITS"
+        module_rels = "CALLS|INSTANTIATES"
+    else:
+        labels = "Function|Method"
+        traversal = "CALLS"
+        module_rels = "CALLS"
     if include_tests:
-        module_clause = _DEAD_CODE_MODULE_ROOT_ANY
+        module_clause = _DEAD_CODE_MODULE_ROOT_ANY.format(module_rels=module_rels)
         test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE
     else:
-        module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST
+        module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST.format(module_rels=module_rels)
         test_clause = ""
     return _DEAD_CODE_QUERY_TEMPLATE.format(
-        module_clause=module_clause, test_clause=test_clause
+        labels=labels,
+        traversal=traversal,
+        module_clause=module_clause,
+        test_clause=test_clause,
     )
 
 
