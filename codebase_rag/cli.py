@@ -273,7 +273,7 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
             style(cs.CLI_ERR_PATH_NOT_DIR.format(path=resolved), cs.Color.RED)
         )
         raise typer.Exit(1)
-    if not (resolved / cs.GIT_DIR_NAME).is_dir():
+    if not (resolved / cs.GIT_DIR_NAME).exists():
         app_context.console.print(
             style(cs.CLI_WARN_NOT_GIT_REPO.format(path=resolved), cs.Color.YELLOW)
         )

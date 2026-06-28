@@ -76,6 +76,16 @@ class TestStartRepoPathValidation:
         assert result.exit_code == 0, result.output
         assert "not a Git repository" not in result.output
 
+    def test_git_file_worktree_does_not_warn(
+        self, mock_memgraph_connect: MagicMock, tmp_path: Path
+    ) -> None:
+        # (H) worktrees and submodules use a .git file, not a directory
+        (tmp_path / cs.GIT_DIR_NAME).write_text("gitdir: /repo/.git/worktrees/wt\n")
+        result = runner.invoke(app, ["start", "--clean", "--repo-path", str(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        assert "not a Git repository" not in result.output
+
 
 class TestIndexRepoPathValidation:
     def test_index_nonexistent_path_exits_with_error(self, tmp_path: Path) -> None:
