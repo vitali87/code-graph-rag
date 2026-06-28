@@ -1591,7 +1591,7 @@ def main_single_query(
         response = asyncio.run(rag_agent.run(question, message_history=[]))
         if output_format == cs.QueryFormat.JSON:
             payload = QueryJsonOutput(query=question, response=str(response.output))
-            print(json.dumps(payload))  # noqa: T201
+            print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
         else:
             print(response.output)  # noqa: T201
 

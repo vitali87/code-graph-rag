@@ -239,6 +239,10 @@ CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
 CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
+    "Error: --output-format json requires --ask-agent/-a; "
+    "it only applies to single-query output."
+)
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
