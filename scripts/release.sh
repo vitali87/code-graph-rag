@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local release: build, verify, and publish the current pyproject version to
-# PyPI, then create the matching git tag and GitHub Release. Use this when the
-# GitHub Actions publish workflow is unavailable (e.g. billing disabled).
+# Local release: sync server.json to the pyproject version, then build, verify,
+# and publish that version to PyPI and create the matching git tag and GitHub
+# Release. Use this when the GitHub Actions publish workflow is unavailable
+# (e.g. billing disabled).
 #
 # Credentials: twine prompts for a PyPI token (username __token__). To avoid the
 # prompt, export TWINE_USERNAME=__token__ and TWINE_PASSWORD=pypi-... or set up
@@ -22,6 +23,12 @@ fi
 if git rev-parse "${TAG}" >/dev/null 2>&1; then
   echo "Error: tag ${TAG} already exists. Bump the version in pyproject.toml first." >&2
   exit 1
+fi
+
+echo "==> Syncing server.json to ${VERSION}"
+perl -i -pe 's/"version": "[^"]*"/"version": "'"${VERSION}"'"/g' server.json
+if [ -n "$(git status --porcelain server.json)" ]; then
+  git commit -m "chore: sync server.json version to ${VERSION}" server.json
 fi
 
 echo "==> Building distributions"
