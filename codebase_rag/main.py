@@ -74,6 +74,7 @@ from .types_defs import (
     ConfirmationToolNames,
     CreateFileArgs,
     GraphData,
+    QueryJsonOutput,
     RawToolArgs,
     ReplaceCodeArgs,
     ShellCommandArgs,
@@ -1576,6 +1577,7 @@ def main_single_query(
     batch_size: int,
     question: str,
     active_projects: list[str] | None = None,
+    output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
 ) -> None:
     _setup_common_initialization(repo_path)
     # (H) Override logger to stderr so stdout is clean for scripted output
@@ -1587,7 +1589,11 @@ def main_single_query(
             repo_path, ingestor, active_projects=active_projects
         )
         response = asyncio.run(rag_agent.run(question, message_history=[]))
-        print(response.output)  # noqa: T201
+        if output_format == cs.QueryFormat.JSON:
+            payload = QueryJsonOutput(query=question, response=str(response.output))
+            print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
+        else:
+            print(response.output)  # noqa: T201
 
 
 async def main_async(

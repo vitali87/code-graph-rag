@@ -361,6 +361,11 @@ def start(
         "--ask-agent",
         help=ch.HELP_ASK_AGENT,
     ),
+    output_format: cs.QueryFormat = typer.Option(
+        cs.QueryFormat.TABLE,
+        "--output-format",
+        help=ch.HELP_QUERY_OUTPUT_FORMAT,
+    ),
     no_start_stack: bool = typer.Option(
         False,
         "--no-start-stack",
@@ -384,6 +389,12 @@ def start(
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
+
+    if output_format == cs.QueryFormat.JSON and not ask_agent:
+        app_context.console.print(
+            style(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT, cs.Color.RED)
+        )
+        raise typer.Exit(1)
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
@@ -471,6 +482,7 @@ def start(
                 effective_batch_size,
                 ask_agent,
                 active_projects=active_projects,
+                output_format=output_format,
             )
         else:
             asyncio.run(
