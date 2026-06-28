@@ -166,6 +166,11 @@ HELP_ASK_AGENT = (
     "Output is sent to stdout, useful for scripting."
 )
 
+HELP_QUERY_OUTPUT_FORMAT = (
+    "Output format for --ask-agent: 'table' (default) prints the plain answer; "
+    '\'json\' wraps it as {"query": ..., "response": ...} for scripting.'
+)
+
 HELP_MCP_TRANSPORT = "Transport mode: 'stdio' (default) or 'http'"
 HELP_MCP_HTTP_HOST = (
     "Host to bind the HTTP server — only used when --transport http (default: 0.0.0.0)"

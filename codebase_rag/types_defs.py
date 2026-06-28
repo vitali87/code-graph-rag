@@ -210,6 +210,11 @@ class GraphSummary(TypedDict):
     metadata: GraphMetadata
 
 
+class QueryJsonOutput(TypedDict):
+    query: str
+    response: str
+
+
 class EmbeddingQueryResult(TypedDict):
     node_id: int
     qualified_name: str

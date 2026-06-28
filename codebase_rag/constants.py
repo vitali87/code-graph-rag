@@ -185,6 +185,8 @@ KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
+KEY_QUERY = "query"
+KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
@@ -401,6 +403,11 @@ class UniqueKeyType(StrEnum):
 
 
 class DeadCodeFormat(StrEnum):
+    TABLE = "table"
+    JSON = "json"
+
+
+class QueryFormat(StrEnum):
     TABLE = "table"
     JSON = "json"
 
