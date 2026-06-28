@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release
 
 PYTHON := uv run
 
@@ -76,6 +76,9 @@ typecheck: ## Run type checking with ty
 	$(PYTHON) ty check -v --exclude codebase_rag/tests/
 
 check: lint typecheck test ## Run all checks: lint, typecheck, test
+
+release: ## Build, verify, and publish the current pyproject version to PyPI, then tag and create a GitHub Release
+	./scripts/release.sh
 
 pre-commit: ## Run all pre-commit checks locally (comprehensive test before commit)
 	@echo "Running pre-commit checks..."
