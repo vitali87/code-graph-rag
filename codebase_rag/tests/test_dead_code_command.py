@@ -198,5 +198,7 @@ class TestDeadCodeCommand:
 
         assert result.exit_code == 0
         query, params = mock_ingestor.fetch_all.call_args.args
-        assert "test_patterns" not in params
-        assert "$test_patterns" not in query
+        # (H) test_patterns is still passed (it filters test modules out of the
+        # (H) module-load roots), but test functions themselves are not roots.
+        assert "test_patterns" in params
+        assert "n.path CONTAINS" not in query

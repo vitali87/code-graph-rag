@@ -355,21 +355,35 @@ class TestBuildDeadCodeQueryUnit:
         assert "$entry_points" in query
         assert "is_exported" in query
         assert "CALLS*0.." in query
+        # (H) test functions are roots when tests are included
+        assert "n.path CONTAINS" in query
 
-    def test_exclude_tests_omits_test_patterns(self) -> None:
+    def test_exclude_tests_omits_test_function_roots(self) -> None:
         query = build_dead_code_query(include_tests=False)
 
-        assert "$test_patterns" not in query
+        # (H) test functions are NOT roots when excluding tests ...
+        assert "n.path CONTAINS" not in query
+        # (H) ... but test_patterns still filters test modules out of the
+        # (H) module-load root clause so test-only code is not kept alive.
+        assert "$test_patterns" in query
+        assert "m.path CONTAINS" in query
         assert "$project_prefix" in query
+
+    def test_module_load_callees_are_roots(self) -> None:
+        query = build_dead_code_query(include_tests=False)
+
+        # (H) a function called by a Module node runs at import, so it is a root
+        assert "Module" in query
+        assert "[:CALLS]-(" in query
 
 
 @pytest.mark.integration
 class TestBuildDeadCodeQueryIntegration:
     def _seed(self, ingestor: MemgraphIngestor) -> None:
-        # called -> live; orphan -> dead; handler is a @task root;
-        # routed is a @app.route root calling routed_callee (decorators are
-        # stored @-prefixed and dotted, exactly as the parser emits them);
-        # test_runs is a test root that calls helper (so helper is live)
+        # (H) called -> live; orphan -> dead; handler is a @task root;
+        # (H) routed is a @app.route root calling routed_callee (decorators are
+        # (H) stored @-prefixed and dotted, exactly as the parser emits them);
+        # (H) test_runs is a test root that calls helper (so helper is live)
         ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -397,15 +411,15 @@ class TestBuildDeadCodeQueryIntegration:
             "(testfn)-[:CALLS]->(helper)"
         )
 
-    def _params(self, include_tests: bool) -> dict[str, PropertyValue]:
-        params: dict[str, PropertyValue] = {
+    def _params(self, include_tests: bool) -> dict[str, PropertyValue]:  # noqa: ARG002
+        # (H) test_patterns is always supplied; the query (built per include_tests)
+        # (H) decides whether it gates test-function roots or test-module filtering.
+        return {
             "project_prefix": "proj.",
             "root_decorators": ["task", "route"],
             "entry_points": ["proj.mod.main"],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
         }
-        if include_tests:
-            params["test_patterns"] = ["test_", "_test", "conftest", "/tests/"]
-        return params
 
     def test_reports_only_the_orphan_with_tests_included(
         self, memgraph_ingestor: MemgraphIngestor
@@ -429,7 +443,7 @@ class TestBuildDeadCodeQueryIntegration:
         )
 
         names = {r["qualified_name"] for r in results}
-        # without test roots, the test fn and its helper are no longer reachable
+        # (H) without test roots, the test fn and its helper are no longer reachable
         assert names == {
             "proj.mod.orphan",
             "proj.tests.test_runs",
@@ -449,6 +463,70 @@ class TestBuildDeadCodeQueryIntegration:
         assert row["name"] == "orphan"
         assert row["start_line"] == 9
         assert row["end_line"] == 11
+
+    def test_test_module_call_is_not_a_root_when_excluding_tests(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) a function reached only from a TEST module's top-level call must NOT
+        # (H) be kept alive when --no-include-tests, else test-only code hides as
+        # (H) live. The same call DOES keep it live when tests are included.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(tm:Module {qualified_name: 'proj.tests.test_x', "
+            "  path: 'proj/tests/test_x.py'}), "
+            "(tool:Function {qualified_name: 'proj.mod.tool_only', "
+            "  name: 'tool_only', start_line: 1, end_line: 2, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(tm)-[:CALLS]->(tool)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        excluded = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), params
+        )
+        assert {r["qualified_name"] for r in excluded} == {"proj.mod.tool_only"}
+
+        included = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=True), params
+        )
+        assert {r["qualified_name"] for r in included} == set()
+
+    def test_module_load_callee_is_a_root(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) a function called by a Module (e.g. `if __name__ == "__main__": main()`
+        # (H) or a bare decorator) runs at import, so it and its callees are live even
+        # (H) with no entry-point/decorator/export root.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(main:Function {qualified_name: 'proj.mod.main', name: 'main', "
+            "  start_line: 1, end_line: 2, decorators: [], path: 'proj/mod.py'}), "
+            "(used:Function {qualified_name: 'proj.mod.used', name: 'used', "
+            "  start_line: 4, end_line: 5, decorators: [], path: 'proj/mod.py'}), "
+            "(orphan:Function {qualified_name: 'proj.mod.orphan', name: 'orphan', "
+            "  start_line: 7, end_line: 8, decorators: [], path: 'proj/mod.py'}), "
+            "(m)-[:CALLS]->(main), "
+            "(main)-[:CALLS]->(used)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), params
+        )
+        names = {r["qualified_name"] for r in results}
+
+        assert names == {"proj.mod.orphan"}
 
 
 @pytest.mark.integration
