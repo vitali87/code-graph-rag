@@ -417,6 +417,46 @@ The remaining gap is field/generic method dispatch (`self.field.method()`,
 undercount inside macro bodies (`write!` expands to `.fmt()` calls `syn` does not
 see), documented rather than scoped away.
 
+## Multi-language retrieval (Java) — Java CALLS vs the JDK Compiler Tree API
+
+The same harness applied to Java: for each first-party Java symbol, which files
+call it. cgr's Java `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against method-invocation sites extracted by `javac` (the JDK Compiler
+Tree API, the same oracle as the Java L1 structure eval, extended to emit the
+trailing identifier of each `MethodInvocationTree`), over the same first-party
+name universe. `javac` is independent of cgr's tree-sitter Java frontend.
+
+```bash
+uv run python -m evals.java_retrieval --target <java-sources>
+```
+
+Requires the `javac`/`java` toolchain on `PATH`; the eval exits cleanly if it is
+missing. Pinned by `codebase_rag/tests/test_java_retrieval_eval.py`, where cgr's
+Java call graph matches the `javac` oracle on the fixture.
+
+Running it on a real stdlib package (`java.util`, 349 files from the JDK
+`src.zip`) surfaced three cgr bugs and drove recall from 0 (every Java call
+dropped) to 0.52 at precision 1.0 (zero false positives). (1) The definition pass
+registers a Java method node with its parameter signature (`Class.name(args)` —
+Java overloads), but the call pass built the enclosing-method caller qn without
+it (`Class.name`), so every Java method's `CALLS` from-endpoint matched no node
+and the edge would not attach in Memgraph; fixed by routing the caller qn through
+the same signature build the definition pass uses
+(`codebase_rag/tests/test_java_call_caller_qn.py`). (2) `find_package_start_index`
+returns `None` for any project not under a recognized `src/main/java` layout, so
+`_build_fqn_lookup_map` left the simple-name to module map empty and all
+cross-file resolution (instance dispatch in sibling files) silently failed; fixed
+by falling back to the segment after the project root for flat/non-standard
+layouts. (3) A static call on a bare class-name receiver in a sibling file
+(`T.make()`, same package, no import) never resolved because the receiver-type
+lookup only checked the current module and explicit imports; fixed with a
+same-package class-name fallback in `_resolve_java_object_type`. The remaining gap
+is interface/abstract dispatch (the name-based oracle counts a call whenever the
+callee name is any declared first-party method, but cgr emits an edge only when
+the concrete receiver type is statically knowable) and deep receiver-type
+inference (iterator/functional-interface/generic element types), documented rather
+than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine

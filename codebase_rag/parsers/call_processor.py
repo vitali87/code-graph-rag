@@ -19,6 +19,7 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
+from .java import utils as java_utils
 from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -604,7 +605,7 @@ class CallProcessor:
             # (H) the method-dropping Class.nested) and label a nested function
             # (H) FUNCTION, so the CALLS edge joins the real node.
             caller_qn, caller_label = self._class_member_qn_and_label(
-                method_node, class_qn, method_name, lang_config
+                method_node, class_qn, method_name, lang_config, language
             )
             filtered = (
                 self._calls_owned_by(
@@ -626,7 +627,12 @@ class CallProcessor:
             )
 
     def _class_member_qn_and_label(
-        self, func_node: Node, class_qn: str, func_name: str, lang_config: LanguageSpec
+        self,
+        func_node: Node,
+        class_qn: str,
+        func_name: str,
+        lang_config: LanguageSpec,
+        language: str,
     ) -> tuple[str, str]:
         # (H) Build a class-body function's qn through the chain of enclosing
         # (H) functions up to the class: a direct method is Class.method (METHOD);
@@ -644,7 +650,23 @@ class CallProcessor:
         if path_parts:
             joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
             return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
-        return f"{class_qn}{cs.SEPARATOR_DOT}{func_name}", cs.NodeLabel.METHOD
+        member = self._java_method_member(func_node, func_name, language)
+        return f"{class_qn}{cs.SEPARATOR_DOT}{member}", cs.NodeLabel.METHOD
+
+    def _java_method_member(
+        self, func_node: Node, func_name: str, language: str
+    ) -> str:
+        # (H) A Java Method node is registered with its parameter signature
+        # (H) (definition pass: class_qn.name(params)), so the caller endpoint of a
+        # (H) CALLS edge must carry the same signature to join that node. Mirrors
+        # (H) class_ingest.mixin's method-qn build exactly.
+        if language != cs.SupportedLanguage.JAVA:
+            return func_name
+        info = java_utils.extract_method_info(func_node)
+        name = info.get(cs.KEY_NAME) or func_name
+        parameters = info.get(cs.KEY_PARAMETERS, [])
+        param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
+        return f"{name}{param_sig}"
 
     def _calls_owned_by(
         self,
