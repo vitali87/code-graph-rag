@@ -177,15 +177,17 @@ class JavaMethodResolverMixin:
         return parent_classes[0] if parent_classes else None
 
     def _resolve_sibling_class_qn(self, class_name: str, module_qn: str) -> str | None:
-        # (H) Resolve a bare class name to a registered Class/Interface in another
-        # (H) module, preferring one in the same package (directory) so an
-        # (H) unqualified same-package reference resolves without an import. Falls
-        # (H) back to any registered match for the cross-package case.
+        # (H) Resolve a bare class name to a registered Class/Interface in a SIBLING
+        # (H) file of the same package (directory), so an unqualified same-package
+        # (H) reference resolves without an import. A bare receiver with no import
+        # (H) is only valid for the current package in Java, so a class in another
+        # (H) package is NOT a match -- linking it would be a wrong cross-package
+        # (H) edge; leave the receiver unresolved instead.
         if not (candidate_modules := self._fqn_to_module_qn.get(class_name)):
             return None
-        current_file = self.module_qn_to_file_path.get(module_qn)
-        current_dir = current_file.parent if current_file else None
-        fallback: str | None = None
+        if not (current_file := self.module_qn_to_file_path.get(module_qn)):
+            return None
+        current_dir = current_file.parent
         for candidate_module in candidate_modules:
             candidate_qn = f"{candidate_module}{cs.SEPARATOR_DOT}{class_name}"
             if candidate_qn not in self.function_registry or self.function_registry[
@@ -193,10 +195,9 @@ class JavaMethodResolverMixin:
             ] not in (NodeType.CLASS, NodeType.INTERFACE):
                 continue
             candidate_file = self.module_qn_to_file_path.get(candidate_module)
-            if current_dir and candidate_file and candidate_file.parent == current_dir:
+            if candidate_file and candidate_file.parent == current_dir:
                 return candidate_qn
-            fallback = fallback or candidate_qn
-        return fallback
+        return None
 
     def _resolve_static_or_local_method(
         self, method_name: str, module_qn: str
