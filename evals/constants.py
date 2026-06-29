@@ -401,3 +401,15 @@ OVERRIDES_EDGE_REPR = "{sub} -> {base} .{method}"
 INHERITANCE_TITLE = "cgr inheritance eval: resolved INHERITS and OVERRIDES"
 STAR_IMPORT = "*"
 SEP_NUL = "\x00"
+
+# (H) Instantiation eval: file-level constructor localization. For each first-party
+# (H) class, which files instantiate it. cgr INSTANTIATES edges vs an ast oracle of
+# (H) calls whose callee simple name is a first-party class. Isolates the
+# (H) INSTANTIATES signal the retrieval eval folds into CALLS.
+INSTANTIATION_DEFAULT_TARGET = "codebase_rag"
+INSTANTIATION_SCORES_FILENAME = "instantiation_scores.csv"
+INSTANTIATION_DIFF_FILENAME = "instantiation_diff.json"
+INSTANTIATION_DIFF_PREFIX = "instantiation:"
+INSTANTIATES_LABEL = "instantiates"
+INSTANTIATION_EDGE_REPR = "{file} -> {cls}"
+INSTANTIATION_TITLE = "cgr instantiation eval: file-level INSTANTIATES vs ast oracle"

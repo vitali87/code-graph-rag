@@ -226,6 +226,24 @@ Writes `evals/results/inheritance_scores.csv` and
 `evals/results/inheritance_diff.json`; pinned by
 `codebase_rag/tests/test_inheritance_eval.py`.
 
+## Instantiation — file-level INSTANTIATES
+
+The retrieval eval folds class instantiation into its `CALLS` localization (a
+constructor call resolves to `Class.__init__`, credited to the class). This eval
+grades cgr's `INSTANTIATES` edges on their own, so a constructor-resolution
+regression is visible separately from ordinary calls.
+
+```bash
+uv run python -m evals.instantiation --target codebase_rag
+```
+
+The unit is `(caller_file, class_simple_name)`. The oracle counts every `ast.Call`
+whose callee simple name is a first-party class; cgr contributes its
+`INSTANTIATES` edges reduced to the caller's file and the class simple name.
+Writes `evals/results/instantiation_scores.csv` and
+`evals/results/instantiation_diff.json`; pinned by
+`codebase_rag/tests/test_instantiation_eval.py`.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -426,6 +444,15 @@ base. The first run showed minor `fp`/`fn`; investigation traced all of them to
 oracle scope (a class nested in a test method, and multi-base mixin classes whose
 override attribution is MRO-decided), not cgr defects, so the scope was tightened
 rather than the discrepancies reported.
+
+### Instantiation — file-level INSTANTIATES (`uv run python -m evals.instantiation`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | instantiates | 378 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+cgr localizes every constructor call exactly on `codebase_rag`: the
+`INSTANTIATES` set and the ast oracle's constructor-call set are identical.
 
 ### Next step: agentic resolved-rate (out of scope here)
 
