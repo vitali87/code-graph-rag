@@ -543,6 +543,7 @@ class CallProcessor:
             method_cursor = QueryCursor(method_query)
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        lang_config = queries[language][cs.QUERY_CONFIG]
         for method_node in method_nodes:
             if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
@@ -550,16 +551,24 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name:
                 continue
-            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            # (H) method_nodes includes functions nested inside methods. Build the
+            # (H) qn through the enclosing-function chain (Class.method.nested, not
+            # (H) the method-dropping Class.nested) and label a nested function
+            # (H) FUNCTION, so the CALLS edge joins the real node.
+            caller_qn, caller_label = self._class_member_qn_and_label(
+                method_node, class_qn, method_name, lang_config
+            )
             filtered = (
-                self._filter_calls_in_node(all_call_nodes, call_starts, method_node)
+                self._calls_owned_by(
+                    method_node, method_nodes, all_call_nodes, call_starts
+                )
                 if all_call_nodes is not None and call_starts is not None
                 else None
             )
             self._ingest_function_calls(
                 method_node,
-                method_qn,
-                cs.NodeLabel.METHOD,
+                caller_qn,
+                caller_label,
                 module_qn,
                 language,
                 queries,
@@ -567,6 +576,57 @@ class CallProcessor:
                 call_nodes=filtered,
                 call_name_cache=call_name_cache,
             )
+
+    def _class_member_qn_and_label(
+        self, func_node: Node, class_qn: str, func_name: str, lang_config: LanguageSpec
+    ) -> tuple[str, str]:
+        # (H) Build a class-body function's qn through the chain of enclosing
+        # (H) functions up to the class: a direct method is Class.method (METHOD);
+        # (H) a function nested in a method is Class.method.nested (FUNCTION).
+        path_parts: list[str] = []
+        current = func_node.parent
+        while current and current.type not in lang_config.class_node_types:
+            if current.type in lang_config.function_node_types:
+                if (name_node := current.child_by_field_name(cs.FIELD_NAME)) and (
+                    name_node.text is not None
+                ):
+                    path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+            current = current.parent
+        path_parts.reverse()
+        if path_parts:
+            joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
+            return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
+        return f"{class_qn}{cs.SEPARATOR_DOT}{func_name}", cs.NodeLabel.METHOD
+
+    def _calls_owned_by(
+        self,
+        func_node: Node,
+        sibling_func_nodes: list[Node],
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+    ) -> list[Node]:
+        # (H) Calls inside func_node MINUS calls owned by functions nested within
+        # (H) it, so a call in a nested function is attributed only to the nested
+        # (H) function, never also to the enclosing one.
+        own = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        descendant_bodies = [
+            body
+            for n in sibling_func_nodes
+            if n is not func_node
+            and n.start_byte >= func_node.start_byte
+            and n.end_byte <= func_node.end_byte
+            and (body := n.child_by_field_name(cs.FIELD_BODY)) is not None
+        ]
+        if not descendant_bodies:
+            return own
+        return [
+            call
+            for call in own
+            if not any(
+                body.start_byte <= call.start_byte and call.end_byte <= body.end_byte
+                for body in descendant_bodies
+            )
+        ]
 
     def _process_calls_in_classes(
         self,

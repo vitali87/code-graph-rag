@@ -292,6 +292,33 @@ multi-package fixtures whose cross-package edges are known by construction
 are correctly excluded. cgr resolves all of these; the eval stands as a
 regression guard for monorepo cross-package resolution.
 
+## Static calls — function-level direct-call recall
+
+Grades cgr's `CALLS` graph at function granularity against an `ast` oracle that
+resolves only the calls a reader can resolve without type inference: a bare-name
+call (`foo()`) whose target is a first-party function reached via a `from ...
+import foo` or a same-module top-level def. Each becomes a `(caller_qn,
+callee_qn)` edge. Method / attribute / dynamic calls need cgr's type inference and
+are out of the oracle's scope, so only **recall** is graded (cgr resolving more
+than static analysis can is expected, not a false positive). The oracle uses ast
+import resolution, not cgr's function-registry trie, so it is independent.
+
+```bash
+uv run python -m evals.static_calls --target codebase_rag
+```
+
+Decorator applications (`@deco(...)`) are excluded (they are not calls the
+decorated function makes), and the oracle attributes a call to its real enclosing
+function qn including nested scopes (`Class.method.nested`).
+
+**This eval caught a real cgr bug.** A call inside a function nested in a method
+was emitted with a caller qn that dropped the method (`Class.nested` instead of
+`Class.method.nested`, matching no node), and was also over-attributed to the
+enclosing method. After the root-cause fix in `call_processor.py`
+(`_class_member_qn_and_label` + `_calls_owned_by`), recall on `codebase_rag` is
+4434/4434 = 1.0. Pinned by `codebase_rag/tests/test_static_calls_eval.py` and the
+regression `codebase_rag/tests/test_nested_method_call_qn.py`.
+
 ## Multi-language retrieval (Go) — Go CALLS vs `go/ast`
 
 The retrieval benchmark above is Python-only. This extends file-level call

@@ -150,6 +150,20 @@ SEMANTIC_DIFF_PREFIX = "semantic:"
 SEMANTIC_LABEL = "recall-at-k"
 SEMANTIC_CASE_REPR = "{query} => {expected}"
 SEMANTIC_TITLE = "cgr semantic-search eval: query->function recall@k"
+
+# (H) Static CALLS eval: function-level call recall. The oracle resolves only the
+# (H) unambiguous direct calls (a bare-name call to a function reachable via a
+# (H) first-party import or a same-module top-level def) to (caller_qn, callee_qn),
+# (H) using ast import resolution rather than cgr's trie. Method / attribute /
+# (H) dynamic calls need type inference and are out of the oracle's scope, so only
+# (H) recall is graded: every statically-certain call must be in cgr's graph.
+STATIC_CALLS_DEFAULT_TARGET = "codebase_rag"
+STATIC_CALLS_SCORES_FILENAME = "static_calls_scores.csv"
+STATIC_CALLS_DIFF_FILENAME = "static_calls_diff.json"
+STATIC_CALLS_DIFF_PREFIX = "static-calls:"
+STATIC_CALLS_LABEL = "direct-call-recall"
+STATIC_CALL_EDGE_REPR = "{caller} -> {callee}"
+STATIC_CALLS_TITLE = "cgr static-calls eval: function-level direct-call recall"
 ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"
