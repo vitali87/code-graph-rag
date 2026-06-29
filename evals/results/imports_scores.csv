@@ -1,0 +1,4 @@
+category,label,tp,fp,fn,precision,recall,f1
+edge,imports-all,1986,0,0,1.0,1.0,1.0
+edge,imports-internal,462,0,0,1.0,1.0,1.0
+edge,imports-external,1524,0,0,1.0,1.0,1.0

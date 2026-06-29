@@ -173,6 +173,31 @@ outbound calls to symbols defined in unchanged files are dropped (the callee is
 unknown at resolution time). Writes `evals/results/incremental_scores.csv` and
 `evals/results/incremental_diff.json`.
 
+## Import resolution — internal vs external classification
+
+The structural L1 above grades internal `IMPORTS` edges by their resolved target
+file. It does not check how cgr classifies the *other* imports: stdlib and
+third-party. This eval does, against an `ast` plus filesystem oracle, to surface
+internal/external misclassification (the shape of
+[issue #498](https://github.com/vitali87/code-graph-rag/issues/498)).
+
+```bash
+uv run python -m evals.import_resolution --target codebase_rag
+```
+
+The comparison unit is `(importing_file, top_level_package, is_external)`. Both
+sides reduce an import to its top-level package name the same way (`import
+numpy.linalg` and `from numpy import x` both reduce to `numpy`), and both decide
+internal versus external by whether that top level is the project package, so the
+oracle is independent of cgr's own resolver. cgr models an external import as a
+`Module` node flagged `is_external=True` linked by `IMPORTS` (it does not emit
+`ExternalPackage`/`DEPENDS_ON_EXTERNAL` for code-level imports), so the eval reads
+the flag off each `IMPORTS` target. `from __future__ import ...` is a compiler
+directive rather than a dependency and is excluded on both sides (a calibration
+the tests pin). Writes `evals/results/imports_scores.csv` and
+`evals/results/imports_diff.json`; the oracle and the misclassification signal
+are pinned by `codebase_rag/tests/test_import_resolution_eval.py`.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -344,6 +369,20 @@ each edit only perturbs the edges touching one file, but the per-edit effect is
 large (e.g. editing `graph_updater.py` drops 1406 edges). This is
 [issue #532](https://github.com/vitali87/code-graph-rag/issues/532), shown here
 to extend beyond inbound `CALLS` to `IMPORTS` and `INSTANTIATES` as well.
+
+### Import resolution — internal vs external (`uv run python -m evals.import_resolution`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | imports-all | 1986 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | imports-internal | 462 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | imports-external | 1524 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+A clean negative result: on `codebase_rag`, cgr classifies every import correctly,
+internal and external alike. This rules out #498-style misclassification on this
+corpus and stands as a regression guard. (The first run reported 247 missing
+externals; investigation showed they were all `from __future__ import ...`, an
+oracle over-count now corrected rather than a cgr bug.)
 
 ### Next step: agentic resolved-rate (out of scope here)
 

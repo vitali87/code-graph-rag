@@ -367,3 +367,21 @@ INCREMENTAL_DEFAULT_SAMPLE = 25
 INCREMENTAL_DIFF_SAMPLE_CAP = 50
 STATE_NODE_REPR = "{label} {uid}"
 STATE_EDGE_REPR = "{rel} {fl}:{fv} -> {tl}:{tv}"
+
+# (H) Import-resolution eval: classify each module's imports by top-level package
+# (H) as internal (first-party, resolves into the repo) or external (stdlib or
+# (H) third-party), against an ast + filesystem oracle. Surfaces internal/external
+# (H) misclassification (issue #498). Both sides reduce an import to its top-level
+# (H) package name, a unit each computes independently, so the oracle is clean.
+IMPORTS_DEFAULT_TARGET = "codebase_rag"
+IMPORTS_SCORES_FILENAME = "imports_scores.csv"
+IMPORTS_DIFF_FILENAME = "imports_diff.json"
+IMPORTS_DIFF_PREFIX = "imports:"
+IMPORTS_ALL_LABEL = "imports-all"
+IMPORTS_INTERNAL_LABEL = "imports-internal"
+IMPORTS_EXTERNAL_LABEL = "imports-external"
+IMPORT_DEP_REPR = "{file} -> {top} (external={external})"
+IMPORTS_TITLE = "cgr import-resolution eval: internal vs external classification"
+# (H) `__future__` is a compiler directive, not a dependency; cgr ignores it, so
+# (H) the oracle excludes it to avoid false external-import misses.
+IMPORTS_IGNORED_TOPS: frozenset[str] = frozenset({"__future__"})
