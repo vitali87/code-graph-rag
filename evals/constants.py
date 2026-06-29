@@ -70,6 +70,7 @@ class Category(StrEnum):
     NODE = "node"
     EDGE = "edge"
     SPAN = "span"
+    RETRIEVAL = "retrieval"
 
 
 AGGREGATE_LABEL = "ALL"
@@ -294,3 +295,49 @@ CPP_COMPDB_FILENAME = "compile_commands.json"
 CPP_SCORES_FILENAME = "cpp_scores.csv"
 CPP_DIFF_FILENAME = "cpp_diff.json"
 CPP_DEFAULT_TARGET = "."
+
+# (H) Retrieval benchmark: does graph-augmented retrieval find the code that
+# (H) calls a symbol better than grep? The unit is a file-level call edge
+# (H) (caller_file, callee_simple_name): "file F contains a call to symbol S".
+# (H) This mirrors the GitLab GKG "did it open the right file" localization
+# (H) signal, and all conditions are scored against the same Python ast oracle
+# (H) over the same file and first-party symbol universe.
+
+
+class GrepMode(StrEnum):
+    # (H) NAME matches the bare symbol token anywhere (a user's first grep); CALL
+    # (H) matches the symbol immediately followed by `(` (a call-tuned grep). Both
+    # (H) still over-match: NAME on imports/aliases/comments, CALL on def sites.
+    NAME = "name"
+    CALL = "call"
+
+
+class RetrievalCondition(StrEnum):
+    GRAPH = "graph"
+    GREP_NAME = "grep_name"
+    GREP_CALL = "grep_call"
+
+
+RG_BIN = "rg"
+RG_ONLY_MATCHING = "-o"
+RG_WITH_FILENAME = "-H"
+RG_NO_LINE_NUMBER = "--no-line-number"
+RG_NO_HEADING = "--no-heading"
+RG_PATTERN_FLAG = "-e"
+RG_GLOB_FLAG = "-g"
+RG_PY_GLOB = "*.py"
+RG_SEARCH_PATH = "."
+RG_PATH_PREFIX = "./"
+RG_FIELD_SEP = ":"
+RG_OK_RETURNCODES: frozenset[int] = frozenset({0, 1})
+
+NAMES_ALT_SEP = "|"
+GREP_NAME_TEMPLATE = r"\b(?:{names})\b"
+GREP_CALL_TEMPLATE = r"\b(?:{names})\s*\("
+IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+
+RETRIEVAL_DEFAULT_TARGET = "codebase_rag"
+RETRIEVAL_SCORES_FILENAME = "retrieval_scores.csv"
+RETRIEVAL_DIFF_FILENAME = "retrieval_diff.json"
+RETRIEVAL_DIFF_PREFIX = "retrieval:"
+RETRIEVAL_TITLE = "cgr retrieval eval: graph vs grep (file-level call localization)"
