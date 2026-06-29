@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,7 +16,7 @@ from ..types_defs import (
     OraclePayload,
     OracleRecord,
 )
-from ._common import payload_to_graph
+from ._common import is_ignored, payload_to_graph
 
 if TYPE_CHECKING:
     from clang.cindex import Cursor
@@ -164,6 +166,115 @@ def _emit(
                     source=OracleNodeRef(kind=_CLASS, file=rel, line=line),
                     target_name=base,
                 )
+
+
+_FUNCTION_DECL = "FUNCTION_DECL"
+_CALL_EXPR = "CALL_EXPR"
+
+
+def _capture_path(command: tuple[str, ...]) -> str | None:
+    if shutil.which(command[0]) is None:
+        return None
+    try:
+        out = subprocess.run(
+            command, capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return out or None
+
+
+def _clang_system_args() -> list[str]:
+    # (H) Resolve the SDK system headers and clang's own builtin headers
+    # (H) (stdarg.h, stddef.h) so a translation unit parses fully without a
+    # (H) compile_commands.json. Best-effort and portable: each probe is skipped
+    # (H) when its tool is absent (e.g. no SDK on Linux, headers found on PATH).
+    args: list[str] = []
+    if sdk := _capture_path(ec.XCRUN_SDK_PATH_CMD):
+        args.extend((ec.CLANG_ISYSROOT_FLAG, sdk))
+    if resource := _capture_path(ec.CLANG_RESOURCE_DIR_CMD):
+        args.extend((ec.CLANG_ISYSTEM_FLAG, str(Path(resource) / ec.CLANG_INCLUDE_DIR)))
+    return args
+
+
+def _c_include_args(root: Path) -> list[str]:
+    # (H) Every dir holding a header becomes an -I path so first-party #includes
+    # (H) resolve without a compile database.
+    dirs = {root}
+    for header in root.rglob(ec.C_HEADER_GLOB):
+        dirs.add(header.parent)
+    args: list[str] = []
+    for directory in sorted(dirs):
+        args.extend((ec.CLANG_INCLUDE_FLAG, str(directory)))
+    return args
+
+
+def _collect_c_decls_and_calls(
+    cursor: Cursor,
+    root: Path,
+    declared: set[str],
+    raw_calls: list[tuple[str, str]] | None,
+) -> None:
+    # (H) raw_calls is None for an unclean translation unit: its AST may be
+    # (H) truncated by a missing header, so its call sites are not authoritative
+    # (H) and only its (reliable) definitions are harvested into `declared`.
+    for child in cursor.get_children():
+        file = child.location.file
+        rel = _rel(file.name, root) if file else None
+        # (H) Prune non-first-party subtrees (system/library headers): they are
+        # (H) never graded and walking them is the dominant cost.
+        if rel is None or is_ignored(rel):
+            continue
+        if child.kind.name == _FUNCTION_DECL and child.is_definition():
+            declared.add(child.spelling)
+        elif raw_calls is not None and child.kind.name == _CALL_EXPR and child.spelling:
+            raw_calls.append((rel, child.spelling))
+        _collect_c_decls_and_calls(child, root, declared, raw_calls)
+
+
+def run_c_call_oracle(
+    target: Path,
+) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
+    # (H) File-level C call sites restricted to first-party callees (a callee whose
+    # (H) name is a first-party defined function), the declared name universe, and
+    # (H) the set of cleanly-parsed source files. libclang resolves the true call
+    # (H) graph (independent of cgr's tree-sitter C frontend). Each .c file is
+    # (H) parsed directly (no compile_commands.json); C has no overloading, so a
+    # (H) simple name is unambiguous. A file whose TU emits an error diagnostic
+    # (H) (a missing build-generated header) is not authoritative, so it is left
+    # (H) out of the covered set and the cgr side is held to the same files.
+    import clang.cindex as ci
+
+    root = target.resolve()
+    index = ci.Index.create()
+    base_args = [ec.CLANG_C_STD, *_clang_system_args(), *_c_include_args(root)]
+    declared: set[str] = set()
+    raw_calls: list[tuple[str, str]] = []
+    covered: set[str] = set()
+    for source in sorted(root.rglob(ec.C_SOURCE_GLOB)):
+        rel = _rel(str(source), root)
+        if rel is None or is_ignored(rel):
+            continue
+        try:
+            tu = index.parse(str(source), args=base_args)
+        except ci.TranslationUnitLoadError:
+            continue
+        clean = not any(
+            diag.severity >= ec.CLANG_SEVERITY_ERROR for diag in tu.diagnostics
+        )
+        _collect_c_decls_and_calls(
+            tu.cursor, root, declared, raw_calls if clean else None
+        )
+        if clean:
+            covered.add(rel)
+    declared_names = frozenset(declared)
+    covered_files = frozenset(covered)
+    edges = {
+        (file, name)
+        for file, name in raw_calls
+        if name in declared_names and file in covered_files
+    }
+    return edges, declared_names, covered_files
 
 
 def _add_edge(

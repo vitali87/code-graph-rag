@@ -574,6 +574,42 @@ statically infer (e.g. `res[klass]:append(val)`) cannot resolve, while the oracl
 credits any call whose simple name is a declared first-party function. Documented
 rather than scoped away.
 
+## Multi-language retrieval (C) — C CALLS vs `libclang`
+
+The same harness applied to C: for each first-party C function, which files call
+it. cgr's C `CALLS` edges, reduced to `(caller_file, callee_simple_name)`, are
+graded against call sites extracted by `libclang`, over the same first-party name
+universe. cgr parses C with tree-sitter by default (`CPP_FRONTEND=libclang` is
+off), so `libclang` — a full C front end — is an independent oracle. C has no
+overloading, so a simple name is unambiguous.
+
+```bash
+uv run python -m evals.c_retrieval --target <c-sources>
+```
+
+Requires `libclang` (the `clang.cindex` Python bindings). No `compile_commands.json`
+is needed: each `.c` file is parsed directly, with the SDK sysroot
+(`xcrun --show-sdk-path`) and clang's builtin-header directory
+(`clang -print-resource-dir`) added so system and compiler headers resolve. A
+translation unit that still emits an error diagnostic (a missing build-generated
+header such as a configured `config.h`) has a possibly-truncated AST, so the oracle
+**abstains** on it: that file is left out of the covered set and the cgr side is
+held to the same files (the count of graded files is logged, never silently
+dropped). Pinned by `codebase_rag/tests/test_c_retrieval_eval.py`, where cgr's C
+call graph matches the `libclang` oracle on a header-free fixture.
+
+Running it on a real project (`jq`, 18 of 21 `src/*.c` files parsed cleanly; the
+other three need build-generated headers) gives precision **0.98**, recall
+**0.93**, F1 0.96 — **no cgr bug**. The whole residual tail is the **C preprocessor
+gap**: cgr's tree-sitter front end does not evaluate `#if`/macros, while `libclang`
+does. So cgr over-counts calls inside inactive conditional branches (e.g.
+`yysymbol_name` in bison-generated `parser.c`, called only under `#if YYDEBUG` with
+`YYDEBUG` defined to `0`) and under-counts calls that exist only after macro
+expansion (e.g. the `jv_object_foreach` macro in `jv.h` expanding to
+`jv_object_iter`/`jv_object_iter_key`/`jv_object_iter_next` calls that never appear
+in the source text). This is inherent to a tree-sitter front end versus a real
+compiler, not a resolution defect. Documented rather than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine
