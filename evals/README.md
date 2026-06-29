@@ -624,9 +624,11 @@ bison-generated `parser.c`, tree-sitter produces 20 `ERROR` nodes, and the norma
 `yyerror` definition (a plain `void yyerror(...)` at `parser.c:406`) falls inside
 one. cgr therefore never registers `yyerror` as a function, so every call to it is
 unresolved. cgr silently drops real definitions that land inside a tree-sitter
-parse-error region on machine-generated code. This is a real coverage gap (tracked
-separately); it is rooted in the tree-sitter C grammar failing on generated parser
-soup rather than in cgr's resolution logic, so it is reported here, not hidden.
+parse-error region on machine-generated code. The trigger was reduced to a
+`tree-sitter-c` grammar bug (a block comment inside a `#define` body breaks the
+parse and drops the following declaration, present through the latest 0.24.2);
+tracked in issue #555 for an upstream report. It is rooted in the grammar, not in
+cgr's resolution logic, so it is reported here, not hidden.
 
 ## Semantic search — query to function relevance
 
