@@ -385,3 +385,19 @@ IMPORTS_TITLE = "cgr import-resolution eval: internal vs external classification
 # (H) `__future__` is a compiler directive, not a dependency; cgr ignores it, so
 # (H) the oracle excludes it to avoid false external-import misses.
 IMPORTS_IGNORED_TOPS: frozenset[str] = frozenset({"__future__"})
+
+# (H) Inheritance eval: grade resolved INHERITS (subclass_qn -> base_qn) and
+# (H) OVERRIDES (subclass_qn, base_qn, method) against an ast oracle that resolves
+# (H) bases via same-module and from-import only, skipping ambiguous/attribute/
+# (H) external bases. Goes beyond L1, which checks INHERITS by base simple name.
+INHERITANCE_DEFAULT_TARGET = "codebase_rag"
+INHERITANCE_SCORES_FILENAME = "inheritance_scores.csv"
+INHERITANCE_DIFF_FILENAME = "inheritance_diff.json"
+INHERITANCE_DIFF_PREFIX = "inheritance:"
+INHERITS_LABEL = "inherits-resolved"
+OVERRIDES_LABEL = "overrides"
+INHERITS_EDGE_REPR = "{sub} -> {base}"
+OVERRIDES_EDGE_REPR = "{sub} -> {base} .{method}"
+INHERITANCE_TITLE = "cgr inheritance eval: resolved INHERITS and OVERRIDES"
+STAR_IMPORT = "*"
+SEP_NUL = "\x00"

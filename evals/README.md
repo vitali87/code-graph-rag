@@ -198,6 +198,34 @@ the tests pin). Writes `evals/results/imports_scores.csv` and
 `evals/results/imports_diff.json`; the oracle and the misclassification signal
 are pinned by `codebase_rag/tests/test_import_resolution_eval.py`.
 
+## Inheritance — resolved INHERITS and OVERRIDES
+
+The structural L1 grades `INHERITS` by the base's simple *name*. This eval grades
+two deeper things against an `ast` oracle: that cgr resolves a base to the correct
+first-party class qualified name (`INHERITS` target), and that method overrides
+are attributed to the right base class (`OVERRIDES`).
+
+```bash
+uv run python -m evals.inheritance --target codebase_rag
+```
+
+The oracle resolves a base only when it is unambiguous: defined in the same module
+or imported via `from <first-party> import <Base>`. Attribute bases (`pkg.Base`),
+star-imported, and external bases are skipped and counted, never guessed. Two
+deliberate scope limits keep the oracle honest rather than noisy:
+
+- **INHERITS** is graded only for top-level classes (the universe the oracle
+  enumerates); cgr edges whose subclass is a class nested inside a function are
+  not graded against an oracle that never saw them.
+- **OVERRIDES** is graded only for single-inheritance classes, where "which base
+  does method `m` override" is unambiguous. Multi-base mixin classes are excluded
+  on both sides, because the answer there is decided by the MRO, which this ast
+  oracle does not model.
+
+Writes `evals/results/inheritance_scores.csv` and
+`evals/results/inheritance_diff.json`; pinned by
+`codebase_rag/tests/test_inheritance_eval.py`.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -383,6 +411,21 @@ internal and external alike. This rules out #498-style misclassification on this
 corpus and stands as a regression guard. (The first run reported 247 missing
 externals; investigation showed they were all `from __future__ import ...`, an
 oracle over-count now corrected rather than a cgr bug.)
+
+### Inheritance — resolved INHERITS and OVERRIDES (`uv run python -m evals.inheritance`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | inherits-resolved | 31 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | overrides | 57 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+Another clean negative result within the graded scope (top-level classes;
+single-inheritance for overrides): cgr resolves every base to the correct
+first-party class and attributes every single-inheritance override to the right
+base. The first run showed minor `fp`/`fn`; investigation traced all of them to
+oracle scope (a class nested in a test method, and multi-base mixin classes whose
+override attribution is MRO-decided), not cgr defects, so the scope was tightened
+rather than the discrepancies reported.
 
 ### Next step: agentic resolved-rate (out of scope here)
 
