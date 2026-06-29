@@ -172,6 +172,14 @@ PHP_RETRIEVAL_LABEL = "graph"
 PHP_RETRIEVAL_TITLE = "cgr multi-language retrieval: PHP CALLS vs php-parser oracle"
 PHP_CALL_EDGE_REPR = "{file} -> {name}"
 
+LUA_DEFAULT_TARGET = "."
+LUA_RETRIEVAL_SCORES_FILENAME = "lua_retrieval_scores.csv"
+LUA_RETRIEVAL_DIFF_FILENAME = "lua_retrieval_diff.json"
+LUA_RETRIEVAL_DIFF_PREFIX = "lua-retrieval:"
+LUA_RETRIEVAL_LABEL = "graph"
+LUA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Lua CALLS vs luaparse oracle"
+LUA_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on
