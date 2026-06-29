@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 
 from . import constants as ec
 from . import logs as ls
+from .ast_oracle import _from_base_parts
 from .cgr_graph import _capture
 from .module_calls import _callee_name, _is_dunder
 from .retrieval import parse_py_trees
@@ -40,14 +41,42 @@ def _class_names(trees: list[tuple[str, ast.Module]]) -> set[str]:
     return names
 
 
+def _externally_shadowed_names(tree: ast.Module, rel: str, project: str) -> set[str]:
+    # (H) Names this file rebinds to a non-first-party import (a stdlib/third-party
+    # (H) `from ext import Name`, or any `import mod` that binds `mod`). A bare
+    # (H) `Name()` call on such a name is not a first-party instantiation, so the
+    # (H) oracle must not credit one against the shared simple-name class set, or
+    # (H) it would report a false missing edge and unfairly lower cgr recall.
+    pkg_parts = [project, *Path(rel).parent.parts]
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                shadowed.add(alias.asname or alias.name.split(cs.SEPARATOR_DOT, 1)[0])
+        elif isinstance(node, ast.ImportFrom):
+            base_parts = _from_base_parts(node, pkg_parts)
+            if base_parts and base_parts[0] == project:
+                continue
+            for alias in node.names:
+                shadowed.add(alias.asname or alias.name)
+    return shadowed
+
+
 def oracle_instantiations(target: Path, project: str) -> set[InstantiationEdge]:
     trees, _files = parse_py_trees(target)
     classes = _class_names(trees)
     edges: set[InstantiationEdge] = set()
     for rel, tree in trees:
+        shadowed = _externally_shadowed_names(tree, rel, project)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
-                if name in classes:
+                # (H) A simple-name callee bound to an external import names that
+                # (H) import, not the first-party class; an attribute callee
+                # (H) (`mod.Cls()`) is qualified, so the shadow check applies only
+                # (H) to the bare-name form.
+                if name in classes and not (
+                    isinstance(node.func, ast.Name) and name in shadowed
+                ):
                     edges.add((rel, name))
     return edges
 

@@ -563,8 +563,6 @@ class GraphUpdater:
             except ValueError:
                 continue
             self.function_registry[qn] = node_type
-            if simple := qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
-                self.simple_name_lookup[simple].add(qn)
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)

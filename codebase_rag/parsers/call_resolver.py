@@ -265,10 +265,43 @@ class CallResolver:
         ):
             return result
 
+        # (H) A bare name explicitly imported from outside the project binds to that
+        # (H) external symbol. Since precise import / same-module resolution above
+        # (H) already failed, the symbol is unindexed; do NOT let the simple-name
+        # (H) trie fallback rebind it to an unrelated first-party symbol of the same
+        # (H) name. (The instantiation eval caught `from evals import GraphData;
+        # (H) GraphData()` being resolved to codebase_rag's own GraphData class.)
+        if cs.SEPARATOR_DOT not in call_name and self._is_external_import(
+            call_name, module_qn
+        ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = None
+            return None
+
         result = self._try_resolve_via_trie(call_name, module_qn)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _is_external_import(self, call_name: str, module_qn: str) -> bool:
+        # (H) True when call_name is imported in module_qn from a module outside the
+        # (H) project. First-party imports are written either project-prefixed
+        # (H) (`from proj.w import X`) or bare (`from utils.helpers import X`, where
+        # (H) the registered node is `proj.utils.helpers.X`); both are first-party
+        # (H) and left to the trie fallback. Only a target that is neither rooted at
+        # (H) the project nor registered under the project prefix is external, so
+        # (H) this suppresses cross-project fuzzy rebinds without dropping real
+        # (H) first-party calls.
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return False
+        target = import_map.get(call_name)
+        if not target:
+            return False
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
+            return False
+        return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str

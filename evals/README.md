@@ -183,6 +183,16 @@ cross-file type context that a single-file reprocess does not rebuild; this is
 documented as a deeper follow-on, not a regression. Writes
 `evals/results/incremental_scores.csv` and `evals/results/incremental_diff.json`.
 
+Inbound capture is intentionally scoped to re-indexed files (changed, **not** new
+or deleted), because a re-indexed file keeps its module qualified name, so the
+restore target still exists after reprocessing. Moved or renamed files are not
+captured by design: the old path is deleted and the new path is new, so an
+unchanged caller's import of the old name no longer resolves, exactly as in a
+clean re-index, and dropping that now-dangling edge is correct. Restoring edges
+for a vanished module qn would instead fabricate a phantom module node, so the
+scoping is the safe choice rather than a gap. A transparently re-exported rename
+(old name still resolves) is the one narrow case left to a clean re-index.
+
 ## Import resolution — internal vs external classification
 
 The structural L1 above grades internal `IMPORTS` edges by their resolved target
@@ -248,11 +258,26 @@ uv run python -m evals.instantiation --target codebase_rag
 ```
 
 The unit is `(caller_file, class_simple_name)`. The oracle counts every `ast.Call`
-whose callee simple name is a first-party class; cgr contributes its
-`INSTANTIATES` edges reduced to the caller's file and the class simple name.
-Writes `evals/results/instantiation_scores.csv` and
+whose callee simple name is a first-party class, **excluding bare-name calls whose
+name is rebound in that file by a non-first-party import** (`from ext import
+Config; Config()` names the external `Config`, not a same-named first-party
+class). cgr contributes its `INSTANTIATES` edges reduced to the caller's file and
+the class simple name. Writes `evals/results/instantiation_scores.csv` and
 `evals/results/instantiation_diff.json`; pinned by
 `codebase_rag/tests/test_instantiation_eval.py`.
+
+Making the oracle import-aware surfaced a cgr precision bug: a constructor whose
+name was explicitly imported from an external module (`from evals.types_defs
+import GraphData`, with `evals` outside the indexed project) was resolved by the
+simple-name trie fallback to a same-named first-party class
+(`codebase_rag.types_defs.GraphData`), emitting a wrong `INSTANTIATES` edge. Fixed
+in `call_resolver.py` (`_is_external_import` suppresses the trie fallback for a
+bare name bound to a genuinely external import; first-party imports, prefixed or
+bare, are unaffected). On `codebase_rag`: precision rose from 0.976 to 1.000
+(9 false edges removed), recall 0.997. The one remaining miss is a class defined
+in a test method and instantiated from inside a nested class's method (a closure
+over an enclosing-function scope), a known resolution gap left documented rather
+than scoped away.
 
 ## Dead code — reachability over the captured graph
 
