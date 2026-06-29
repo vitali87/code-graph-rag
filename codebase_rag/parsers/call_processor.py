@@ -48,6 +48,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.TS,
         cs.SupportedLanguage.JAVA,
         cs.SupportedLanguage.LUA,
+        cs.SupportedLanguage.GO,
     }
 )
 
@@ -733,6 +734,7 @@ class CallProcessor:
                     | cs.TS_MEMBER_EXPRESSION
                     | cs.CppNodeType.QUALIFIED_IDENTIFIER
                     | cs.TS_SCOPED_IDENTIFIER
+                    | cs.TS_SELECTOR_EXPRESSION
                 ):
                     if func_child.text is not None:
                         return func_child.text.decode(cs.ENCODING_UTF8)

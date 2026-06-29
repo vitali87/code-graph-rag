@@ -343,6 +343,19 @@ graph matches the `go/ast` oracle on the fixture. The same harness shape
 generalizes to the other native-oracle languages (Rust, TypeScript, Java) by
 teaching each oracle to emit call sites.
 
+Running this on a real stdlib package (`encoding/json` via `GOROOT`) instead of
+the fixture first surfaced two Go call-graph bugs, then drove their fix to a
+clean result. (1) Receiver methods got a receiver-dropping caller qn that bound
+to no node; fixed by `_go_receiver_method_caller`. (2) Go receiver dispatch
+(`d.method()`, a method call on a receiver, parameter, or composite-literal
+local) resolved to no callee at all, because Go calls were not typed and the Go
+`selector_expression` callee node was never read by `_get_call_target_name`.
+Fixed by adding Go to the typed-language set, a Go local-variable type inference
+engine (`parsers/go/type_inference.py`) that maps receivers/parameters/`:=`
+locals to their type, and reading the selector callee name. On `encoding/json`,
+precision/recall went from 1.0/0.55 to 1.0/1.0 (110/110 call edges, zero false
+positives).
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine
