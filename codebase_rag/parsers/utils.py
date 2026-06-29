@@ -231,8 +231,7 @@ def _js_ts_field_member_name(
         cs.TS_PROPERTY_IDENTIFIER,
     ):
         return None
-    text = name_node.text
-    return text.decode(cs.ENCODING_UTF8) if text is not None else None
+    return safe_decode_text(name_node)
 
 
 def ingest_method(

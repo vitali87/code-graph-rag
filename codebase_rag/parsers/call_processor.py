@@ -1632,11 +1632,11 @@ class CallProcessor:
         parent = func_node.parent
         if parent is None:
             return None
-        # (H) `==` not `is`: py-tree-sitter returns a fresh Node wrapper per access,
-        # (H) so identity comparison always fails; Node equality compares the id.
-        if parent.type != cs.TS_VARIABLE_DECLARATOR and (
-            parent.child_by_field_name(cs.FIELD_VALUE) != func_node
-        ):
+        # (H) func_node must be the parent's value/initializer for both forms
+        # (H) (variable_declarator and public_field_definition), so one value check
+        # (H) covers both. `==` not `is`: py-tree-sitter returns a fresh Node wrapper
+        # (H) per access, so identity comparison always fails (Node `==` compares id).
+        if parent.child_by_field_name(cs.FIELD_VALUE) != func_node:
             return None
         name_node = parent.child_by_field_name(cs.FIELD_NAME)
         if name_node is None or name_node.type not in (
