@@ -457,6 +457,48 @@ the concrete receiver type is statically knowable) and deep receiver-type
 inference (iterator/functional-interface/generic element types), documented rather
 than scoped away.
 
+## Multi-language retrieval (TypeScript) — TS CALLS vs the TypeScript compiler API
+
+The same harness applied to TypeScript: for each first-party TS symbol, which
+files call it. cgr's TS `CALLS` edges, reduced to `(caller_file,
+callee_simple_name)`, are graded against call sites extracted by the TypeScript
+compiler API (the same oracle as the TS L1 structure eval, extended to emit the
+callee identifier of each `CallExpression` — bare identifier or property-access
+trailing name), over the same first-party name universe. `tsc` is independent of
+cgr's tree-sitter TS frontend. The oracle also now names arrow / function
+expressions by their binding (`const foo = () => …` → `foo`), matching how cgr
+names them, so they enter the declared-name universe.
+
+```bash
+uv run python -m evals.ts_retrieval --target <ts-sources>
+```
+
+Requires `node`/`npm` (the `typescript` dependency installs on first run); the
+eval exits cleanly if node is missing. Pinned by
+`codebase_rag/tests/test_ts_retrieval_eval.py`, where cgr's TS call graph matches
+the `tsc` oracle on the fixture.
+
+Running it on a real library (`zod`, 88 non-test files from `packages/zod/src/v4`)
+surfaced two cgr bugs and drove recall from 0.45 to 0.75 at precision 1.0 (zero
+false positives). (1) **Exported-function duplication:** the definition pass
+already ingests an exported function / const-arrow at its natural qn, but the
+ES6-export pass (`ingest_exported_function`) re-registered it, minting a spurious
+`qn@line` duplicate node (`register_unique_qn` collision) onto which call
+resolution then bound — so callers of the natural node were invisible and ~half of
+all TS call edges carried a mangled `name@line` callee. In an ESM codebase where
+most functions are exported this polluted the whole graph; fixed by skipping the
+export-pass registration when the natural qn already exists
+(`codebase_rag/tests/test_ts_export_no_duplicate.py`). (2) **Arrow-body calls
+unresolved:** the call pass derived a caller name with `child_by_field_name("name")`,
+which is empty for an arrow / function expression, so it skipped the whole
+`const f = () => …` body and never emitted its calls — and modern TS is mostly
+arrow functions. Fixed by recovering the binding name for the `variable_declarator`
+form so the body's calls attribute to the same qn the definition pass registered
+(`codebase_rag/tests/test_ts_arrow_caller_calls.py`). The remaining gap is calls
+inside anonymous (returned/inline) arrows, method dispatch on typed receivers, and
+the name-based oracle's over-count of common method names (`error` on a receiver
+cgr cannot type) — documented rather than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine

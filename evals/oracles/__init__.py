@@ -6,6 +6,7 @@ from .php_oracle import php_oracle_available, run_php_oracle
 from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_available
 from .typescript_oracle import (
     run_javascript_oracle,
+    run_typescript_call_oracle,
     run_typescript_oracle,
     typescript_available,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "run_rust_oracle",
     "rust_available",
     "run_javascript_oracle",
+    "run_typescript_call_oracle",
     "run_typescript_oracle",
     "typescript_available",
 ]

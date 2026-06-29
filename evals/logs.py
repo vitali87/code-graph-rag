@@ -91,6 +91,13 @@ JAVA_RETRIEVAL_ORACLE = "Running javac call oracle ({binary}) over {target}"
 JAVA_RETRIEVAL_ORACLE_DONE = "javac first-party call edges: {count}"
 JAVA_RETRIEVAL_CGR = "Building cgr Java CALLS edges for {target} (project={project})"
 JAVA_RETRIEVAL_CGR_DONE = "cgr Java call edges (first-party): {count}"
+TS_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
+TS_RETRIEVAL_ORACLE = "Running tsc call oracle ({binary}) over {target}"
+TS_RETRIEVAL_ORACLE_DONE = "tsc first-party call edges: {count}"
+TS_RETRIEVAL_CGR = (
+    "Building cgr TypeScript CALLS edges for {target} (project={project})"
+)
+TS_RETRIEVAL_CGR_DONE = "cgr TypeScript call edges (first-party): {count}"
 SEMANTIC_MISSING = "semantic dependencies not installed; cannot run semantic eval"
 SEMANTIC_TARGET = "Semantic-search eval over {target} (project={project})"
 SEMANTIC_DONE = "recall@{k}: {hits}/{total} queries retrieved the expected function"

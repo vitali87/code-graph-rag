@@ -38,6 +38,7 @@ const MODULE_LINE = 0;
 const nodes = [];
 const edges = [];
 const nameEdges = [];
+const calls = [];
 
 function emit(kind, file, line, name, endLine) {
   nodes.push({ kind, file, line, end_line: endLine, name });
@@ -94,6 +95,25 @@ function endLineOf(sf, node) {
 
 function methodKind(container) {
   return container === "namespace" || container === "class" ? "Method" : "Function";
+}
+
+// (H) The binding name of an arrow/function expression (`const foo = () => ...`,
+// (H) `foo = () => ...` class property, `{ foo: () => ... }`), matching how cgr
+// (H) names such a Function. Used so the call oracle's declared-name universe
+// (H) includes these (cgr resolves `foo()` to them); falls back to "anonymous".
+function bindingName(node) {
+  const p = node.parent;
+  if (
+    p &&
+    (ts.isVariableDeclaration(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isPropertyAssignment(p)) &&
+    p.name &&
+    ts.isIdentifier(p.name)
+  ) {
+    return p.name.text;
+  }
+  return "anonymous";
 }
 
 // ctx carries the file, the enclosing class/namespace ref (for Methods) and the
@@ -180,11 +200,24 @@ function walk(node, sf, file, container, ctx) {
     // line. The name is irrelevant to the (kind, file, line) join.
     const kind = methodKind(container);
     const line = lineOf(sf, node);
-    emit(kind, file, line, "anonymous", endLineOf(sf, node));
+    emit(kind, file, line, bindingName(node), endLineOf(sf, node));
     defineFunction(node, sf, file, container, ctx, kind, line);
     const sub = { typeRef: null, funcRef: { kind, line } };
     node.forEachChild((c) => walk(c, sf, file, "function", sub));
     return;
+  }
+  // (H) A call site: the callee simple name is a bare identifier (`foo()`,
+  // (H) same-scope or imported) or the trailing identifier of a property access
+  // (H) (`obj.foo()`, `Type.bar()`). The Python side keeps only callees whose
+  // (H) name is a declared first-party Function/Method, mirroring the Go/Rust/Java
+  // (H) call oracles. Do not return -- recurse so nested calls (`f(g())`) emit too.
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee)) {
+      calls.push({ file, name: callee.text });
+    } else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)) {
+      calls.push({ file, name: callee.name.text });
+    }
   }
   node.forEachChild((c) => walk(c, sf, file, container, ctx));
 }
@@ -211,4 +244,4 @@ function visitDir(dir, root, exts) {
 const root = process.argv[2] || ".";
 const exts = process.argv.slice(3);
 visitDir(root, root, exts.length ? exts : [".ts", ".tsx"]);
-process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges }));
+process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges, calls }));

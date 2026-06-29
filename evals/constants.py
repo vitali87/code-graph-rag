@@ -156,6 +156,14 @@ JAVA_RETRIEVAL_LABEL = "graph"
 JAVA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Java CALLS vs javac oracle"
 JAVA_CALL_EDGE_REPR = "{file} -> {name}"
 
+TS_DEFAULT_TARGET = "."
+TS_RETRIEVAL_SCORES_FILENAME = "ts_retrieval_scores.csv"
+TS_RETRIEVAL_DIFF_FILENAME = "ts_retrieval_diff.json"
+TS_RETRIEVAL_DIFF_PREFIX = "ts-retrieval:"
+TS_RETRIEVAL_LABEL = "graph"
+TS_RETRIEVAL_TITLE = "cgr multi-language retrieval: TypeScript CALLS vs tsc oracle"
+TS_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on

@@ -303,6 +303,12 @@ def ingest_exported_function(
         return
 
     function_qn = f"{module_qn}.{function_name}"
+    # (H) The definition pass already ingests an exported function / const-arrow at
+    # (H) its natural qn. Re-registering here would collide and mint a spurious
+    # (H) `qn@line` duplicate node, onto which call resolution then binds (mangling
+    # (H) the callee qn). If the natural qn already exists, the node is done.
+    if function_qn in function_registry:
+        return
     function_qn = function_registry.register_unique_qn(
         function_qn, function_node.start_point[0] + 1
     )
