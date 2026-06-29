@@ -254,6 +254,31 @@ Writes `evals/results/instantiation_scores.csv` and
 `evals/results/instantiation_diff.json`; pinned by
 `codebase_rag/tests/test_instantiation_eval.py`.
 
+## Dead code — reachability over the captured graph
+
+cgr's `dead-code` command reports functions/methods unreachable from any entry
+point. It runs as a Cypher reachability query against the database, which the
+deterministic in-memory harness cannot execute, so this eval faithfully
+re-implements that query's reachability over the captured graph and grades it on
+controlled fixtures whose dead set is known by construction.
+
+```bash
+uv run python -m evals.dead_code --target codebase_rag   # informational report
+```
+
+Roots are project functions that are decorated with an entry-point decorator
+(`@app.route` and friends), exported, named as an entry point, reached by a
+`Module` via `CALLS` (a module-level call), or in a test file when tests are
+included; everything reachable from a root via `CALLS` (plus `INSTANTIATES` /
+`INHERITS` with classes) is live, and the rest is dead. The reachability is
+unit-tested on hand-built graphs, so when it is run over a cgr-built graph from a
+fixture with a known dead set, a mismatch indicts cgr's `CALLS` graph (a missing
+edge would flag a live function as dead) rather than the scorer. The graded eval
+is the fixture suite `codebase_rag/tests/test_dead_code_eval.py`; the CLI's
+corpus mode is informational only, because a real repo has no independent dead-code
+oracle (true reachability needs the very call graph under test). On `codebase_rag`
+it currently reports 4450 unreachable functions/methods (tests excluded).
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.

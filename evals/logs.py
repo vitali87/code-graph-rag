@@ -75,3 +75,5 @@ INHERITANCE_SKIPPED_BASES = "oracle skipped {count} unresolved/ambiguous base re
 INSTANTIATION_TARGET = "Instantiation eval over {target} (project={project})"
 INSTANTIATION_ORACLE_DONE = "oracle constructor calls: {count}"
 INSTANTIATION_CGR_DONE = "cgr INSTANTIATES edges: {count}"
+DEAD_CODE_TARGET = "Dead-code eval over {target} (project={project})"
+DEAD_CODE_DONE = "cgr reports {count} unreachable functions/methods"
