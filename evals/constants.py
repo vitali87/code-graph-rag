@@ -164,6 +164,14 @@ TS_RETRIEVAL_LABEL = "graph"
 TS_RETRIEVAL_TITLE = "cgr multi-language retrieval: TypeScript CALLS vs tsc oracle"
 TS_CALL_EDGE_REPR = "{file} -> {name}"
 
+PHP_DEFAULT_TARGET = "."
+PHP_RETRIEVAL_SCORES_FILENAME = "php_retrieval_scores.csv"
+PHP_RETRIEVAL_DIFF_FILENAME = "php_retrieval_diff.json"
+PHP_RETRIEVAL_DIFF_PREFIX = "php-retrieval:"
+PHP_RETRIEVAL_LABEL = "graph"
+PHP_RETRIEVAL_TITLE = "cgr multi-language retrieval: PHP CALLS vs php-parser oracle"
+PHP_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on

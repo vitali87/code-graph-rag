@@ -759,6 +759,7 @@ class CallProcessor:
                     | cs.CppNodeType.QUALIFIED_IDENTIFIER
                     | cs.TS_SCOPED_IDENTIFIER
                     | cs.TS_SELECTOR_EXPRESSION
+                    | cs.TS_PHP_NAME
                 ):
                     if func_child.text is not None:
                         return func_child.text.decode(cs.ENCODING_UTF8)
