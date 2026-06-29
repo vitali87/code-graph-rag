@@ -58,6 +58,7 @@ _TYPED_LANGUAGES = frozenset(
 # (H) name lives in a nested declarator (no `name` field). Both need the libclang
 # (H) declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+_JS_TS_LANGUAGES = frozenset({cs.SupportedLanguage.JS, cs.SupportedLanguage.TS})
 
 
 class CallProcessor:
@@ -426,6 +427,8 @@ class CallProcessor:
                 func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)
+            if not func_name and language in _JS_TS_LANGUAGES:
+                func_name = self._js_ts_arrow_binding_name(func_node)
             if not func_name:
                 continue
             # (H) An out-of-line C++ method definition (`Ret Class::method() {...}`
@@ -1613,6 +1616,24 @@ class CallProcessor:
         if path_parts:
             return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(path_parts)}{cs.SEPARATOR_DOT}{func_name}"
         return f"{module_qn}{cs.SEPARATOR_DOT}{func_name}"
+
+    def _js_ts_arrow_binding_name(self, func_node: Node) -> str | None:
+        # (H) An arrow / function expression has no `name` field, so the call pass
+        # (H) skipped it and never processed its body's calls. Recover the binding
+        # (H) name for the `const f = () => ...` form (a variable_declarator with an
+        # (H) identifier name) -- the dominant ESM pattern -- so its calls are
+        # (H) attributed to the same qn the definition pass registered (module.f via
+        # (H) _build_nested_qualified_name). Anonymous/destructured arrows stay
+        # (H) unnamed (skipped), as before.
+        if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+            return None
+        parent = func_node.parent
+        if parent is None or parent.type != cs.TS_VARIABLE_DECLARATOR:
+            return None
+        name_node = parent.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or name_node.type != cs.TS_IDENTIFIER:
+            return None
+        return safe_decode_text(name_node)
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
