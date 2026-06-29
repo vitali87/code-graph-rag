@@ -20,6 +20,7 @@ from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import utils as java_utils
+from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -429,6 +430,19 @@ class CallProcessor:
                 func_name = self._get_node_name(func_node)
             if not func_name and language in _JS_TS_LANGUAGES:
                 func_name = self._js_ts_arrow_binding_name(func_node)
+            if (
+                not func_name
+                and language == cs.SupportedLanguage.LUA
+                and func_node.type == cs.TS_LUA_FUNCTION_DEFINITION
+            ):
+                # (H) A function expression bound to a variable or table field
+                # (H) (`local f = function()`, `M.f = function()`) has no name field;
+                # (H) the definition pass names it after its assignment target, so
+                # (H) recover the same name here or the whole body would be skipped.
+                func_name = lua_utils.extract_assigned_name(
+                    func_node,
+                    accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
+                )
             if not func_name:
                 continue
             # (H) An out-of-line C++ method definition (`Ret Class::method() {...}`

@@ -539,6 +539,41 @@ the PHP builtin of the same name is counted as first-party — cgr's simple-name
 trie fallback links it to the same-named first-party symbol, which the file+name
 metric credits. Documented rather than scoped away.
 
+## Multi-language retrieval (Lua) — Lua CALLS vs `luaparse`
+
+The same harness applied to Lua: for each first-party Lua function, which files
+call it. cgr's Lua `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by `luaparse` (the same oracle as the Lua
+L1 structure eval, extended to emit the callee of each call — a bare name, or the
+trailing member of a `t.f()` / `t:m()` lookup — and to carry real declaration
+names, including function expressions named after their assignment target), over
+the same first-party name universe. `luaparse` is a pure-JS Lua parser,
+independent of cgr's tree-sitter Lua frontend.
+
+```bash
+uv run python -m evals.lua_retrieval --target <lua-sources>
+```
+
+Requires `node`/`npm` (the `luaparse` dependency installs on first run; no Lua
+runtime needed). Pinned by `codebase_rag/tests/test_lua_retrieval_eval.py`, where
+cgr's Lua call graph matches the `luaparse` oracle on the fixture.
+
+Running it on a real library (`penlight`, 39 files from `lua/pl`) surfaced one cgr
+bug and held precision at 1.0 (zero false positives), recall 0.93. **Calls inside
+function expressions were never attributed:** a function bound to a variable or
+table field (`M.runner = function() ... end`) has no name field, so the call pass
+could not derive the caller qn and skipped the whole body — the same family as the
+JS/TS arrow-caller gap. The definition pass already names these after their
+assignment target (`lua_utils.extract_assigned_name`); the fix reuses that in the
+call pass so the body's calls attribute to the right node
+(`test_cgr_resolves_function_expression_body_calls`). The remaining recall gap is
+colon-method dispatch and the name-based oracle's over-count: a colon method
+`function List:append(i)` gets cgr qn `List:append` (simple name `List:append`, not
+`append`), and a call `obj:append(x)` on a receiver whose type cgr cannot
+statically infer (e.g. `res[klass]:append(val)`) cannot resolve, while the oracle
+credits any call whose simple name is a declared first-party function. Documented
+rather than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine
