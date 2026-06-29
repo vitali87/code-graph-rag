@@ -271,8 +271,8 @@ The L3 fixture exercises rich Python plus all 11 supported languages; recall is 
 | category | label | tp | fp | fn | precision | recall | f1 |
 |---|---|---|---|---|---|---|---|
 | retrieval | graph | 3217 | 587 | 37 | 0.8457 | 0.9886 | 0.9116 |
-| retrieval | grep_name | 3254 | 10590 | 0 | 0.2350 | 1.0000 | 0.3806 |
-| retrieval | grep_call | 3254 | 5637 | 0 | 0.3660 | 1.0000 | 0.5359 |
+| retrieval | grep_name | 3254 | 10591 | 0 | 0.2350 | 1.0000 | 0.3806 |
+| retrieval | grep_call | 3254 | 5638 | 0 | 0.3659 | 1.0000 | 0.5358 |
 
 The resolved graph more than doubles the precision of even the call-tuned grep
 (0.85 versus 0.37) at near-perfect recall, for an F1 of 0.91 versus 0.54: a gain

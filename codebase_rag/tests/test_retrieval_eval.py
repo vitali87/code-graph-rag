@@ -118,6 +118,20 @@ def test_score_retrieval_computes_prf() -> None:
     assert row["recall"] == round(2 / 3, ec.ROUND_DIGITS)
 
 
+@needs_rg
+def test_grep_preserves_colon_in_path(repo: Path) -> None:
+    # (H) a .py file whose name contains a colon must keep its full path; the
+    # (H) ripgrep output separator must not be confused with a path colon.
+    (repo / "pkg" / "od:d.py").write_text(
+        "from pkg.core import helper\n\nhelper()\n", encoding="utf-8"
+    )
+    trees, files = parse_py_trees(repo)
+    fp = first_party_symbols(trees)
+    grep_name = grep_call_edges(repo, fp, files, ec.GrepMode.NAME)
+
+    assert _edge("pkg/od:d.py", "helper") in grep_name
+
+
 def test_cgr_call_edges_smoke(repo: Path) -> None:
     trees, _files = parse_py_trees(repo)
     fp = first_party_symbols(trees)

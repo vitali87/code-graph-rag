@@ -323,17 +323,23 @@ RG_ONLY_MATCHING = "-o"
 RG_WITH_FILENAME = "-H"
 RG_NO_LINE_NUMBER = "--no-line-number"
 RG_NO_HEADING = "--no-heading"
-RG_PATTERN_FLAG = "-e"
+# (H) --null separates the path from the match with a NUL byte instead of `:`, so
+# (H) a path containing a colon is parsed intact. -f - reads the patterns from
+# (H) stdin (one per line), so the full symbol universe never lands in argv and
+# (H) cannot trip the OS per-argument length limit (128KB on Linux, 32KB on
+# (H) Windows). The pattern lines are ORed, equivalent to a single alternation.
+RG_NULL = "--null"
+RG_PATTERN_FILE_FLAG = "-f"
+RG_STDIN = "-"
 RG_GLOB_FLAG = "-g"
 RG_PY_GLOB = "*.py"
 RG_SEARCH_PATH = "."
-RG_PATH_PREFIX = "./"
-RG_FIELD_SEP = ":"
+RG_NULL_SEP = "\x00"
 RG_OK_RETURNCODES: frozenset[int] = frozenset({0, 1})
 
-NAMES_ALT_SEP = "|"
-GREP_NAME_TEMPLATE = r"\b(?:{names})\b"
-GREP_CALL_TEMPLATE = r"\b(?:{names})\s*\("
+PATTERN_SEP = "\n"
+GREP_NAME_TEMPLATE = r"\b{name}\b"
+GREP_CALL_TEMPLATE = r"\b{name}\s*\("
 IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 
 RETRIEVAL_DEFAULT_TARGET = "codebase_rag"

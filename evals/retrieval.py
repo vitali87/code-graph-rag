@@ -108,12 +108,13 @@ def cgr_call_edges(
     return edges
 
 
-def _grep_pattern(first_party: set[str], mode: ec.GrepMode) -> str:
-    alternation = ec.NAMES_ALT_SEP.join(re.escape(name) for name in sorted(first_party))
+def _grep_patterns(first_party: set[str], mode: ec.GrepMode) -> str:
     template = (
         ec.GREP_CALL_TEMPLATE if mode == ec.GrepMode.CALL else ec.GREP_NAME_TEMPLATE
     )
-    return template.format(names=alternation)
+    return ec.PATTERN_SEP.join(
+        template.format(name=re.escape(name)) for name in sorted(first_party)
+    )
 
 
 def grep_call_edges(
@@ -128,13 +129,15 @@ def grep_call_edges(
             ec.RG_WITH_FILENAME,
             ec.RG_NO_LINE_NUMBER,
             ec.RG_NO_HEADING,
+            ec.RG_NULL,
             ec.RG_GLOB_FLAG,
             ec.RG_PY_GLOB,
-            ec.RG_PATTERN_FLAG,
-            _grep_pattern(first_party, mode),
+            ec.RG_PATTERN_FILE_FLAG,
+            ec.RG_STDIN,
             ec.RG_SEARCH_PATH,
         ],
         cwd=target,
+        input=_grep_patterns(first_party, mode),
         capture_output=True,
         text=True,
         check=False,
@@ -145,10 +148,12 @@ def grep_call_edges(
 
     edges: set[NameEdge] = set()
     for line in completed.stdout.splitlines():
-        path_text, sep, matched = line.partition(ec.RG_FIELD_SEP)
+        path_text, sep, matched = line.partition(ec.RG_NULL_SEP)
         if not sep:
             continue
-        rel = path_text.removeprefix(ec.RG_PATH_PREFIX)
+        # (H) Path(...).as_posix() strips the leading ./ and folds Windows
+        # (H) backslashes to the forward-slash form parse_py_trees keys files on.
+        rel = Path(path_text).as_posix()
         if rel not in files:
             continue
         token = _IDENTIFIER.match(matched)
