@@ -46,6 +46,205 @@ class _CapturingIngestor:
         return None
 
 
+_MODULE_LABEL = cs.NodeLabel.MODULE.value
+_FILE_LABEL = cs.NodeLabel.FILE.value
+_FOLDER_LABEL = cs.NodeLabel.FOLDER.value
+_DEFINES_RELS = frozenset(
+    {
+        cs.RelationshipType.DEFINES.value,
+        cs.RelationshipType.DEFINES_METHOD.value,
+    }
+)
+_DEFINITION_LABELS = frozenset(
+    {
+        cs.NodeLabel.FUNCTION.value,
+        cs.NodeLabel.METHOD.value,
+        cs.NodeLabel.CLASS.value,
+        cs.NodeLabel.INTERFACE.value,
+        cs.NodeLabel.ENUM.value,
+        cs.NodeLabel.TYPE.value,
+        cs.NodeLabel.UNION.value,
+    }
+)
+_INBOUND_DEPENDENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.INSTANTIATES.value,
+        cs.RelationshipType.IMPORTS.value,
+        cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.OVERRIDES.value,
+    }
+)
+
+
+def _text(value: PropertyValue) -> str | None:
+    # (H) path / qualified_name / absolute_path are always textual; narrow the
+    # (H) general PropertyValue (which includes list[str]) so the row matches the
+    # (H) ResultValue shape the prune query consumer expects.
+    return value if isinstance(value, str) else None
+
+
+class _StatefulIngestor:
+    # (H) A faithful in-memory stand-in for the persistent graph store. Unlike
+    # (H) _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
+    # (H) the incremental updater issues, so a graph mutated by an incremental run
+    # (H) can be compared against a clean re-index. Only the exact queries cgr
+    # (H) emits are emulated (matched by identity), nothing more.
+    def __init__(self) -> None:
+        self.nodes: dict[_NodeId, PropertyDict] = {}
+        self.edges: set[_RelTuple] = set()
+
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        uid = properties[cs.NODE_UNIQUE_CONSTRAINTS[label]]
+        self.nodes[(str(label), uid)] = dict(properties)
+
+    def ensure_relationship_batch(
+        self,
+        from_spec: tuple[str, str, PropertyValue],
+        rel_type: str,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: PropertyDict | None = None,
+    ) -> None:
+        from_label, _from_key, from_val = from_spec
+        to_label, _to_key, to_val = to_spec
+        self.edges.add(
+            (str(from_label), from_val, str(rel_type), str(to_label), to_val)
+        )
+
+    def flush_all(self) -> None:
+        return None
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        match query:
+            case cs.CYPHER_ALL_FILE_PATHS:
+                return self._path_rows(_FILE_LABEL)
+            case cs.CYPHER_ALL_FOLDER_PATHS:
+                return self._path_rows(_FOLDER_LABEL)
+            case cs.CYPHER_INBOUND_EDGES:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                changed: set[str] = (
+                    set(raw_paths) if isinstance(raw_paths, list) else set()
+                )
+                inbound: list[ResultRow] = []
+                for from_label, from_val, rel_type, to_label, to_val in self.edges:
+                    if rel_type not in _INBOUND_DEPENDENT_RELS:
+                        continue
+                    target = self.nodes.get((to_label, to_val))
+                    caller = self.nodes.get((from_label, from_val))
+                    if target is None or caller is None:
+                        continue
+                    caller_path = caller.get(cs.KEY_PATH)
+                    if target.get(cs.KEY_PATH) not in changed or caller_path in changed:
+                        continue
+                    inbound.append(
+                        {
+                            cs.KEY_CALLER_LABEL: from_label,
+                            cs.KEY_CALLER_QN: _text(from_val),
+                            cs.KEY_REL: rel_type,
+                            cs.KEY_TARGET_LABEL: to_label,
+                            cs.KEY_TARGET_QN: _text(to_val),
+                        }
+                    )
+                return inbound
+            case cs.CYPHER_ALL_DEFINITION_QNS:
+                defs: list[ResultRow] = []
+                for (label, uid), props in self.nodes.items():
+                    if label not in _DEFINITION_LABELS:
+                        continue
+                    qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
+                    row: ResultRow = {
+                        cs.KEY_QUALIFIED_NAME: _text(qn),
+                        cs.KEY_LABEL: label,
+                    }
+                    defs.append(row)
+                return defs
+            case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+                rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL or props.get(cs.KEY_IS_EXTERNAL) is True:
+                        continue
+                    row: ResultRow = {
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                    }
+                    rows.append(row)
+                return rows
+            case _:
+                return []
+
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        path = params.get(cs.KEY_PATH) if params else None
+        match query:
+            case cs.CYPHER_DELETE_MODULE:
+                self._delete_module_subtree(path)
+            case cs.CYPHER_DELETE_FILE:
+                self._detach_delete(self._nodes_at_path(_FILE_LABEL, path))
+            case cs.CYPHER_DELETE_FOLDER:
+                self._detach_delete(self._nodes_at_path(_FOLDER_LABEL, path))
+            case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
+                self._delete_orphan_external_modules()
+            case _:
+                return None
+
+    def _path_rows(self, label: str) -> list[ResultRow]:
+        rows: list[ResultRow] = []
+        for (node_label, _uid), props in self.nodes.items():
+            if node_label != label:
+                continue
+            row: ResultRow = {
+                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                cs.KEY_ABSOLUTE_PATH: _text(props.get(cs.KEY_ABSOLUTE_PATH)),
+            }
+            rows.append(row)
+        return rows
+
+    def _nodes_at_path(self, label: str, path: PropertyValue) -> set[_NodeId]:
+        return {
+            (node_label, uid)
+            for (node_label, uid), props in self.nodes.items()
+            if node_label == label and props.get(cs.KEY_PATH) == path
+        }
+
+    def _delete_module_subtree(self, path: PropertyValue) -> None:
+        doomed: set[_NodeId] = set()
+        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        while frontier:
+            node = frontier.pop()
+            if node in doomed:
+                continue
+            doomed.add(node)
+            for from_label, from_val, rel_type, to_label, to_val in self.edges:
+                if rel_type in _DEFINES_RELS and (from_label, from_val) == node:
+                    child = (to_label, to_val)
+                    if child not in doomed:
+                        frontier.append(child)
+        self._detach_delete(doomed)
+
+    def _delete_orphan_external_modules(self) -> None:
+        incoming = {(to_label, to_val) for _f, _v, _r, to_label, to_val in self.edges}
+        doomed = {
+            (label, uid)
+            for (label, uid), props in self.nodes.items()
+            if label == _MODULE_LABEL
+            and props.get(cs.KEY_IS_EXTERNAL) is True
+            and (label, uid) not in incoming
+        }
+        self._detach_delete(doomed)
+
+    def _detach_delete(self, doomed: set[_NodeId]) -> None:
+        if not doomed:
+            return
+        for node in doomed:
+            self.nodes.pop(node, None)
+        self.edges = {
+            edge
+            for edge in self.edges
+            if (edge[0], edge[1]) not in doomed and (edge[3], edge[4]) not in doomed
+        }
+
+
 def _capture(target: Path, project_name: str) -> _CapturingIngestor:
     parsers, queries = load_parsers()
     ingestor = _CapturingIngestor()

@@ -1,0 +1,3 @@
+category,label,tp,fp,fn,precision,recall,f1
+edge,inherits-resolved,31,0,0,1.0,1.0,1.0
+edge,overrides,57,0,0,1.0,1.0,1.0

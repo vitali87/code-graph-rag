@@ -1,0 +1,194 @@
+{
+  "incremental-node:Class": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:File": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Folder": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Function": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Method": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Module": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Package": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-node:Project": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:CALLS": {
+    "missing": [
+      "CALLS Function:codebase_rag.cgr_state._save -> Method:codebase_rag.tests.conftest.MockNode.parent",
+      "CALLS Function:codebase_rag.cgr_state._save -> Method:codebase_rag.tests.conftest.MockNode.parent@58",
+      "CALLS Function:codebase_rag.cli._cleanup_project_embeddings -> Function:codebase_rag.vector_store.delete_project_embeddings@171",
+      "CALLS Function:codebase_rag.cli._maybe_start_stack -> Method:codebase_rag.stack.manager.StackManager.ensure_running",
+      "CALLS Function:codebase_rag.cli._sync_workspace -> Method:codebase_rag.types_defs.ColumnDescriptor.name",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.services.graph_service.MemgraphIngestor.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_abstract_method_override_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_callable_field_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_chained_attribute_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_conditional_alias_call._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_constructor_call_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_duplicate_qn_definitions._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_external_package_name_collision._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_function_local_definitions._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_getattr_dispatch._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_graph_updater_incremental_rename.InMemoryGraph.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_higher_order_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_inherits_attribute_base._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_instance_attr_type_inference._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_interprocedural_callback_flow._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_local_alias_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_local_alias_chain_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_nested_function_defines._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_operator_dispatch_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_property_getter_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_property_return_type_chain._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_protocol_dispatch_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_protocol_impl_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_protocol_operator_dispatch._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_reexport_chain_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_relative_import_package_init._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_relative_import_root_level._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_sibling_mixin_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.tests.test_truthiness_dispatch_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.doctor -> Method:codebase_rag.types_defs.ColumnDescriptor.name",
+      "CALLS Function:codebase_rag.cli.start -> Method:codebase_rag.types_defs.ColumnDescriptor.name",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.services.graph_service.MemgraphIngestor.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_abstract_method_override_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_callable_field_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_chained_attribute_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_conditional_alias_call._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_constructor_call_resolution._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_duplicate_qn_definitions._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_external_package_name_collision._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_function_local_definitions._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_getattr_dispatch._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_graph_updater_incremental_rename.InMemoryGraph.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_higher_order_calls._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_inherits_attribute_base._Capture.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.tests.test_instance_attr_type_inference._Capture.fetch_all"
+    ],
+    "extra": [
+      "CALLS Function:codebase_rag.cli._maybe_start_stack -> Function:codebase_rag.stack.manager.ensure_running",
+      "CALLS Function:codebase_rag.cli.dead_code -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Function:codebase_rag.cli.stats -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Function:codebase_rag.decorators.ensure_loaded.wrapper -> Method:codebase_rag.types_defs.LoadableProtocol._ensure_loaded",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._capture_inbound_edges -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._delete_module_entities -> Method:codebase_rag.services.QueryProtocol.execute_write",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._generate_semantic_embeddings -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._process_files -> Method:codebase_rag.services.IngestorProtocol.flush_all",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._process_files -> Method:codebase_rag.services.QueryProtocol.execute_write",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._prune_orphan_nodes -> Method:codebase_rag.services.QueryProtocol.execute_write",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._prune_orphan_nodes -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._rehydrate_registry_from_graph -> Method:codebase_rag.services.QueryProtocol.fetch_all",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater._restore_inbound_edges -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater.run -> Function:codebase_rag.parsers.class_ingest.method_override.process_all_method_overrides",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater.run -> Method:codebase_rag.services.IngestorProtocol.ensure_node_batch",
+      "CALLS Method:codebase_rag.graph_updater.GraphUpdater.run -> Method:codebase_rag.services.IngestorProtocol.flush_all",
+      "CALLS Method:codebase_rag.parsers.call_processor.CallProcessor._emit_operator_dunder -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.parsers.call_processor.CallProcessor._ingest_decorator_calls -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.parsers.call_processor.CallProcessor._ingest_function_calls -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.parsers.call_processor.CallProcessor._ingest_property_accesses -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.parsers.call_processor.CallProcessor.finalize_callable_param_flow -> Method:codebase_rag.services.IngestorProtocol.ensure_relationship_batch",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._follow_reexports -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._mro_method_qns -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._protocol_structural_implementers -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.find_with_prefix",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._redirect_protocol_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._redirect_protocol_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_chained_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_chained_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_imported_class_qn -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_inherited_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_inherited_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_multi_part_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_multi_part_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_rust_class_qn -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.find_ending_with",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_rust_class_qn -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.get",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_self_attribute_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_self_attribute_call -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_self_sibling_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._resolve_self_sibling_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.is_abstract",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_method_on_class -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_method_on_class -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_direct_import -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_direct_import -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_iife -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_iife -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_module_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_module_method -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__getitem__",
+      "CALLS Method:codebase_rag.parsers.call_resolver.CallResolver._try_resolve_same_module -> Method:codebase_rag.types_defs.FunctionRegistryTrieProtocol.__contains__"
+    ]
+  },
+  "incremental-edge:CONTAINS_FILE": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:CONTAINS_FOLDER": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:CONTAINS_MODULE": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:CONTAINS_PACKAGE": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:DEFINES": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:DEFINES_METHOD": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:IMPORTS": {
+    "missing": [
+      "IMPORTS Module:codebase_rag.graph_loader -> Module:codebase_rag.decorators",
+      "IMPORTS Module:codebase_rag.graph_updater -> Module:codebase_rag.embedder",
+      "IMPORTS Module:codebase_rag.mcp.server -> Module:codebase_rag.vector_store",
+      "IMPORTS Module:codebase_rag.mcp.tools -> Module:codebase_rag.parser_loader",
+      "IMPORTS Module:codebase_rag.mcp.tools -> Module:codebase_rag.vector_store"
+    ],
+    "extra": [
+      "IMPORTS Module:codebase_rag.graph_loader -> Module:codebase_rag.decorators.ensure_loaded",
+      "IMPORTS Module:codebase_rag.graph_updater -> Module:codebase_rag.embedder.embed_code_batch",
+      "IMPORTS Module:codebase_rag.graph_updater -> Module:codebase_rag.embedder.get_embedding_cache",
+      "IMPORTS Module:codebase_rag.main -> Module:codebase_rag.config.load_cgrignore_patterns",
+      "IMPORTS Module:codebase_rag.mcp.server -> Module:codebase_rag.vector_store.close_qdrant_client",
+      "IMPORTS Module:codebase_rag.mcp.tools -> Module:codebase_rag.parser_loader.load_parsers",
+      "IMPORTS Module:codebase_rag.mcp.tools -> Module:codebase_rag.vector_store.delete_project_embeddings"
+    ]
+  },
+  "incremental-edge:INHERITS": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:INSTANTIATES": {
+    "missing": [],
+    "extra": []
+  },
+  "incremental-edge:OVERRIDES": {
+    "missing": [],
+    "extra": []
+  }
+}

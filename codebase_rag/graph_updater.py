@@ -525,6 +525,9 @@ class GraphUpdater:
         if go_methods:
             logger.info("Resolved {} Go receiver methods", go_methods)
 
+        if not force:
+            self._rehydrate_registry_from_graph()
+
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
@@ -537,6 +540,81 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+    def _rehydrate_registry_from_graph(self) -> None:
+        # (H) Incremental runs populate the function registry only from re-parsed
+        # (H) files. Read every definition's qualified name back from the graph and
+        # (H) re-register the ones missing locally, so calls and instantiations
+        # (H) into files that were not re-parsed still resolve and their edges are
+        # (H) re-emitted. Without this, editing one file drops cross-file CALLS /
+        # (H) INSTANTIATES into any unchanged file (issue #532, outbound half).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        added = 0
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(label, str):
+                continue
+            if qn in self.function_registry:
+                continue
+            try:
+                node_type = NodeType(label)
+            except ValueError:
+                continue
+            self.function_registry[qn] = node_type
+            added += 1
+        if added:
+            logger.info(ls.REGISTRY_REHYDRATED, count=added)
+
+    def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
+        # (H) Record the reference edges that unchanged files point at the
+        # (H) re-indexed files, BEFORE those files' subtrees (and thus the inbound
+        # (H) edges) are deleted. Capturing and restoring the exact edges avoids
+        # (H) re-resolving the callers, whose resolution would diverge from a clean
+        # (H) index (cgr resolution is context-sensitive).
+        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        return self.ingestor.fetch_all(
+            cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+        )
+
+    def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
+        # (H) Re-emit each captured inbound edge whose target still exists after the
+        # (H) re-index. A target that was renamed or removed is correctly left
+        # (H) without its stale inbound edge, matching a clean re-index.
+        if not captured:
+            return
+        module_label = cs.NodeLabel.MODULE.value
+        restored = 0
+        for row in captured:
+            caller_label = row.get(cs.KEY_CALLER_LABEL)
+            caller_qn = row.get(cs.KEY_CALLER_QN)
+            rel = row.get(cs.KEY_REL)
+            target_label = row.get(cs.KEY_TARGET_LABEL)
+            target_qn = row.get(cs.KEY_TARGET_QN)
+            if not (
+                isinstance(caller_label, str)
+                and isinstance(caller_qn, str)
+                and isinstance(rel, str)
+                and isinstance(target_label, str)
+                and isinstance(target_qn, str)
+            ):
+                continue
+            if target_label != module_label and target_qn not in self.function_registry:
+                continue
+            caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
+            target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
+            if caller_key is None or target_key is None:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (caller_label, caller_key, caller_qn),
+                rel,
+                (target_label, target_key, target_qn),
+            )
+            restored += 1
+        if restored:
+            logger.info(ls.INCREMENTAL_REBUILD_INBOUND, count=restored)
 
     def remove_file_from_state(self, file_path: Path) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
@@ -829,6 +907,16 @@ class GraphUpdater:
                 logger.debug(ls.FILE_HASH_NEW, path=file_key)
             changed_entries.append((filepath, file_key, is_new, file_bytes))
 
+        # (H) Before deleting any changed file's subtree (which removes the inbound
+        # (H) CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
+        # (H) so they can be restored verbatim afterwards (issue #532, inbound
+        # (H) half). New files have no prior inbound edges, so only re-indexed
+        # (H) (changed, non-new) files matter.
+        reindexed_keys = sorted(
+            file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
+        )
+        captured_inbound = self._capture_inbound_edges(reindexed_keys)
+
         pre_parsed = self._pre_parse_changed_files(changed_entries)
 
         with Progress(
@@ -877,6 +965,8 @@ class GraphUpdater:
                     self.ingestor.execute_write(
                         cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
                     )
+
+        self._restore_inbound_edges(captured_inbound)
 
         if skipped_count > 0:
             logger.info(ls.INCREMENTAL_SKIPPED, count=skipped_count)

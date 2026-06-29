@@ -27,6 +27,8 @@ GRAPH_ALREADY_IN_SYNC = (
 
 # (H) Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
+REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolution"
+INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
 ANALYSIS_COMPLETE = "\n--- Analysis complete. Flushing all data to database... ---"
 REMOVING_STATE = "Removing in-memory state for: {path}"
 REMOVED_FROM_CACHE = "  - Removed from ast_cache"

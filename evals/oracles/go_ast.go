@@ -60,10 +60,18 @@ type Edge struct {
 	Child  NodeRef `json:"child"`
 }
 
+// Call is a call site: the file it appears in and the callee's simple name
+// (the bare identifier, or the selector tail for x.Method() / pkg.Func()).
+type Call struct {
+	File string `json:"file"`
+	Name string `json:"name"`
+}
+
 // Payload is the oracle's stdout shape.
 type Payload struct {
 	Nodes []Def  `json:"nodes"`
 	Edges []Edge `json:"edges"`
+	Calls []Call `json:"calls"`
 }
 
 // ignoredDirs are skipped during the walk; they never hold first-party sources.
@@ -214,6 +222,35 @@ func collectEdges(pf parsedFile, types map[string]Def, edges *[]Edge) {
 	}
 }
 
+// calleeName returns the simple name a call expression targets: the bare
+// identifier for foo(), or the selector tail for x.Method() and pkg.Func().
+func calleeName(expr ast.Expr) string {
+	switch f := expr.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	case *ast.IndexExpr:
+		return calleeName(f.X)
+	case *ast.IndexListExpr:
+		return calleeName(f.X)
+	}
+	return ""
+}
+
+// collectCalls records every call site's (file, callee simple name). First-party
+// filtering happens in the Python harness against the declared name set.
+func collectCalls(pf parsedFile, calls *[]Call) {
+	ast.Inspect(pf.file, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if name := calleeName(call.Fun); name != "" {
+				*calls = append(*calls, Call{pf.rel, name})
+			}
+		}
+		return true
+	})
+}
+
 func main() {
 	root := os.Args[1]
 	var parsed []parsedFile
@@ -251,9 +288,11 @@ func main() {
 
 	defs := []Def{}
 	edges := []Edge{}
+	calls := []Call{}
 	for _, pf := range parsed {
 		collectNodes(pf, &defs)
 		collectEdges(pf, types, &edges)
+		collectCalls(pf, &calls)
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(Payload{Nodes: defs, Edges: edges})
+	_ = json.NewEncoder(os.Stdout).Encode(Payload{Nodes: defs, Edges: edges, Calls: calls})
 }

@@ -31,6 +31,15 @@ class GraphData(NamedTuple):
     name_edges: set[NameEdge]
 
 
+class GraphState(NamedTuple):
+    # (H) A flat, comparable snapshot of a whole captured graph: node identities
+    # (H) (label, unique-id) and directed edges (from_label, from_id, rel,
+    # (H) to_label, to_id). Used to diff an incremental update against a clean
+    # (H) re-index, where the clean index is the oracle.
+    nodes: frozenset[tuple[str, str]]
+    edges: frozenset[tuple[str, str, str, str, str]]
+
+
 class ScoreRow(TypedDict):
     category: str
     label: str
@@ -89,7 +98,15 @@ class OracleNameEdge(TypedDict):
     target_name: str
 
 
+class OracleCall(TypedDict):
+    file: str
+    name: str
+
+
 class OraclePayload(TypedDict):
     nodes: list[OracleRecord]
     edges: list[OracleEdge]
     name_edges: list[OracleNameEdge]
+    # (H) Optional: only the call-aware oracles (Go multi-language retrieval) emit
+    # (H) call sites; structure-only oracles omit this key.
+    calls: NotRequired[list[OracleCall]]

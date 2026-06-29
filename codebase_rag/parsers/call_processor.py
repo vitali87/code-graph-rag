@@ -17,6 +17,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
+from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -47,6 +48,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.TS,
         cs.SupportedLanguage.JAVA,
         cs.SupportedLanguage.LUA,
+        cs.SupportedLanguage.GO,
     }
 )
 
@@ -452,6 +454,34 @@ class CallProcessor:
                     call_name_cache=call_name_cache,
                 )
                 continue
+            # (H) A Go receiver method (`func (t T) m()`) is declared at file scope
+            # (H) but the definition pass binds it to its receiver type's node
+            # (H) (qn `module.T.m`). Attribute its body's calls to that method node,
+            # (H) not the receiver-dropping `module.m` that _build_nested_qualified_name
+            # (H) would produce, so the CALLS edges join to a real node.
+            if language == cs.SupportedLanguage.GO and (
+                bound := self._go_receiver_method_caller(
+                    func_node, func_name, module_qn
+                )
+            ):
+                caller_qn, container_qn = bound
+                filtered = (
+                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+                    if all_call_nodes is not None and call_starts is not None
+                    else None
+                )
+                self._ingest_function_calls(
+                    func_node,
+                    caller_qn,
+                    cs.NodeLabel.METHOD,
+                    module_qn,
+                    language,
+                    queries,
+                    container_qn,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
+                continue
             if func_qn := self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             ):
@@ -470,6 +500,27 @@ class CallProcessor:
                     call_nodes=filtered,
                     call_name_cache=call_name_cache,
                 )
+
+    def _go_receiver_method_caller(
+        self, func_node: Node, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) Resolve a Go receiver method to its (method_qn, container_qn),
+        # (H) mirroring the definition pass's receiver-type binding. The receiver
+        # (H) type resolves to its node qn (same-file or sibling-file in the
+        # (H) package), and the registry check ensures the method node exists
+        # (H) before overriding the default attribution.
+        if not go_utils.is_receiver_method(func_node):
+            return None
+        receiver_type = go_utils.extract_receiver_type_name(func_node)
+        if not receiver_type:
+            return None
+        container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
+            f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
+        )
+        caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if caller_qn in self._resolver.function_registry:
+            return caller_qn, container_qn
+        return None
 
     def _cpp_out_of_class_method_caller(
         self, func_node: Node, method_name: str, module_qn: str
@@ -543,6 +594,7 @@ class CallProcessor:
             method_cursor = QueryCursor(method_query)
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        lang_config = queries[language][cs.QUERY_CONFIG]
         for method_node in method_nodes:
             if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
@@ -550,16 +602,24 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name:
                 continue
-            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            # (H) method_nodes includes functions nested inside methods. Build the
+            # (H) qn through the enclosing-function chain (Class.method.nested, not
+            # (H) the method-dropping Class.nested) and label a nested function
+            # (H) FUNCTION, so the CALLS edge joins the real node.
+            caller_qn, caller_label = self._class_member_qn_and_label(
+                method_node, class_qn, method_name, lang_config
+            )
             filtered = (
-                self._filter_calls_in_node(all_call_nodes, call_starts, method_node)
+                self._calls_owned_by(
+                    method_node, method_nodes, all_call_nodes, call_starts
+                )
                 if all_call_nodes is not None and call_starts is not None
                 else None
             )
             self._ingest_function_calls(
                 method_node,
-                method_qn,
-                cs.NodeLabel.METHOD,
+                caller_qn,
+                caller_label,
                 module_qn,
                 language,
                 queries,
@@ -567,6 +627,57 @@ class CallProcessor:
                 call_nodes=filtered,
                 call_name_cache=call_name_cache,
             )
+
+    def _class_member_qn_and_label(
+        self, func_node: Node, class_qn: str, func_name: str, lang_config: LanguageSpec
+    ) -> tuple[str, str]:
+        # (H) Build a class-body function's qn through the chain of enclosing
+        # (H) functions up to the class: a direct method is Class.method (METHOD);
+        # (H) a function nested in a method is Class.method.nested (FUNCTION).
+        path_parts: list[str] = []
+        current = func_node.parent
+        while current and current.type not in lang_config.class_node_types:
+            if current.type in lang_config.function_node_types:
+                if (name_node := current.child_by_field_name(cs.FIELD_NAME)) and (
+                    name_node.text is not None
+                ):
+                    path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+            current = current.parent
+        path_parts.reverse()
+        if path_parts:
+            joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
+            return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
+        return f"{class_qn}{cs.SEPARATOR_DOT}{func_name}", cs.NodeLabel.METHOD
+
+    def _calls_owned_by(
+        self,
+        func_node: Node,
+        sibling_func_nodes: list[Node],
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+    ) -> list[Node]:
+        # (H) Calls inside func_node MINUS calls owned by functions nested within
+        # (H) it, so a call in a nested function is attributed only to the nested
+        # (H) function, never also to the enclosing one.
+        own = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        descendant_bodies = [
+            body
+            for n in sibling_func_nodes
+            if n is not func_node
+            and n.start_byte >= func_node.start_byte
+            and n.end_byte <= func_node.end_byte
+            and (body := n.child_by_field_name(cs.FIELD_BODY)) is not None
+        ]
+        if not descendant_bodies:
+            return own
+        return [
+            call
+            for call in own
+            if not any(
+                body.start_byte <= call.start_byte and call.end_byte <= body.end_byte
+                for body in descendant_bodies
+            )
+        ]
 
     def _process_calls_in_classes(
         self,
@@ -623,6 +734,7 @@ class CallProcessor:
                     | cs.TS_MEMBER_EXPRESSION
                     | cs.CppNodeType.QUALIFIED_IDENTIFIER
                     | cs.TS_SCOPED_IDENTIFIER
+                    | cs.TS_SELECTOR_EXPRESSION
                 ):
                     if func_child.text is not None:
                         return func_child.text.decode(cs.ENCODING_UTF8)

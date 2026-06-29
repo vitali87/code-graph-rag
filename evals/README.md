@@ -134,6 +134,274 @@ wins. Graph recall below 1.0 reflects the few call edges cgr does not resolve;
 graph false positives are call edges cgr emits that the pure-`ast` notion of a
 call does not see (worth a look, but a small fraction).
 
+## Incremental update — incremental vs clean re-index
+
+Answers a correctness question the other layers cannot: after cgr re-indexes only
+the files that changed, does the resulting graph still equal a clean full
+re-index of the same tree? Incremental indexing is where a knowledge graph
+silently rots, so the clean re-index is the oracle and any divergence is a real
+bug.
+
+```bash
+uv run python -m evals.incremental --target codebase_rag --sample 25
+```
+
+The probe is a semantically neutral edit: a trailing comment is appended to one
+file, changing its hash (so cgr treats it as modified) without changing its AST
+(so a clean re-index of the edited tree is identical to the original). For each
+sampled file the harness indexes a fresh copy, applies the neutral edit, runs an
+incremental update, then compares the mutated graph node for node and edge for
+edge against a clean forced re-index of the identical on-disk state.
+
+The comparison runs against a faithful in-memory store (`cgr_graph._StatefulIngestor`)
+that implements the exact delete and fetch Cypher the incremental updater issues
+(`DETACH DELETE` of a changed file's `Module` subtree, file and folder deletes,
+orphan-external pruning, and the prune path queries), so deletions take real
+effect rather than being mocked away. The store's semantics are pinned by
+`codebase_rag/tests/test_incremental_eval.py`; the same suite also pins the
+runner's requirement to purge any pre-existing hash cache copied from the source
+tree, without which the baseline index would skip every file.
+
+What it surfaced and drove a fix for:
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532). Editing a
+file `DETACH`-deletes its `Module` subtree, including the reference edges incident
+on its functions. The eval showed the loss was broader than the issue recorded:
+**inbound** `CALLS`/`IMPORTS`/`INSTANTIATES` from unchanged callers were deleted
+and never rebuilt (the callers are not reprocessed), and a fresh incremental run
+also rebuilt the function registry from changed files only, so even the changed
+file's **outbound** calls to symbols defined in unchanged files were dropped. The
+fix, verified by this eval, has two parts:
+
+- **Inbound** edges are captured before deletion and restored verbatim (rather
+  than re-resolved, which would diverge: cgr resolution is context-sensitive).
+- **Outbound** resolution rehydrates the function registry from the persisted
+  graph so calls into unchanged files resolve again.
+
+Residual divergence is confined to the changed file's own calls resolved through
+type inference / protocol dispatch (e.g. `self.x.method()`), which need the full
+cross-file type context that a single-file reprocess does not rebuild; this is
+documented as a deeper follow-on, not a regression. Writes
+`evals/results/incremental_scores.csv` and `evals/results/incremental_diff.json`.
+
+Inbound capture is intentionally scoped to re-indexed files (changed, **not** new
+or deleted), because a re-indexed file keeps its module qualified name, so the
+restore target still exists after reprocessing. Moved or renamed files are not
+captured by design: the old path is deleted and the new path is new, so an
+unchanged caller's import of the old name no longer resolves, exactly as in a
+clean re-index, and dropping that now-dangling edge is correct. Restoring edges
+for a vanished module qn would instead fabricate a phantom module node, so the
+scoping is the safe choice rather than a gap. A transparently re-exported rename
+(old name still resolves) is the one narrow case left to a clean re-index.
+
+## Import resolution — internal vs external classification
+
+The structural L1 above grades internal `IMPORTS` edges by their resolved target
+file. It does not check how cgr classifies the *other* imports: stdlib and
+third-party. This eval does, against an `ast` plus filesystem oracle, to surface
+internal/external misclassification (the shape of
+[issue #498](https://github.com/vitali87/code-graph-rag/issues/498)).
+
+```bash
+uv run python -m evals.import_resolution --target codebase_rag
+```
+
+The comparison unit is `(importing_file, top_level_package, is_external)`. Both
+sides reduce an import to its top-level package name the same way (`import
+numpy.linalg` and `from numpy import x` both reduce to `numpy`), and both decide
+internal versus external by whether that top level is the project package, so the
+oracle is independent of cgr's own resolver. cgr models an external import as a
+`Module` node flagged `is_external=True` linked by `IMPORTS` (it does not emit
+`ExternalPackage`/`DEPENDS_ON_EXTERNAL` for code-level imports), so the eval reads
+the flag off each `IMPORTS` target. `from __future__ import ...` is a compiler
+directive rather than a dependency and is excluded on both sides (a calibration
+the tests pin). Writes `evals/results/imports_scores.csv` and
+`evals/results/imports_diff.json`; the oracle and the misclassification signal
+are pinned by `codebase_rag/tests/test_import_resolution_eval.py`.
+
+## Inheritance — resolved INHERITS and OVERRIDES
+
+The structural L1 grades `INHERITS` by the base's simple *name*. This eval grades
+two deeper things against an `ast` oracle: that cgr resolves a base to the correct
+first-party class qualified name (`INHERITS` target), and that method overrides
+are attributed to the right base class (`OVERRIDES`).
+
+```bash
+uv run python -m evals.inheritance --target codebase_rag
+```
+
+The oracle resolves a base only when it is unambiguous: defined in the same module
+or imported via `from <first-party> import <Base>`. Attribute bases (`pkg.Base`),
+star-imported, and external bases are skipped and counted, never guessed. Two
+deliberate scope limits keep the oracle honest rather than noisy:
+
+- **INHERITS** is graded only for top-level classes (the universe the oracle
+  enumerates); cgr edges whose subclass is a class nested inside a function are
+  not graded against an oracle that never saw them.
+- **OVERRIDES** is graded only for single-inheritance classes, where "which base
+  does method `m` override" is unambiguous. Multi-base mixin classes are excluded
+  on both sides, because the answer there is decided by the MRO, which this ast
+  oracle does not model.
+
+Writes `evals/results/inheritance_scores.csv` and
+`evals/results/inheritance_diff.json`; pinned by
+`codebase_rag/tests/test_inheritance_eval.py`.
+
+## Instantiation — file-level INSTANTIATES
+
+The retrieval eval folds class instantiation into its `CALLS` localization (a
+constructor call resolves to `Class.__init__`, credited to the class). This eval
+grades cgr's `INSTANTIATES` edges on their own, so a constructor-resolution
+regression is visible separately from ordinary calls.
+
+```bash
+uv run python -m evals.instantiation --target codebase_rag
+```
+
+The unit is `(caller_file, class_simple_name)`. The oracle counts every `ast.Call`
+whose callee simple name is a first-party class, **excluding bare-name calls whose
+name is rebound in that file by a non-first-party import** (`from ext import
+Config; Config()` names the external `Config`, not a same-named first-party
+class). cgr contributes its `INSTANTIATES` edges reduced to the caller's file and
+the class simple name. Writes `evals/results/instantiation_scores.csv` and
+`evals/results/instantiation_diff.json`; pinned by
+`codebase_rag/tests/test_instantiation_eval.py`.
+
+Making the oracle import-aware surfaced a cgr precision bug: a constructor whose
+name was explicitly imported from an external module (`from evals.types_defs
+import GraphData`, with `evals` outside the indexed project) was resolved by the
+simple-name trie fallback to a same-named first-party class
+(`codebase_rag.types_defs.GraphData`), emitting a wrong `INSTANTIATES` edge. Fixed
+in `call_resolver.py` (`_is_external_import` suppresses the trie fallback for a
+bare name bound to a genuinely external import; first-party imports, prefixed or
+bare, are unaffected). On `codebase_rag`: precision rose from 0.976 to 1.000
+(9 false edges removed), recall 0.997. The one remaining miss is a class defined
+in a test method and instantiated from inside a nested class's method (a closure
+over an enclosing-function scope), a known resolution gap left documented rather
+than scoped away.
+
+## Dead code — reachability over the captured graph
+
+cgr's `dead-code` command reports functions/methods unreachable from any entry
+point. It runs as a Cypher reachability query against the database, which the
+deterministic in-memory harness cannot execute, so this eval faithfully
+re-implements that query's reachability over the captured graph and grades it on
+controlled fixtures whose dead set is known by construction.
+
+```bash
+uv run python -m evals.dead_code --target codebase_rag   # informational report
+```
+
+Roots are project functions that are decorated with an entry-point decorator
+(`@app.route` and friends), exported, named as an entry point, reached by a
+`Module` via `CALLS` (a module-level call), or in a test file when tests are
+included; everything reachable from a root via `CALLS` (plus `INSTANTIATES` /
+`INHERITS` with classes) is live, and the rest is dead. The reachability is
+unit-tested on hand-built graphs, so when it is run over a cgr-built graph from a
+fixture with a known dead set, a mismatch indicts cgr's `CALLS` graph (a missing
+edge would flag a live function as dead) rather than the scorer. The graded eval
+is the fixture suite `codebase_rag/tests/test_dead_code_eval.py`; the CLI's
+corpus mode is informational only, because a real repo has no independent dead-code
+oracle (true reachability needs the very call graph under test). On `codebase_rag`
+it currently reports 4450 unreachable functions/methods (tests excluded).
+
+## Cross-project — resolution across top-level packages (monorepo)
+
+Every other eval runs on a single top-level package (`codebase_rag`), so none
+checks the case cgr is built for: a monorepo with several top-level packages where
+one references another. This eval extracts cgr's `CALLS` and `IMPORTS` edges whose
+endpoints live in *different* top-level packages and grades them on synthetic
+multi-package fixtures whose cross-package edges are known by construction
+(`codebase_rag/tests/test_cross_project_eval.py`). It confirms that
+`pkg_b.use.run()` calling `pkg_a.core.shared()`, and `pkg_b`/`pkg_c` importing
+`pkg_a` modules, resolve across the package boundary, while intra-package edges
+are correctly excluded. cgr resolves all of these; the eval stands as a
+regression guard for monorepo cross-package resolution.
+
+## Static calls — function-level direct-call recall
+
+Grades cgr's `CALLS` graph at function granularity against an `ast` oracle that
+resolves only the calls a reader can resolve without type inference: a bare-name
+call (`foo()`) whose target is a first-party function reached via a `from ...
+import foo` or a same-module top-level def. Each becomes a `(caller_qn,
+callee_qn)` edge. Method / attribute / dynamic calls need cgr's type inference and
+are out of the oracle's scope, so only **recall** is graded (cgr resolving more
+than static analysis can is expected, not a false positive). The oracle uses ast
+import resolution, not cgr's function-registry trie, so it is independent.
+
+```bash
+uv run python -m evals.static_calls --target codebase_rag
+```
+
+Decorator applications (`@deco(...)`) are excluded (they are not calls the
+decorated function makes), and the oracle attributes a call to its real enclosing
+function qn including nested scopes (`Class.method.nested`).
+
+**This eval caught a real cgr bug.** A call inside a function nested in a method
+was emitted with a caller qn that dropped the method (`Class.nested` instead of
+`Class.method.nested`, matching no node), and was also over-attributed to the
+enclosing method. After the root-cause fix in `call_processor.py`
+(`_class_member_qn_and_label` + `_calls_owned_by`), recall on `codebase_rag` is
+4434/4434 = 1.0. Pinned by `codebase_rag/tests/test_static_calls_eval.py` and the
+regression `codebase_rag/tests/test_nested_method_call_qn.py`.
+
+## Multi-language retrieval (Go) — Go CALLS vs `go/ast`
+
+The retrieval benchmark above is Python-only. This extends file-level call
+localization to a second language: for each first-party Go symbol, which files
+call it. cgr's Go `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by Go's own `go/ast` (the same oracle
+program as the Go L1 structure eval, extended to emit `CallExpr` callees), over
+the same first-party name universe. The oracle uses Go's standard parser, fully
+independent of cgr's tree-sitter Go frontend, so this measures cgr's cross-file
+Go call resolution against ground truth.
+
+```bash
+uv run python -m evals.go_retrieval --target <go-sources>
+```
+
+Requires the `go` toolchain on `PATH`; the eval exits cleanly if it is missing.
+The oracle counts a call by its callee simple name (a bare `foo()` or the selector
+tail of `x.Method()` / `pkg.Func()`), keeping only callees that are declared
+first-party functions/methods, exactly mirroring the Python retrieval oracle.
+Pinned by `codebase_rag/tests/test_go_retrieval_eval.py`, where cgr's Go call
+graph matches the `go/ast` oracle on the fixture. The same harness shape
+generalizes to the other native-oracle languages (Rust, TypeScript, Java) by
+teaching each oracle to emit call sites.
+
+Running this on a real stdlib package (`encoding/json` via `GOROOT`) instead of
+the fixture first surfaced two Go call-graph bugs, then drove their fix to a
+clean result. (1) Receiver methods got a receiver-dropping caller qn that bound
+to no node; fixed by `_go_receiver_method_caller`. (2) Go receiver dispatch
+(`d.method()`, a method call on a receiver, parameter, or composite-literal
+local) resolved to no callee at all, because Go calls were not typed and the Go
+`selector_expression` callee node was never read by `_get_call_target_name`.
+Fixed by adding Go to the typed-language set, a Go local-variable type inference
+engine (`parsers/go/type_inference.py`) that maps receivers/parameters/`:=`
+locals to their type, and reading the selector callee name. On `encoding/json`,
+precision/recall went from 1.0/0.55 to 1.0/1.0 (110/110 call edges, zero false
+positives).
+
+## Semantic search — query to function relevance
+
+cgr's semantic search embeds each function's source and retrieves by cosine
+similarity to a query embedding. This grades that relevance directly: for
+controlled fixtures whose natural-language query maps unambiguously to one
+function, does cgr's embedder rank that function in the top `k`?
+
+It uses cgr's own embedder over function source extracted from the captured graph
+(the same text cgr embeds), computes the ranking, and scores recall@k against
+curated `query -> function` cases (e.g. "read and parse a json file" should
+retrieve `load_json_file`, not `send_email` or `compute_sales_tax`). This tests
+the embedding-and-ranking pipeline that decides relevance; the Qdrant ANN layer
+only approximates the same cosine ranking, so it is out of the loop here.
+
+Requires the `semantic` extra (embedding model); the eval is skipped when it is
+absent. Pinned by `codebase_rag/tests/test_semantic_search_eval.py`, where cgr
+reaches recall@3 = 1.0 on the fixture. The relevance set is curated and
+deliberately clear-cut: this is a regression guard that the pipeline retrieves
+obviously-relevant code, not a broad relevance benchmark (which would need a large
+human-judged dataset).
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -280,6 +548,69 @@ of roughly 0.38 absolute (about 70% relative) over the strongest grep baseline.
 Bare-name grep, the common first attempt, scores far worse (F1 0.38). This is
 the decoupled retrieval result behind the intuition that a structural graph
 beats text search for code navigation.
+
+### Incremental update — incremental vs clean re-index (`uv run python -m evals.incremental`)
+
+Over a 25-file neutral-edit sample on `codebase_rag`, **after the #532 fix**
+(micro-averaged across probes; clean re-index is the oracle, so `fn` is edges the
+incremental graph dropped and `fp` is stale edges it kept):
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | CALLS | 333010 | 63 | 740 | 0.9998 | 0.9978 | 0.9988 |
+| edge | IMPORTS | 82995 | 7 | 5 | 0.9999 | 0.9999 | 0.9999 |
+| edge | INSTANTIATES | 25525 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | DEFINES / DEFINES_METHOD / CONTAINS_* / INHERITS / OVERRIDES | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| node | all kinds | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+**10 of 25** edits now reproduce a clean re-index exactly (up from 3 before the
+fix), `INSTANTIATES` is perfect, and `IMPORTS` is all but perfect. For reference,
+before the fix the same sample showed CALLS `fp`/`fn` of 4/3318, IMPORTS 7/599,
+INSTANTIATES 0/414, and only 3/25 clean-equivalent: the fix cut CALLS divergence
+by roughly 75% and IMPORTS by 98%. The residual is the changed file's own calls
+resolved through type inference / protocol dispatch (the `fp`/`fn` are mostly the
+same call resolved to the protocol method incrementally versus the concrete
+implementation in a clean pass), which needs full cross-file type context to
+close (see the methodology note above). Tracked under
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532).
+
+### Import resolution — internal vs external (`uv run python -m evals.import_resolution`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | imports-all | 1986 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | imports-internal | 462 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | imports-external | 1524 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+A clean negative result: on `codebase_rag`, cgr classifies every import correctly,
+internal and external alike. This rules out #498-style misclassification on this
+corpus and stands as a regression guard. (The first run reported 247 missing
+externals; investigation showed they were all `from __future__ import ...`, an
+oracle over-count now corrected rather than a cgr bug.)
+
+### Inheritance — resolved INHERITS and OVERRIDES (`uv run python -m evals.inheritance`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | inherits-resolved | 31 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| edge | overrides | 57 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+Another clean negative result within the graded scope (top-level classes;
+single-inheritance for overrides): cgr resolves every base to the correct
+first-party class and attributes every single-inheritance override to the right
+base. The first run showed minor `fp`/`fn`; investigation traced all of them to
+oracle scope (a class nested in a test method, and multi-base mixin classes whose
+override attribution is MRO-decided), not cgr defects, so the scope was tightened
+rather than the discrepancies reported.
+
+### Instantiation — file-level INSTANTIATES (`uv run python -m evals.instantiation`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | instantiates | 378 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+cgr localizes every constructor call exactly on `codebase_rag`: the
+`INSTANTIATES` set and the ast oracle's constructor-call set are identical.
 
 ### Next step: agentic resolved-rate (out of scope here)
 
