@@ -316,6 +316,27 @@ graph matches the `go/ast` oracle on the fixture. The same harness shape
 generalizes to the other native-oracle languages (Rust, TypeScript, Java) by
 teaching each oracle to emit call sites.
 
+## Semantic search — query to function relevance
+
+cgr's semantic search embeds each function's source and retrieves by cosine
+similarity to a query embedding. This grades that relevance directly: for
+controlled fixtures whose natural-language query maps unambiguously to one
+function, does cgr's embedder rank that function in the top `k`?
+
+It uses cgr's own embedder over function source extracted from the captured graph
+(the same text cgr embeds), computes the ranking, and scores recall@k against
+curated `query -> function` cases (e.g. "read and parse a json file" should
+retrieve `load_json_file`, not `send_email` or `compute_sales_tax`). This tests
+the embedding-and-ranking pipeline that decides relevance; the Qdrant ANN layer
+only approximates the same cosine ranking, so it is out of the loop here.
+
+Requires the `semantic` extra (embedding model); the eval is skipped when it is
+absent. Pinned by `codebase_rag/tests/test_semantic_search_eval.py`, where cgr
+reaches recall@3 = 1.0 on the fixture. The relevance set is curated and
+deliberately clear-cut: this is a regression guard that the pipeline retrieves
+obviously-relevant code, not a broad relevance benchmark (which would need a large
+human-judged dataset).
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.

@@ -138,6 +138,18 @@ GO_RETRIEVAL_DIFF_PREFIX = "go-retrieval:"
 GO_RETRIEVAL_LABEL = "graph"
 GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
 GO_CALL_EDGE_REPR = "{file} -> {name}"
+
+# (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
+# (H) right function for a natural-language query? Uses cgr's own embedder over
+# (H) function source extracted from the captured graph; graded as recall@k on
+# (H) controlled fixtures whose query->function relevance is unambiguous.
+SEMANTIC_TOP_K = 3
+SEMANTIC_SCORES_FILENAME = "semantic_scores.csv"
+SEMANTIC_DIFF_FILENAME = "semantic_diff.json"
+SEMANTIC_DIFF_PREFIX = "semantic:"
+SEMANTIC_LABEL = "recall-at-k"
+SEMANTIC_CASE_REPR = "{query} => {expected}"
+SEMANTIC_TITLE = "cgr semantic-search eval: query->function recall@k"
 ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"
