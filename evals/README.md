@@ -381,6 +381,42 @@ locals to their type, and reading the selector callee name. On `encoding/json`,
 precision/recall went from 1.0/0.55 to 1.0/1.0 (110/110 call edges, zero false
 positives).
 
+## Multi-language retrieval (Rust) — Rust CALLS vs `syn`
+
+The same harness applied to Rust: for each first-party Rust symbol, which files
+call it. cgr's Rust `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by `syn` (the de-facto Rust parser, the
+same oracle as the Rust L1 structure eval, extended to emit `ExprCall` path
+callees and `ExprMethodCall` method idents), over the same first-party name
+universe. `syn` is independent of cgr's tree-sitter Rust frontend.
+
+```bash
+uv run python -m evals.rust_retrieval --target <rust-sources>
+```
+
+Requires the `cargo` toolchain on `PATH`; the eval exits cleanly if it is missing.
+Pinned by `codebase_rag/tests/test_rust_retrieval_eval.py`, where cgr's Rust call
+graph matches the `syn` oracle on the fixture.
+
+Running it on a real stdlib module (`core::str`, via the `rust-src` component
+under the rustup sysroot) surfaced two cgr bugs and drove the fix from
+precision/recall 0.91/0.65 to 0.94/0.95. (1) A method in a generic impl block
+(`impl<'a> Thing for Chars<'a>`) was attributed to a caller qn that carried the
+impl's generics (`crate.lib.Chars<'a>.go`), but the method node is registered on
+the bare type (`crate.lib.Chars.go`), so every such `CALLS` edge had a dangling
+caller and was dropped; fixed by routing `_get_rust_impl_class_name` through the
+same `rs_utils.extract_impl_target` the definition pass uses (recovered 44 of 58
+missing edges). (2) A regression from the externally-imported-name fix:
+`_is_external_import` mistook Rust relative imports (`use super::b::helper`, whose
+recorded target is the `::`-separated `super::b::helper`) for external symbols and
+suppressed the trie fallback, dropping the call; fixed by restricting that guard
+to dotted absolute-path imports (Python/Java form), leaving `::`-path and relative
+imports to the trie. Pinned by `codebase_rag/tests/test_rust_impl_method_call_qn.py`.
+The remaining gap is field/generic method dispatch (`self.field.method()`,
+`Pattern` trait calls) needing deeper Rust type inference, plus oracle
+undercount inside macro bodies (`write!` expands to `.fmt()` calls `syn` does not
+see), documented rather than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine

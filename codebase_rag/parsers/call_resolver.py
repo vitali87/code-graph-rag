@@ -298,6 +298,12 @@ class CallResolver:
         target = import_map.get(call_name)
         if not target:
             return False
+        # (H) Only dotted absolute-path imports (Python/Java `pkg.mod.Name`) are
+        # (H) judged here. Rust/C++ record relative or `::`-separated targets
+        # (H) (`super::b::helper`) that never carry the project prefix and rely on
+        # (H) the trie fallback to resolve, so they must not be mistaken external.
+        if cs.SEPARATOR_DOT not in target or cs.SEPARATOR_DOUBLE_COLON in target:
+            return False
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False

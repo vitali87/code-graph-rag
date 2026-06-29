@@ -19,6 +19,7 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
+from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
     get_function_captures,
@@ -547,17 +548,13 @@ class CallProcessor:
         return None
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
-        class_name = self._get_node_name(class_node, cs.FIELD_TYPE)
-        if class_name:
-            return class_name
-        return next(
-            (
-                child.text.decode(cs.ENCODING_UTF8)
-                for child in class_node.children
-                if child.type == cs.TS_TYPE_IDENTIFIER and child.is_named and child.text
-            ),
-            None,
-        )
+        # (H) Use the same bare-type extraction as the definition pass
+        # (H) (rs_utils.extract_impl_target), which strips generic arguments
+        # (H) (`Chars<'a>` -> `Chars`). _get_node_name returns the full generic
+        # (H) text, so a call inside a generic impl block was attributed to a
+        # (H) caller qn bearing the generics (crate.lib.Chars<'a>.go) that matches
+        # (H) no registered node, silently dropping the CALLS edge.
+        return rs_utils.extract_impl_target(class_node)
 
     def _get_class_name_for_node(
         self, class_node: Node, language: cs.SupportedLanguage

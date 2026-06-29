@@ -139,6 +139,15 @@ GO_RETRIEVAL_LABEL = "graph"
 GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
 GO_CALL_EDGE_REPR = "{file} -> {name}"
 
+RS_SUFFIX = ".rs"
+RUST_DEFAULT_TARGET = "."
+RUST_RETRIEVAL_SCORES_FILENAME = "rust_retrieval_scores.csv"
+RUST_RETRIEVAL_DIFF_FILENAME = "rust_retrieval_diff.json"
+RUST_RETRIEVAL_DIFF_PREFIX = "rust-retrieval:"
+RUST_RETRIEVAL_LABEL = "graph"
+RUST_RETRIEVAL_TITLE = "cgr multi-language retrieval: Rust CALLS vs syn oracle"
+RUST_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on

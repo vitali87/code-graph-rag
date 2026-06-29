@@ -106,9 +106,40 @@ fn name_edge_json(
     )
 }
 
+fn call_json(file: &str, name: &str) -> String {
+    format!("{{\"file\":\"{}\",\"name\":\"{}\"}}", esc(file), esc(name))
+}
+
 // (H) Last path segment of a trait reference (`a::b::Trait` / `Trait<T>` -> Trait).
 fn trait_path_name(path: &syn::Path) -> Option<String> {
     path.segments.last().map(|s| s.ident.to_string())
+}
+
+// ---- call-site collection ----
+//
+// (H) Every call expression's (file, callee simple name): a path call's last
+// (H) segment (`foo()`, `a::b::foo()`, `Type::assoc()` -> foo / assoc) and a
+// (H) method call's method ident (`x.method()` -> method). Mirrors go_ast.go's
+// (H) call oracle so cgr's Rust CALLS edges grade against an independent parser.
+
+struct CallCollector<'a> {
+    file: &'a str,
+    out: &'a mut Vec<String>,
+}
+
+impl<'ast, 'a> Visit<'ast> for CallCollector<'a> {
+    fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(p) = &*node.func {
+            if let Some(seg) = p.path.segments.last() {
+                self.out.push(call_json(self.file, &seg.ident.to_string()));
+            }
+        }
+        syn::visit::visit_expr_call(self, node);
+    }
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        self.out.push(call_json(self.file, &node.method.to_string()));
+        syn::visit::visit_expr_method_call(self, node);
+    }
 }
 
 // ---- node collection (every declaration, including nested/closures) ----
@@ -428,6 +459,7 @@ fn visit_dir(
     nodes: &mut Vec<String>,
     edges: &mut Vec<String>,
     name_edges: &mut Vec<String>,
+    calls: &mut Vec<String>,
 ) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -438,7 +470,7 @@ fn visit_dir(
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !IGNORED_DIRS.contains(&name) {
-                visit_dir(&path, root, nodes, edges, name_edges);
+                visit_dir(&path, root, nodes, edges, name_edges, calls);
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             if let Ok(src) = fs::read_to_string(&path) {
@@ -462,6 +494,8 @@ fn visit_dir(
                         module_line: MODULE_LINE,
                     };
                     closures.visit_file(&ast);
+                    let mut callcol = CallCollector { file: &rel, out: calls };
+                    callcol.visit_file(&ast);
                 }
             }
         }
@@ -474,11 +508,13 @@ fn main() {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut name_edges = Vec::new();
-    visit_dir(root, root, &mut nodes, &mut edges, &mut name_edges);
+    let mut calls = Vec::new();
+    visit_dir(root, root, &mut nodes, &mut edges, &mut name_edges, &mut calls);
     println!(
-        "{{\"nodes\":[{}],\"edges\":[{}],\"name_edges\":[{}]}}",
+        "{{\"nodes\":[{}],\"edges\":[{}],\"name_edges\":[{}],\"calls\":[{}]}}",
         nodes.join(","),
         edges.join(","),
-        name_edges.join(",")
+        name_edges.join(","),
+        calls.join(",")
     );
 }
