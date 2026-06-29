@@ -7,11 +7,11 @@ description: "Contribution guidelines for Code-Graph-RAG including setup, code s
 Thank you for your interest in contributing to Code-Graph-RAG!
 
 !!! note "Canonical guide"
-    This page is a quick-start summary. The full, authoritative contribution guide, including the complete coding standards, lives in [`CONTRIBUTING.md`](https://codeberg.org/vitali87/code-graph-rag/src/branch/main/CONTRIBUTING.md) at the repository root. When the two differ, the root guide wins.
+    This page is a quick-start summary. The full, authoritative contribution guide, including the complete coding standards, lives in [`CONTRIBUTING.md`](https://github.com/vitali87/code-graph-rag/blob/main/CONTRIBUTING.md) at the repository root. When the two differ, the root guide wins.
 
 ## Getting Started
 
-1. **Browse Issues**: Check out the [issue tracker](https://codeberg.org/vitali87/code-graph-rag/issues) to find tasks that need work. Look for `good first issue` and `help wanted` labels.
+1. **Browse Issues**: Check out the [issue tracker](https://github.com/vitali87/code-graph-rag/issues) to find tasks that need work. Look for `good first issue` and `help wanted` labels.
 2. **Pick an Issue**: Choose an issue that interests you and matches your skill level
 3. **Comment on the Issue**: Let us know you're working on it to avoid duplicate effort
 4. **Fork the Repository**: Create your own fork to work on

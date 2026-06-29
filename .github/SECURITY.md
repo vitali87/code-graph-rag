@@ -12,7 +12,7 @@ As the project is in early development (pre 1.0), only the latest release receiv
 
 **Please do not report security vulnerabilities through public issues, pull requests, or any other public channels.**
 
-Instead, please open a [confidential issue](https://codeberg.org/vitali87/code-graph-rag/issues/new) on Codeberg (tick "this issue is confidential" before submitting). This ensures the details remain confidential until a fix is available.
+Instead, please use GitHub's private vulnerability reporting: go to the [Security tab](https://github.com/vitali87/code-graph-rag/security/advisories/new) and click **Report a vulnerability**. This keeps the details confidential between you and the maintainers until a fix is available.
 
 When reporting, please include:
 

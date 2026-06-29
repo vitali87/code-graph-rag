@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 
 ## Getting Started
 
-1. **Browse Issues**: Check out our [issue tracker](https://codeberg.org/vitali87/code-graph-rag/issues) to find tasks that need work
+1. **Browse Issues**: Check out our [issue tracker](https://github.com/vitali87/code-graph-rag/issues) to find tasks that need work
    - Look for issues labeled `good first issue` for beginner-friendly tasks
    - Issues labeled `help wanted` are open for community contributions
 2. **Pick an Issue**: Choose an issue that interests you and matches your skill level

@@ -5,7 +5,7 @@
   "description": "Graph-based RAG system for multi-language codebases. Parse, index, query, and edit code using knowledge graphs and natural language.",
   "websiteUrl": "https://code-graph-rag.com",
   "repository": {
-    "url": "https://codeberg.org/vitali87/code-graph-rag",
+    "url": "https://github.com/vitali87/code-graph-rag",
     "source": "github"
   },
   "version": "0.0.187",

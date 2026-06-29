@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for your question! Please keep questions concrete; for broader topics, prefer opening an [issue](https://codeberg.org/vitali87/code-graph-rag/issues) with the `question` label.
+        Thank you for your question! Please keep questions concrete; for broader topics, prefer opening an [issue](https://github.com/vitali87/code-graph-rag/issues) with the `question` label.
 
   - type: textarea
     id: question

@@ -7,7 +7,7 @@ description: "Add support for new programming languages to Code-Graph-RAG using 
 Code-Graph-RAG makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
 
 !!! warning
-    While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. [Submit a language request](https://codeberg.org/vitali87/code-graph-rag/issues) if you need a specific language supported.
+    While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. [Submit a language request](https://github.com/vitali87/code-graph-rag/issues) if you need a specific language supported.
 
 ## Quick Start
 

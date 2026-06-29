@@ -31,7 +31,7 @@ body:
     attributes:
       label: URL (if applicable)
       description: Link to the documentation page
-      placeholder: "https://codeberg.org/vitali87/code-graph-rag/src/branch/main/..."
+      placeholder: "https://github.com/vitali87/code-graph-rag/blob/main/..."
 
   - type: textarea
     id: current-state

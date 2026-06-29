@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: 📚 Documentation
-    url: https://codeberg.org/vitali87/code-graph-rag
+    url: https://github.com/vitali87/code-graph-rag
     about: Read the documentation and setup guides
   - name: 🎓 MCP Server Setup
-    url: https://codeberg.org/vitali87/code-graph-rag/src/branch/main/docs/claude-code-setup.md
+    url: https://github.com/vitali87/code-graph-rag/blob/main/docs/claude-code-setup.md
     about: Setup Code-Graph-RAG as an MCP server with Claude Code

@@ -1,4 +1,4 @@
-# (H) Regression tests for Codeberg issue #1: incremental rebuild used to leave
+# (H) Regression tests for issue #1: incremental rebuild used to leave
 # (H) stale Function/DEFINES/IMPORTS/CALLS entities when a symbol was renamed
 # (H) across files, because the incremental path was additive-only. After the
 # (H) fix, an incremental rebuild after a rename must yield exactly the same
