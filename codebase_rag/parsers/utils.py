@@ -210,6 +210,30 @@ def callable_parameter_indices(
     return {name: index for index, name in enumerate(names) if name in invoked}
 
 
+def _js_ts_field_member_name(
+    node: ASTNode, language: cs.SupportedLanguage | None
+) -> str | None:
+    # (H) The binding name of a JS/TS class-field arrow / fn-expr whose enclosing
+    # (H) field definition holds it as its `value` (`helper = () => ...`), so the
+    # (H) member is modelled as class_qn.helper. None for other languages/shapes.
+    if language not in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+        return None
+    if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+        return None
+    parent = node.parent
+    # (H) `==` not `is`: py-tree-sitter returns a fresh Node wrapper on each access,
+    # (H) so identity comparison always fails; Node equality compares the node id.
+    if parent is None or parent.child_by_field_name(cs.FIELD_VALUE) != node:
+        return None
+    name_node = parent.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.type not in (
+        cs.TS_IDENTIFIER,
+        cs.TS_PROPERTY_IDENTIFIER,
+    ):
+        return None
+    return safe_decode_text(name_node)
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -230,8 +254,12 @@ def ingest_method(
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return
-    elif not (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)):
-        return
+    elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
+        # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
+        # (H) field on the function node; take the binding name from the enclosing
+        # (H) field definition so it is modelled as a member instead of dropped.
+        if not (method_name := _js_ts_field_member_name(method_node, language)):
+            return
     elif (text := method_name_node.text) is None:
         return
     else:

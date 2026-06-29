@@ -601,6 +601,8 @@ class CallProcessor:
                 method_name = cpp_utils.extract_function_name(method_node)
             else:
                 method_name = self._get_node_name(method_node)
+            if not method_name and language in _JS_TS_LANGUAGES:
+                method_name = self._js_ts_arrow_binding_name(method_node)
             if not method_name:
                 continue
             # (H) method_nodes includes functions nested inside methods. Build the
@@ -1620,18 +1622,27 @@ class CallProcessor:
     def _js_ts_arrow_binding_name(self, func_node: Node) -> str | None:
         # (H) An arrow / function expression has no `name` field, so the call pass
         # (H) skipped it and never processed its body's calls. Recover the binding
-        # (H) name for the `const f = () => ...` form (a variable_declarator with an
-        # (H) identifier name) -- the dominant ESM pattern -- so its calls are
-        # (H) attributed to the same qn the definition pass registered (module.f via
-        # (H) _build_nested_qualified_name). Anonymous/destructured arrows stay
-        # (H) unnamed (skipped), as before.
+        # (H) name for the two named forms whose value IS the arrow: a module/local
+        # (H) `const f = () => ...` (variable_declarator) and a class field
+        # (H) `helper = () => ...` (public_field_definition). The body's calls then
+        # (H) attribute to the same qn the definition pass registered. Anonymous /
+        # (H) destructured arrows stay unnamed (skipped), as before.
         if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return None
         parent = func_node.parent
-        if parent is None or parent.type != cs.TS_VARIABLE_DECLARATOR:
+        if parent is None:
+            return None
+        # (H) func_node must be the parent's value/initializer for both forms
+        # (H) (variable_declarator and public_field_definition), so one value check
+        # (H) covers both. `==` not `is`: py-tree-sitter returns a fresh Node wrapper
+        # (H) per access, so identity comparison always fails (Node `==` compares id).
+        if parent.child_by_field_name(cs.FIELD_VALUE) != func_node:
             return None
         name_node = parent.child_by_field_name(cs.FIELD_NAME)
-        if name_node is None or name_node.type != cs.TS_IDENTIFIER:
+        if name_node is None or name_node.type not in (
+            cs.TS_IDENTIFIER,
+            cs.TS_PROPERTY_IDENTIFIER,
+        ):
             return None
         return safe_decode_text(name_node)
 

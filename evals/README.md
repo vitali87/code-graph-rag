@@ -494,7 +494,13 @@ which is empty for an arrow / function expression, so it skipped the whole
 `const f = () => …` body and never emitted its calls — and modern TS is mostly
 arrow functions. Fixed by recovering the binding name for the `variable_declarator`
 form so the body's calls attribute to the same qn the definition pass registered
-(`codebase_rag/tests/test_ts_arrow_caller_calls.py`). The remaining gap is calls
+(`codebase_rag/tests/test_ts_arrow_caller_calls.py`). A follow-up fix also models
+**class-field arrow members** (`class T { helper = () => … }`): the definition
+pass dropped them (the arrow has no `name` field, so `ingest_method` returned
+early) so no `T.helper` node existed and its body's calls were lost. The binding
+name is now taken from the enclosing field definition in both the definition and
+call passes, modelling it as `T.helper` like a normal method
+(`codebase_rag/tests/test_ts_class_field_arrow.py`). The remaining gap is calls
 inside anonymous (returned/inline) arrows, method dispatch on typed receivers, and
 the name-based oracle's over-count of common method names (`error` on a receiver
 cgr cannot type) — documented rather than scoped away.
