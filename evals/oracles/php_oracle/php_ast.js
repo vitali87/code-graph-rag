@@ -66,8 +66,13 @@ function callName(what) {
     what.kind === "nullsafepropertylookup" ||
     what.kind === "staticlookup"
   ) {
+    // (H) Only a static identifier offset is a real callee name; a dynamic
+    // (H) offset (`$obj->$m()`) is kind "variable" whose `name` is the variable
+    // (H) identifier, which must not be emitted as a call edge.
     const off = what.offset;
-    if (off && typeof off.name === "string") return off.name;
+    if (off && off.kind === "identifier" && typeof off.name === "string") {
+      return off.name;
+    }
   }
   return null;
 }

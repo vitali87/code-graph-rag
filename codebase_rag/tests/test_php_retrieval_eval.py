@@ -62,6 +62,25 @@ def test_cgr_matches_oracle_on_clean_php_project(tmp_path: Path) -> None:
     assert cgr == oracle
 
 
+@needs_node
+def test_php_dynamic_member_call_not_emitted(tmp_path: Path) -> None:
+    # (H) A dynamic member call (`$this->$method()`) has a `variable` offset whose
+    # (H) name is the variable identifier ("method"), not a static method name. The
+    # (H) oracle must not emit it as a call edge even when it collides with a
+    # (H) declared first-party method name, or it becomes a false ground-truth edge.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "c.php").write_text(
+        "<?php\nclass C {\n"
+        "    public function method(): int { return 1; }\n"
+        "    public function go(): int { $method = 'x'; return $this->$method(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    edges, declared = oracle_php_call_edges(tmp_path)
+    assert "method" in declared
+    assert ("c.php", "method") not in edges
+
+
 def test_score_php_retrieval_prf() -> None:
     result = score_php_retrieval(
         {("a.php", "f"), ("a.php", "g")}, {("a.php", "f"), ("b.php", "h")}
