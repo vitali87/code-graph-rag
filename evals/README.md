@@ -600,15 +600,33 @@ call graph matches the `libclang` oracle on a header-free fixture.
 
 Running it on a real project (`jq`, 18 of 21 `src/*.c` files parsed cleanly; the
 other three need build-generated headers) gives precision **0.98**, recall
-**0.93**, F1 0.96 — **no cgr bug**. The whole residual tail is the **C preprocessor
-gap**: cgr's tree-sitter front end does not evaluate `#if`/macros, while `libclang`
-does. So cgr over-counts calls inside inactive conditional branches (e.g.
-`yysymbol_name` in bison-generated `parser.c`, called only under `#if YYDEBUG` with
-`YYDEBUG` defined to `0`) and under-counts calls that exist only after macro
-expansion (e.g. the `jv_object_foreach` macro in `jv.h` expanding to
-`jv_object_iter`/`jv_object_iter_key`/`jv_object_iter_next` calls that never appear
-in the source text). This is inherent to a tree-sitter front end versus a real
-compiler, not a resolution defect. Documented rather than scoped away.
+**0.93**, F1 0.96. Every diff entry was classified against the source; the tail
+splits into two causes.
+
+**Most of it is the C preprocessor gap** (inherent — cgr's tree-sitter front end
+does not evaluate `#if`/macros, while `libclang` does), confirmed in both
+directions:
+
+- All 11 false positives are calls cgr emits inside inactive conditional branches
+  that `libclang` correctly compiles out: `jvp_strtod` / `tsd_dtoa_context_get` in
+  `jv.c` under `#ifdef USE_DECNUM`, `jv_parser_new` in `jq_test.c` under
+  `#ifdef HAVE_PTHREAD`, `jv_mem_calloc` in `jv_print.c` under `#ifdef WIN32`,
+  `yysymbol_name` in `parser.c` under `#if YYDEBUG` (`YYDEBUG` is `0`). cgr makes
+  **zero misresolutions** — each is correct code that is simply dead.
+- Most false negatives are calls that exist only after macro expansion, which cgr
+  cannot see: the `jv_object_foreach` macro (`jv.h`) expanding to `jv_object_iter*`
+  calls, the `token()` / `check_done()` macros in `jv_parse.c`, flex's input macros,
+  and bison's `api.prefix {jq_yy}` rename (`libclang` records `jq_yylex` after the
+  `#define`; cgr resolves the same call under the textual name `yylex`).
+
+**The rest is a genuine cgr limitation, not the preprocessor:** in the
+bison-generated `parser.c`, tree-sitter produces 20 `ERROR` nodes, and the normal
+`yyerror` definition (a plain `void yyerror(...)` at `parser.c:406`) falls inside
+one. cgr therefore never registers `yyerror` as a function, so every call to it is
+unresolved. cgr silently drops real definitions that land inside a tree-sitter
+parse-error region on machine-generated code. This is a real coverage gap (tracked
+separately); it is rooted in the tree-sitter C grammar failing on generated parser
+soup rather than in cgr's resolution logic, so it is reported here, not hidden.
 
 ## Semantic search — query to function relevance
 
