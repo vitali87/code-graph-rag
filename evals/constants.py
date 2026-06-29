@@ -148,6 +148,14 @@ RUST_RETRIEVAL_LABEL = "graph"
 RUST_RETRIEVAL_TITLE = "cgr multi-language retrieval: Rust CALLS vs syn oracle"
 RUST_CALL_EDGE_REPR = "{file} -> {name}"
 
+JAVA_DEFAULT_TARGET = "."
+JAVA_RETRIEVAL_SCORES_FILENAME = "java_retrieval_scores.csv"
+JAVA_RETRIEVAL_DIFF_FILENAME = "java_retrieval_diff.json"
+JAVA_RETRIEVAL_DIFF_PREFIX = "java-retrieval:"
+JAVA_RETRIEVAL_LABEL = "graph"
+JAVA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Java CALLS vs javac oracle"
+JAVA_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on

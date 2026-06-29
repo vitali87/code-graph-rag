@@ -118,6 +118,12 @@ class JavaMethodResolverMixin:
         ):
             return simple_class_qn
 
+        # (H) An unqualified class-name receiver for a static call (`T.make()`)
+        # (H) defined in a sibling file: imports and the current module were checked
+        # (H) above, so the remaining unqualified case is a same-package class.
+        if sibling_class_qn := self._resolve_sibling_class_qn(object_ref, module_qn):
+            return sibling_class_qn
+
         # (H) A receiver like `obj.engine` (field access on a typed variable) is not a
         # (H) single name: resolve the base, then walk each field's declared type across
         # (H) classes so `obj.engine.start()` and deeper chains resolve to a method.
@@ -169,6 +175,28 @@ class JavaMethodResolverMixin:
     def _find_parent_class(self, class_qn: str) -> str | None:
         parent_classes = self.class_inheritance.get(class_qn, [])
         return parent_classes[0] if parent_classes else None
+
+    def _resolve_sibling_class_qn(self, class_name: str, module_qn: str) -> str | None:
+        # (H) Resolve a bare class name to a registered Class/Interface in another
+        # (H) module, preferring one in the same package (directory) so an
+        # (H) unqualified same-package reference resolves without an import. Falls
+        # (H) back to any registered match for the cross-package case.
+        if not (candidate_modules := self._fqn_to_module_qn.get(class_name)):
+            return None
+        current_file = self.module_qn_to_file_path.get(module_qn)
+        current_dir = current_file.parent if current_file else None
+        fallback: str | None = None
+        for candidate_module in candidate_modules:
+            candidate_qn = f"{candidate_module}{cs.SEPARATOR_DOT}{class_name}"
+            if candidate_qn not in self.function_registry or self.function_registry[
+                candidate_qn
+            ] not in (NodeType.CLASS, NodeType.INTERFACE):
+                continue
+            candidate_file = self.module_qn_to_file_path.get(candidate_module)
+            if current_dir and candidate_file and candidate_file.parent == current_dir:
+                return candidate_qn
+            fallback = fallback or candidate_qn
+        return fallback
 
     def _resolve_static_or_local_method(
         self, method_name: str, module_qn: str

@@ -28,8 +28,12 @@
 
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.LambdaExpressionTree;
 import com.sun.source.tree.LineMap;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
@@ -59,6 +63,7 @@ public class Oracle {
     static final List<String> recs = new ArrayList<>();
     static final List<String> edges = new ArrayList<>();
     static final List<String> nameEdges = new ArrayList<>();
+    static final List<String> calls = new ArrayList<>();
     static final long MODULE_LINE = 0;
 
     static String esc(String s) {
@@ -85,6 +90,13 @@ public class Oracle {
         nameEdges.add("{\"rel\":\"" + rel + "\",\"source\":{\"kind\":\"" + skind
             + "\",\"file\":\"" + esc(file) + "\",\"line\":" + sline
             + "},\"target_name\":\"" + esc(targetName) + "\"}");
+    }
+
+    // (H) A file-level call site: caller file + callee simple name (the method
+    // (H) identifier). The Python side keeps only callees whose name is a declared
+    // (H) first-party Method/Function, mirroring the Go/Rust call oracles.
+    static void emitCall(String file, String name) {
+        calls.add("{\"file\":\"" + esc(file) + "\",\"name\":\"" + esc(name) + "\"}");
     }
 
     static void emit(String kind, String file, long line, long endLine, String name) {
@@ -213,10 +225,30 @@ public class Oracle {
                     }
                     return super.visitMethod(node, p);
                 }
+
+                public Void visitMethodInvocation(MethodInvocationTree node, Void p) {
+                    // (H) The callee simple name: the trailing identifier of a
+                    // (H) member-select (`obj.foo()`, `Type.bar()`) or a bare
+                    // (H) identifier (`foo()`, same-class or static-imported). A
+                    // (H) `super()`/`this()` constructor call yields "super"/"this"
+                    // (H) and is dropped downstream (never a declared method name).
+                    ExpressionTree sel = node.getMethodSelect();
+                    String name = null;
+                    if (sel instanceof MemberSelectTree) {
+                        name = ((MemberSelectTree) sel).getIdentifier().toString();
+                    } else if (sel instanceof IdentifierTree) {
+                        name = ((IdentifierTree) sel).getName().toString();
+                    }
+                    if (name != null) {
+                        emitCall(rel, name);
+                    }
+                    return super.visitMethodInvocation(node, p);
+                }
             }.scan(unit, null);
         }
         System.out.print("{\"nodes\":[" + String.join(",", recs)
             + "],\"edges\":[" + String.join(",", edges)
-            + "],\"name_edges\":[" + String.join(",", nameEdges) + "]}");
+            + "],\"name_edges\":[" + String.join(",", nameEdges)
+            + "],\"calls\":[" + String.join(",", calls) + "]}");
     }
 }
