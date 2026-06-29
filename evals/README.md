@@ -89,6 +89,51 @@ To keep the trace and the static graph in agreement, `calls_trace._frame_qn` att
 
 Covered by `codebase_rag/tests/test_l3_decorator_normalization.py`.
 
+## Retrieval — graph vs grep (file-level call localization)
+
+Answers the question raised in issue #424: does graph-augmented retrieval find
+the code that calls a symbol better than plain grep? This is the retrieval layer
+decoupled from any LLM, which is the measurement the GitLab GKG evaluation
+([work item #224](https://gitlab.com/gitlab-org/rust/knowledge-graph/-/work_items/224))
+flagged as out of scope. (That work item, contrary to a widely repeated claim,
+contains no "8% over grep" figure; its headline was an agentic SWE-bench-Lite
+pass rate of roughly 6 to 7 of 23 issues. This benchmark measures retrieval
+quality directly instead.)
+
+```bash
+uv run python -m evals.retrieval --target codebase_rag
+```
+
+The task: for every first-party symbol `S`, find the files that call `S`. The
+comparison unit is a file-level call edge `(caller_file, callee_simple_name)`,
+which mirrors the GKG "did it open the right file" localization signal. Three
+conditions are scored against one Python `ast` oracle over the same file and
+first-party symbol universe:
+
+- **graph** (`retrieval.cgr_call_edges`): every cgr `CALLS`/`INSTANTIATES` edge,
+  reduced to its caller node's file and the callee's simple name (a constructor
+  resolved to `Class.__init__` is credited to `Class`, as in L2).
+- **grep_name** (`retrieval.grep_call_edges`, `GrepMode.NAME`): ripgrep for the
+  bare symbol token `\b(name)\b`, the first thing a user reaches for.
+- **grep_call** (`GrepMode.CALL`): ripgrep for the symbol followed by a paren
+  `\b(name)\s*\(`, a call-tuned pattern.
+- **Oracle** (`retrieval.oracle_call_edges`): every `ast.Call` whose callee
+  simple name is first-party and non-dunder, attributed to its file.
+
+Requires `rg` (ripgrep) on `PATH`; `evals.retrieval` exits cleanly if it is
+missing. Writes `evals/results/retrieval_scores.csv` and
+`evals/results/retrieval_diff.json`. The thesis and grep's two failure modes (a
+bare reference or import counts as a hit, and a definition site `def S(` is
+indistinguishable from a call) are pinned by
+`codebase_rag/tests/test_retrieval_eval.py`.
+
+Both grep conditions reach recall 1.0 by construction: the oracle is itself
+name-based, so any called name is present textually and grep cannot miss it. The
+entire story is therefore precision, which is exactly where the resolved graph
+wins. Graph recall below 1.0 reflects the few call edges cgr does not resolve;
+graph false positives are call edges cgr emits that the pure-`ast` notion of a
+call does not see (worth a look, but a small fraction).
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -220,3 +265,26 @@ Span (end_line) accuracy on matched defs: 6800/6800 exact.
 | explicit (no dunders) | 580 | 580 | 0 | 1.0000 |
 
 The L3 fixture exercises rich Python plus all 11 supported languages; recall is a sound lower bound over the cgr code paths that fixture drives. These numbers are for the Python `codebase_rag` target — graded multi-language recall (JS/Rust/Go/Java/C/C++/Lua/PHP/Scala) is future work pending a SCIP-based oracle.
+
+### Retrieval — graph vs grep (`uv run python -m evals.retrieval`)
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| retrieval | graph | 3217 | 587 | 37 | 0.8457 | 0.9886 | 0.9116 |
+| retrieval | grep_name | 3254 | 10591 | 0 | 0.2350 | 1.0000 | 0.3806 |
+| retrieval | grep_call | 3254 | 5638 | 0 | 0.3659 | 1.0000 | 0.5358 |
+
+The resolved graph more than doubles the precision of even the call-tuned grep
+(0.85 versus 0.37) at near-perfect recall, for an F1 of 0.91 versus 0.54: a gain
+of roughly 0.38 absolute (about 70% relative) over the strongest grep baseline.
+Bare-name grep, the common first attempt, scores far worse (F1 0.38). This is
+the decoupled retrieval result behind the intuition that a structural graph
+beats text search for code navigation.
+
+### Next step: agentic resolved-rate (out of scope here)
+
+The above isolates retrieval. The complementary end-to-end measurement is GKG's
+own design: hold one agent and model fixed and vary only the tools (graph tools
+versus grep), then report SWE-bench-style resolved rate over real issues. That
+needs an LLM, a container harness, and many runs, so it is tracked separately
+rather than run inside this deterministic harness.

@@ -49,3 +49,13 @@ PHP_CGR_DONE = "cgr PHP nodes: {count}"
 PHP_EXTRACTING_ORACLE = "Running php-parser oracle ({binary}) over {target}"
 PHP_ORACLE_DONE = "php-parser oracle nodes: {count}"
 PHP_ORACLE_MISSING = "node/npm not found on PATH; cannot run the PHP oracle"
+RETRIEVAL_SYMBOLS = "first-party symbol universe: {count} names"
+RETRIEVAL_EXTRACTING_ORACLE = "Building ast call oracle (file-level) for {target}"
+RETRIEVAL_ORACLE_DONE = "oracle call edges (first-party): {count}"
+RETRIEVAL_EXTRACTING_CGR = "Building cgr CALLS edges for {target} (project={project})"
+RETRIEVAL_CGR_DONE = "cgr call edges (first-party): {count}"
+RETRIEVAL_EXTRACTING_GREP = "Running ripgrep ({mode}) baseline over {target}"
+RETRIEVAL_GREP_DONE = "grep ({mode}) call edges: {count}"
+RETRIEVAL_RG_MISSING = (
+    "ripgrep '{binary}' not found on PATH; cannot run the grep baseline"
+)
