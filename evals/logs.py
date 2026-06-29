@@ -98,6 +98,11 @@ TS_RETRIEVAL_CGR = (
     "Building cgr TypeScript CALLS edges for {target} (project={project})"
 )
 TS_RETRIEVAL_CGR_DONE = "cgr TypeScript call edges (first-party): {count}"
+PHP_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
+PHP_RETRIEVAL_ORACLE = "Running php-parser call oracle ({binary}) over {target}"
+PHP_RETRIEVAL_ORACLE_DONE = "php-parser first-party call edges: {count}"
+PHP_RETRIEVAL_CGR = "Building cgr PHP CALLS edges for {target} (project={project})"
+PHP_RETRIEVAL_CGR_DONE = "cgr PHP call edges (first-party): {count}"
 SEMANTIC_MISSING = "semantic dependencies not installed; cannot run semantic eval"
 SEMANTIC_TARGET = "Semantic-search eval over {target} (project={project})"
 SEMANTIC_DONE = "recall@{k}: {hits}/{total} queries retrieved the expected function"

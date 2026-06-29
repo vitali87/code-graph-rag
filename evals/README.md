@@ -505,6 +505,40 @@ inside anonymous (returned/inline) arrows, method dispatch on typed receivers, a
 the name-based oracle's over-count of common method names (`error` on a receiver
 cgr cannot type) — documented rather than scoped away.
 
+## Multi-language retrieval (PHP) — PHP CALLS vs `php-parser`
+
+The same harness applied to PHP: for each first-party PHP symbol, which files
+call it. cgr's PHP `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by `php-parser` (the same oracle as the
+PHP L1 structure eval, extended to emit the callee of each `call` — a bare
+function name, or the trailing member of a `$obj->m()` / `Class::m()` lookup —
+and to carry real declaration names), over the same first-party name universe.
+`php-parser` is a pure-JS PHP parser, independent of cgr's tree-sitter PHP frontend.
+
+```bash
+uv run python -m evals.php_retrieval --target <php-sources>
+```
+
+Requires `node`/`npm` (the `php-parser` dependency installs on first run; no PHP
+runtime needed). Pinned by `codebase_rag/tests/test_php_retrieval_eval.py`, where
+cgr's PHP call graph matches the `php-parser` oracle on the fixture.
+
+Running it on a real library (`monolog`, 121 files from `src/Monolog`) surfaced
+one cgr bug and drove recall from 0.97 to 0.99 at precision 1.0 (zero false
+positives). **Plain function calls were never resolved:** a PHP
+`function_call_expression` carries its callee as a `name` node under the
+`function` field, a type `_get_call_target_name` did not handle, so no callee name
+was extracted and the edge was dropped — only method (`$obj->m()`) and static
+(`Class::m()`) calls, which expose a `name` field directly, resolved. cgr's strong
+OOP-PHP score had masked the gap (monolog is almost entirely methods). Fixed by
+adding the PHP `name` type to the callee match arm
+(`codebase_rag/tests/test_php_function_call.py`). The remaining gap is the
+name-based oracle's over-count: monolog declares first-party methods named
+`substr`/`reset`/`fwrite` (e.g. a UTF-8-aware `Utils::substr`), so a bare call to
+the PHP builtin of the same name is counted as first-party — cgr's simple-name
+trie fallback links it to the same-named first-party symbol, which the file+name
+metric credits. Documented rather than scoped away.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine

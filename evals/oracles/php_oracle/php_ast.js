@@ -41,9 +41,40 @@ const MODULE_LINE = 0;
 const nodes = [];
 const edges = [];
 const nameEdges = [];
+const calls = [];
 
-function emit(kind, file, line, endLine) {
-  nodes.push({ kind, file, line, end_line: endLine, name: "decl" });
+// (H) A php-parser declaration name is an identifier object ({name:"foo"}) or a
+// (H) bare string depending on node/version; normalise to the string.
+function nameOf(n) {
+  if (!n) return "anonymous";
+  if (typeof n === "string") return n;
+  return typeof n.name === "string" ? n.name : "anonymous";
+}
+
+function emit(kind, file, line, endLine, name) {
+  nodes.push({ kind, file, line, end_line: endLine, name: name || "decl" });
+}
+
+// (H) The callee simple name of a php-parser `call`: a bare function name
+// (H) (`foo()`), or the trailing member of a method (`$this->h()`) or static
+// (H) (`Bar::s()`) lookup. Dynamic callees (`$f()`, `$obj->$m()`) yield null.
+function callName(what) {
+  if (!what) return null;
+  if (what.kind === "name") return what.name ? what.name.split("\\").pop() : null;
+  if (
+    what.kind === "propertylookup" ||
+    what.kind === "nullsafepropertylookup" ||
+    what.kind === "staticlookup"
+  ) {
+    // (H) Only a static identifier offset is a real callee name; a dynamic
+    // (H) offset (`$obj->$m()`) is kind "variable" whose `name` is the variable
+    // (H) identifier, which must not be emitted as a call edge.
+    const off = what.offset;
+    if (off && off.kind === "identifier" && typeof off.name === "string") {
+      return off.name;
+    }
+  }
+  return null;
 }
 
 function emitEdge(rel, file, pkind, pline, ckind, cline) {
@@ -136,7 +167,7 @@ function walk(node, file, ctx) {
         walkChildren(node, file, { container: "anon", typeRef: null, funcRef: ctx.funcRef });
       } else {
         const line = declLine(node);
-        emit("Class", file, line, node.loc.end.line);
+        emit("Class", file, line, node.loc.end.line, nameOf(node.name));
         emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
         emitInheritance(node, file, "Class", line);
         walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
@@ -145,7 +176,7 @@ function walk(node, file, ctx) {
     }
     case "interface": {
       const line = declLine(node);
-      emit("Interface", file, line, node.loc.end.line);
+      emit("Interface", file, line, node.loc.end.line, nameOf(node.name));
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
       emitInheritance(node, file, "Interface", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Interface", line }, funcRef: null });
@@ -153,14 +184,14 @@ function walk(node, file, ctx) {
     }
     case "trait": {
       const line = declLine(node);
-      emit("Class", file, line, node.loc.end.line);
+      emit("Class", file, line, node.loc.end.line, nameOf(node.name));
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       return;
     }
     case "enum": {
       const line = declLine(node);
-      emit("Enum", file, line, node.loc.end.line);
+      emit("Enum", file, line, node.loc.end.line, nameOf(node.name));
       emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
       emitInheritance(node, file, "Enum", line);
       walkChildren(node, file, { container: "class", typeRef: { kind: "Enum", line }, funcRef: null });
@@ -169,14 +200,14 @@ function walk(node, file, ctx) {
     case "method": {
       const kind = ctx.container === "anon" ? "Function" : "Method";
       const line = declLine(node);
-      emit(kind, file, line, node.loc.end.line);
+      emit(kind, file, line, node.loc.end.line, nameOf(node.name));
       defineFunctionEdge(file, ctx, kind, line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind, line } });
       return;
     }
     case "function": {
       const line = declLine(node);
-      emit("Function", file, line, node.loc.end.line);
+      emit("Function", file, line, node.loc.end.line, nameOf(node.name));
       defineFunctionEdge(file, ctx, "Function", line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
       return;
@@ -184,9 +215,18 @@ function walk(node, file, ctx) {
     case "closure":
     case "arrowfunc": {
       const line = node.loc.start.line;
-      emit("Function", file, line, node.loc.end.line);
+      emit("Function", file, line, node.loc.end.line, "anonymous");
       defineFunctionEdge(file, ctx, "Function", line);
       walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Function", line } });
+      return;
+    }
+    case "call": {
+      // (H) Emit the callee simple name; the Python side keeps only callees whose
+      // (H) name is a declared first-party Function/Method. Recurse for nested
+      // (H) calls in the arguments / receiver.
+      const name = callName(node.what);
+      if (name) calls.push({ file, name });
+      walkChildren(node, file, ctx);
       return;
     }
     default:
@@ -217,4 +257,4 @@ const parser = new phpParser.Engine({
   ast: { withPositions: true },
 });
 visitDir(root, root, parser);
-process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges }));
+process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges, calls }));
