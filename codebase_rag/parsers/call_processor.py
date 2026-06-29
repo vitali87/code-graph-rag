@@ -17,6 +17,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
+from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -452,6 +453,34 @@ class CallProcessor:
                     call_name_cache=call_name_cache,
                 )
                 continue
+            # (H) A Go receiver method (`func (t T) m()`) is declared at file scope
+            # (H) but the definition pass binds it to its receiver type's node
+            # (H) (qn `module.T.m`). Attribute its body's calls to that method node,
+            # (H) not the receiver-dropping `module.m` that _build_nested_qualified_name
+            # (H) would produce, so the CALLS edges join to a real node.
+            if language == cs.SupportedLanguage.GO and (
+                bound := self._go_receiver_method_caller(
+                    func_node, func_name, module_qn
+                )
+            ):
+                caller_qn, container_qn = bound
+                filtered = (
+                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+                    if all_call_nodes is not None and call_starts is not None
+                    else None
+                )
+                self._ingest_function_calls(
+                    func_node,
+                    caller_qn,
+                    cs.NodeLabel.METHOD,
+                    module_qn,
+                    language,
+                    queries,
+                    container_qn,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
+                continue
             if func_qn := self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             ):
@@ -470,6 +499,27 @@ class CallProcessor:
                     call_nodes=filtered,
                     call_name_cache=call_name_cache,
                 )
+
+    def _go_receiver_method_caller(
+        self, func_node: Node, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) Resolve a Go receiver method to its (method_qn, container_qn),
+        # (H) mirroring the definition pass's receiver-type binding. The receiver
+        # (H) type resolves to its node qn (same-file or sibling-file in the
+        # (H) package), and the registry check ensures the method node exists
+        # (H) before overriding the default attribution.
+        if not go_utils.is_receiver_method(func_node):
+            return None
+        receiver_type = go_utils.extract_receiver_type_name(func_node)
+        if not receiver_type:
+            return None
+        container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
+            f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
+        )
+        caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if caller_qn in self._resolver.function_registry:
+            return caller_qn, container_qn
+        return None
 
     def _cpp_out_of_class_method_caller(
         self, func_node: Node, method_name: str, module_qn: str
