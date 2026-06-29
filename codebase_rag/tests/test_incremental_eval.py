@@ -148,13 +148,13 @@ class TestIncrementalScenario:
         ).run(force=True)
         assert _INBOUND_CALL in snapshot(store).edges
 
-    def test_eval_detects_dropped_inbound_call_editing_callee(
+    def test_incremental_preserves_inbound_call_editing_callee(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Detector test for issue #532: editing the callee deletes its module
-        # (H) subtree (and the inbound CALLS incident on it) but never reprocesses
-        # (H) the unchanged caller, so the edge is gone. The clean re-index keeps
-        # (H) it. The eval must surface exactly this divergence.
+        # (H) Issue #532: editing the callee deletes its module subtree (and the
+        # (H) inbound CALLS incident on it). The fix must rebuild that inbound edge
+        # (H) from the unchanged caller, so the incremental graph equals a clean
+        # (H) re-index.
         src = tmp_path / "proj"
         _make_repo(src)
         parsers, queries = parsers_queries
@@ -162,16 +162,16 @@ class TestIncrementalScenario:
             src, "proj", "callee.py", parsers, queries, tmp_path / "scn"
         )
         assert _INBOUND_CALL in clean.edges
-        assert _INBOUND_CALL not in incr.edges
-        assert incr != clean
+        assert _INBOUND_CALL in incr.edges
+        assert incr == clean
 
-    def test_eval_detects_cross_file_call_loss_editing_caller(
+    def test_incremental_preserves_cross_file_call_editing_caller(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Broader than #532: even editing the caller loses the call, because a
-        # (H) fresh incremental run rebuilds the function registry from changed
-        # (H) files only, so the unchanged callee is unknown and the resolved
-        # (H) CALLS edge is never emitted. The eval flags this too.
+        # (H) Editing the caller must rebuild its outbound call to the unchanged
+        # (H) callee. This requires the function registry to know definitions in
+        # (H) unchanged files (rehydrated from the persisted graph), not just the
+        # (H) changed file.
         src = tmp_path / "proj"
         _make_repo(src)
         parsers, queries = parsers_queries
@@ -179,7 +179,8 @@ class TestIncrementalScenario:
             src, "proj", "caller.py", parsers, queries, tmp_path / "scn"
         )
         assert _INBOUND_CALL in clean.edges
-        assert _INBOUND_CALL not in incr.edges
+        assert _INBOUND_CALL in incr.edges
+        assert incr == clean
 
     def test_baseline_index_ignores_preexisting_cache(
         self, tmp_path: Path, parsers_queries: tuple[object, object]

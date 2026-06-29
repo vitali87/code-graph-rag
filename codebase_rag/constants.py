@@ -1095,6 +1095,36 @@ CYPHER_ALL_FOLDER_PATHS = (
     "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
 
+# (H) Rehydrate the in-memory function registry on an incremental run: returns
+# (H) every definition node's qualified name and label so call/instantiation
+# (H) resolution can see symbols defined in files that were not re-parsed.
+CYPHER_ALL_DEFINITION_QNS = (
+    "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
+    "OR n:Enum OR n:Type OR n:Union "
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+)
+
+# (H) Inbound reference edges (from unchanged files) into symbols defined in one
+# (H) of $paths. Captured BEFORE a changed file's subtree is deleted so the exact
+# (H) edges can be restored verbatim afterwards (issue #532, inbound half).
+# (H) Re-resolving the callers instead would diverge from a clean index, because
+# (H) cgr's call resolution is context-sensitive (protocol vs concrete receiver,
+# (H) import granularity); the original edges already match a clean re-index.
+CYPHER_INBOUND_EDGES = (
+    "MATCH (caller)-[r:CALLS|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
+    "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
+    "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
+    "RETURN head(labels(caller)) AS caller_label, "
+    "caller.qualified_name AS caller_qn, type(r) AS rel, "
+    "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
+)
+CYPHER_PARAM_PATHS = "paths"
+KEY_CALLER_LABEL = "caller_label"
+KEY_CALLER_QN = "caller_qn"
+KEY_REL = "rel"
+KEY_TARGET_LABEL = "target_label"
+KEY_TARGET_QN = "target_qn"
+
 REALTIME_LOGGER_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
     "<level>{level: <8}</level> | "

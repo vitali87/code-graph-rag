@@ -55,6 +55,26 @@ _DEFINES_RELS = frozenset(
         cs.RelationshipType.DEFINES_METHOD.value,
     }
 )
+_DEFINITION_LABELS = frozenset(
+    {
+        cs.NodeLabel.FUNCTION.value,
+        cs.NodeLabel.METHOD.value,
+        cs.NodeLabel.CLASS.value,
+        cs.NodeLabel.INTERFACE.value,
+        cs.NodeLabel.ENUM.value,
+        cs.NodeLabel.TYPE.value,
+        cs.NodeLabel.UNION.value,
+    }
+)
+_INBOUND_DEPENDENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.INSTANTIATES.value,
+        cs.RelationshipType.IMPORTS.value,
+        cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.OVERRIDES.value,
+    }
+)
 
 
 def _text(value: PropertyValue) -> str | None:
@@ -102,6 +122,44 @@ class _StatefulIngestor:
                 return self._path_rows(_FILE_LABEL)
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
+            case cs.CYPHER_INBOUND_EDGES:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                changed: set[str] = (
+                    set(raw_paths) if isinstance(raw_paths, list) else set()
+                )
+                inbound: list[ResultRow] = []
+                for from_label, from_val, rel_type, to_label, to_val in self.edges:
+                    if rel_type not in _INBOUND_DEPENDENT_RELS:
+                        continue
+                    target = self.nodes.get((to_label, to_val))
+                    caller = self.nodes.get((from_label, from_val))
+                    if target is None or caller is None:
+                        continue
+                    caller_path = caller.get(cs.KEY_PATH)
+                    if target.get(cs.KEY_PATH) not in changed or caller_path in changed:
+                        continue
+                    inbound.append(
+                        {
+                            cs.KEY_CALLER_LABEL: from_label,
+                            cs.KEY_CALLER_QN: _text(from_val),
+                            cs.KEY_REL: rel_type,
+                            cs.KEY_TARGET_LABEL: to_label,
+                            cs.KEY_TARGET_QN: _text(to_val),
+                        }
+                    )
+                return inbound
+            case cs.CYPHER_ALL_DEFINITION_QNS:
+                defs: list[ResultRow] = []
+                for (label, uid), props in self.nodes.items():
+                    if label not in _DEFINITION_LABELS:
+                        continue
+                    qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
+                    row: ResultRow = {
+                        cs.KEY_QUALIFIED_NAME: _text(qn),
+                        cs.KEY_LABEL: label,
+                    }
+                    defs.append(row)
+                return defs
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():

@@ -162,16 +162,26 @@ effect rather than being mocked away. The store's semantics are pinned by
 runner's requirement to purge any pre-existing hash cache copied from the source
 tree, without which the baseline index would skip every file.
 
-What it surfaces: editing a file `DETACH`-deletes its `Module` subtree, including
-the `CALLS` edges incident on its functions. Outbound calls from the changed file
-are rebuilt, but inbound `CALLS` from unchanged callers are deleted and never
-rebuilt, because those callers are not reprocessed. This is
-[issue #532](https://github.com/vitali87/code-graph-rag/issues/532), and the eval
-shows it is broader than the issue records: a fresh incremental run rebuilds the
-function registry from changed files only, so even the changed file's own
-outbound calls to symbols defined in unchanged files are dropped (the callee is
-unknown at resolution time). Writes `evals/results/incremental_scores.csv` and
-`evals/results/incremental_diff.json`.
+What it surfaced and drove a fix for:
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532). Editing a
+file `DETACH`-deletes its `Module` subtree, including the reference edges incident
+on its functions. The eval showed the loss was broader than the issue recorded:
+**inbound** `CALLS`/`IMPORTS`/`INSTANTIATES` from unchanged callers were deleted
+and never rebuilt (the callers are not reprocessed), and a fresh incremental run
+also rebuilt the function registry from changed files only, so even the changed
+file's **outbound** calls to symbols defined in unchanged files were dropped. The
+fix, verified by this eval, has two parts:
+
+- **Inbound** edges are captured before deletion and restored verbatim (rather
+  than re-resolved, which would diverge: cgr resolution is context-sensitive).
+- **Outbound** resolution rehydrates the function registry from the persisted
+  graph so calls into unchanged files resolve again.
+
+Residual divergence is confined to the changed file's own calls resolved through
+type inference / protocol dispatch (e.g. `self.x.method()`), which need the full
+cross-file type context that a single-file reprocess does not rebuild; this is
+documented as a deeper follow-on, not a regression. Writes
+`evals/results/incremental_scores.csv` and `evals/results/incremental_diff.json`.
 
 ## Import resolution — internal vs external classification
 
@@ -393,28 +403,28 @@ beats text search for code navigation.
 
 ### Incremental update — incremental vs clean re-index (`uv run python -m evals.incremental`)
 
-Over a 25-file neutral-edit sample on `codebase_rag` (micro-averaged across
-probes; clean re-index is the oracle, so `fn` is edges the incremental graph
-dropped and `fp` is stale edges it kept):
+Over a 25-file neutral-edit sample on `codebase_rag`, **after the #532 fix**
+(micro-averaged across probes; clean re-index is the oracle, so `fn` is edges the
+incremental graph dropped and `fp` is stale edges it kept):
 
 | category | label | tp | fp | fn | precision | recall | f1 |
 |---|---|---|---|---|---|---|---|
-| edge | CALLS | 327832 | 4 | 3318 | 1.0000 | 0.9900 | 0.9950 |
-| edge | IMPORTS | 82001 | 7 | 599 | 0.9999 | 0.9927 | 0.9963 |
-| edge | INSTANTIATES | 25086 | 0 | 414 | 1.0000 | 0.9838 | 0.9918 |
+| edge | CALLS | 333010 | 63 | 740 | 0.9998 | 0.9978 | 0.9988 |
+| edge | IMPORTS | 82995 | 7 | 5 | 0.9999 | 0.9999 | 0.9999 |
+| edge | INSTANTIATES | 25525 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
 | edge | DEFINES / DEFINES_METHOD / CONTAINS_* / INHERITS / OVERRIDES | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
 | node | all kinds | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
 
-Only **3 of 25** edits reproduced a clean re-index exactly. The damage is
-confined to the three cross-file *reference* edge types (CALLS, IMPORTS,
-INSTANTIATES): editing a file deletes and rebuilds its own subtree, so node,
-containment, DEFINES, INHERITS, and OVERRIDES edges (each single-parent and
-local) stay perfect, but edges pointing *into* the changed file from unchanged
-files are deleted and never rebuilt. The micro-averaged recall looks high because
-each edit only perturbs the edges touching one file, but the per-edit effect is
-large (e.g. editing `graph_updater.py` drops 1406 edges). This is
-[issue #532](https://github.com/vitali87/code-graph-rag/issues/532), shown here
-to extend beyond inbound `CALLS` to `IMPORTS` and `INSTANTIATES` as well.
+**10 of 25** edits now reproduce a clean re-index exactly (up from 3 before the
+fix), `INSTANTIATES` is perfect, and `IMPORTS` is all but perfect. For reference,
+before the fix the same sample showed CALLS `fp`/`fn` of 4/3318, IMPORTS 7/599,
+INSTANTIATES 0/414, and only 3/25 clean-equivalent: the fix cut CALLS divergence
+by roughly 75% and IMPORTS by 98%. The residual is the changed file's own calls
+resolved through type inference / protocol dispatch (the `fp`/`fn` are mostly the
+same call resolved to the protocol method incrementally versus the concrete
+implementation in a clean pass), which needs full cross-file type context to
+close (see the methodology note above). Tracked under
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532).
 
 ### Import resolution — internal vs external (`uv run python -m evals.import_resolution`)
 
