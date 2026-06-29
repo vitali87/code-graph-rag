@@ -98,7 +98,15 @@ class OracleNameEdge(TypedDict):
     target_name: str
 
 
+class OracleCall(TypedDict):
+    file: str
+    name: str
+
+
 class OraclePayload(TypedDict):
     nodes: list[OracleRecord]
     edges: list[OracleEdge]
     name_edges: list[OracleNameEdge]
+    # (H) Optional: only the call-aware oracles (Go multi-language retrieval) emit
+    # (H) call sites; structure-only oracles omit this key.
+    calls: NotRequired[list[OracleCall]]

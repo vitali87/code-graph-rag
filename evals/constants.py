@@ -127,6 +127,17 @@ GO_MODULE_OFF = "off"
 GO_DEFAULT_TARGET = "."
 GO_SCORES_FILENAME = "go_scores.csv"
 GO_DIFF_FILENAME = "go_diff.json"
+
+# (H) Multi-language retrieval (Go): file-level call localization for a second
+# (H) language, cgr's Go CALLS vs go/ast call sites over the same first-party name
+# (H) universe. The go/ast oracle is independent of cgr's tree-sitter parser.
+ORACLE_KEY_CALLS = "calls"
+GO_RETRIEVAL_SCORES_FILENAME = "go_retrieval_scores.csv"
+GO_RETRIEVAL_DIFF_FILENAME = "go_retrieval_diff.json"
+GO_RETRIEVAL_DIFF_PREFIX = "go-retrieval:"
+GO_RETRIEVAL_LABEL = "graph"
+GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
+GO_CALL_EDGE_REPR = "{file} -> {name}"
 ORACLE_KEY_KIND = "kind"
 ORACLE_KEY_FILE = "file"
 ORACLE_KEY_LINE = "line"

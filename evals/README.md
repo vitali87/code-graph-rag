@@ -292,6 +292,30 @@ multi-package fixtures whose cross-package edges are known by construction
 are correctly excluded. cgr resolves all of these; the eval stands as a
 regression guard for monorepo cross-package resolution.
 
+## Multi-language retrieval (Go) — Go CALLS vs `go/ast`
+
+The retrieval benchmark above is Python-only. This extends file-level call
+localization to a second language: for each first-party Go symbol, which files
+call it. cgr's Go `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by Go's own `go/ast` (the same oracle
+program as the Go L1 structure eval, extended to emit `CallExpr` callees), over
+the same first-party name universe. The oracle uses Go's standard parser, fully
+independent of cgr's tree-sitter Go frontend, so this measures cgr's cross-file
+Go call resolution against ground truth.
+
+```bash
+uv run python -m evals.go_retrieval --target <go-sources>
+```
+
+Requires the `go` toolchain on `PATH`; the eval exits cleanly if it is missing.
+The oracle counts a call by its callee simple name (a bare `foo()` or the selector
+tail of `x.Method()` / `pkg.Func()`), keeping only callees that are declared
+first-party functions/methods, exactly mirroring the Python retrieval oracle.
+Pinned by `codebase_rag/tests/test_go_retrieval_eval.py`, where cgr's Go call
+graph matches the `go/ast` oracle on the fixture. The same harness shape
+generalizes to the other native-oracle languages (Rust, TypeScript, Java) by
+teaching each oracle to emit call sites.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
