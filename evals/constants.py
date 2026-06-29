@@ -347,3 +347,23 @@ RETRIEVAL_SCORES_FILENAME = "retrieval_scores.csv"
 RETRIEVAL_DIFF_FILENAME = "retrieval_diff.json"
 RETRIEVAL_DIFF_PREFIX = "retrieval:"
 RETRIEVAL_TITLE = "cgr retrieval eval: graph vs grep (file-level call localization)"
+
+# (H) Incremental-update eval: index, apply a semantically neutral edit (a
+# (H) trailing comment that changes the file hash but not its AST), run an
+# (H) incremental update, then compare against a clean forced re-index of the
+# (H) same on-disk state. The clean re-index is the oracle; any divergence is an
+# (H) incremental-update correctness bug.
+INCREMENTAL_DEFAULT_TARGET = "codebase_rag"
+INCREMENTAL_SCORES_FILENAME = "incremental_scores.csv"
+INCREMENTAL_DIFF_FILENAME = "incremental_diff.json"
+INCREMENTAL_NODE_DIFF_PREFIX = "incremental-node:"
+INCREMENTAL_EDGE_DIFF_PREFIX = "incremental-edge:"
+INCREMENTAL_TITLE = "cgr incremental-update eval: incremental vs clean re-index"
+INCREMENTAL_WORK_DIRNAME = "repo"
+INCREMENTAL_TMP_PREFIX = "cgr-incremental-eval-"
+NEUTRAL_EDIT_COMMENT = "\n# cgr-incremental-eval neutral edit\n"
+INCREMENTAL_MTIME_BUMP = 10.0
+INCREMENTAL_DEFAULT_SAMPLE = 25
+INCREMENTAL_DIFF_SAMPLE_CAP = 50
+STATE_NODE_REPR = "{label} {uid}"
+STATE_EDGE_REPR = "{rel} {fl}:{fv} -> {tl}:{tv}"

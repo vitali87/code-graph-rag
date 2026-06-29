@@ -134,6 +134,45 @@ wins. Graph recall below 1.0 reflects the few call edges cgr does not resolve;
 graph false positives are call edges cgr emits that the pure-`ast` notion of a
 call does not see (worth a look, but a small fraction).
 
+## Incremental update — incremental vs clean re-index
+
+Answers a correctness question the other layers cannot: after cgr re-indexes only
+the files that changed, does the resulting graph still equal a clean full
+re-index of the same tree? Incremental indexing is where a knowledge graph
+silently rots, so the clean re-index is the oracle and any divergence is a real
+bug.
+
+```bash
+uv run python -m evals.incremental --target codebase_rag --sample 25
+```
+
+The probe is a semantically neutral edit: a trailing comment is appended to one
+file, changing its hash (so cgr treats it as modified) without changing its AST
+(so a clean re-index of the edited tree is identical to the original). For each
+sampled file the harness indexes a fresh copy, applies the neutral edit, runs an
+incremental update, then compares the mutated graph node for node and edge for
+edge against a clean forced re-index of the identical on-disk state.
+
+The comparison runs against a faithful in-memory store (`cgr_graph._StatefulIngestor`)
+that implements the exact delete and fetch Cypher the incremental updater issues
+(`DETACH DELETE` of a changed file's `Module` subtree, file and folder deletes,
+orphan-external pruning, and the prune path queries), so deletions take real
+effect rather than being mocked away. The store's semantics are pinned by
+`codebase_rag/tests/test_incremental_eval.py`; the same suite also pins the
+runner's requirement to purge any pre-existing hash cache copied from the source
+tree, without which the baseline index would skip every file.
+
+What it surfaces: editing a file `DETACH`-deletes its `Module` subtree, including
+the `CALLS` edges incident on its functions. Outbound calls from the changed file
+are rebuilt, but inbound `CALLS` from unchanged callers are deleted and never
+rebuilt, because those callers are not reprocessed. This is
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532), and the eval
+shows it is broader than the issue records: a fresh incremental run rebuilds the
+function registry from changed files only, so even the changed file's own
+outbound calls to symbols defined in unchanged files are dropped (the callee is
+unknown at resolution time). Writes `evals/results/incremental_scores.csv` and
+`evals/results/incremental_diff.json`.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
@@ -280,6 +319,31 @@ of roughly 0.38 absolute (about 70% relative) over the strongest grep baseline.
 Bare-name grep, the common first attempt, scores far worse (F1 0.38). This is
 the decoupled retrieval result behind the intuition that a structural graph
 beats text search for code navigation.
+
+### Incremental update — incremental vs clean re-index (`uv run python -m evals.incremental`)
+
+Over a 25-file neutral-edit sample on `codebase_rag` (micro-averaged across
+probes; clean re-index is the oracle, so `fn` is edges the incremental graph
+dropped and `fp` is stale edges it kept):
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| edge | CALLS | 327832 | 4 | 3318 | 1.0000 | 0.9900 | 0.9950 |
+| edge | IMPORTS | 82001 | 7 | 599 | 0.9999 | 0.9927 | 0.9963 |
+| edge | INSTANTIATES | 25086 | 0 | 414 | 1.0000 | 0.9838 | 0.9918 |
+| edge | DEFINES / DEFINES_METHOD / CONTAINS_* / INHERITS / OVERRIDES | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+| node | all kinds | (all) | 0 | 0 | 1.0000 | 1.0000 | 1.0000 |
+
+Only **3 of 25** edits reproduced a clean re-index exactly. The damage is
+confined to the three cross-file *reference* edge types (CALLS, IMPORTS,
+INSTANTIATES): editing a file deletes and rebuilds its own subtree, so node,
+containment, DEFINES, INHERITS, and OVERRIDES edges (each single-parent and
+local) stay perfect, but edges pointing *into* the changed file from unchanged
+files are deleted and never rebuilt. The micro-averaged recall looks high because
+each edit only perturbs the edges touching one file, but the per-edit effect is
+large (e.g. editing `graph_updater.py` drops 1406 edges). This is
+[issue #532](https://github.com/vitali87/code-graph-rag/issues/532), shown here
+to extend beyond inbound `CALLS` to `IMPORTS` and `INSTANTIATES` as well.
 
 ### Next step: agentic resolved-rate (out of scope here)
 

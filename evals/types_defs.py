@@ -31,6 +31,15 @@ class GraphData(NamedTuple):
     name_edges: set[NameEdge]
 
 
+class GraphState(NamedTuple):
+    # (H) A flat, comparable snapshot of a whole captured graph: node identities
+    # (H) (label, unique-id) and directed edges (from_label, from_id, rel,
+    # (H) to_label, to_id). Used to diff an incremental update against a clean
+    # (H) re-index, where the clean index is the oracle.
+    nodes: frozenset[tuple[str, str]]
+    edges: frozenset[tuple[str, str, str, str, str]]
+
+
 class ScoreRow(TypedDict):
     category: str
     label: str

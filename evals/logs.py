@@ -59,3 +59,9 @@ RETRIEVAL_GREP_DONE = "grep ({mode}) call edges: {count}"
 RETRIEVAL_RG_MISSING = (
     "ripgrep '{binary}' not found on PATH; cannot run the grep baseline"
 )
+INCREMENTAL_TARGET = "Incremental-update eval over {target} (project={project})"
+INCREMENTAL_SAMPLED = "probing {count} of {total} python files with a neutral edit"
+INCREMENTAL_NO_PY = "no python files found under {target}; nothing to probe"
+INCREMENTAL_PROBE = "probe {index}/{total}: edit {path}"
+INCREMENTAL_PROBE_DIVERGED = "DIVERGED on {path}: -{missing} edges, +{stale} edges"
+INCREMENTAL_DONE = "clean-equivalent probes: {clean}/{total}"
