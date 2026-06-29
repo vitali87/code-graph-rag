@@ -279,6 +279,19 @@ corpus mode is informational only, because a real repo has no independent dead-c
 oracle (true reachability needs the very call graph under test). On `codebase_rag`
 it currently reports 4450 unreachable functions/methods (tests excluded).
 
+## Cross-project — resolution across top-level packages (monorepo)
+
+Every other eval runs on a single top-level package (`codebase_rag`), so none
+checks the case cgr is built for: a monorepo with several top-level packages where
+one references another. This eval extracts cgr's `CALLS` and `IMPORTS` edges whose
+endpoints live in *different* top-level packages and grades them on synthetic
+multi-package fixtures whose cross-package edges are known by construction
+(`codebase_rag/tests/test_cross_project_eval.py`). It confirms that
+`pkg_b.use.run()` calling `pkg_a.core.shared()`, and `pkg_b`/`pkg_c` importing
+`pkg_a` modules, resolve across the package boundary, while intra-package edges
+are correctly excluded. cgr resolves all of these; the eval stands as a
+regression guard for monorepo cross-package resolution.
+
 ## L1 (Go) — structure against a native `go/ast` oracle
 
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.

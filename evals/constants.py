@@ -417,6 +417,15 @@ DEAD_CODE_TITLE = "cgr dead-code eval: reachability over the captured graph"
 DECORATOR_AT = "@"
 DECORATOR_CALL_OPEN = "("
 
+# (H) Cross-project (monorepo) eval: does cgr resolve CALLS and IMPORTS across
+# (H) top-level package boundaries? The single-package corpora the other evals use
+# (H) never exercise this; cgr's headline is monorepo RAG. Graded on synthetic
+# (H) multi-package fixtures with known cross-package edges.
+CROSS_PROJECT_DIFF_PREFIX = "cross-project:"
+CROSS_CALLS_LABEL = "cross-package-calls"
+CROSS_IMPORTS_LABEL = "cross-package-imports"
+CROSS_EDGE_REPR = "{src} -> {dst}"
+
 # (H) Instantiation eval: file-level constructor localization. For each first-party
 # (H) class, which files instantiate it. cgr INSTANTIATES edges vs an ast oracle of
 # (H) calls whose callee simple name is a first-party class. Isolates the
