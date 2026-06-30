@@ -55,7 +55,32 @@ _KIND_BY_NAME: dict[str, str] = {
 }
 
 
+_libclang_pinned = False
+
+
+def _ensure_libclang() -> None:
+    # (H) Pin the libclang shared library BEFORE the first Index.create (libclang is
+    # (H) a global one-shot). Prefer a system libclang whose clang version matches the
+    # (H) active SDK's libc++ — required to parse C++ standard headers, which the
+    # (H) bundled pip wheel's older clang cannot. C parsing is unaffected by the
+    # (H) choice, so both the C and C++ oracles share one consistent toolchain.
+    global _libclang_pinned
+    if _libclang_pinned:
+        return
+    _libclang_pinned = True
+    from clang.cindex import Config
+
+    for candidate in ec.LIBCLANG_CANDIDATES:
+        if Path(candidate).exists():
+            try:
+                Config.set_library_file(candidate)
+            except Exception:
+                pass
+            return
+
+
 def cpp_available() -> bool:
+    _ensure_libclang()
     try:
         import clang.cindex as ci
 
@@ -73,6 +98,7 @@ def _rel(path: str, root: Path) -> str | None:
 
 
 def run_cpp_oracle(target: Path) -> GraphData:
+    _ensure_libclang()
     import clang.cindex as ci
 
     root = target.resolve()
@@ -169,7 +195,14 @@ def _emit(
 
 
 _FUNCTION_DECL = "FUNCTION_DECL"
+_FUNCTION_TEMPLATE = "FUNCTION_TEMPLATE"
+_CXX_METHOD = "CXX_METHOD"
 _CALL_EXPR = "CALL_EXPR"
+# (H) C: only free functions are first-party callees. C++: free functions (incl.
+# (H) templates) plus member functions; constructors/destructors are excluded
+# (H) because cgr models object creation as INSTANTIATES, not CALLS.
+_C_DECL_KINDS = frozenset({_FUNCTION_DECL})
+_CPP_DECL_KINDS = frozenset({_FUNCTION_DECL, _FUNCTION_TEMPLATE, _CXX_METHOD})
 
 
 def _capture_path(command: tuple[str, ...]) -> str | None:
@@ -211,11 +244,12 @@ def _c_include_args(root: Path) -> list[str]:
     return args
 
 
-def _collect_c_decls_and_calls(
+def _collect_decls_and_calls(
     cursor: Cursor,
     root: Path,
     declared: set[str],
     raw_calls: list[tuple[str, str]] | None,
+    decl_kinds: frozenset[str],
 ) -> None:
     # (H) raw_calls is None for an unclean translation unit: its AST may be
     # (H) truncated by a missing header, so its call sites are not authoritative
@@ -227,11 +261,11 @@ def _collect_c_decls_and_calls(
         # (H) never graded and walking them is the dominant cost.
         if rel is None or is_ignored(rel):
             continue
-        if child.kind.name == _FUNCTION_DECL and child.is_definition():
+        if child.kind.name in decl_kinds and child.is_definition():
             declared.add(child.spelling)
         elif raw_calls is not None and child.kind.name == _CALL_EXPR and child.spelling:
             raw_calls.append((rel, child.spelling))
-        _collect_c_decls_and_calls(child, root, declared, raw_calls)
+        _collect_decls_and_calls(child, root, declared, raw_calls, decl_kinds)
 
 
 def run_c_call_oracle(
@@ -245,6 +279,7 @@ def run_c_call_oracle(
     # (H) simple name is unambiguous. A file whose TU emits an error diagnostic
     # (H) (a missing build-generated header) is not authoritative, so it is left
     # (H) out of the covered set and the cgr side is held to the same files.
+    _ensure_libclang()
     import clang.cindex as ci
 
     root = target.resolve()
@@ -264,11 +299,96 @@ def run_c_call_oracle(
         clean = not any(
             diag.severity >= ec.CLANG_SEVERITY_ERROR for diag in tu.diagnostics
         )
-        _collect_c_decls_and_calls(
-            tu.cursor, root, declared, raw_calls if clean else None
+        _collect_decls_and_calls(
+            tu.cursor, root, declared, raw_calls if clean else None, _C_DECL_KINDS
         )
         if clean:
             covered.add(rel)
+    declared_names = frozenset(declared)
+    covered_files = frozenset(covered)
+    edges = {
+        (file, name)
+        for file, name in raw_calls
+        if name in declared_names and file in covered_files
+    }
+    return edges, declared_names, covered_files
+
+
+def _cpp_system_args() -> list[str]:
+    # (H) Like _clang_system_args but for C++: the SDK's libc++ headers must precede
+    # (H) the clang builtin resource headers, else libc++'s <cstddef> resolves the C
+    # (H) <stddef.h> first and the parse fails. isysroot supplies the platform C
+    # (H) library; the resource dir supplies clang builtins (stdarg.h, stddef.h).
+    args: list[str] = []
+    if sdk := _capture_path(ec.XCRUN_SDK_PATH_CMD):
+        args.extend((ec.CLANG_ISYSROOT_FLAG, sdk))
+        args.extend((ec.CLANG_ISYSTEM_FLAG, str(Path(sdk) / ec.CLANG_LIBCXX_SUBPATH)))
+    if resource := _capture_path(ec.CLANG_RESOURCE_DIR_CMD):
+        args.extend((ec.CLANG_ISYSTEM_FLAG, str(Path(resource) / ec.CLANG_INCLUDE_DIR)))
+    return args
+
+
+def _cpp_include_args(root: Path) -> list[str]:
+    # (H) Root and a conventional include/ root plus every dir holding a C++ header
+    # (H) become -I paths so first-party #includes resolve without a compile database.
+    dirs = {root, root / ec.CLANG_INCLUDE_DIR}
+    for glob in ec.CPP_HEADER_GLOBS:
+        for header in root.rglob(glob):
+            rel = _rel(str(header), root)
+            if rel is not None and not is_ignored(rel):
+                dirs.add(header.parent)
+    args: list[str] = []
+    for directory in sorted(dirs):
+        if directory.exists():
+            args.extend((ec.CLANG_INCLUDE_FLAG, str(directory)))
+    return args
+
+
+def run_cpp_call_oracle(
+    target: Path,
+    extra_defines: tuple[str, ...] = (),
+) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
+    # (H) File-level C++ call sites restricted to first-party callees (free functions
+    # (H) and member functions), the declared name universe, and the cleanly-parsed
+    # (H) source files. libclang resolves the true translation-unit call graph
+    # (H) (independent of cgr's tree-sitter C++ frontend). Overloads collapse under
+    # (H) the (file, simple-name) metric, so they need no disambiguation. extra_defines
+    # (H) carries corpus-specific platform macros (e.g. LEVELDB_PLATFORM_POSIX) that a
+    # (H) build system would normally supply; a TU that still errors abstains.
+    _ensure_libclang()
+    import clang.cindex as ci
+
+    root = target.resolve()
+    index = ci.Index.create()
+    defines = [ec.CLANG_DEFINE_FLAG + d for d in extra_defines]
+    base_args = [
+        ec.CLANG_CPP_LANG_FLAG,
+        ec.CLANG_CPP_LANG,
+        ec.CLANG_CPP_STD,
+        *defines,
+        *_cpp_system_args(),
+        *_cpp_include_args(root),
+    ]
+    declared: set[str] = set()
+    raw_calls: list[tuple[str, str]] = []
+    covered: set[str] = set()
+    for glob in ec.CPP_SOURCE_GLOBS:
+        for source in sorted(root.rglob(glob)):
+            rel = _rel(str(source), root)
+            if rel is None or is_ignored(rel):
+                continue
+            try:
+                tu = index.parse(str(source), args=base_args)
+            except ci.TranslationUnitLoadError:
+                continue
+            clean = not any(
+                diag.severity >= ec.CLANG_SEVERITY_ERROR for diag in tu.diagnostics
+            )
+            _collect_decls_and_calls(
+                tu.cursor, root, declared, raw_calls if clean else None, _CPP_DECL_KINDS
+            )
+            if clean:
+                covered.add(rel)
     declared_names = frozenset(declared)
     covered_files = frozenset(covered)
     edges = {
