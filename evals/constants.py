@@ -180,6 +180,25 @@ LUA_RETRIEVAL_LABEL = "graph"
 LUA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Lua CALLS vs luaparse oracle"
 LUA_CALL_EDGE_REPR = "{file} -> {name}"
 
+C_DEFAULT_TARGET = "."
+C_SOURCE_GLOB = "*.c"
+C_HEADER_GLOB = "*.h"
+C_SUFFIXES: tuple[str, ...] = (".c", ".h")
+CLANG_INCLUDE_FLAG = "-I"
+CLANG_C_STD = "-std=c11"
+CLANG_ISYSROOT_FLAG = "-isysroot"
+CLANG_ISYSTEM_FLAG = "-isystem"
+CLANG_INCLUDE_DIR = "include"
+CLANG_SEVERITY_ERROR = 3
+XCRUN_SDK_PATH_CMD: tuple[str, ...] = ("xcrun", "--show-sdk-path")
+CLANG_RESOURCE_DIR_CMD: tuple[str, ...] = ("clang", "-print-resource-dir")
+C_RETRIEVAL_SCORES_FILENAME = "c_retrieval_scores.csv"
+C_RETRIEVAL_DIFF_FILENAME = "c_retrieval_diff.json"
+C_RETRIEVAL_DIFF_PREFIX = "c-retrieval:"
+C_RETRIEVAL_LABEL = "graph"
+C_RETRIEVAL_TITLE = "cgr multi-language retrieval: C CALLS vs libclang oracle"
+C_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on
