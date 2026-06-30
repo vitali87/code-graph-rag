@@ -202,7 +202,9 @@ def _c_include_args(root: Path) -> list[str]:
     # (H) resolve without a compile database.
     dirs = {root}
     for header in root.rglob(ec.C_HEADER_GLOB):
-        dirs.add(header.parent)
+        rel = _rel(str(header), root)
+        if rel is not None and not is_ignored(rel):
+            dirs.add(header.parent)
     args: list[str] = []
     for directory in sorted(dirs):
         args.extend((ec.CLANG_INCLUDE_FLAG, str(directory)))
