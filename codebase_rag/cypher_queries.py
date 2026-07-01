@@ -124,7 +124,9 @@ _DEAD_CODE_MODULE_ROOT_NON_TEST = (
 # (H) as edges, so class candidates are review hints, not a delete list.
 # (H) *BFS visits each reachable node once; plain *0.. enumerates every path and
 # (H) times out on real graphs (cycles/diamonds make it combinatorial). *BFS
-# (H) excludes the source node, so the roots are unioned into the live set.
+# (H) excludes the source node, so the roots are unioned into the live set. The
+# (H) CASE keeps one row when there are no roots (UNWIND of [] yields zero rows,
+# (H) which would drop the final MATCH and wrongly report nothing as dead).
 _DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (
@@ -136,10 +138,10 @@ WHERE n.qualified_name STARTS WITH $project_prefix
     OR {module_clause}{test_clause}
   )
 WITH collect(n) AS roots
-UNWIND roots AS r
+UNWIND (CASE WHEN size(roots) = 0 THEN [null] ELSE roots END) AS r
 OPTIONAL MATCH (r)-[:{traversal}*BFS]->(reached)
-WITH collect(DISTINCT r) AS root_set, collect(DISTINCT reached) AS reached_set
-WITH root_set + reached_set AS live_set
+WITH roots, collect(DISTINCT reached) AS reached_set
+WITH roots + reached_set AS live_set
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set
