@@ -31,6 +31,7 @@ class TypeInferenceEngine:
         "module_qn_to_file_path",
         "class_inheritance",
         "simple_name_lookup",
+        "class_field_types",
         "_java_type_inference",
         "_lua_type_inference",
         "_js_type_inference",
@@ -50,6 +51,7 @@ class TypeInferenceEngine:
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
+        class_field_types: dict[str, dict[str, str]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -60,6 +62,13 @@ class TypeInferenceEngine:
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
+        # (H) Must preserve the shared dict reference: the factory passes the
+        # (H) DefinitionProcessor's map, which is empty at construction and populated
+        # (H) later during ingestion. `or {}` would swap an empty dict for a new one and
+        # (H) silently lose every field type written afterward.
+        self.class_field_types = (
+            class_field_types if class_field_types is not None else {}
+        )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._lua_type_inference: LuaTypeInferenceEngine | None = None
@@ -136,6 +145,21 @@ class TypeInferenceEngine:
         return self._python_type_inference
 
     def build_local_variable_type_map(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None = None,
+    ) -> dict[str, str]:
+        local = self._build_local_variable_type_map(caller_node, module_qn, language)
+        # (H) When the caller is a method, overlay its class's member-field types as a
+        # (H) base so a bare `field_.method()` receiver resolves; parameters and locals
+        # (H) with the same name shadow a field, so the local map wins on conflict.
+        if class_context and (fields := self.class_field_types.get(class_context)):
+            return {**fields, **local}
+        return local
+
+    def _build_local_variable_type_map(
         self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage
     ) -> dict[str, str]:
         match language:

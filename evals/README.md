@@ -665,8 +665,9 @@ counted as a first-party `size` edge. Pinned by
 the `libclang` oracle on a header-free namespaced fixture.
 
 Running it on a real project (`leveldb`, 40 of 42 core sources parsed cleanly; the
-other two are Windows-only or need gmock) gives precision **0.96**, recall
-**0.82**, F1 0.88 — recall up from **0.54** before the fix below.
+other two are Windows-only or need gmock) gives precision **0.99**, recall
+**0.83**, F1 **0.90** — recall up from **0.54** before the namespace fix below, and
+precision lifted from 0.96 by the receiver type inference chain (next section).
 
 **The dominant gap was a real cgr bug: the call pass dropped the namespace from
 the caller qn.** The definition pass binds a C++ free function or class inside a
@@ -680,25 +681,35 @@ routes both the free-function and class qns through the same
 always agree (RED test `test_cpp_namespace_call_caller_qn.py`). Dangling sources
 fell to 251 and recall rose 0.54 → 0.82.
 
+**Three follow-on cgr fixes then landed on top of the namespace fix, building out
+C++ receiver type inference:** (a) C++ joined the typed-language set with an engine
+(`parsers/cpp/type_inference.py`) mapping parameters and local variables — including
+reference declarators, multi-variable declarations, and drop-on-conflict lexical
+scope handling — to their class types, so `obj->method()` resolves to the method on
+the receiver's class instead of by bare name; (b) a member call whose receiver has a
+known external type (a `std::string`) skips the name-only trie fallback instead of
+mis-binding to a same-named first-party method (`call_resolver._receiver_type_is_external`);
+(c) member **fields** are captured per class at ingestion (`build_field_type_map`,
+stored in `class_field_types` keyed by class qn) and merged into the receiver map by
+the caller's enclosing class, so `mutex_.Lock()` in an out-of-line method resolves to
+the field's type even though the field is declared in a different file (the header).
+Together these lifted precision **0.96 → 0.99** (false positives 30 → 10) on `leveldb`.
+
 The remaining tail is documented, not scoped away:
 
-- **Operator overloads** (`operator=` ×25, `operator[]`, `operator==`/`!=`):
-  `libclang` records `a = b` and `a[i]` as calls to the overloaded operator
-  methods, while cgr models them as `builtin.cpp.*` operator calls — a metric
-  difference, not a misresolution.
-- **Trie-fallback misresolution of external calls** (the ~30 false positives:
-  `size`, `data`, `empty`, `clear`, `begin`, `end`): when a call's simple name
-  collides with a first-party method, cgr's name-only trie fallback binds the
-  external `std::` call to the same-named first-party method. The oracle correctly
-  treats it as external, so it surfaces as a cgr false positive.
-- **Receiver-type method dispatch and out-of-line static methods** (`DB::Open`):
-  resolving `obj->method()` to the right class needs C++ receiver type inference
-  (C++ is not yet in the typed-language set that builds a local-variable type
-  map), the same deeper gap as the Go/Java/Rust tails.
-
-The last two share one root cause: cgr has no C++ receiver type inference, so it
-resolves member calls by name alone. The eval keeps surfacing it; it is a
-follow-on, not hidden.
+- **Operator overloads** (`operator=` ×25, `operator[]`, `operator==`/`!=`, 23% of
+  the misses): `libclang` records `a = b` and `a[i]` as calls to the overloaded
+  operator methods, while cgr models them as `builtin.cpp.*` operator calls — a
+  metric difference, not a misresolution.
+- **STL calls on non-simple receivers** (the residual `begin`/`end`/`empty`/`clear`
+  false positives): receiver type inference covers parameters, locals, and member
+  fields named by a bare identifier, but not chained receivers (`map_.begin()` via a
+  nested `this->` expression) or STL locals whose element type cgr does not model, so
+  a few external calls still reach the name-only fallback.
+- **Namespace-scoped and singleton calls** (`Schedule`, `SetReadOnlyFDLimit`,
+  `DebugString`): a call on a singleton (`Env::Default()->Schedule()`) or a
+  free/namespace function the oracle attributes to a different site. Each is a
+  distinct smaller sub-case the eval continues to surface; none are hidden.
 
 ## Semantic search — query to function relevance
 

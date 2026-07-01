@@ -52,6 +52,11 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
+        # (H) {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
+        # (H) member call `field_.method()` in a (possibly out-of-line, cross-file)
+        # (H) method resolves via the field's declared type. Populated at class
+        # (H) ingestion, read by the type-inference engine at call resolution.
+        self.class_field_types: dict[str, dict[str, str]] = {}
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
         self._deferred_forward_decls: list = []
