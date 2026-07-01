@@ -68,7 +68,14 @@ def _ensure_libclang() -> None:
     if _libclang_pinned:
         return
     _libclang_pinned = True
-    from clang.cindex import Config
+    # (H) clang is an optional dependency: if the bindings are absent this import
+    # (H) raises ModuleNotFoundError, so swallow it here and let cpp_available's own
+    # (H) try/except report the oracle as unavailable (returning False), rather than
+    # (H) letting the exception escape and break test collection / the CLI path.
+    try:
+        from clang.cindex import Config
+    except Exception:
+        return
 
     for candidate in ec.LIBCLANG_CANDIDATES:
         if Path(candidate).exists():
