@@ -354,7 +354,9 @@ class TestBuildDeadCodeQueryUnit:
         assert "$root_decorators" in query
         assert "$entry_points" in query
         assert "is_exported" in query
-        assert "CALLS*0.." in query
+        # (H) BFS expansion: visits each reachable node once instead of
+        # (H) enumerating every path (which times out on real graphs).
+        assert "CALLS*BFS" in query
         # (H) test functions are roots when tests are included
         assert "n.path CONTAINS" in query
 

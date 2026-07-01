@@ -122,6 +122,9 @@ _DEAD_CODE_MODULE_ROOT_NON_TEST = (
 # (H) part of the dead cluster (the subclass is reported too). Classes referenced
 # (H) solely via type annotations / isinstance / dynamic lookups are not modelled
 # (H) as edges, so class candidates are review hints, not a delete list.
+# (H) *BFS visits each reachable node once; plain *0.. enumerates every path and
+# (H) times out on real graphs (cycles/diamonds make it combinatorial). *BFS
+# (H) excludes the source node, so the roots are unioned into the live set.
 _DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (
@@ -134,8 +137,9 @@ WHERE n.qualified_name STARTS WITH $project_prefix
   )
 WITH collect(n) AS roots
 UNWIND roots AS r
-MATCH (r)-[:{traversal}*0..]->(live)
-WITH collect(DISTINCT live) AS live_set
+OPTIONAL MATCH (r)-[:{traversal}*BFS]->(reached)
+WITH collect(DISTINCT r) AS root_set, collect(DISTINCT reached) AS reached_set
+WITH root_set + reached_set AS live_set
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set
