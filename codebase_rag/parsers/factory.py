@@ -133,5 +133,6 @@ class ProcessorFactory:
                 import_processor=self.import_processor,
                 type_inference=self.type_inference,
                 class_inheritance=self.definition_processor.class_inheritance,
+                type_aliases=self.definition_processor.type_aliases,
             )
         return self._call_processor
