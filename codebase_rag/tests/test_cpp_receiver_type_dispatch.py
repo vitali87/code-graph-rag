@@ -215,3 +215,15 @@ def test_cpp_second_declarator_receiver_resolves(
         f"b.run() on the second declarator `Zeta b` should resolve to Zeta.run, "
         f"got {calls[caller]}"
     )
+
+
+# (H) A lambda body opens its own scope. A same-named variable declared inside it must
+# (H) not leak into the enclosing function's map: without the scope guard the inner
+# (H) `Alpha z` conflicts with the outer `Zeta z`, so drop-on-conflict would discard
+# (H) `z` entirely and the outer `z.run()` would fall back to name-only (Alpha.run).
+def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
+    node = _first_function_node("void f() { Zeta z; auto g = [](){ Alpha z; }; }")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    assert var_types.get("z") == "Zeta", (
+        f"outer z should stay Zeta despite a lambda-local Alpha z, got {var_types}"
+    )

@@ -72,11 +72,16 @@ class CppTypeInferenceEngine:
         self, node: Node, decls: list[tuple[str, str]]
     ) -> None:
         for child in node.children:
+            # (H) A lambda / nested function / local class body opens its own scope;
+            # (H) its declarations are not locals of the enclosing function, so descend
+            # (H) no further or an inner `x` would be attributed to the outer `x`.
+            if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                continue
             if child.type == cs.CppNodeType.DECLARATION:
                 self._record_declaration(child, decls)
-            # (H) Recurse into nested blocks (if/for/while/try bodies) so a variable
-            # (H) declared only in an inner scope still resolves; conflicting redecls
-            # (H) across scopes are reconciled by the caller (drop-on-conflict).
+            # (H) Recurse into ordinary nested blocks (if/for/while/try bodies) so a
+            # (H) variable declared only in an inner block still resolves; conflicting
+            # (H) redecls across scopes are reconciled by the caller (drop-on-conflict).
             self._collect_body_declarations(child, decls)
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
