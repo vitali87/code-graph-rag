@@ -233,14 +233,16 @@ def _create_locals_query(
 def _create_highlights_query(
     language: Language, lang_name: cs.SupportedLanguage
 ) -> Query | None:
+    query_str = ""
     try:
         module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
         module = importlib.import_module(module_name)
-
-        query_str = ""
         if hasattr(module, "HIGHLIGHTS_QUERY"):
             query_str = module.HIGHLIGHTS_QUERY
+    except Exception as e:
+        logger.debug(f"Failed to load standard highlights query for {lang_name}: {e}")
 
+    try:
         fallback_path = (
             Path(__file__).parent / "queries" / "highlights" / f"{lang_name}.scm"
         )
@@ -253,7 +255,8 @@ def _create_highlights_query(
         if query_str:
             return Query(language, query_str)
     except Exception as e:
-        logger.debug(f"Failed to load highlights query for {lang_name}: {e}")
+        logger.debug(f"Failed to load fallback highlights query for {lang_name}: {e}")
+
     return None
 
 

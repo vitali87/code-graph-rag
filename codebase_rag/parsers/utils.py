@@ -87,6 +87,34 @@ def get_function_captures(
     return FunctionCapturesResult(lang_config, captures)
 
 
+_EXCLUDED_KEYWORDS = frozenset(
+    {
+        "def",
+        "class",
+        "fn",
+        "struct",
+        "impl",
+        "interface",
+        "enum",
+        "function",
+        "trait",
+        "type",
+        "void",
+        "None",
+        "True",
+        "False",
+        "null",
+        "true",
+        "false",
+        "return",
+        "import",
+        "from",
+        "as",
+        "where",
+    }
+)
+
+
 def extract_modifiers_and_decorators(
     node: ASTNode, lang_queries: LanguageQueries
 ) -> tuple[list[str], list[str]]:
@@ -103,24 +131,37 @@ def extract_modifiers_and_decorators(
     if node.parent and node.parent.type in ("decorated_definition", "export_statement"):
         target_node = node.parent
 
-    cursor.set_byte_range(target_node.start_byte, header_end_byte)
-
-    captures = sorted_captures(cursor, target_node)
+    query_nodes = [target_node]
+    curr_sibling = target_node.prev_named_sibling
+    while curr_sibling and curr_sibling.type == "attribute_item":
+        query_nodes.insert(0, curr_sibling)
+        curr_sibling = curr_sibling.prev_named_sibling
 
     modifiers: list[str] = []
     decorators: list[str] = []
 
-    for name, nodes in captures.items():
-        if name.startswith("keyword.modifier") or name == "keyword":
-            for n in nodes:
-                text = safe_decode_text(n)
-                if text and text not in modifiers:
-                    modifiers.append(text)
-        elif name.startswith("attribute") or name.startswith("function.decorator"):
-            for n in nodes:
-                text = safe_decode_text(n)
-                if text and text not in decorators:
-                    decorators.append(text)
+    for q_node in query_nodes:
+        if q_node == target_node:
+            cursor.set_byte_range(q_node.start_byte, header_end_byte)
+        else:
+            cursor.set_byte_range(q_node.start_byte, q_node.end_byte)
+
+        captures = sorted_captures(cursor, q_node)
+        for name, nodes in captures.items():
+            if name.startswith("keyword.modifier") or name == "keyword":
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if (
+                        text
+                        and text not in modifiers
+                        and text not in _EXCLUDED_KEYWORDS
+                    ):
+                        modifiers.append(text)
+            elif name.startswith("attribute") or name.startswith("function.decorator"):
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if text and text not in decorators:
+                        decorators.append(text)
 
     return modifiers, decorators
 
@@ -154,7 +195,10 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
 
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
-        decorator.lstrip("@#[]() ").split(cs.SEPARATOR_DOT)[-1].rstrip(")]")
+        decorator.lstrip("@#[]() ")
+        .split("(")[0]
+        .split(cs.SEPARATOR_DOT)[-1]
+        .rstrip(")] ")
         for decorator in decorators
     }
 
