@@ -501,9 +501,19 @@ class CallProcessor:
                     call_name_cache=call_name_cache,
                 )
                 continue
-            if func_qn := self._build_nested_qualified_name(
-                func_node, module_qn, func_name, lang_config
-            ):
+            # (H) A C++ free function inside a namespace is bound by the definition
+            # (H) pass via build_qualified_name (qn `module.ns.fn`); _build_nested...
+            # (H) ignores namespace_definition ancestors and would drop the namespace
+            # (H) (`module.fn`), dangling the CALLS source. Use the same builder so
+            # (H) caller and node qns agree.
+            func_qn = (
+                cpp_utils.build_qualified_name(func_node, module_qn, func_name)
+                if language == cs.SupportedLanguage.CPP
+                else self._build_nested_qualified_name(
+                    func_node, module_qn, func_name, lang_config
+                )
+            )
+            if func_qn:
                 filtered = (
                     self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
                     if all_call_nodes is not None and call_starts is not None
@@ -744,7 +754,15 @@ class CallProcessor:
             class_name = self._get_class_name_for_node(class_node, language)
             if not class_name:
                 continue
-            class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+            # (H) A C++ class inside a namespace is bound by the definition pass via
+            # (H) build_qualified_name (qn `module.ns.Class`); the bare join would drop
+            # (H) the namespace, dangling every inline method's CALLS source. Use the
+            # (H) same builder so the class qn (and thus method caller qns) agree.
+            class_qn = (
+                cpp_utils.build_qualified_name(class_node, module_qn, class_name)
+                if language == cs.SupportedLanguage.CPP
+                else f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+            )
             if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
                 self._process_methods_in_class(
                     body_node,

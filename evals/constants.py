@@ -199,6 +199,29 @@ C_RETRIEVAL_LABEL = "graph"
 C_RETRIEVAL_TITLE = "cgr multi-language retrieval: C CALLS vs libclang oracle"
 C_CALL_EDGE_REPR = "{file} -> {name}"
 
+CPP_SOURCE_GLOBS: tuple[str, ...] = ("*.cc", "*.cpp", "*.cxx")
+CPP_HEADER_GLOBS: tuple[str, ...] = ("*.h", "*.hpp", "*.hh", "*.hxx")
+CPP_SUFFIXES: tuple[str, ...] = (".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx")
+CLANG_CPP_STD = "-std=c++17"
+CLANG_CPP_LANG_FLAG = "-x"
+CLANG_CPP_LANG = "c++"
+CLANG_DEFINE_FLAG = "-D"
+# (H) Apple ships a libclang whose version matches the active macOS SDK's libc++,
+# (H) which the pip `libclang` wheel does not; C++ standard headers need that match
+# (H) to parse. Probed in order; first existing path wins, else the bundled default.
+LIBCLANG_CANDIDATES: tuple[str, ...] = (
+    "/Library/Developer/CommandLineTools/usr/lib/libclang.dylib",
+)
+# (H) libc++ headers live under <sdk>/usr/include/c++/v1 and MUST precede the clang
+# (H) builtin resource headers, else libc++'s <cstddef> finds the C <stddef.h> first.
+CLANG_LIBCXX_SUBPATH = "usr/include/c++/v1"
+CPP_RETRIEVAL_SCORES_FILENAME = "cpp_retrieval_scores.csv"
+CPP_RETRIEVAL_DIFF_FILENAME = "cpp_retrieval_diff.json"
+CPP_RETRIEVAL_DIFF_PREFIX = "cpp-retrieval:"
+CPP_RETRIEVAL_LABEL = "graph"
+CPP_RETRIEVAL_TITLE = "cgr multi-language retrieval: C++ CALLS vs libclang oracle"
+CPP_CALL_EDGE_REPR = "{file} -> {name}"
+
 # (H) Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # (H) right function for a natural-language query? Uses cgr's own embedder over
 # (H) function source extracted from the captured graph; graded as recall@k on
