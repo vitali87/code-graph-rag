@@ -576,6 +576,11 @@ class GraphUpdater:
             except ValueError:
                 continue
             self.function_registry[qn] = node_type
+            # (H) Restore the property-name set for unchanged files: property-dispatch
+            # (H) resolution (`obj.prop`) consults it, so a re-parsed file's call to a
+            # (H) @property defined elsewhere would otherwise drop vs a clean index.
+            if row.get(cs.KEY_IS_PROPERTY):
+                self.function_registry.mark_property(qn)
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)

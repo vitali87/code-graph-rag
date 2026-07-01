@@ -157,6 +157,7 @@ class _StatefulIngestor:
                     row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
+                        cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                     }
                     defs.append(row)
                 return defs

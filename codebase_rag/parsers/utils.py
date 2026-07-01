@@ -287,10 +287,18 @@ def ingest_method(
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
 
+    # (H) Persist @property status on the node so an incremental rebuild can restore
+    # (H) the registry's property-name set for unchanged files (it re-marks from this
+    # (H) flag rather than re-parsing decorators); property-dispatch call resolution
+    # (H) depends on it, so without persistence those edges drop (issue #532 parity).
+    is_property = _is_property_decorator(decorators)
+    if is_property:
+        method_props[cs.KEY_IS_PROPERTY] = True
+
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     function_registry[method_qn] = NodeType.METHOD
-    if _is_property_decorator(decorators):
+    if is_property:
         function_registry.mark_property(method_qn)
     if _is_abstract_decorator(decorators):
         function_registry.mark_abstract(method_qn)
