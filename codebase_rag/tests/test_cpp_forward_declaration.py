@@ -52,3 +52,69 @@ def test_forward_declaration_does_not_create_phantom_class(
     assert any(q.endswith(".ns.Widget.run") for q in method_qns), (
         f"expected ns.Widget.run method node, got {sorted(method_qns)}"
     )
+
+
+# (H) A template class forward declaration (`template <T> class Box;`) is a
+# (H) template_declaration wrapping a bodyless class_specifier, so the plain guard on
+# (H) class_specifier node type missed it and it still fragmented the class. It must
+# (H) be dropped the same way -- BUT only when a real definition exists, because a
+# (H) primary template forward-declared and defined solely via specializations is the
+# (H) canonical node and must be kept. The invariant: a template forward declaration
+# (H) that is followed by a real definition adds no Box node beyond the definition's.
+_TEMPLATE_DEF_ONLY = """
+namespace ns {
+template <typename T>
+class Box {
+ public:
+  T get() { return value_; }
+  T value_;
+};
+}  // namespace ns
+"""
+
+_TEMPLATE_FORWARD_PLUS_DEF = """
+namespace ns {
+template <typename T>
+class Box;
+template <typename T>
+class Box {
+ public:
+  T get() { return value_; }
+  T value_;
+};
+}  // namespace ns
+"""
+
+
+def _box_class_count(mock_ingestor: MagicMock) -> int:
+    return len(
+        [
+            q
+            for q in get_qualified_names(get_nodes(mock_ingestor, "Class"))
+            if q.rsplit(".", 1)[-1].startswith("Box")
+        ]
+    )
+
+
+def test_template_forward_declaration_adds_no_node(temp_repo: Path) -> None:
+    baseline_repo = temp_repo / "def_only"
+    baseline_repo.mkdir()
+    (baseline_repo / "d.cpp").write_text(_TEMPLATE_DEF_ONLY, encoding="utf-8")
+    baseline_ingestor = MagicMock()
+    run_updater(baseline_repo, baseline_ingestor)
+    baseline = _box_class_count(baseline_ingestor)
+    assert baseline >= 1, "definition-only template produced no Box node"
+
+    with_forward_repo = temp_repo / "fwd_and_def"
+    with_forward_repo.mkdir()
+    (with_forward_repo / "f.cpp").write_text(
+        _TEMPLATE_FORWARD_PLUS_DEF, encoding="utf-8"
+    )
+    with_forward_ingestor = MagicMock()
+    run_updater(with_forward_repo, with_forward_ingestor)
+    with_forward = _box_class_count(with_forward_ingestor)
+
+    assert with_forward == baseline, (
+        f"template forward declaration added {with_forward - baseline} phantom "
+        f"Box node(s) (baseline {baseline}, with forward {with_forward})"
+    )

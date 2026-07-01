@@ -525,6 +525,15 @@ class GraphUpdater:
         if go_methods:
             logger.info("Resolved {} Go receiver methods", go_methods)
 
+        kept_forwards = (
+            self.factory.definition_processor.resolve_deferred_forward_declarations()
+        )
+        if kept_forwards:
+            logger.info(
+                "Registered {} forward-declared C/C++ types with no definition",
+                kept_forwards,
+            )
+
         if not force:
             self._rehydrate_registry_from_graph()
 
