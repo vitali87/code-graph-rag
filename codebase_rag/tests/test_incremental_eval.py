@@ -219,6 +219,43 @@ class TestIncrementalScenario:
         assert (_FUNCTION, "proj.other.helper") in clean.nodes
         assert (_FUNCTION, "proj.other.helper") in incr.nodes
 
+    def test_incremental_preserves_property_dispatch_editing_caller(
+        self, tmp_path: Path, parsers_queries: tuple[object, object]
+    ) -> None:
+        # (H) Issue #532 residual (full-parity): editing client.py re-parses only it,
+        # (H) so the property status of Factory.dep (a @property in the unchanged
+        # (H) factory.py) is not re-marked. cgr resolves the attribute access
+        # (H) `self.d.dep` to that property via its property-name set, which the
+        # (H) incremental run must rehydrate from the graph (not just the function
+        # (H) registry). Without it the property-dispatch edge drops vs a clean index.
+        method = cs.NodeLabel.METHOD.value
+        prop_call = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.factory.Factory.dep",
+        )
+        src = tmp_path / "proj"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "factory.py").write_text(
+            "class Factory:\n    @property\n    def dep(self):\n        return 1\n",
+            encoding="utf-8",
+        )
+        (src / "client.py").write_text(
+            "from proj.factory import Factory\n\n\n"
+            "def use(f: Factory):\n    return f.dep\n",
+            encoding="utf-8",
+        )
+        parsers, queries = parsers_queries
+        incr, clean = run_neutral_edit_scenario(
+            src, "proj", "client.py", parsers, queries, tmp_path / "scn"
+        )
+        assert prop_call in clean.edges
+        assert prop_call in incr.edges
+        assert incr == clean
+
     def test_compare_states_flags_missing_edge(self) -> None:
         from evals.types_defs import GraphState
 

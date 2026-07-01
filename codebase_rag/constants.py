@@ -185,6 +185,7 @@ KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
+KEY_IS_PROPERTY = "is_property"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
@@ -1101,7 +1102,8 @@ CYPHER_ALL_FOLDER_PATHS = (
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.is_property AS is_property"
 )
 
 # (H) Inbound reference edges (from unchanged files) into symbols defined in one
