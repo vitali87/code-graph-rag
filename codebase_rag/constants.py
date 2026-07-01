@@ -438,8 +438,17 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     }
 )
 
-# (H) Substrings in a node's file path that mark it as test code.
-TEST_PATH_PATTERNS: tuple[str, ...] = ("test_", "_test", "conftest", "/tests/")
+# (H) Substrings in a node's file path that mark it as test code. Covers Python
+# (H) (test_, _test, conftest, /tests/) and the JS/TS convention (foo.test.ts,
+# (H) foo.spec.tsx) so *.test.* files are not reported as dead.
+TEST_PATH_PATTERNS: tuple[str, ...] = (
+    "test_",
+    "_test",
+    "conftest",
+    "/tests/",
+    ".test.",
+    ".spec.",
+)
 
 
 class NodeLabel(StrEnum):
