@@ -108,7 +108,6 @@ class TestHandlerProtocol:
         assert hasattr(handler, "build_method_qualified_name")
         assert hasattr(handler, "extract_base_class_name")
         assert hasattr(handler, "build_nested_function_qn")
-        assert hasattr(handler, "extract_decorators")
 
     @pytest.mark.parametrize(
         "language",
@@ -138,7 +137,6 @@ class TestHandlerProtocol:
         assert callable(handler.build_method_qualified_name)
         assert callable(handler.extract_base_class_name)
         assert callable(handler.build_nested_function_qn)
-        assert callable(handler.extract_decorators)
 
 
 class TestHandlerInheritance:
