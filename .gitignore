@@ -37,5 +37,8 @@ evals/oracles/java_oracle/*.class
 evals/oracles/lua_oracle/node_modules/
 # PHP oracle deps (the source + package-lock.json are committed)
 evals/oracles/php_oracle/node_modules/
+# Scala oracle build artifacts (the source is committed; scala-cli fetches deps)
+evals/oracles/scala_oracle/.scala-build/
+evals/oracles/scala_oracle/.bsp/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json

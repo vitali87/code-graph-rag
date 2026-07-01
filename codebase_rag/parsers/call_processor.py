@@ -778,7 +778,9 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
-    def _get_call_target_name(self, call_node: Node) -> str | None:
+    def _get_call_target_name(
+        self, call_node: Node, language: cs.SupportedLanguage | None = None
+    ) -> str | None:
         # (H) A macro-internal call (Rust `name(args)` inside a token_tree) is
         # (H) captured as the bare identifier node; its text is the callee name.
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
@@ -842,6 +844,19 @@ class CallProcessor:
                         return method_name
                     object_text = object_node.text.decode(cs.ENCODING_UTF8)
                     return f"{object_text}{cs.SEPARATOR_DOT}{method_name}"
+            # (H) Scala infix operator call (`a ~> b`, `xs map f`): the callee is the
+            # (H) `operator` field's method name. tree-sitter has no `function` field
+            # (H) here, so it is unreachable above. Gated to Scala since the node type
+            # (H) string is Scala-specific but the guard keeps other languages inert.
+            # (H) Infix is unambiguously a method call; a bare `field_expression`
+            # (H) (`obj.done` with no parens) is deliberately NOT named here because
+            # (H) Scala's uniform access makes a nullary call and a `val` read
+            # (H) syntactically identical, so resolving it by simple name would turn a
+            # (H) same-named field read into a spurious CALLS edge.
+            case cs.TS_SCALA_INFIX_EXPRESSION if language == cs.SupportedLanguage.SCALA:
+                operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
+                if operator_node and operator_node.text:
+                    return operator_node.text.decode(cs.ENCODING_UTF8)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
@@ -944,7 +959,7 @@ class CallProcessor:
             if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
             else:
-                call_name = get_target(call_node)
+                call_name = get_target(call_node, language)
                 if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
             if not call_name:
