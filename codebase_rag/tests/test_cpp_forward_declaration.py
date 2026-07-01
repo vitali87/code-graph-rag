@@ -118,3 +118,45 @@ def test_template_forward_declaration_adds_no_node(temp_repo: Path) -> None:
         f"template forward declaration added {with_forward - baseline} phantom "
         f"Box node(s) (baseline {baseline}, with forward {with_forward})"
     )
+
+
+# (H) A forward declaration must be dropped only when a definition of the SAME
+# (H) namespace-qualified type exists. Here `A::Thing` is defined but `B::Thing` is
+# (H) only forward-declared (a distinct type). Dropping the forward on a bare
+# (H) simple-name match would erase `B::Thing` entirely; the namespace-qualified
+# (H) comparison must keep it.
+_CROSS_NAMESPACE_SOURCE = """
+namespace A {
+class Thing {
+ public:
+  int a() { return 1; }
+};
+}  // namespace A
+
+namespace B {
+class Thing;
+}  // namespace B
+"""
+
+
+def test_forward_decl_in_other_namespace_is_kept(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "cpp_cross_ns"
+    project.mkdir()
+    (project / "t.cpp").write_text(_CROSS_NAMESPACE_SOURCE, encoding="utf-8")
+
+    run_updater(project, mock_ingestor)
+
+    thing_qns = {
+        q
+        for q in get_qualified_names(get_nodes(mock_ingestor, "Class"))
+        if q.rsplit(".", 1)[-1] == "Thing"
+    }
+    assert any(q.endswith(".A.Thing") for q in thing_qns), (
+        f"defined A::Thing missing: {sorted(thing_qns)}"
+    )
+    assert any(q.endswith(".B.Thing") for q in thing_qns), (
+        f"forward-only B::Thing was wrongly dropped: {sorted(thing_qns)}"
+    )
