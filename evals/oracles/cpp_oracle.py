@@ -74,9 +74,13 @@ def _ensure_libclang() -> None:
         if Path(candidate).exists():
             try:
                 Config.set_library_file(candidate)
+                return
             except Exception:
-                pass
-            return
+                # (H) libclang loading raises a wide, unpredictable range of errors
+                # (H) (arch mismatch, format errors, an already-loaded library); on
+                # (H) any, fall through to the next candidate, else the bundled
+                # (H) default the bindings load on their own.
+                continue
 
 
 def cpp_available() -> bool:
