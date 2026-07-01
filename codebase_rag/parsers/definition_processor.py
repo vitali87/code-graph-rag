@@ -54,6 +54,7 @@ class DefinitionProcessor(
         self.class_inheritance: dict[str, list[str]] = {}
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
+        self._deferred_forward_decls: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 

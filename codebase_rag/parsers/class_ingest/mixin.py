@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -72,6 +72,26 @@ def _skip_method(
     return _is_nested_inside_function(method_node, class_body, lang_config)
 
 
+class _DeferredForwardDecl(NamedTuple):
+    # (H) A C/C++ forward declaration held back until every file's real definitions
+    # (H) are registered, so we can tell an only-forward-declared type (keep it) from
+    # (H) one that also has a bodied definition elsewhere (drop the phantom).
+    class_node: Node
+    class_name: str
+    # (H) The namespace-qualified name (module-file prefix stripped, so `A::Foo` is
+    # (H) `A.Foo` regardless of which header declares it). Comparing on this — not the
+    # (H) bare simple name — keeps a forward-declared `B::Foo` when only `A::Foo` is
+    # (H) defined, while still matching a cross-file forward/definition of one type.
+    ns_qn: str
+    module_qn: str
+    language: cs.SupportedLanguage
+    lang_queries: LanguageQueries
+    lang_config: LanguageSpec
+    file_path: Path | None
+    sorted_func_nodes: list[Node] | None
+    func_node_starts: list[int] | None
+
+
 class ClassIngestMixin:
     __slots__ = ()
     ingestor: IngestorProtocol
@@ -82,6 +102,29 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    _deferred_forward_decls: list[_DeferredForwardDecl]
+
+    def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
+        # (H) Strip the module-file prefix so two nodes for the same C++ type in
+        # (H) different headers share one key (`leveldb.db.x.h.leveldb.VersionSet` and
+        # (H) `...y.h.leveldb.VersionSet` both -> `leveldb.VersionSet`), while types in
+        # (H) different namespaces stay distinct.
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        return class_qn[len(prefix) :] if class_qn.startswith(prefix) else class_qn
+
+    def _namespace_qn_has_definition(self, ns_qn: str) -> bool:
+        # (H) A real definition of this namespace-qualified type is registered iff some
+        # (H) class qn ends with it (`....leveldb.VersionSet`). find_ending_with is
+        # (H) indexed by simple name, and because it is queried AFTER the registry is
+        # (H) rehydrated from the graph, it also covers definitions in files an
+        # (H) incremental run did not re-parse (issue: a forward decl must still drop
+        # (H) when its definition lives in an unchanged file).
+        simple = ns_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
+        return any(
+            qn.endswith(suffix)
+            for qn in self.function_registry.find_ending_with(simple)
+        )
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -167,6 +210,38 @@ class ClassIngestMixin:
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
+    def resolve_deferred_forward_declarations(self) -> int:
+        # (H) Run after every file's definitions are registered. A deferred forward
+        # (H) declaration whose class name already produced a real node is a phantom
+        # (H) (the bodied definition exists) -> drop it. Otherwise it is the only
+        # (H) representation of the type -> register it now. Deterministic: the
+        # (H) deferred list is in file (sorted) order, and the first surviving forward
+        # (H) declaration of an only-declared type claims the name for the rest.
+        deferred = getattr(self, "_deferred_forward_decls", None)
+        if not deferred:
+            return 0
+        self._deferred_forward_decls = []
+        registered = 0
+        for entry in deferred:
+            # (H) Drop the forward declaration only when a real definition of the SAME
+            # (H) namespace-qualified type exists (not merely the same simple name in
+            # (H) another namespace). Otherwise it is the type's only node -> keep it.
+            if self._namespace_qn_has_definition(entry.ns_qn):
+                continue
+            self._process_class_node(
+                entry.class_node,
+                entry.module_qn,
+                entry.language,
+                entry.lang_queries,
+                entry.lang_config,
+                entry.file_path,
+                sorted_func_nodes=entry.sorted_func_nodes,
+                func_node_starts=entry.func_node_starts,
+                allow_defer=False,
+            )
+            registered += 1
+        return registered
+
     def _process_class_node(
         self,
         class_node: Node,
@@ -177,6 +252,7 @@ class ClassIngestMixin:
         file_path: Path | None,
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
+        allow_defer: bool = True,
     ) -> None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             self._ingest_rust_impl_methods(
@@ -188,6 +264,60 @@ class ClassIngestMixin:
                 func_node_starts=func_node_starts,
             )
             return
+
+        # (H) A C/C++ forward declaration (`class Widget;`, or `template <T> class
+        # (H) Widget;`) is a bodyless type specifier. Registering it collides with the
+        # (H) real definition's qn (suffixing it `@line`) and fragments one class into
+        # (H) several same-named nodes, which makes member-call resolution pick among
+        # (H) duplicates nondeterministically. But a type that is ONLY ever
+        # (H) forward-declared (an opaque handle, or a metaprogramming primary defined
+        # (H) solely via specializations) has no other node, so it must be kept. We
+        # (H) cannot tell which until every file's definitions are in, so defer the
+        # (H) forward declaration and decide in resolve_deferred_forward_declarations.
+        type_spec = class_node
+        if class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+            type_spec = next(
+                (
+                    child
+                    for child in class_node.children
+                    if child.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+                ),
+                None,
+            )
+        if (
+            type_spec is not None
+            and type_spec.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            and type_spec.child_by_field_name(cs.FIELD_BODY) is None
+        ):
+            # (H) The inner bodyless specifier of a template forward decl is redundant
+            # (H) with its template_declaration wrapper (the canonical template node),
+            # (H) which is deferred separately; drop the inner one outright.
+            if (
+                class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+                and class_node.parent is not None
+                and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+            ):
+                return
+            if allow_defer:
+                deferred_identity = id_.resolve_class_identity(
+                    class_node, module_qn, language, lang_config, file_path
+                )
+                if deferred_identity:
+                    self._deferred_forward_decls.append(
+                        _DeferredForwardDecl(
+                            class_node,
+                            deferred_identity[1],
+                            self._namespace_qn(deferred_identity[0], module_qn),
+                            module_qn,
+                            language,
+                            lang_queries,
+                            lang_config,
+                            file_path,
+                            sorted_func_nodes,
+                            func_node_starts,
+                        )
+                    )
+                return
 
         identity = id_.resolve_class_identity(
             class_node,

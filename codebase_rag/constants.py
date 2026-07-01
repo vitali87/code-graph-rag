@@ -1826,6 +1826,13 @@ CPP_KEYWORD_CLASS = "class"
 CPP_KEYWORD_STRUCT = "struct"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
+# (H) A C/C++ class/struct/union tag with no body is a forward declaration
+# (H) (`class Widget;`); it must not become its own node, or it collides with the
+# (H) real definition's qn and fragments one class into several same-named nodes.
+CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
+    {"class_specifier", "struct_specifier", "union_specifier"}
+)
+
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
 CPP_OPERATOR_TEXT_PREFIX = "operator"
