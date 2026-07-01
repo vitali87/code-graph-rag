@@ -278,6 +278,17 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = None
             return None
 
+        # (H) A member call `obj.method` whose receiver has a KNOWN inferred type that is
+        # (H) not a first-party class is a call on an external object (e.g. a
+        # (H) `std::string`). Precise local-type resolution above already failed, so the
+        # (H) method lives on the external type; do NOT let the simple-name trie fallback
+        # (H) rebind it to an unrelated first-party method of the same name. Untyped
+        # (H) receivers keep the fallback (their type is unknown, not known-external).
+        if self._receiver_type_is_external(call_name, module_qn, local_var_types):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = None
+            return None
+
         result = self._try_resolve_via_trie(call_name, module_qn)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
@@ -308,6 +319,47 @@ class CallResolver:
         if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
+
+    def _receiver_type_is_external(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        # (H) True only for a two-part dotted member call `obj.method` whose `obj` has an
+        # (H) inferred local type that is known to be external. The receiver type is
+        # (H) external when it resolves to nothing, or to a qn that is neither registered
+        # (H) nor rooted at the project (a `std::string` -> `std.string`). In that case
+        # (H) the method lives on the external type, so the simple-name trie fallback must
+        # (H) not rebind it to a same-named first-party method. An untyped receiver (obj
+        # (H) absent from the map) or a project-rooted type is left alone: its method may
+        # (H) still be resolved by the fallback (e.g. a cross-file imported-class call the
+        # (H) precise path missed), so only a provably external type is suppressed.
+        if not local_var_types or cs.SEPARATOR_DOT not in call_name:
+            return False
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return False
+        var_type = local_var_types.get(parts[0])
+        if var_type is None:
+            return False
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        if not class_qn:
+            return True
+        # (H) First-party class qns may be written without the project prefix (a bare
+        # (H) `from models.user import User` resolves to `models.user.User` while the
+        # (H) registry stores `proj.models.user.User`), so check both the qn as-is and
+        # (H) the project-prefixed form before judging a type external -- mirrors
+        # (H) _is_external_import. A project-rooted qn is always treated as first-party.
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
+            return False
+        return (
+            class_qn not in self.function_registry
+            and f"{project_root}{cs.SEPARATOR_DOT}{class_qn}"
+            not in self.function_registry
+        )
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str

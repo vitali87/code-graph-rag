@@ -227,3 +227,49 @@ def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
     assert var_types.get("z") == "Zeta", (
         f"outer z should stay Zeta despite a lambda-local Alpha z, got {var_types}"
     )
+
+
+# (H) When a receiver's inferred type is NOT a first-party class (a `std::string`, any
+# (H) external/STL type), a member call on it must not fall through to the bare-method
+# (H) trie fallback and rebind to a same-named first-party method. Here `s` is a
+# (H) `std::string`, so `s.size()` is an external call; it must NOT resolve to the
+# (H) first-party `ns.Widget.size`. Before the guard, the trie fallback bound the bare
+# (H) `size` to `Widget.size` (the only first-party `size`), a precision bug the C++
+# (H) retrieval eval flagged on leveldb.
+_EXTERNAL_RECEIVER_SOURCE = """
+#include <string>
+
+namespace ns {
+
+class Widget {
+ public:
+  int size() { return 1; }
+};
+
+int use(std::string s) { return s.size(); }
+
+}  // namespace ns
+"""
+
+
+def test_cpp_external_receiver_call_is_not_rebound_to_first_party(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "cpp_ext"
+    project.mkdir()
+    (project / "s.cpp").write_text(_EXTERNAL_RECEIVER_SOURCE, encoding="utf-8")
+
+    run_updater(project, mock_ingestor)
+
+    # (H) `use` calls std::string::size, which is external; no CALLS edge from it to
+    # (H) the first-party Widget.size may be emitted.
+    bad = [
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if str(c.args[0][2]).endswith(".use")
+        and str(c.args[2][2]).endswith(".Widget.size")
+    ]
+    assert not bad, (
+        f"std::string.size() must not resolve to first-party Widget.size, got {bad}"
+    )
