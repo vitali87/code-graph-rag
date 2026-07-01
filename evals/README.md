@@ -656,13 +656,17 @@ precede clang's builtin resource headers), and every first-party header director
 added as an include path. A build normally supplies platform macros (e.g.
 `LEVELDB_PLATFORM_POSIX`); pass them with `--define`. A translation unit that still
 emits an error diagnostic **abstains** (left out of the covered set; the cgr side
-is held to the same files, the graded count logged). Pinned by
+is held to the same files, the graded count logged). To avoid crediting or
+penalizing calls whose simple name merely collides with a first-party symbol, the
+oracle grades a call only when `libclang` resolves its callee to a **first-party
+declaration** (`child.referenced`), so a `std::string::size()` call is never
+counted as a first-party `size` edge. Pinned by
 `codebase_rag/tests/test_cpp_retrieval_eval.py`, where cgr's C++ call graph matches
 the `libclang` oracle on a header-free namespaced fixture.
 
 Running it on a real project (`leveldb`, 40 of 42 core sources parsed cleanly; the
-other two are Windows-only or need gmock) gives precision **0.99**, recall
-**0.81**, F1 0.89 — up from recall **0.54** before the fix below.
+other two are Windows-only or need gmock) gives precision **0.96**, recall
+**0.82**, F1 0.88 — recall up from **0.54** before the fix below.
 
 **The dominant gap was a real cgr bug: the call pass dropped the namespace from
 the caller qn.** The definition pass binds a C++ free function or class inside a
@@ -674,19 +678,27 @@ pointed at a node that does not exist (904 of 1227 C++ call sources dangled on
 routes both the free-function and class qns through the same
 `cpp_utils.build_qualified_name` the definition pass uses, so caller and node qns
 always agree (RED test `test_cpp_namespace_call_caller_qn.py`). Dangling sources
-fell to 251 and recall rose 0.54 → 0.81.
+fell to 251 and recall rose 0.54 → 0.82.
 
 The remaining tail is documented, not scoped away:
 
-- **Operator overloads** (`operator=` ×25, `operator[]` ×13, `operator==`/`!=`):
+- **Operator overloads** (`operator=` ×25, `operator[]`, `operator==`/`!=`):
   `libclang` records `a = b` and `a[i]` as calls to the overloaded operator
   methods, while cgr models them as `builtin.cpp.*` operator calls — a metric
   difference, not a misresolution.
+- **Trie-fallback misresolution of external calls** (the ~30 false positives:
+  `size`, `data`, `empty`, `clear`, `begin`, `end`): when a call's simple name
+  collides with a first-party method, cgr's name-only trie fallback binds the
+  external `std::` call to the same-named first-party method. The oracle correctly
+  treats it as external, so it surfaces as a cgr false positive.
 - **Receiver-type method dispatch and out-of-line static methods** (`DB::Open`):
   resolving `obj->method()` to the right class needs C++ receiver type inference
   (C++ is not yet in the typed-language set that builds a local-variable type
-  map), the same deeper gap as the Go/Java/Rust tails. The eval keeps surfacing
-  it; it is a follow-on, not hidden.
+  map), the same deeper gap as the Go/Java/Rust tails.
+
+The last two share one root cause: cgr has no C++ receiver type inference, so it
+resolves member calls by name alone. The eval keeps surfacing it; it is a
+follow-on, not hidden.
 
 ## Semantic search — query to function relevance
 

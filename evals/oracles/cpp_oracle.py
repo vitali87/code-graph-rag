@@ -255,12 +255,27 @@ def _c_include_args(root: Path) -> list[str]:
     return args
 
 
+def _callee_is_first_party(call: Cursor, root: Path) -> bool:
+    # (H) libclang resolves a call to its callee declaration; grade the call only
+    # (H) when that declaration is itself first-party. Without this, a call whose
+    # (H) simple name collides with a first-party symbol (e.g. `std::string::size`
+    # (H) vs a project `size()`) would be counted as a first-party edge, understating
+    # (H) cgr recall against calls it correctly resolves as external/builtin. C++'s
+    # (H) large STL surface (size/data/empty/clear/...) makes this collision common.
+    ref = call.referenced
+    if ref is None or ref.location.file is None:
+        return False
+    cref = _rel(ref.location.file.name, root)
+    return cref is not None and not is_ignored(cref)
+
+
 def _collect_decls_and_calls(
     cursor: Cursor,
     root: Path,
     declared: set[str],
     raw_calls: list[tuple[str, str]] | None,
     decl_kinds: frozenset[str],
+    strict_callee: bool = False,
 ) -> None:
     # (H) raw_calls is None for an unclean translation unit: its AST may be
     # (H) truncated by a missing header, so its call sites are not authoritative
@@ -274,9 +289,16 @@ def _collect_decls_and_calls(
             continue
         if child.kind.name in decl_kinds and child.is_definition():
             declared.add(child.spelling)
-        elif raw_calls is not None and child.kind.name == _CALL_EXPR and child.spelling:
+        elif (
+            raw_calls is not None
+            and child.kind.name == _CALL_EXPR
+            and child.spelling
+            and (not strict_callee or _callee_is_first_party(child, root))
+        ):
             raw_calls.append((rel, child.spelling))
-        _collect_decls_and_calls(child, root, declared, raw_calls, decl_kinds)
+        _collect_decls_and_calls(
+            child, root, declared, raw_calls, decl_kinds, strict_callee
+        )
 
 
 def run_c_call_oracle(
@@ -396,7 +418,12 @@ def run_cpp_call_oracle(
                 diag.severity >= ec.CLANG_SEVERITY_ERROR for diag in tu.diagnostics
             )
             _collect_decls_and_calls(
-                tu.cursor, root, declared, raw_calls if clean else None, _CPP_DECL_KINDS
+                tu.cursor,
+                root,
+                declared,
+                raw_calls if clean else None,
+                _CPP_DECL_KINDS,
+                strict_callee=True,
             )
             if clean:
                 covered.add(rel)
