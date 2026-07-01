@@ -1794,6 +1794,15 @@ class CppNodeType(StrEnum):
     CONSTRUCTOR_OR_DESTRUCTOR_DECLARATION = "constructor_or_destructor_declaration"
     INLINE_METHOD_DEFINITION = "inline_method_definition"
     OPERATOR_CAST_DEFINITION = "operator_cast_definition"
+    TYPE_IDENTIFIER = "type_identifier"
+    PARAMETER_LIST = "parameter_list"
+    PARAMETER_DECLARATION = "parameter_declaration"
+    OPTIONAL_PARAMETER_DECLARATION = "optional_parameter_declaration"
+    INIT_DECLARATOR = "init_declarator"
+    TEMPLATE_TYPE = "template_type"
+    FIELD_EXPRESSION = "field_expression"
+    COMPOUND_STATEMENT = "compound_statement"
+    THIS = "this"
 
 
 CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
@@ -2150,6 +2159,16 @@ FIELD_OPERATOR = "operator"
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
 CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)
+# (H) Node types that open their own variable scope; C++ local-variable inference must
+# (H) not descend into them, or a name declared inside a lambda / nested function /
+# (H) local class body would be attributed to the enclosing function's scope.
+CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
+    (
+        TS_CPP_FUNCTION_DEFINITION,
+        TS_CPP_LAMBDA_EXPRESSION,
+        *CPP_COMPOUND_TYPES,
+    )
+)
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 
 # (H) Import processor function names
