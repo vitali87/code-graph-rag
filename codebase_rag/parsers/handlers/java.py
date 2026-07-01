@@ -13,9 +13,6 @@ if TYPE_CHECKING:
 class JavaHandler(BaseLanguageHandler):
     __slots__ = ()
 
-    def extract_decorators(self, node: ASTNode) -> list[str]:
-        return java_utils.extract_from_modifiers_node(node, frozenset()).annotations
-
     def build_method_qualified_name(
         self,
         class_qn: str,

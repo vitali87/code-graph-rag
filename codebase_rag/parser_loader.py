@@ -230,6 +230,36 @@ def _create_locals_query(
         return None
 
 
+def _create_highlights_query(
+    language: Language, lang_name: cs.SupportedLanguage
+) -> Query | None:
+    query_str = ""
+    try:
+        module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+        module = importlib.import_module(module_name)
+        if hasattr(module, "HIGHLIGHTS_QUERY"):
+            query_str = module.HIGHLIGHTS_QUERY
+    except Exception as e:
+        logger.debug(f"Failed to load standard highlights query for {lang_name}: {e}")
+
+    try:
+        fallback_path = (
+            Path(__file__).parent / "queries" / "highlights" / f"{lang_name}.scm"
+        )
+        if fallback_path.exists():
+            custom_queries = fallback_path.read_text(encoding="utf-8")
+            query_str = (
+                query_str + "\n" + custom_queries if query_str else custom_queries
+            )
+
+        if query_str:
+            return Query(language, query_str)
+    except Exception as e:
+        logger.debug(f"Failed to load fallback highlights query for {lang_name}: {e}")
+
+    return None
+
+
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
 COMBINED_FUNC_CLASS_IMPORT_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
 
@@ -273,6 +303,7 @@ def _create_language_queries(
         calls=_create_optional_query(language, call_patterns),
         imports=_create_optional_query(language, combined_import_patterns),
         locals=_create_locals_query(language, lang_name),
+        highlights=_create_highlights_query(language, lang_name),
         config=lang_config,
         language=language,
         parser=parser,

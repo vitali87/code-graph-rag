@@ -515,6 +515,7 @@ BYTES_PER_MB = 1024 * 1024
 # (H) Property keys
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
+KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
 

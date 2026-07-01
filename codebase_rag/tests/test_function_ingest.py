@@ -449,7 +449,7 @@ class TestBuildFunctionProps:
         definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
-        parsers, _ = parsers_and_queries
+        parsers, queries = parsers_and_queries
         if cs.SupportedLanguage.PYTHON not in parsers:
             pytest.skip("Python parser not available")
 
@@ -467,7 +467,7 @@ class TestBuildFunctionProps:
         )
 
         result = definition_processor._build_function_props(
-            func_node, resolution, "proj.module"
+            func_node, resolution, "proj.module", queries[cs.SupportedLanguage.PYTHON]
         )
 
         assert result["qualified_name"] == "proj.module.my_function"
@@ -482,7 +482,7 @@ class TestBuildFunctionProps:
         definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
-        parsers, _ = parsers_and_queries
+        parsers, queries = parsers_and_queries
         if cs.SupportedLanguage.PYTHON not in parsers:
             pytest.skip("Python parser not available")
 
@@ -500,7 +500,7 @@ class TestBuildFunctionProps:
         )
 
         result = definition_processor._build_function_props(
-            func_node, resolution, "proj.module"
+            func_node, resolution, "proj.module", queries[cs.SupportedLanguage.PYTHON]
         )
 
         assert result["is_exported"] is True

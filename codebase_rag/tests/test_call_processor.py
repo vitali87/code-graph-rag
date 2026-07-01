@@ -1582,7 +1582,10 @@ class TestIngestFunctionCallsWithoutCallNodes:
         root_node = tree.root_node
 
         empty_queries: dict = {
-            cs.SupportedLanguage.PYTHON: {cs.QUERY_CALLS: None, cs.QUERY_CONFIG: queries[cs.SupportedLanguage.PYTHON][cs.QUERY_CONFIG]}
+            cs.SupportedLanguage.PYTHON: {
+                cs.QUERY_CALLS: None,
+                cs.QUERY_CONFIG: queries[cs.SupportedLanguage.PYTHON][cs.QUERY_CONFIG],
+            }
         }
         cp._ingest_function_calls(
             root_node,
@@ -1627,19 +1630,25 @@ class TestCombinedQueryCompilationExceptionPaths:
             return RealQuery(language, pattern)
 
         original_fc = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
-        original_fci = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(cs.SupportedLanguage.PYTHON)
+        original_fci = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(
+            cs.SupportedLanguage.PYTHON
+        )
         try:
             with patch("codebase_rag.parser_loader.Query", side_effect=patched_query):
                 _create_language_queries(
                     language_obj, parser, lang_config, cs.SupportedLanguage.PYTHON
                 )
             assert COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] is None
-            assert COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] is None
+            assert (
+                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] is None
+            )
         finally:
             if original_fc is not None:
                 COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = original_fc
             if original_fci is not None:
-                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] = original_fci
+                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] = (
+                    original_fci
+                )
 
 
 class TestGetRustImplClassName:

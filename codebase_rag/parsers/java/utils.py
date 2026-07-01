@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, NamedTuple
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...models import MethodModifiersAndAnnotations
 from ...types_defs import (
     ASTNode,
     JavaAnnotationInfo,
@@ -188,26 +187,27 @@ def _extract_type_parameters(class_node: ASTNode) -> list[str]:
 
 def extract_from_modifiers_node(
     node: ASTNode, allowed_modifiers: frozenset[str]
-) -> MethodModifiersAndAnnotations:
-    result = MethodModifiersAndAnnotations()
+) -> tuple[list[str], list[str]]:
+    modifiers: list[str] = []
+    annotations: list[str] = []
     modifiers_node = next(
         (child for child in node.children if child.type == cs.TS_MODIFIERS), None
     )
     if not modifiers_node:
-        return result
+        return modifiers, annotations
     for modifier_child in modifiers_node.children:
         match modifier_child.type:
             case _ if modifier_child.type in allowed_modifiers:
                 if modifier := safe_decode_text(modifier_child):
-                    result.modifiers.append(modifier)
+                    modifiers.append(modifier)
             case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
                 if annotation := safe_decode_text(modifier_child):
-                    result.annotations.append(annotation)
-    return result
+                    annotations.append(annotation)
+    return modifiers, annotations
 
 
 def _extract_class_modifiers(class_node: ASTNode) -> list[str]:
-    return extract_from_modifiers_node(class_node, cs.JAVA_CLASS_MODIFIERS).modifiers
+    return extract_from_modifiers_node(class_node, cs.JAVA_CLASS_MODIFIERS)[0]
 
 
 def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
@@ -293,16 +293,16 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
             annotations=[],
         )
 
-    mods_and_annots = extract_from_modifiers_node(method_node, cs.JAVA_METHOD_MODIFIERS)
+    mods, annots = extract_from_modifiers_node(method_node, cs.JAVA_METHOD_MODIFIERS)
 
     return JavaMethodInfo(
         name=safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME)),
         type=_get_method_type(method_node),
         return_type=_extract_method_return_type(method_node),
         parameters=_extract_method_parameters(method_node),
-        modifiers=mods_and_annots.modifiers,
+        modifiers=mods,
         type_parameters=[],
-        annotations=mods_and_annots.annotations,
+        annotations=annots,
     )
 
 
@@ -325,13 +325,13 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
         if name_node := declarator_node.child_by_field_name(cs.TS_FIELD_NAME):
             name = safe_decode_text(name_node)
 
-    mods_and_annots = extract_from_modifiers_node(field_node, cs.JAVA_FIELD_MODIFIERS)
+    mods, annots = extract_from_modifiers_node(field_node, cs.JAVA_FIELD_MODIFIERS)
 
     return JavaFieldInfo(
         name=name,
         type=field_type,
-        modifiers=mods_and_annots.modifiers,
-        annotations=mods_and_annots.annotations,
+        modifiers=mods,
+        annotations=annots,
     )
 
 

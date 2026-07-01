@@ -365,6 +365,7 @@ class LanguageQueries(TypedDict):
     calls: Query | None
     imports: Query | None
     locals: Query | None
+    highlights: Query | None
     config: LanguageSpec
     language: Language
     parser: Parser
@@ -495,15 +496,15 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
