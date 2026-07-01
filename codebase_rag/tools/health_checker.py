@@ -84,7 +84,7 @@ class HealthChecker:
                 ),
             )
 
-        except mgclient.MemgraphError as e:
+        except mgclient.Error as e:
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
                 passed=False,
