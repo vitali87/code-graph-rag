@@ -873,7 +873,7 @@ class CallProcessor:
         if language in _TYPED_LANGUAGES:
             local_var_types = (
                 self._resolver.type_inference.build_local_variable_type_map(
-                    caller_node, module_qn, language
+                    caller_node, module_qn, language, class_context
                 )
             )
         else:
