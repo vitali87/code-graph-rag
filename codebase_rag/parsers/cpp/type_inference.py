@@ -44,7 +44,9 @@ class CppTypeInferenceEngine:
             var_types[name] = type_name
         return var_types
 
-    def collect_type_aliases(self, root_node: Node, aliases: dict[str, str]) -> None:
+    def collect_type_aliases(
+        self, root_node: Node, aliases: dict[str, str], conflicts: set[str]
+    ) -> None:
         # (H) Map each C++ `typedef X Y;` / `using Y = X;` alias name to its underlying
         # (H) bare type name, so a field/local declared with the alias resolves to the
         # (H) aliased class. Collected across all files into one map (an alias in a
@@ -52,31 +54,69 @@ class CppTypeInferenceEngine:
         # (H) Aliases to a primitive/template-arg-only type reduce to no bare name and
         # (H) are skipped (never a first-party method-call receiver).
         for child in root_node.children:
+            # (H) An alias inside a function/method/lambda body is local to that body
+            # (H) and can never type a cross-file field/local, so skip the body (this
+            # (H) also avoids traversing the bulk of the AST -- statements/exprs).
+            if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                continue
             match child.type:
                 case cs.CppNodeType.TYPE_DEFINITION:
-                    self._record_typedef(child, aliases)
+                    self._record_alias(self._typedef_pair(child), aliases, conflicts)
                 case cs.CppNodeType.ALIAS_DECLARATION:
-                    self._record_using_alias(child, aliases)
+                    self._record_alias(self._using_pair(child), aliases, conflicts)
                 case _:
                     # (H) typedef/using appear at file scope and inside namespaces
                     # (H) (and extern "C" blocks), so recurse to reach nested ones.
-                    self.collect_type_aliases(child, aliases)
+                    self.collect_type_aliases(child, aliases, conflicts)
 
-    def _record_typedef(self, node: Node, aliases: dict[str, str]) -> None:
+    def _record_alias(
+        self,
+        pair: tuple[str, str] | None,
+        aliases: dict[str, str],
+        conflicts: set[str],
+    ) -> None:
+        # (H) Bare alias names can collide across scopes/files (two namespaces each
+        # (H) `using It = ...;` for a different type). Rather than keep whichever was
+        # (H) seen first (a confidently-wrong typed edge for the other), drop a name
+        # (H) seen with conflicting underlying types so its receivers fall back to
+        # (H) name-only resolution. Mirrors build_local_variable_type_map's
+        # (H) drop-on-conflict.
+        if pair is None:
+            return
+        alias, underlying = pair
+        if alias in conflicts:
+            return
+        existing = aliases.get(alias)
+        if existing is not None and existing != underlying:
+            del aliases[alias]
+            conflicts.add(alias)
+            return
+        aliases[alias] = underlying
+
+    def _typedef_pair(self, node: Node) -> tuple[str, str] | None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if type_node is None or declarator is None:
-            return
+            return None
         underlying = self._bare_type_name(type_node)
-        alias = self._declarator_name(declarator)
+        # (H) A plain `typedef X Y;` declarator is a bare type_identifier (the new
+        # (H) type name); pointer/array/function typedefs wrap it, so fall back to the
+        # (H) declarator-unwrap used for variables. Only the bare-name form types a
+        # (H) class receiver, so the unwrap returning None for the rest is fine.
+        alias = (
+            safe_decode_text(declarator)
+            if declarator.type == cs.CppNodeType.TYPE_IDENTIFIER
+            else self._declarator_name(declarator)
+        )
         if underlying and alias and alias != underlying:
-            aliases.setdefault(alias, underlying)
+            return (alias, underlying)
+        return None
 
-    def _record_using_alias(self, node: Node, aliases: dict[str, str]) -> None:
+    def _using_pair(self, node: Node) -> tuple[str, str] | None:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
         if name_node is None or type_node is None:
-            return
+            return None
         # (H) `using Y = X;` wraps X in a type_descriptor whose `type` child is the type.
         if type_node.type == cs.CppNodeType.TYPE_DESCRIPTOR:
             inner = type_node.child_by_field_name(cs.FIELD_TYPE)
@@ -84,7 +124,8 @@ class CppTypeInferenceEngine:
         underlying = self._bare_type_name(type_node)
         alias = safe_decode_text(name_node)
         if underlying and alias and alias != underlying:
-            aliases.setdefault(alias, underlying)
+            return (alias, underlying)
+        return None
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # (H) Map each data member of a C++ class to its bare type name, so a member

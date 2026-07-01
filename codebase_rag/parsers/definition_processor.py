@@ -63,6 +63,9 @@ class DefinitionProcessor(
         # (H) across all files (an alias in a header is used in a .cc), read by the
         # (H) resolver when mapping a receiver type name to a class.
         self.type_aliases: dict[str, str] = {}
+        # (H) Alias names seen with conflicting underlying types across scopes/files;
+        # (H) dropped from type_aliases so their receivers fall back to name-only.
+        self._type_alias_conflicts: set[str] = set()
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
         self._deferred_forward_decls: list = []
@@ -189,7 +192,7 @@ class DefinitionProcessor(
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
                 CppTypeInferenceEngine().collect_type_aliases(
-                    root_node, self.type_aliases
+                    root_node, self.type_aliases, self._type_alias_conflicts
                 )
             self._ingest_all_functions(
                 root_node,
