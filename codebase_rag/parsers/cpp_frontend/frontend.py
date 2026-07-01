@@ -230,8 +230,6 @@ class _Collector:
         # (H) Resolve the callee semantically via cursor.referenced (libclang did
         # (H) the overload/name resolution already), preferring its definition so
         # (H) the edge targets the node the frontend emitted for the body.
-        if enclosing is None:
-            return
         referenced = cursor.referenced
         if referenced is None:
             return
@@ -246,10 +244,29 @@ class _Collector:
         )
         if callee_qn is None:
             return  # (H) callee outside the indexed repo (stdlib, etc.)
-        caller_label, caller_qn = enclosing
+        caller = enclosing or self._module_caller(cursor)
+        if caller is None:
+            return
+        caller_label, caller_qn = caller
         self._add_edge(
             cs.RelationshipType.CALLS, caller_label, caller_qn, callee_label, callee_qn
         )
+
+    def _module_caller(self, cursor: Cursor) -> _Scope:
+        # (H) A call with no enclosing function/method runs at module load time
+        # (H) (a default member initializer or a file/namespace-scope global
+        # (H) initializer); the tree-sitter path attributes these to the Module,
+        # (H) so mirror that instead of dropping the edge. The call site must be
+        # (H) inside the indexed repo (module_qn is None for system headers).
+        if cursor.location.file is None:
+            return None
+        file_name = cursor.location.file.name
+        module_qn = self.resolver.module_qn(file_name)
+        rel = self.resolver.rel_path(file_name)
+        if module_qn is None or rel is None:
+            return None
+        self._add_module(module_qn, rel, file_name)
+        return (fc.LABEL_MODULE, module_qn)
 
     def _emit_inheritance(self, cursor: Cursor, derived_qn: str) -> None:
         for child in cursor.get_children():

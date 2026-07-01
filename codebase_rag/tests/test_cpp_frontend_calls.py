@@ -83,3 +83,61 @@ def test_method_calls_free_function(temp_repo: Path) -> None:
         and to_qn.endswith(".m.helper")
         for from_label, from_qn, to_label, to_qn in calls
     ), f"expected Calc.add CALLS helper, got {calls}"
+
+
+# (H) A default member initializer and a namespace-scope global initializer both
+# (H) call compute() with no enclosing function or method. The tree-sitter path
+# (H) attributes such module-load-time calls to the Module node; the libclang
+# (H) frontend previously dropped them (its walk had no enclosing scope to attach
+# (H) the call to), so they must instead fall back to the enclosing Module.
+_INIT_SRC = """
+namespace m {
+
+int compute();
+
+struct S {
+  int x_ = compute();
+  int y_;
+};
+
+int g_val = compute();
+
+int compute() { return 7; }
+
+}  // namespace m
+"""
+
+
+def _write_single(root: Path, source: str) -> None:
+    root.mkdir()
+    (root / "s.cpp").write_text(source, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(root),
+                    "arguments": ["c++", "-std=c++17", str(root / "s.cpp")],
+                    "file": str(root / "s.cpp"),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_module_scope_initializer_calls_attributed_to_module(temp_repo: Path) -> None:
+    root = temp_repo / "initproj"
+    _write_single(root, _INIT_SRC)
+
+    ingestor = MagicMock()
+    run_cpp_frontend(ingestor, root, root.name, root)
+
+    calls = _calls(ingestor)
+    # (H) The two initializer calls collapse to a single Module -> compute edge (the
+    # (H) edge set dedups), matching the caller the tree-sitter path uses.
+    assert any(
+        from_label == "Module"
+        and to_label == "Function"
+        and to_qn.endswith(".m.compute")
+        for from_label, from_qn, to_label, to_qn in calls
+    ), f"expected Module CALLS compute for initializer calls, got {calls}"
