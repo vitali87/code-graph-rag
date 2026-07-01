@@ -257,11 +257,8 @@ class FunctionRegistryTrie:
         cached = self._ending_with_cache.get(suffix)
         if cached is not None:
             return cached
-        if self._simple_name_lookup is not None:
-            if suffix in self._simple_name_lookup:
-                result = sorted(self._simple_name_lookup[suffix])
-            else:
-                result = []
+        if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
+            result = sorted(self._simple_name_lookup[suffix])
         else:
             result = sorted(
                 qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")

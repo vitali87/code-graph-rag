@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -159,3 +160,19 @@ class TestTrieOptimization:
         registry["new.function.test"] = NodeType.FUNCTION
         assert "new.function.test" in registry
         assert registry["new.function.test"] == NodeType.FUNCTION
+
+    def test_find_ending_with_falls_back_when_suffix_missing_from_lookup(self) -> None:
+        trie_no_lookup = FunctionRegistryTrie(simple_name_lookup=None)
+        trie_no_lookup.insert("com.example.Logger.info", NodeType.FUNCTION)
+        assert trie_no_lookup.find_ending_with("info") == ["com.example.Logger.info"]
+
+        trie_with_lookup = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
+        trie_with_lookup.insert("com.example.Logger.debug", NodeType.FUNCTION)
+        assert trie_with_lookup.find_ending_with("debug") == [
+            "com.example.Logger.debug"
+        ]
+
+        trie_bug_state = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
+        trie_bug_state.insert("com.example.Logger.warn", NodeType.FUNCTION)
+        trie_bug_state._simple_name_lookup.pop("warn")
+        assert trie_bug_state.find_ending_with("warn") == ["com.example.Logger.warn"]
