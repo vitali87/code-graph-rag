@@ -719,10 +719,12 @@ The remaining tail is documented, not scoped away:
   first (`Limiter.PosixEnv`), turns `struct ::flock` references into phantom classes,
   and degrades out-of-line methods like `DBImpl::BuildBatchGroup` into free functions
   that lose member-field inference — which is what produces the residual `begin`/`end`
-  and `Schedule`/`SetReadOnly*` false positives. Same family as the tree-sitter-c
-  issue tracked in #555. It is an **emergent cascade** — every isolated small
-  reproduction (clean out-of-line methods, same-basename `.h`/`.cc`, an unrelated
-  `#if` error in the same file) resolves correctly, so there is no minimally
+  and `Schedule`/`SetReadOnly*` false positives. This exact trigger is already reported
+  upstream as [tree-sitter-cpp #297](https://github.com/tree-sitter/tree-sitter-cpp/issues/297)
+  ("ifdef not supported inside constructor member initializer list"); it is a sibling of
+  the tree-sitter-c grammar bug tracked in #555. It is an **emergent cascade** — every
+  isolated small reproduction (clean out-of-line methods, same-basename `.h`/`.cc`, an
+  unrelated `#if` error in the same file) resolves correctly, so there is no minimally
   reproducible cgr-side fix; the fix is upstream (grammar) or the libclang frontend.
 - **The libclang frontend trades this precision gain for recall.** Running the same
   `leveldb` benchmark with `CPP_FRONTEND=libclang` (a `compile_commands.json` from
