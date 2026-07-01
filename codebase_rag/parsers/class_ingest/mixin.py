@@ -104,6 +104,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
+    _overrides_skip_classes: set[str]
     _deferred_forward_decls: list[_DeferredForwardDecl]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
@@ -600,6 +601,7 @@ class ClassIngestMixin:
             self.function_registry,
             self.class_inheritance,
             self.ingestor,
+            self._overrides_skip_classes,
         )
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:

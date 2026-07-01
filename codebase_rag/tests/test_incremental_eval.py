@@ -22,6 +22,7 @@ _DEFINES = cs.RelationshipType.DEFINES.value
 _CALLS = cs.RelationshipType.CALLS.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
 _CONTAINS_FILE = cs.RelationshipType.CONTAINS_FILE.value
+_OVERRIDES = cs.RelationshipType.OVERRIDES.value
 
 # (H) The inbound call edge issue #532 drops: caller.use() calls callee.target().
 _INBOUND_CALL = (_FUNCTION, "proj.caller.use", _CALLS, _FUNCTION, "proj.callee.target")
@@ -255,6 +256,91 @@ class TestIncrementalScenario:
         assert prop_call in clean.edges
         assert prop_call in incr.edges
         assert incr == clean
+
+    def test_incremental_preserves_protocol_dispatch_editing_caller(
+        self, tmp_path: Path, parsers_queries: tuple[object, object]
+    ) -> None:
+        # (H) Issue #532 residual: editing client.py re-parses only it, so
+        # (H) class_inheritance no longer records that GreeterProtocol subclasses
+        # (H) Protocol (iface.py was not re-parsed). Protocol dispatch keys off that
+        # (H) hierarchy: a clean index redirects g.greet() from the Protocol stub to
+        # (H) the concrete Greeter.greet, but without rehydrating class_inheritance
+        # (H) the incremental run leaves the call on the stub. The fix rehydrates the
+        # (H) hierarchy from persisted INHERITS edges before Pass 3.
+        method = cs.NodeLabel.METHOD.value
+        concrete = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.impl.Greeter.greet",
+        )
+        stub = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.iface.GreeterProtocol.greet",
+        )
+        src = tmp_path / "proj"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "iface.py").write_text(
+            "from typing import Protocol\n\n\n"
+            "class GreeterProtocol(Protocol):\n    def greet(self):\n        ...\n",
+            encoding="utf-8",
+        )
+        (src / "impl.py").write_text(
+            "class Greeter:\n    def greet(self):\n        return 1\n", encoding="utf-8"
+        )
+        (src / "client.py").write_text(
+            "from proj.iface import GreeterProtocol\n\n\n"
+            "def use(g: GreeterProtocol):\n    return g.greet()\n",
+            encoding="utf-8",
+        )
+        parsers, queries = parsers_queries
+        incr, clean = run_neutral_edit_scenario(
+            src, "proj", "client.py", parsers, queries, tmp_path / "scn"
+        )
+        assert concrete in clean.edges
+        assert stub not in clean.edges
+        assert concrete in incr.edges
+        assert incr == clean
+
+    def test_pass4_skips_rehydrated_classes_for_overrides(self) -> None:
+        # (H) A rehydrated (unchanged) class's bases come back from INHERITS edges
+        # (H) with no source order, so a multi-inheritance method's BFS could pick
+        # (H) the wrong base and emit a spurious OVERRIDES. Pass 4 must skip such
+        # (H) classes; their real OVERRIDES are preserved/restored. Here Combined
+        # (H) has bases in scrambled order [MixinB, MixinA]; without the skip it
+        # (H) would emit OVERRIDES to MixinB.shared (first base), which is exactly
+        # (H) the divergence from a clean index.
+        from codebase_rag.graph_updater import FunctionRegistryTrie
+        from codebase_rag.parsers.class_ingest.method_override import (
+            process_all_method_overrides,
+        )
+        from codebase_rag.types_defs import NodeType
+
+        registry = FunctionRegistryTrie()
+        for qn in (
+            "proj.combined.Combined.shared",
+            "proj.mixins.MixinA.shared",
+            "proj.mixins.MixinB.shared",
+        ):
+            registry[qn] = NodeType.METHOD
+        inheritance = {
+            "proj.combined.Combined": ["proj.mixins.MixinB", "proj.mixins.MixinA"]
+        }
+
+        skipped = _StatefulIngestor()
+        process_all_method_overrides(
+            registry, inheritance, skipped, {"proj.combined.Combined"}
+        )
+        assert not any(e[2] == _OVERRIDES for e in skipped.edges)
+
+        not_skipped = _StatefulIngestor()
+        process_all_method_overrides(registry, inheritance, not_skipped, set())
+        assert any(e[2] == _OVERRIDES for e in not_skipped.edges)
 
     def test_compare_states_flags_missing_edge(self) -> None:
         from evals.types_defs import GraphState

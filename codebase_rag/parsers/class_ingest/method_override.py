@@ -18,9 +18,16 @@ def process_all_method_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    skip_classes: set[str] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
+    # (H) On an incremental run, skip classes whose inheritance was only
+    # (H) rehydrated from the graph (defined in files not re-parsed): their
+    # (H) OVERRIDES already exist / are restored, and re-emitting from
+    # (H) source-order-less rehydrated bases would misattribute multi-inheritance
+    # (H) methods to the wrong base. Empty/None on a full run.
+    skip = skip_classes or set()
     for method_qn in function_registry.keys():
         if (
             function_registry[method_qn] == NodeType.METHOD
@@ -29,6 +36,8 @@ def process_all_method_overrides(
             parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
             if len(parts) == 2:
                 class_qn, method_name = parts
+                if class_qn in skip:
+                    continue
                 check_method_overrides(
                     method_qn,
                     method_name,

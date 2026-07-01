@@ -66,6 +66,13 @@ class DefinitionProcessor(
         # (H) Alias names seen with conflicting underlying types across scopes/files;
         # (H) dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()
+        # (H) Class qns whose inheritance was rehydrated from the graph on an
+        # (H) incremental run (defined in files that were not re-parsed). Pass 4
+        # (H) skips them for OVERRIDES: their edges are already in the graph or
+        # (H) restored verbatim, and re-emitting from rehydrated bases would pick a
+        # (H) different base for multi-inheritance methods (INHERITS edges do not
+        # (H) preserve source order). Empty on a full run, so all classes process.
+        self._overrides_skip_classes: set[str] = set()
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
         self._deferred_forward_decls: list = []

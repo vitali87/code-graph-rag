@@ -75,6 +75,7 @@ _INBOUND_DEPENDENT_RELS = frozenset(
         cs.RelationshipType.OVERRIDES.value,
     }
 )
+_INHERITS_REL = cs.RelationshipType.INHERITS.value
 
 
 def _text(value: PropertyValue) -> str | None:
@@ -161,6 +162,18 @@ class _StatefulIngestor:
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_ALL_INHERITS:
+                inherits: list[ResultRow] = []
+                for from_label, from_val, rel_type, _to_label, to_val in self.edges:
+                    if rel_type != _INHERITS_REL:
+                        continue
+                    inherits.append(
+                        {
+                            cs.KEY_CHILD_QN: _text(from_val),
+                            cs.KEY_BASE_QN: _text(to_val),
+                        }
+                    )
+                return inherits
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():

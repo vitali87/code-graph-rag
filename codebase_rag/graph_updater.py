@@ -584,6 +584,33 @@ class GraphUpdater:
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)
+        self._rehydrate_class_inheritance_from_graph()
+
+    def _rehydrate_class_inheritance_from_graph(self) -> None:
+        # (H) Incremental runs rebuild class_inheritance only from re-parsed files.
+        # (H) Restore the child->bases map for classes defined in files that were
+        # (H) not re-parsed, so protocol dispatch and inherited-method resolution
+        # (H) work in Pass 3 (issue #532 residual). Only fill entries missing
+        # (H) locally: a re-parsed class already has its fresh, correctly ordered
+        # (H) bases, so we must not overwrite or duplicate them.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        class_inheritance = self.factory.definition_processor.class_inheritance
+        rehydrated: dict[str, list[str]] = {}
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_INHERITS):
+            child = row.get(cs.KEY_CHILD_QN)
+            base = row.get(cs.KEY_BASE_QN)
+            if not isinstance(child, str) or not isinstance(base, str):
+                continue
+            if child in class_inheritance:
+                continue
+            rehydrated.setdefault(child, []).append(base)
+        for child, bases in rehydrated.items():
+            class_inheritance[child] = bases
+        # (H) Pass 4 must not re-emit OVERRIDES for these rehydrated (unchanged)
+        # (H) classes: source order is lost, so a multi-inheritance method would be
+        # (H) attributed to the wrong base. Their edges are preserved/restored.
+        self.factory.definition_processor._overrides_skip_classes = set(rehydrated)
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # (H) Record the reference edges that unchanged files point at the
