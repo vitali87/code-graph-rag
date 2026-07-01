@@ -354,7 +354,9 @@ class TestBuildDeadCodeQueryUnit:
         assert "$root_decorators" in query
         assert "$entry_points" in query
         assert "is_exported" in query
-        assert "CALLS*0.." in query
+        # (H) BFS expansion: visits each reachable node once instead of
+        # (H) enumerating every path (which times out on real graphs).
+        assert "CALLS*BFS" in query
         # (H) test functions are roots when tests are included
         assert "n.path CONTAINS" in query
 
@@ -596,6 +598,36 @@ class TestBuildDeadCodeQueryIntegration:
         assert {r["qualified_name"] for r in with_classes} == {
             "proj.mod.Base",
             "proj.mod.Derived",
+        }
+
+    def test_no_roots_reports_everything(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) with no roots at all (nothing exported / entry-point / decorated /
+        # (H) called at module load), every function is unreachable and must be
+        # (H) reported. The empty-roots guard keeps the query from silently
+        # (H) returning nothing (UNWIND of [] would drop the final MATCH).
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(a:Function {qualified_name: 'proj.mod.a', name: 'a', start_line: 1, "
+            "  end_line: 2, decorators: [], is_exported: false, path: 'proj/mod.py'}), "
+            "(b:Function {qualified_name: 'proj.mod.b', name: 'b', start_line: 4, "
+            "  end_line: 5, decorators: [], is_exported: false, path: 'proj/mod.py'}), "
+            "(a)-[:CALLS]->(b)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), params
+        )
+        assert {r["qualified_name"] for r in results} == {
+            "proj.mod.a",
+            "proj.mod.b",
         }
 
     def test_module_load_callee_is_a_root(
