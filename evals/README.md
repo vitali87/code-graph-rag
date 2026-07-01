@@ -701,7 +701,7 @@ The remaining tail is documented, not scoped away:
   the misses): `libclang` records `a = b` and `a[i]` as calls to the overloaded
   operator methods, while cgr models them as `builtin.cpp.*` operator calls — a
   metric difference, not a misresolution.
-- **tree-sitter-cpp parse corruption in complex files (the dominant residual FP).**
+- **tree-sitter-cpp parse corruption in complex files (the dominant residual FPs).**
   Traced to a `tree-sitter-cpp` grammar limitation, not a cgr resolution bug. A
   preprocessor conditional inside a construct — the reduced minimal trigger is a
   constructor member-initializer list interrupted by `#if`/`#endif`:
@@ -726,8 +726,8 @@ The remaining tail is documented, not scoped away:
   reproducible cgr-side fix; the fix is upstream (grammar) or the libclang frontend.
 - **The libclang frontend trades this precision gain for recall.** Running the same
   `leveldb` benchmark with `CPP_FRONTEND=libclang` (a `compile_commands.json` from
-  CMake) parses the corrupt files correctly — env_posix classes nest properly and the
-  FP drop to 1 (precision **0.9975**) — but recall falls to **0.46** (F1 0.63): the
+  CMake) parses the corrupt files correctly — `env_posix` classes nest properly and the
+  FP count drops to 1 (precision **0.9975**) — but recall falls to **0.46** (F1 0.63): the
   frontend emits far fewer `CALLS` edges than the tree-sitter resolver, a diffuse gap
   (implicit operators, compile-DB parse-context differences from the oracle's
   per-file parse, and header-inline caller-file attribution). So the default
