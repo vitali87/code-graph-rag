@@ -737,6 +737,41 @@ The remaining tail is documented, not scoped away:
   frontend for parse fidelity but needs its own call-edge recall work before it is a
   drop-in improvement.
 
+## Multi-language retrieval (Scala) — Scala CALLS vs `scalameta`
+
+The same harness applied to Scala: for each first-party Scala `def`, which files
+call it. cgr's Scala `CALLS` edges, reduced to `(caller_file, callee_simple_name)`,
+are graded against call sites extracted by `scalameta`, over the same first-party
+name universe (every declared `def`). cgr parses Scala with tree-sitter, so
+`scalameta` (the Scala compiler front-end's own parser, run via `scala-cli`) is an
+independent oracle. The oracle grades only files it parses cleanly (covered set;
+the cgr side is held to the same files), so a file using Scala 3 syntax that the
+2.13 parser rejects penalizes neither side.
+
+```bash
+uv run python -m evals.scala_retrieval --target <scala-sources>
+```
+
+Requires `scala-cli` on `PATH` (it fetches `scalameta` on first run); the eval
+exits cleanly if it is missing. Pinned by
+`codebase_rag/tests/test_scala_retrieval_eval.py`, where cgr's Scala call graph
+matches the `scalameta` oracle on the fixture.
+
+**It surfaced a real cgr bug: infix-operator and paren-less method calls were
+dropped.** cgr's Scala spec lists `infix_expression` and `field_expression` as call
+node types, so both are collected, but the callee-name extractor
+(`call_processor._get_call_target_name`) had no case for either: an
+`infix_expression` (`a ~> b`, `xs map f`) exposes its callee through an `operator`
+field, and a paren-less nullary call (`obj.done`) is a bare `field_expression` whose
+callee is its `field` — neither has the `function` field the extractor keyed on, so
+every such call returned no name and never attached. The fix adds two Scala-gated
+cases (the `field_expression` node type collides with C++, so the guard keeps other
+languages inert). On `scala-parser-combinators` (a combinator DSL, so infix-operator
+heavy) recall rose **0.40 → 0.73**, F1 **0.57 → 0.84**, precision held at **1.0**;
+`scopt` shows the same shape (precision **1.0**, recall **0.71**). The residual is
+the diffuse receiver-type-inference tail every language eval carries (implicit
+conversions such as `"" ~>`, deeply generic receivers), not a systematic gap.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine
