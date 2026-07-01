@@ -95,12 +95,6 @@ class Dependency:
 
 
 @dataclass
-class MethodModifiersAndAnnotations:
-    modifiers: list[str] = field(default_factory=list)
-    annotations: list[str] = field(default_factory=list)
-
-
-@dataclass
 class ToolMetadata:
     name: str
     description: str

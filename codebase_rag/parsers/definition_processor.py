@@ -261,5 +261,4 @@ class DefinitionProcessor(
                 return result
         return None
 
-    def _extract_decorators(self, node: ASTNode) -> list[str]:
-        return self._handler.extract_decorators(node)
+

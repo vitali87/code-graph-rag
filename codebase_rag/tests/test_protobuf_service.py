@@ -189,7 +189,6 @@ def test_ensure_node_batch_no_message_class_logs_warning(tmp_path: Path) -> None
 
 
 def test_ensure_node_batch_no_oneof_mapping_logs_warning(tmp_path: Path) -> None:
-    from codebase_rag.services.protobuf_service import LABEL_TO_ONEOF_FIELD
 
     output_dir = tmp_path / "out"
     output_dir.mkdir()

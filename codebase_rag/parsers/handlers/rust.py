@@ -6,7 +6,6 @@ from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..rs import utils as rs_utils
-from ..utils import safe_decode_text
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:
@@ -19,28 +18,6 @@ if TYPE_CHECKING:
 class RustHandler(BaseLanguageHandler):
     __slots__ = ()
 
-    def extract_decorators(self, node: ASTNode) -> list[str]:
-        outer_decorators: list[str] = []
-        sibling = node.prev_named_sibling
-        while sibling and sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
-            if attr_text := safe_decode_text(sibling):
-                outer_decorators.append(attr_text)
-            sibling = sibling.prev_named_sibling
-
-        decorators = list(reversed(outer_decorators))
-
-        nodes_to_search = [node]
-        if body_node := node.child_by_field_name(cs.FIELD_BODY):
-            nodes_to_search.append(body_node)
-
-        inner_attr_type = cs.TS_RS_INNER_ATTRIBUTE_ITEM
-        for search_node in nodes_to_search:
-            for child in search_node.children:
-                if child.type == inner_attr_type:
-                    if attr_text := safe_decode_text(child):
-                        decorators.append(attr_text)
-
-        return decorators
 
     def build_function_qualified_name(
         self,
