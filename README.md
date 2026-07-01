@@ -292,7 +292,7 @@ ollama pull llama3.2
 
 4. **Start Memgraph database**:
 ```bash
-docker compose up -d
+cgr daemon up
 ```
 
 5. **Verify installation**:
