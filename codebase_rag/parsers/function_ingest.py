@@ -84,8 +84,6 @@ class FunctionIngestMixin:
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
 
-
-
     def _ingest_all_functions(
         self,
         root_node: Node,
@@ -111,7 +109,9 @@ class FunctionIngestMixin:
                 continue
 
             if language == cs.SupportedLanguage.CPP:
-                if self._handle_cpp_out_of_class_method(func_node, module_qn, lang_queries):
+                if self._handle_cpp_out_of_class_method(
+                    func_node, module_qn, lang_queries
+                ):
                     continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
@@ -236,7 +236,12 @@ class FunctionIngestMixin:
             parts = parts[:-1]
         return False
 
-    def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str, lang_queries: LanguageQueries | None = None) -> bool:
+    def _handle_cpp_out_of_class_method(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_queries: LanguageQueries | None = None,
+    ) -> bool:
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return False
 
@@ -268,7 +273,9 @@ class FunctionIngestMixin:
             decorators = []
             modifiers = []
             if lang_queries:
-                modifiers, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
+                modifiers, decorators = extract_modifiers_and_decorators(
+                    func_node, lang_queries
+                )
             props: PropertyDict = {
                 cs.KEY_NAME: method_name,
                 cs.KEY_MODIFIERS: modifiers,
@@ -331,7 +338,9 @@ class FunctionIngestMixin:
         self._deferred_cpp_methods = []
         return ingested
 
-    def _defer_go_receiver_method(self, func_node: Node, module_qn: str, lang_queries: LanguageQueries | None) -> bool:
+    def _defer_go_receiver_method(
+        self, func_node: Node, module_qn: str, lang_queries: LanguageQueries | None
+    ) -> bool:
         if not go_utils.is_receiver_method(func_node):
             return False
         receiver_type = go_utils.extract_receiver_type_name(func_node)
@@ -479,7 +488,9 @@ class FunctionIngestMixin:
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
 
-        func_props = self._build_function_props(func_node, resolution, module_qn, lang_queries)
+        func_props = self._build_function_props(
+            func_node, resolution, module_qn, lang_queries
+        )
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
@@ -498,10 +509,16 @@ class FunctionIngestMixin:
         )
 
     def _build_function_props(
-        self, func_node: Node, resolution: FunctionResolution, module_qn: str, lang_queries: LanguageQueries
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_queries: LanguageQueries,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
-        modifiers, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
+        modifiers, decorators = extract_modifiers_and_decorators(
+            func_node, lang_queries
+        )
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,

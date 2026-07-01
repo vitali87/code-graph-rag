@@ -312,7 +312,9 @@ def ingest_method(
     decorators = []
     modifiers = []
     if lang_queries:
-        modifiers, decorators = extract_modifiers_and_decorators(method_node, lang_queries)
+        modifiers, decorators = extract_modifiers_and_decorators(
+            method_node, lang_queries
+        )
 
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,

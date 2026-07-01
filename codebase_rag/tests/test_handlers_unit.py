@@ -205,7 +205,6 @@ class TestBaseLanguageHandler:
         node = create_mock_node(cs.TS_IDENTIFIER, text="")
         assert handler.extract_base_class_name(node) is None
 
-
     @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
     def test_build_nested_function_qn_with_parent_functions(
         self, python_parser: Parser
@@ -450,7 +449,6 @@ class MyClass {
         assert result is None
 
 
-
 try:
     import tree_sitter_typescript as tsts
 
@@ -470,6 +468,7 @@ def ts_parser() -> Parser | None:
 @pytest.mark.skipif(not TS_AVAILABLE, reason="tree-sitter-typescript not available")
 class TestJsTsHandlerTypeScriptDecorators:
     pass
+
 
 @pytest.mark.skipif(not CPP_AVAILABLE, reason="tree-sitter-cpp not available")
 class TestCppHandler:
@@ -653,11 +652,6 @@ impl MyTrait for MyStruct {
         assert "my_function" in result
 
 
-
-
-
-
-
 @pytest.mark.skipif(not JAVA_AVAILABLE, reason="tree-sitter-java not available")
 class TestJavaHandler:
     def test_build_method_qualified_name_with_params(self, java_parser: Parser) -> None:
@@ -731,11 +725,6 @@ class MyClass {
         assert result1 != result2
         assert "int" in result1
         assert "String" in result2
-
-
-
-
-
 
 
 @pytest.mark.skipif(not LUA_AVAILABLE, reason="tree-sitter-lua not available")
@@ -819,6 +808,7 @@ class TestLuaHandler:
 @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="tree-sitter-python not available")
 class TestPythonHandler:
     pass
+
 
 def _find_php_node(root: ASTNode, node_type: str) -> ASTNode | None:
     if root.type == node_type:
@@ -939,7 +929,3 @@ class TestPhpHandler:
         assert func_node is not None
 
         assert handler.is_function_exported(func_node) is True
-
-
-
-

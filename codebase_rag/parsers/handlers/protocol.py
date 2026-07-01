@@ -53,4 +53,3 @@ class LanguageHandler(Protocol):
         func_name: str,
         lang_config: LanguageSpec,
     ) -> str | None: ...
-

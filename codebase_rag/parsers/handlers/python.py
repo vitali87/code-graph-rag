@@ -10,4 +10,3 @@ if TYPE_CHECKING:
 
 class PythonHandler(BaseLanguageHandler):
     __slots__ = ()
-

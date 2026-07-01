@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 class JavaHandler(BaseLanguageHandler):
     __slots__ = ()
 
-
     def build_method_qualified_name(
         self,
         class_qn: str,

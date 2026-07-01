@@ -260,5 +260,3 @@ class DefinitionProcessor(
                 ).strip(cs.DOCSTRING_STRIP_CHARS)
                 return result
         return None
-
-

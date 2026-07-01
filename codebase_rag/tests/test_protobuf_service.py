@@ -189,7 +189,6 @@ def test_ensure_node_batch_no_message_class_logs_warning(tmp_path: Path) -> None
 
 
 def test_ensure_node_batch_no_oneof_mapping_logs_warning(tmp_path: Path) -> None:
-
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     ingestor = ProtobufFileIngestor(str(output_dir))
@@ -279,8 +278,7 @@ def test_ensure_relationship_batch_unknown_rel_type(tmp_path: Path) -> None:
     key = next(iter(ingestor._relationships))
     rel_obj = ingestor._relationships[key]
     assert (
-        rel_obj.type
-        == pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
+        rel_obj.type == pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
     )
 
 

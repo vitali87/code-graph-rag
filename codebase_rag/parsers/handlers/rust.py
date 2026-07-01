@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 class RustHandler(BaseLanguageHandler):
     __slots__ = ()
 
-
     def build_function_qualified_name(
         self,
         node: ASTNode,

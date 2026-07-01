@@ -241,10 +241,14 @@ def _create_highlights_query(
         if hasattr(module, "HIGHLIGHTS_QUERY"):
             query_str = module.HIGHLIGHTS_QUERY
 
-        fallback_path = Path(__file__).parent / "queries" / "highlights" / f"{lang_name}.scm"
+        fallback_path = (
+            Path(__file__).parent / "queries" / "highlights" / f"{lang_name}.scm"
+        )
         if fallback_path.exists():
             custom_queries = fallback_path.read_text(encoding="utf-8")
-            query_str = query_str + "\n" + custom_queries if query_str else custom_queries
+            query_str = (
+                query_str + "\n" + custom_queries if query_str else custom_queries
+            )
 
         if query_str:
             return Query(language, query_str)

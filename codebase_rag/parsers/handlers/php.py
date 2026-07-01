@@ -48,4 +48,3 @@ class PhpHandler(BaseLanguageHandler):
                 text = safe_decode_text(child)
                 return text == "public"
         return True
-

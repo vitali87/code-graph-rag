@@ -136,8 +136,6 @@ class ClassIngestMixin:
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
 
-
-
     @abstractmethod
     def _determine_function_parent(
         self,
@@ -341,7 +339,9 @@ class ClassIngestMixin:
         )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
-        modifiers, decorators = extract_modifiers_and_decorators(class_node, lang_queries)
+        modifiers, decorators = extract_modifiers_and_decorators(
+            class_node, lang_queries
+        )
 
         class_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: class_qn,
