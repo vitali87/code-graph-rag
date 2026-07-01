@@ -52,6 +52,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.JAVA,
         cs.SupportedLanguage.LUA,
         cs.SupportedLanguage.GO,
+        cs.SupportedLanguage.CPP,
     }
 )
 
@@ -803,7 +804,22 @@ class CallProcessor:
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:
-                        return field_node.text.decode(cs.ENCODING_UTF8)
+                        method = field_node.text.decode(cs.ENCODING_UTF8)
+                        # (H) Prepend a simple-identifier receiver (`obj->m`/`obj.m`
+                        # (H) -> `obj.m`) so the resolver can map obj to its type and
+                        # (H) bind the correct class method; a `.`-joined two-part name
+                        # (H) still falls back to the bare method-name trie when the
+                        # (H) receiver type is unknown. Complex receivers (chains,
+                        # (H) calls, `this`) keep the bare method name, as before.
+                        arg = func_child.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+                        if (
+                            arg is not None
+                            and arg.type == cs.TS_IDENTIFIER
+                            and arg.text
+                        ):
+                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            return f"{receiver}{cs.SEPARATOR_DOT}{method}"
+                        return method
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 

@@ -8,6 +8,7 @@ from ..types_defs import (
     LanguageQueries,
     SimpleNameLookup,
 )
+from .cpp import CppTypeInferenceEngine
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -35,6 +36,7 @@ class TypeInferenceEngine:
         "_js_type_inference",
         "_python_type_inference",
         "_go_type_inference",
+        "_cpp_type_inference",
     )
 
     def __init__(
@@ -64,12 +66,19 @@ class TypeInferenceEngine:
         self._js_type_inference: JsTypeInferenceEngine | None = None
         self._python_type_inference: PythonTypeInferenceEngine | None = None
         self._go_type_inference: GoTypeInferenceEngine | None = None
+        self._cpp_type_inference: CppTypeInferenceEngine | None = None
 
     @property
     def go_type_inference(self) -> GoTypeInferenceEngine:
         if self._go_type_inference is None:
             self._go_type_inference = GoTypeInferenceEngine()
         return self._go_type_inference
+
+    @property
+    def cpp_type_inference(self) -> CppTypeInferenceEngine:
+        if self._cpp_type_inference is None:
+            self._cpp_type_inference = CppTypeInferenceEngine()
+        return self._cpp_type_inference
 
     @property
     def java_type_inference(self) -> JavaTypeInferenceEngine:
@@ -148,6 +157,10 @@ class TypeInferenceEngine:
                 )
             case cs.SupportedLanguage.GO:
                 return self.go_type_inference.build_local_variable_type_map(
+                    caller_node, module_qn
+                )
+            case cs.SupportedLanguage.CPP:
+                return self.cpp_type_inference.build_local_variable_type_map(
                     caller_node, module_qn
                 )
             case _:

@@ -259,7 +259,6 @@ class TestBuildLocalVariableTypeMapDispatch:
             cs.SupportedLanguage.RUST,
             cs.SupportedLanguage.GO,
             cs.SupportedLanguage.SCALA,
-            cs.SupportedLanguage.CPP,
             cs.SupportedLanguage.PHP,
         ],
     )

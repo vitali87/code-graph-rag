@@ -1794,6 +1794,15 @@ class CppNodeType(StrEnum):
     CONSTRUCTOR_OR_DESTRUCTOR_DECLARATION = "constructor_or_destructor_declaration"
     INLINE_METHOD_DEFINITION = "inline_method_definition"
     OPERATOR_CAST_DEFINITION = "operator_cast_definition"
+    TYPE_IDENTIFIER = "type_identifier"
+    PARAMETER_LIST = "parameter_list"
+    PARAMETER_DECLARATION = "parameter_declaration"
+    OPTIONAL_PARAMETER_DECLARATION = "optional_parameter_declaration"
+    INIT_DECLARATOR = "init_declarator"
+    TEMPLATE_TYPE = "template_type"
+    FIELD_EXPRESSION = "field_expression"
+    COMPOUND_STATEMENT = "compound_statement"
+    THIS = "this"
 
 
 CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
