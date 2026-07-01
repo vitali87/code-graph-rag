@@ -701,15 +701,39 @@ The remaining tail is documented, not scoped away:
   the misses): `libclang` records `a = b` and `a[i]` as calls to the overloaded
   operator methods, while cgr models them as `builtin.cpp.*` operator calls — a
   metric difference, not a misresolution.
-- **STL calls on non-simple receivers** (the residual `begin`/`end`/`empty`/`clear`
-  false positives): receiver type inference covers parameters, locals, and member
-  fields named by a bare identifier, but not chained receivers (`map_.begin()` via a
-  nested `this->` expression) or STL locals whose element type cgr does not model, so
-  a few external calls still reach the name-only fallback.
-- **Namespace-scoped and singleton calls** (`Schedule`, `SetReadOnlyFDLimit`,
-  `DebugString`): a call on a singleton (`Env::Default()->Schedule()`) or a
-  free/namespace function the oracle attributes to a different site. Each is a
-  distinct smaller sub-case the eval continues to surface; none are hidden.
+- **tree-sitter-cpp parse corruption in complex files (the dominant residual FP).**
+  Traced to a `tree-sitter-cpp` grammar limitation, not a cgr resolution bug. A
+  preprocessor conditional inside a construct — the reduced minimal trigger is a
+  constructor member-initializer list interrupted by `#if`/`#endif`:
+
+  ```cpp
+  class A { public: A(int n) :
+  #if !defined(NDEBUG)
+      x_(n),
+  #endif
+      y_(n) {} int x_; int y_; };
+  ```
+
+  emits `ERROR` nodes (4 vs 0 without the `#if`). In real files this cascades:
+  `util/env_posix.cc` (24 `ERROR` nodes) mis-nests every sibling class under the
+  first (`Limiter.PosixEnv`), turns `struct ::flock` references into phantom classes,
+  and degrades out-of-line methods like `DBImpl::BuildBatchGroup` into free functions
+  that lose member-field inference — which is what produces the residual `begin`/`end`
+  and `Schedule`/`SetReadOnly*` false positives. Same family as the tree-sitter-c
+  issue tracked in #555. It is an **emergent cascade** — every isolated small
+  reproduction (clean out-of-line methods, same-basename `.h`/`.cc`, an unrelated
+  `#if` error in the same file) resolves correctly, so there is no minimally
+  reproducible cgr-side fix; the fix is upstream (grammar) or the libclang frontend.
+- **The libclang frontend trades this precision gain for recall.** Running the same
+  `leveldb` benchmark with `CPP_FRONTEND=libclang` (a `compile_commands.json` from
+  CMake) parses the corrupt files correctly — env_posix classes nest properly and the
+  FP drop to 1 (precision **0.9975**) — but recall falls to **0.46** (F1 0.63): the
+  frontend emits far fewer `CALLS` edges than the tree-sitter resolver, a diffuse gap
+  (implicit operators, compile-DB parse-context differences from the oracle's
+  per-file parse, and header-inline caller-file attribution). So the default
+  tree-sitter path remains the higher-F1 choice; the libclang frontend is the correct
+  frontend for parse fidelity but needs its own call-edge recall work before it is a
+  drop-in improvement.
 
 ## Semantic search — query to function relevance
 
