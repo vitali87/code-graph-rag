@@ -34,7 +34,7 @@ The package installs a `cgr` command.
 **Start Memgraph, parse a repo, and query it:**
 
 ```bash
-docker compose up -d                       # start Memgraph
+cgr daemon up                              # start Memgraph + Qdrant
 cgr start --repo-path ./my-project \
           --update-graph --clean           # parse & launch interactive chat
 ```
