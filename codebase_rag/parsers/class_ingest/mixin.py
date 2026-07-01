@@ -103,7 +103,6 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
-    _defined_namespace_qns: set[str]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -112,6 +111,20 @@ class ClassIngestMixin:
         # (H) different namespaces stay distinct.
         prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
         return class_qn[len(prefix) :] if class_qn.startswith(prefix) else class_qn
+
+    def _namespace_qn_has_definition(self, ns_qn: str) -> bool:
+        # (H) A real definition of this namespace-qualified type is registered iff some
+        # (H) class qn ends with it (`....leveldb.VersionSet`). find_ending_with is
+        # (H) indexed by simple name, and because it is queried AFTER the registry is
+        # (H) rehydrated from the graph, it also covers definitions in files an
+        # (H) incremental run did not re-parse (issue: a forward decl must still drop
+        # (H) when its definition lives in an unchanged file).
+        simple = ns_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
+        return any(
+            qn.endswith(suffix)
+            for qn in self.function_registry.find_ending_with(simple)
+        )
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -213,7 +226,7 @@ class ClassIngestMixin:
             # (H) Drop the forward declaration only when a real definition of the SAME
             # (H) namespace-qualified type exists (not merely the same simple name in
             # (H) another namespace). Otherwise it is the type's only node -> keep it.
-            if entry.ns_qn in self._defined_namespace_qns:
+            if self._namespace_qn_has_definition(entry.ns_qn):
                 continue
             self._process_class_node(
                 entry.class_node,
@@ -317,13 +330,6 @@ class ClassIngestMixin:
             return
 
         class_qn, class_name, is_exported = identity
-        # (H) Record this real (bodied) definition's namespace-qualified name so a
-        # (H) deferred forward declaration of the same type is recognized as a phantom
-        # (H) and dropped. Uses the pre-suffix identity qn so both sides share a key.
-        if class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES or (
-            class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION
-        ):
-            self._defined_namespace_qns.add(self._namespace_qn(class_qn, module_qn))
         class_qn = self.function_registry.register_unique_qn(
             class_qn, class_node.start_point[0] + 1
         )

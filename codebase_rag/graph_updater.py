@@ -525,6 +525,13 @@ class GraphUpdater:
         if go_methods:
             logger.info("Resolved {} Go receiver methods", go_methods)
 
+        if not force:
+            self._rehydrate_registry_from_graph()
+
+        # (H) After rehydration so the "does a real definition exist?" check sees
+        # (H) definitions in files an incremental run did not re-parse; otherwise a
+        # (H) forward declaration whose definition lives in an unchanged file would be
+        # (H) kept as a phantom and re-fragment the class.
         kept_forwards = (
             self.factory.definition_processor.resolve_deferred_forward_declarations()
         )
@@ -533,9 +540,6 @@ class GraphUpdater:
                 "Registered {} forward-declared C/C++ types with no definition",
                 kept_forwards,
             )
-
-        if not force:
-            self._rehydrate_registry_from_graph()
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
