@@ -83,9 +83,11 @@ class CppTypeInferenceEngine:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or not (type_name := self._bare_type_name(type_node)):
             return
-        declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
-        if (name := self._declarator_name(declarator)) is not None:
-            decls.append((name, type_name))
+        # (H) One statement may declare several variables sharing the leading type
+        # (H) (`Zeta a, b;`), each its own `declarator` field child; record them all.
+        for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+            if (name := self._declarator_name(declarator)) is not None:
+                decls.append((name, type_name))
 
     def _bare_type_name(self, type_node: Node) -> str | None:
         match type_node.type:

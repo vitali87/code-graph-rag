@@ -162,3 +162,56 @@ def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
     assert var_types.get("x") == "Foo", (
         f"an inner-block local with no name collision should resolve, got {var_types}"
     )
+
+
+# (H) One C++ declaration statement can declare several variables (`Zeta a, b;`), each
+# (H) exposed as its own `declarator` field child. Recording only the first left `b`
+# (H) unmapped, so `b.run()` fell back to bare-name resolution. Every declarator in the
+# (H) statement shares the leading type and must be recorded, including mixed
+# (H) pointer/plain forms (`Foo* p, q;`).
+def test_cpp_multi_declarator_declaration_maps_all_names() -> None:
+    node = _first_function_node("void f() { Zeta a, b; Foo* p, q; }")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    assert var_types.get("a") == "Zeta" and var_types.get("b") == "Zeta", (
+        f"both a and b should map to Zeta, got {var_types}"
+    )
+    assert var_types.get("p") == "Foo" and var_types.get("q") == "Foo", (
+        f"both p and q should map to Foo, got {var_types}"
+    )
+
+
+_MULTI_DECL_SOURCE = """
+namespace ns {
+
+class Alpha {
+ public:
+  int run() { return 1; }
+};
+
+class Zeta {
+ public:
+  int run() { return 2; }
+};
+
+int use_second(Zeta& zr) { Zeta a = zr, b = zr; return b.run(); }
+
+}  // namespace ns
+"""
+
+
+def test_cpp_second_declarator_receiver_resolves(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "cpp_multi_decl"
+    project.mkdir()
+    (project / "s.cpp").write_text(_MULTI_DECL_SOURCE, encoding="utf-8")
+
+    run_updater(project, mock_ingestor)
+
+    calls = _calls_to_run(mock_ingestor)
+    caller = next(q for q in calls if q.endswith(".use_second"))
+    assert calls[caller].endswith(".Zeta.run"), (
+        f"b.run() on the second declarator `Zeta b` should resolve to Zeta.run, "
+        f"got {calls[caller]}"
+    )
