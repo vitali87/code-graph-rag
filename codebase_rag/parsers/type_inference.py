@@ -155,9 +155,29 @@ class TypeInferenceEngine:
         # (H) When the caller is a method, overlay its class's member-field types as a
         # (H) base so a bare `field_.method()` receiver resolves; parameters and locals
         # (H) with the same name shadow a field, so the local map wins on conflict.
-        if class_context and (fields := self.class_field_types.get(class_context)):
+        if class_context and (fields := self._collect_field_types(class_context)):
             return {**fields, **local}
         return local
+
+    def _collect_field_types(self, class_qn: str) -> dict[str, str]:
+        # (H) Collect member-field types along the inheritance chain so a derived class
+        # (H) method can resolve a field inherited from a base. Bases are visited first
+        # (H) and the class's own fields applied last, so a derived field shadows a
+        # (H) base field of the same name. Guards against inheritance cycles.
+        fields: dict[str, str] = {}
+        seen: set[str] = set()
+
+        def collect(qn: str) -> None:
+            if qn in seen:
+                return
+            seen.add(qn)
+            for base in self.class_inheritance.get(qn, []):
+                collect(base)
+            if own := self.class_field_types.get(qn):
+                fields.update(own)
+
+        collect(class_qn)
+        return fields
 
     def _build_local_variable_type_map(
         self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage

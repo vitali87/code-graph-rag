@@ -181,3 +181,70 @@ def test_cpp_out_of_line_member_field_call_resolves_cross_file(
         f"buffer_.clear() on a std::string field must not resolve first-party, "
         f"got {callees}"
     )
+
+
+# (H) Member fields are frequently declared inside preprocessor conditionals
+# (H) (`#ifdef`), which wrap the field_declaration in a preproc_ifdef node. Iterating
+# (H) only the class body's direct children misses them; the collector must recurse
+# (H) through preprocessor blocks while still skipping nested type/function scopes.
+def test_cpp_build_field_type_map_captures_fields_in_preproc_blocks() -> None:
+    src = """
+class C {
+ private:
+  Mutex mutex_;
+#ifdef LEVELDB_FOO
+  Slice cond_;
+#endif
+};
+"""
+    fields = CppTypeInferenceEngine().build_field_type_map(_first_class_node(src))
+    assert fields == {"mutex_": "Mutex", "cond_": "Slice"}, fields
+
+
+# (H) A derived class accesses fields inherited from its base. The receiver map must
+# (H) collect fields along the inheritance chain (derived shadows base). `Alpha.Lock`
+# (H) is a same-named competitor that sorts first, so name-only resolution picks it;
+# (H) only the inherited field type resolves `mutex_.Lock()` to Mutex.Lock.
+_INHERITED_SOURCE = """
+namespace ns {
+
+class Alpha {
+ public:
+  void Lock() {}
+};
+
+class Mutex {
+ public:
+  void Lock() {}
+};
+
+class Base {
+ protected:
+  Mutex mutex_;
+};
+
+class Derived : public Base {
+ public:
+  void Run() { mutex_.Lock(); }
+};
+
+}  // namespace ns
+"""
+
+
+def test_cpp_inherited_member_field_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "cpp_field_inherit"
+    project.mkdir()
+    (project / "s.cpp").write_text(_INHERITED_SOURCE, encoding="utf-8")
+
+    run_updater(project, mock_ingestor)
+
+    callees = _calls_from(mock_ingestor, ".Derived.Run")
+    assert any(c.endswith(".Mutex.Lock") for c in callees), (
+        f"inherited field mutex_.Lock() should resolve to Mutex.Lock, got {callees}"
+    )
+    assert not any(c.endswith(".Alpha.Lock") for c in callees), (
+        f"inherited mutex_.Lock() must not resolve to Alpha.Lock, got {callees}"
+    )

@@ -51,24 +51,35 @@ class CppTypeInferenceEngine:
         # (H) out-of-line method bodies, so this is captured once at class ingestion and
         # (H) looked up by the enclosing class qn at call resolution.
         field_types: dict[str, str] = {}
-        body = class_node.child_by_field_name(cs.FIELD_BODY)
-        if body is None:
-            return field_types
-        for child in body.children:
-            if child.type != cs.CppNodeType.FIELD_DECLARATION:
-                continue
-            type_node = child.child_by_field_name(cs.FIELD_TYPE)
-            if type_node is None or not (type_name := self._bare_type_name(type_node)):
-                continue
-            for declarator in child.children_by_field_name(cs.FIELD_DECLARATOR):
-                # (H) A member function declaration (`void Lock();`) is also a
-                # (H) field_declaration, but its declarator is a function_declarator;
-                # (H) only data members are fields.
-                if declarator.type == cs.CppNodeType.FUNCTION_DECLARATOR:
-                    continue
-                if (name := self._declarator_name(declarator)) is not None:
-                    field_types.setdefault(name, type_name)
+        if body := class_node.child_by_field_name(cs.FIELD_BODY):
+            self._collect_fields(body, field_types)
         return field_types
+
+    def _collect_fields(self, node: Node, field_types: dict[str, str]) -> None:
+        for child in node.children:
+            # (H) A nested type / function / lambda opens its own member scope; its
+            # (H) declarations are not this class's fields. Preprocessor blocks
+            # (H) (`#ifdef ... #endif`) are transparent, so recurse through them to
+            # (H) reach fields declared conditionally.
+            if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                continue
+            if child.type == cs.CppNodeType.FIELD_DECLARATION:
+                self._record_field(child, field_types)
+                continue
+            self._collect_fields(child, field_types)
+
+    def _record_field(self, node: Node, field_types: dict[str, str]) -> None:
+        type_node = node.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None or not (type_name := self._bare_type_name(type_node)):
+            return
+        for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+            # (H) A member function declaration (`void Lock();`) is also a
+            # (H) field_declaration, but its declarator is a function_declarator;
+            # (H) only data members are fields.
+            if declarator.type == cs.CppNodeType.FUNCTION_DECLARATOR:
+                continue
+            if (name := self._declarator_name(declarator)) is not None:
+                field_types.setdefault(name, type_name)
 
     def _function_declarator(self, caller_node: Node) -> Node | None:
         # (H) The parameter_list hangs off the (possibly pointer/reference-wrapped)
