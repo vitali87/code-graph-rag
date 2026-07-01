@@ -1803,6 +1803,9 @@ class CppNodeType(StrEnum):
     FIELD_EXPRESSION = "field_expression"
     COMPOUND_STATEMENT = "compound_statement"
     THIS = "this"
+    TYPE_DEFINITION = "type_definition"
+    ALIAS_DECLARATION = "alias_declaration"
+    TYPE_DESCRIPTOR = "type_descriptor"
 
 
 CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")

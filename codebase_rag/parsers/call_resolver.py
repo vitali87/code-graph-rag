@@ -25,6 +25,7 @@ class CallResolver:
         "import_processor",
         "type_inference",
         "class_inheritance",
+        "type_aliases",
         "_simple_resolution_cache",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -41,11 +42,15 @@ class CallResolver:
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
+        type_aliases: dict[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        # (H) C++ typedef/using alias -> underlying bare type, consulted when a
+        # (H) receiver type name is mapped to a class (empty for other languages).
+        self.type_aliases = type_aliases if type_aliases is not None else {}
         self._simple_resolution_cache: dict[
             tuple[str, str], tuple[str, str] | None
         ] = {}
@@ -1142,9 +1147,23 @@ class CallResolver:
             base_distance -= 1
         return base_distance
 
+    def _dealias_type(self, type_name: str) -> str:
+        # (H) Follow C++ typedef/using aliases (`typedef Mutex MutexAlias;`) to the
+        # (H) underlying class name so an alias'd receiver resolves like the class it
+        # (H) names. Bounded against an alias cycle; a no-op when the name is not an
+        # (H) alias (and always, for languages with no aliases collected).
+        seen: set[str] = set()
+        while type_name in self.type_aliases and type_name not in seen:
+            seen.add(type_name)
+            type_name = self.type_aliases[type_name]
+        return type_name
+
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         return resolve_class_name(
-            class_name, module_qn, self.import_processor, self.function_registry
+            self._dealias_type(class_name),
+            module_qn,
+            self.import_processor,
+            self.function_registry,
         )
 
     def resolve_java_method_call(

@@ -82,6 +82,7 @@ class CallProcessor:
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
+        type_aliases: dict[str, str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -92,6 +93,7 @@ class CallProcessor:
             import_processor=import_processor,
             type_inference=type_inference,
             class_inheritance=class_inheritance,
+            type_aliases=type_aliases,
         )
         # (H) Inter-procedural callable-parameter flow: ordered params per function and
         # (H) the per-call-site argument bindings, resolved to a fixpoint in finalize.
