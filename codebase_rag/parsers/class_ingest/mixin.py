@@ -189,6 +189,18 @@ class ClassIngestMixin:
             )
             return
 
+        # (H) A C/C++ forward declaration (`class Widget;`) is a bodyless type
+        # (H) specifier. Registering it as a node collides with the real definition's
+        # (H) qn (suffixing it `@line`) and fragments one class into several
+        # (H) same-named nodes, which makes member-call resolution pick among
+        # (H) duplicates nondeterministically. Only the real (bodied) definition
+        # (H) becomes a node; an only-ever-forward-declared type stays a non-node.
+        if (
+            class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            and class_node.child_by_field_name(cs.FIELD_BODY) is None
+        ):
+            return
+
         identity = id_.resolve_class_identity(
             class_node,
             module_qn,
