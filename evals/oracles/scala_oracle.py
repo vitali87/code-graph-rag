@@ -8,6 +8,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 
 from .. import constants as ec
+from .. import logs as ls
 from ..types_defs import GraphData, OraclePayload
 from ._common import is_ignored, payload_to_graph
 
@@ -35,7 +36,15 @@ def _run_scala_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         check=True,
     )
-    payload: OraclePayload = json.loads(proc.stdout or "{}")
+    # (H) capture_output hides scala-cli's stderr; if stdout is not the expected
+    # (H) JSON (a compile error, a changed launcher banner) surface both streams
+    # (H) instead of a bare JSONDecodeError with no context.
+    try:
+        payload: OraclePayload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            ls.SCALA_ORACLE_DECODE_FAILED.format(stderr=proc.stderr, stdout=proc.stdout)
+        ) from exc
     return payload
 
 
