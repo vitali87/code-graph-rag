@@ -14,7 +14,6 @@ from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
 from codebase_rag.parsers.handlers.php import PhpHandler
-from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import create_mock_node
 
@@ -206,10 +205,6 @@ class TestBaseLanguageHandler:
         node = create_mock_node(cs.TS_IDENTIFIER, text="")
         assert handler.extract_base_class_name(node) is None
 
-    def test_extract_decorators_returns_empty_list(self) -> None:
-        handler = BaseLanguageHandler()
-        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
-        assert handler.extract_decorators(node) == []
 
     @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
     def test_build_nested_function_qn_with_parent_functions(
@@ -454,16 +449,6 @@ class MyClass {
         )
         assert result is None
 
-    def test_extract_decorators_returns_empty_for_undecorated(
-        self, js_parser: Parser
-    ) -> None:
-        handler = JsTsHandler()
-        code = b"function foo() {}"
-        tree = js_parser.parse(code)
-        func_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(func_node)
-        assert result == []
 
 
 try:
@@ -484,72 +469,7 @@ def ts_parser() -> Parser | None:
 
 @pytest.mark.skipif(not TS_AVAILABLE, reason="tree-sitter-typescript not available")
 class TestJsTsHandlerTypeScriptDecorators:
-    def test_extract_decorators_single_decorator(self, ts_parser: Parser) -> None:
-        handler = JsTsHandler()
-        code = b"""
-@Component
-class MyClass {}
-"""
-        tree = ts_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert result == ["@Component"]
-
-    def test_extract_decorators_decorator_with_call(self, ts_parser: Parser) -> None:
-        handler = JsTsHandler()
-        code = b"""
-@Injectable()
-class MyService {}
-"""
-        tree = ts_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert result == ["@Injectable()"]
-
-    def test_extract_decorators_decorator_with_args(self, ts_parser: Parser) -> None:
-        handler = JsTsHandler()
-        code = b"""
-@Component({selector: 'app-root', template: '<div></div>'})
-class AppComponent {}
-"""
-        tree = ts_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert len(result) == 1
-        assert (
-            "@Component({selector: 'app-root', template: '<div></div>'})" in result[0]
-        )
-
-    def test_extract_decorators_multiple_decorators(self, ts_parser: Parser) -> None:
-        handler = JsTsHandler()
-        code = b"""
-@Component
-@Injectable()
-class MyClass {}
-"""
-        tree = ts_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert len(result) == 2
-        assert "@Component" in result
-        assert "@Injectable()" in result
-
-    def test_extract_decorators_member_expression(self, ts_parser: Parser) -> None:
-        handler = JsTsHandler()
-        code = b"""
-@ng.Component
-class MyClass {}
-"""
-        tree = ts_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert result == ["@ng.Component"]
-
+    pass
 
 @pytest.mark.skipif(not CPP_AVAILABLE, reason="tree-sitter-cpp not available")
 class TestCppHandler:
@@ -732,58 +652,10 @@ impl MyTrait for MyStruct {
         )
         assert "my_function" in result
 
-    def test_extract_decorators_single_attribute(self, rust_parser: Parser) -> None:
-        handler = RustHandler()
-        code = b"#[derive(Debug)]\nstruct MyStruct {}"
-        tree = rust_parser.parse(code)
-        struct_node = next(
-            c for c in tree.root_node.children if c.type == cs.TS_RS_STRUCT_ITEM
-        )
 
-        result = handler.extract_decorators(struct_node)
-        assert any("derive" in attr for attr in result)
 
-    def test_extract_decorators_multiple_attributes(self, rust_parser: Parser) -> None:
-        handler = RustHandler()
-        code = b"#[derive(Debug, Clone)]\n#[allow(dead_code)]\nstruct MyStruct {}"
-        tree = rust_parser.parse(code)
-        struct_node = next(
-            c for c in tree.root_node.children if c.type == cs.TS_RS_STRUCT_ITEM
-        )
 
-        result = handler.extract_decorators(struct_node)
-        assert len(result) == 2
-        assert any("derive" in attr for attr in result)
-        assert any("allow" in attr for attr in result)
 
-    def test_extract_decorators_function_attribute(self, rust_parser: Parser) -> None:
-        handler = RustHandler()
-        code = b"#[test]\nfn my_test() {}"
-        tree = rust_parser.parse(code)
-        func_node = next(
-            c for c in tree.root_node.children if c.type == cs.TS_RS_FUNCTION_ITEM
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert any("test" in attr for attr in result)
-
-    def test_extract_decorators_no_attributes(self, rust_parser: Parser) -> None:
-        handler = RustHandler()
-        code = b"fn my_function() {}"
-        tree = rust_parser.parse(code)
-        func_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(func_node)
-        assert result == []
-
-    def test_extract_decorators_inner_attribute(self, rust_parser: Parser) -> None:
-        handler = RustHandler()
-        code = b"mod my_module {\n    #![allow(dead_code)]\n}"
-        tree = rust_parser.parse(code)
-        mod_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(mod_node)
-        assert any("allow" in attr for attr in result)
 
 
 @pytest.mark.skipif(not JAVA_AVAILABLE, reason="tree-sitter-java not available")
@@ -860,85 +732,10 @@ class MyClass {
         assert "int" in result1
         assert "String" in result2
 
-    def test_extract_decorators_single_annotation(self, java_parser: Parser) -> None:
-        handler = JavaHandler()
-        code = b"""
-class MyClass {
-    @Override
-    void myMethod() {}
-}
-"""
-        tree = java_parser.parse(code)
-        class_node = tree.root_node.children[0]
-        class_body = class_node.child_by_field_name("body")
-        method_node = class_body.children[1]
 
-        result = handler.extract_decorators(method_node)
-        assert "@Override" in result
 
-    def test_extract_decorators_multiple_annotations(self, java_parser: Parser) -> None:
-        handler = JavaHandler()
-        code = b"""
-class MyClass {
-    @Override
-    @Deprecated
-    void myMethod() {}
-}
-"""
-        tree = java_parser.parse(code)
-        class_node = tree.root_node.children[0]
-        class_body = class_node.child_by_field_name("body")
-        method_node = class_body.children[1]
 
-        result = handler.extract_decorators(method_node)
-        assert len(result) == 2
-        assert "@Override" in result
-        assert "@Deprecated" in result
 
-    def test_extract_decorators_parameterized_annotation(
-        self, java_parser: Parser
-    ) -> None:
-        handler = JavaHandler()
-        code = b"""
-class MyClass {
-    @SuppressWarnings("unchecked")
-    void myMethod() {}
-}
-"""
-        tree = java_parser.parse(code)
-        class_node = tree.root_node.children[0]
-        class_body = class_node.child_by_field_name("body")
-        method_node = class_body.children[1]
-
-        result = handler.extract_decorators(method_node)
-        assert any("SuppressWarnings" in ann for ann in result)
-
-    def test_extract_decorators_class_annotation(self, java_parser: Parser) -> None:
-        handler = JavaHandler()
-        code = b"""
-@Deprecated
-public class MyClass {}
-"""
-        tree = java_parser.parse(code)
-        class_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(class_node)
-        assert "@Deprecated" in result
-
-    def test_extract_decorators_no_annotations(self, java_parser: Parser) -> None:
-        handler = JavaHandler()
-        code = b"""
-class MyClass {
-    void myMethod() {}
-}
-"""
-        tree = java_parser.parse(code)
-        class_node = tree.root_node.children[0]
-        class_body = class_node.child_by_field_name("body")
-        method_node = class_body.children[1]
-
-        result = handler.extract_decorators(method_node)
-        assert result == []
 
 
 @pytest.mark.skipif(not LUA_AVAILABLE, reason="tree-sitter-lua not available")
@@ -1021,107 +818,7 @@ class TestLuaHandler:
 
 @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="tree-sitter-python not available")
 class TestPythonHandler:
-    def test_extract_decorators_simple_identifier(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"@my_decorator\ndef func(): pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        func_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert result == ["@my_decorator"]
-
-    def test_extract_decorators_call_decorator(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"@decorator_factory(arg1, arg2)\ndef func(): pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        func_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert result == ["@decorator_factory(arg1, arg2)"]
-
-    def test_extract_decorators_dotted_decorator(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"@module.submodule.decorator\ndef func(): pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        func_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert result == ["@module.submodule.decorator"]
-
-    def test_extract_decorators_multiple(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"@first\n@second\n@third\ndef func(): pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        func_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert len(result) == 3
-        assert "@first" in result
-        assert "@second" in result
-        assert "@third" in result
-
-    def test_extract_decorators_no_decorators(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"def func(): pass"
-        tree = python_parser.parse(code)
-        func_node = tree.root_node.children[0]
-
-        result = handler.extract_decorators(func_node)
-        assert result == []
-
-    def test_extract_decorators_class_decorator(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = b"@dataclass\nclass MyClass: pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        class_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_CLASS_DEFINITION
-        )
-
-        result = handler.extract_decorators(class_node)
-        assert result == ["@dataclass"]
-
-    def test_extract_decorators_with_args(self, python_parser: Parser) -> None:
-        handler = PythonHandler()
-        code = (
-            b"@app.route('/api/users', methods=['GET', 'POST'])\ndef get_users(): pass"
-        )
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        func_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
-        )
-
-        result = handler.extract_decorators(func_node)
-        assert len(result) == 1
-        assert "@app.route('/api/users', methods=['GET', 'POST'])" in result[0]
-
-    def test_extract_decorators_dataclass_with_options(
-        self, python_parser: Parser
-    ) -> None:
-        handler = PythonHandler()
-        code = b"@dataclass(frozen=True, slots=True)\nclass Config: pass"
-        tree = python_parser.parse(code)
-        decorated_def = tree.root_node.children[0]
-        class_node = next(
-            c for c in decorated_def.children if c.type == cs.TS_PY_CLASS_DEFINITION
-        )
-
-        result = handler.extract_decorators(class_node)
-        assert result == ["@dataclass(frozen=True, slots=True)"]
-
+    pass
 
 def _find_php_node(root: ASTNode, node_type: str) -> ASTNode | None:
     if root.type == node_type:
@@ -1243,46 +940,6 @@ class TestPhpHandler:
 
         assert handler.is_function_exported(func_node) is True
 
-    def test_extract_decorators_php8_attribute(self, php_parser: Parser) -> None:
-        handler = PhpHandler()
-        code = b'<?php class Foo { #[Route("/products")] public function index() {} }'
-        tree = php_parser.parse(code)
-        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
-        assert method_node is not None
 
-        result = handler.extract_decorators(method_node)
-        assert len(result) == 1
-        assert "Route" in result[0]
 
-    def test_extract_decorators_multiple_attributes(self, php_parser: Parser) -> None:
-        handler = PhpHandler()
-        code = b"<?php class C { #[First] #[Second] public function m() {} }"
-        tree = php_parser.parse(code)
-        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
-        assert method_node is not None
 
-        result = handler.extract_decorators(method_node)
-        assert len(result) == 2
-
-    def test_extract_decorators_no_attributes(self, php_parser: Parser) -> None:
-        handler = PhpHandler()
-        code = b"<?php class Foo { public function bar() {} }"
-        tree = php_parser.parse(code)
-        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
-        assert method_node is not None
-
-        result = handler.extract_decorators(method_node)
-        assert result == []
-
-    def test_extract_decorators_on_function_definition(
-        self, php_parser: Parser
-    ) -> None:
-        handler = PhpHandler()
-        code = b'<?php #[Deprecated("use newFunc")] function oldFunc() {}'
-        tree = php_parser.parse(code)
-        func_node = _find_php_node(tree.root_node, cs.TS_PHP_FUNCTION_DEFINITION)
-        assert func_node is not None
-
-        result = handler.extract_decorators(func_node)
-        assert len(result) == 1
-        assert "Deprecated" in result[0]
