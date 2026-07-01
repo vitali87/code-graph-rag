@@ -63,7 +63,13 @@ class CppTypeInferenceEngine:
             return
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if (name := self._declarator_name(declarator)) is not None:
-            var_types[name] = type_name
+            # (H) Outermost-first traversal + first-write-wins: a variable declared in
+            # (H) the function's outer scope keeps its type even when an inner block
+            # (H) shadows the name, so a call in the outer scope resolves to the outer
+            # (H) type. A single-type-per-name map can't fully model lexical scope
+            # (H) (calls inside the shadowing block stay ambiguous), but this prevents
+            # (H) an inner redeclaration from producing a wrong edge for outer calls.
+            var_types.setdefault(name, type_name)
 
     def _bare_type_name(self, type_node: Node) -> str | None:
         match type_node.type:
@@ -100,5 +106,20 @@ class CppTypeInferenceEngine:
             if inner := current.child_by_field_name(cs.FIELD_DECLARATOR):
                 current = inner
                 continue
-            return None
+            # (H) `reference_declarator` (`T& x`) holds its identifier as a positional
+            # (H) child, not under the `declarator` field that pointer/init declarators
+            # (H) expose, so the field-based unwrap stalls; descend into the first
+            # (H) named declarator-bearing child instead.
+            current = self._first_declarator_child(current)
+        return None
+
+    def _first_declarator_child(self, node: Node) -> Node | None:
+        for child in node.children:
+            if child.type in (
+                cs.CppNodeType.IDENTIFIER,
+                cs.CppNodeType.REFERENCE_DECLARATOR,
+                cs.CppNodeType.POINTER_DECLARATOR,
+                cs.CppNodeType.INIT_DECLARATOR,
+            ):
+                return child
         return None
