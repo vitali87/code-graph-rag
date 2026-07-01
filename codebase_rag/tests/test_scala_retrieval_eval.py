@@ -57,10 +57,11 @@ def test_oracle_captures_first_party_scala_calls(tmp_path: Path) -> None:
     assert ("Use.scala", "make") in edges
     assert ("Use.scala", "free") in edges
     assert ("Use.scala", "caller") in edges
-    # (H) An infix operator call (t ~> ...) and a nullary field-expression call
-    # (H) (u.done, no parens) are first-party calls too.
+    # (H) An infix operator call (t ~> ...) is unambiguously a method call.
     assert ("Use.scala", "~>") in edges
-    assert ("Use.scala", "done") in edges
+    # (H) A bare paren-less select (u.done) is NOT graded: uniform access makes a
+    # (H) nullary call and a field read identical, so it is scoped out on both sides.
+    assert ("Use.scala", "done") not in edges
     # (H) orphan is declared but never called -> never a call edge.
     assert ("T.scala", "orphan") not in edges
     assert {

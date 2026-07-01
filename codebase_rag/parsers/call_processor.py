@@ -848,18 +848,15 @@ class CallProcessor:
             # (H) `operator` field's method name. tree-sitter has no `function` field
             # (H) here, so it is unreachable above. Gated to Scala since the node type
             # (H) string is Scala-specific but the guard keeps other languages inert.
+            # (H) Infix is unambiguously a method call; a bare `field_expression`
+            # (H) (`obj.done` with no parens) is deliberately NOT named here because
+            # (H) Scala's uniform access makes a nullary call and a `val` read
+            # (H) syntactically identical, so resolving it by simple name would turn a
+            # (H) same-named field read into a spurious CALLS edge.
             case cs.TS_SCALA_INFIX_EXPRESSION if language == cs.SupportedLanguage.SCALA:
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
                     return operator_node.text.decode(cs.ENCODING_UTF8)
-            # (H) Scala nullary method call written without parens (`obj.done`) is a
-            # (H) bare field_expression call node; its `field` is the callee name.
-            # (H) Gated to Scala because `field_expression` collides with C++'s node
-            # (H) type, where a bare field access must not become a call.
-            case cs.TS_SCALA_FIELD_EXPRESSION if language == cs.SupportedLanguage.SCALA:
-                field_node = call_node.child_by_field_name(cs.FIELD_FIELD)
-                if field_node and field_node.text:
-                    return field_node.text.decode(cs.ENCODING_UTF8)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:

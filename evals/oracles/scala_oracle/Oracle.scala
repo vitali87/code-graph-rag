@@ -67,13 +67,12 @@ object Oracle {
         case Term.Apply(fun, _)         => trailingName(fun).foreach(emitCall(file, _))
         case Term.ApplyInfix(_, op, _, _) => emitCall(file, op.value)
         case Term.ApplyType(fun, _)     => trailingName(fun).foreach(emitCall(file, _))
-        // A bare `x.name` is a nullary method call or a field read: Scala's uniform
-        // access makes them syntactically identical, so cgr's tree-sitter path also
-        // treats every `field_expression` as a call node. Emitting the select here
-        // mirrors cgr exactly, so a same-named field read produces the same edge on
-        // both sides (it cancels, never a spurious cgr-vs-oracle divergence); the
-        // declared-`def` filter and covered set bound what survives.
-        case Term.Select(_, name)       => emitCall(file, name.value)
+        // A bare `x.name` with no application (a standalone Term.Select) is NOT
+        // emitted as a call: Scala's uniform access makes a nullary method call and
+        // a plain field read syntactically identical, so counting it would treat a
+        // same-named `val` read as a first-party call. The eval therefore grades
+        // application/infix call sites only, matching cgr's Scala call extraction,
+        // which for the same reason does not resolve bare `field_expression` nodes.
         case _ =>
       }
 
