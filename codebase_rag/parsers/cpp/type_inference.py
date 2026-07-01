@@ -19,11 +19,29 @@ class CppTypeInferenceEngine:
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str
     ) -> dict[str, str]:
-        var_types: dict[str, str] = {}
+        decls: list[tuple[str, str]] = []
         if declarator := self._function_declarator(caller_node):
-            self._collect_parameters(declarator, var_types)
+            self._collect_parameters(declarator, decls)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
-            self._collect_body_declarations(body, var_types)
+            self._collect_body_declarations(body, decls)
+        # (H) The map is keyed by name only, with no knowledge of a call's lexical
+        # (H) position, so it cannot tell an outer `Zeta z` from an inner-block
+        # (H) `Alpha z` that shadows it. Rather than pick a write order that is wrong
+        # (H) for one of the two scopes, decline to infer any name declared with more
+        # (H) than one type: such a call falls back to name-only resolution instead of
+        # (H) getting a confidently wrong typed edge. (Same flat-map limitation the Go
+        # (H) engine carries; true scoping would need positional call resolution.)
+        var_types: dict[str, str] = {}
+        conflicting: set[str] = set()
+        for name, type_name in decls:
+            if name in conflicting:
+                continue
+            existing = var_types.get(name)
+            if existing is not None and existing != type_name:
+                del var_types[name]
+                conflicting.add(name)
+                continue
+            var_types[name] = type_name
         return var_types
 
     def _function_declarator(self, caller_node: Node) -> Node | None:
@@ -36,7 +54,9 @@ class CppTypeInferenceEngine:
             declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
         return None
 
-    def _collect_parameters(self, declarator: Node, var_types: dict[str, str]) -> None:
+    def _collect_parameters(
+        self, declarator: Node, decls: list[tuple[str, str]]
+    ) -> None:
         params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
         if params is None:
             return
@@ -46,30 +66,26 @@ class CppTypeInferenceEngine:
                 cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
             ):
                 continue
-            self._record_declaration(param, var_types)
+            self._record_declaration(param, decls)
 
-    def _collect_body_declarations(self, node: Node, var_types: dict[str, str]) -> None:
+    def _collect_body_declarations(
+        self, node: Node, decls: list[tuple[str, str]]
+    ) -> None:
         for child in node.children:
             if child.type == cs.CppNodeType.DECLARATION:
-                self._record_declaration(child, var_types)
+                self._record_declaration(child, decls)
             # (H) Recurse into nested blocks (if/for/while/try bodies) so a variable
-            # (H) declared in an inner scope still resolves; last write wins, which is
-            # (H) good enough for the single-type-per-name model this map supports.
-            self._collect_body_declarations(child, var_types)
+            # (H) declared only in an inner scope still resolves; conflicting redecls
+            # (H) across scopes are reconciled by the caller (drop-on-conflict).
+            self._collect_body_declarations(child, decls)
 
-    def _record_declaration(self, node: Node, var_types: dict[str, str]) -> None:
+    def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or not (type_name := self._bare_type_name(type_node)):
             return
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if (name := self._declarator_name(declarator)) is not None:
-            # (H) Outermost-first traversal + first-write-wins: a variable declared in
-            # (H) the function's outer scope keeps its type even when an inner block
-            # (H) shadows the name, so a call in the outer scope resolves to the outer
-            # (H) type. A single-type-per-name map can't fully model lexical scope
-            # (H) (calls inside the shadowing block stay ambiguous), but this prevents
-            # (H) an inner redeclaration from producing a wrong edge for outer calls.
-            var_types.setdefault(name, type_name)
+            decls.append((name, type_name))
 
     def _bare_type_name(self, type_node: Node) -> str | None:
         match type_node.type:

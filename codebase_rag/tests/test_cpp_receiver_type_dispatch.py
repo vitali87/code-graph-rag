@@ -141,47 +141,24 @@ def test_cpp_local_reference_receiver_resolves(
     )
 
 
-# (H) A single-type-per-name map cannot model true lexical scope, but an inner-block
-# (H) redeclaration must NOT clobber the outer binding for calls made in the outer
-# (H) scope. Traversal is outermost-first, so first-write-wins keeps the outer `Zeta z`
-# (H) even though an inner block shadows it with `Alpha z`; the trailing `z.run()` sits
-# (H) in the outer scope and must bind to Zeta.run.
-_SHADOW_SOURCE = """
-namespace ns {
-
-class Alpha {
- public:
-  int run() { return 1; }
-};
-
-class Zeta {
- public:
-  int run() { return 2; }
-};
-
-int use_shadow() {
-  Zeta z;
-  { Alpha z; }
-  return z.run();
-}
-
-}  // namespace ns
-"""
+# (H) The type map is keyed by name with no call-position context, so it cannot model
+# (H) true lexical scope: it cannot tell an outer `Zeta z` from an inner-block `Alpha z`
+# (H) that shadows it. Picking either write order emits a confidently wrong typed edge
+# (H) for one of the two scopes. Instead a name declared with conflicting types is NOT
+# (H) inferred at all -- the call falls back to name-only resolution rather than getting
+# (H) a wrong edge. An inner-block local whose name does NOT collide is still recorded,
+# (H) so recall for the common case is preserved.
+def test_cpp_conflicting_shadow_type_is_not_inferred() -> None:
+    node = _first_function_node("void f() { Zeta z; { Alpha z; } }")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    assert "z" not in var_types, (
+        f"a name shadowed by a different type must not be inferred, got {var_types}"
+    )
 
 
-def test_cpp_outer_scope_survives_inner_shadow(
-    temp_repo: Path,
-    mock_ingestor: MagicMock,
-) -> None:
-    project = temp_repo / "cpp_shadow"
-    project.mkdir()
-    (project / "s.cpp").write_text(_SHADOW_SOURCE, encoding="utf-8")
-
-    run_updater(project, mock_ingestor)
-
-    calls = _calls_to_run(mock_ingestor)
-    caller = next(q for q in calls if q.endswith(".use_shadow"))
-    assert calls[caller].endswith(".Zeta.run"), (
-        f"outer-scope z.run() should resolve to Zeta.run despite inner Alpha shadow, "
-        f"got {calls[caller]}"
+def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
+    node = _first_function_node("void f() { if (c) { Foo x; } }")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    assert var_types.get("x") == "Foo", (
+        f"an inner-block local with no name collision should resolve, got {var_types}"
     )
