@@ -104,6 +104,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
+    interface_implementers: dict[str, list[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
@@ -373,6 +374,7 @@ class ClassIngestMixin:
             self.import_processor,
             self._resolve_to_qn,
             self.function_registry,
+            self.interface_implementers,
         )
         if language == cs.SupportedLanguage.CPP:
             # (H) Record this class's member-field types now (from the class body,
