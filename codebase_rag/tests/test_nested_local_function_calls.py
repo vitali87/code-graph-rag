@@ -89,3 +89,66 @@ def test_nested_function_passed_to_builtin_filter_is_traced(tmp_path: Path) -> N
     )
     calls = _run_calls(tmp_path, {"m.py": src})
     assert _has(calls, "m.filter_runs", "m.filter_runs.filter_date_fn")
+
+
+def test_sibling_methods_resolve_own_nested_function(tmp_path: Path) -> None:
+    # (H) Two methods each define a nested traverse and call it. Each call must bind to
+    # (H) ITS OWN enclosing scope's nested function, not the first same-named sibling,
+    # (H) or the other method's traverse gets no inbound edge (OperationResult shape:
+    # (H) get_llm_results.traverse and get_metadata.traverse both exist).
+    src = (
+        "class Op:\n"
+        "    def get_a(self):\n"
+        "        def traverse(node):\n"
+        "            return node\n"
+        "        return traverse(self)\n"
+        "    def get_b(self):\n"
+        "        def traverse(node):\n"
+        "            return node\n"
+        "        return traverse(self)\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert _has(calls, "m.Op.get_a", "m.Op.get_a.traverse")
+    assert _has(calls, "m.Op.get_b", "m.Op.get_b.traverse")
+
+
+def test_sibling_module_functions_resolve_own_nested_function(
+    tmp_path: Path,
+) -> None:
+    # (H) Two module-level functions each define a nested helper of the same name; each
+    # (H) call must bind to its own (run_determination/run_determinations._get_param).
+    src = (
+        "def run_one(kwargs):\n"
+        "    def _get_param(name):\n"
+        "        return kwargs[name]\n"
+        "    return _get_param('a')\n\n\n"
+        "def run_many(kwargs):\n"
+        "    def _get_param(name):\n"
+        "        return kwargs[name]\n"
+        "    return _get_param('b')\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert _has(calls, "m.run_one", "m.run_one._get_param")
+    assert _has(calls, "m.run_many", "m.run_many._get_param")
+
+
+def test_sibling_callback_args_resolve_own_nested_function(tmp_path: Path) -> None:
+    # (H) Two sibling functions each define a nested worker and pass it as a callback to
+    # (H) a consumer that invokes it. Each callback arg must resolve to ITS OWN nested
+    # (H) worker, so both workers are reached (create_context-as-kwarg shape). Without
+    # (H) threading the caller scope into callback resolution, both bind to the first.
+    src = (
+        "def consume(cb):\n"
+        "    return cb()\n\n\n"
+        "def outer_a():\n"
+        "    def worker():\n"
+        "        return 1\n"
+        "    return consume(worker)\n\n\n"
+        "def outer_b():\n"
+        "    def worker():\n"
+        "        return 2\n"
+        "    return consume(worker)\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert _has(calls, "m.consume", "m.outer_a.worker")
+    assert _has(calls, "m.consume", "m.outer_b.worker")

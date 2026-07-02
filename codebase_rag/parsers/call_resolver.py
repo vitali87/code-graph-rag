@@ -187,12 +187,37 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         return self._redirect_protocol_method(
             self._resolve_function_call(
-                call_name, module_qn, local_var_types, class_context
+                call_name, module_qn, local_var_types, class_context, caller_qn
             )
         )
+
+    def _resolve_enclosing_scope(
+        self, call_name: str, caller_qn: str | None, module_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) Python LEGB: a bare name defined in the caller's own body or an enclosing
+        # (H) FUNCTION scope (a nested def) shadows module-level and same-named nested
+        # (H) defs in sibling scopes. The module-keyed trie fallback cannot tell two
+        # (H) sibling `traverse` defs apart, so resolve against the caller's scope chain
+        # (H) first. Walk up only through function/method scopes (each ancestor must be
+        # (H) in the registry); a class or the module boundary stops the walk, because
+        # (H) class scope is NOT part of a method's name-lookup chain in Python.
+        if not caller_qn or cs.SEPARATOR_DOT in call_name:
+            return None
+        scope = caller_qn
+        while True:
+            candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+            if candidate in self.function_registry:
+                return self.function_registry[candidate], candidate
+            if cs.SEPARATOR_DOT not in scope:
+                return None
+            parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if parent == module_qn or parent not in self.function_registry:
+                return None
+            scope = parent
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # (H) A Protocol stub never runs; the concrete implementer does. Map each
@@ -316,7 +341,14 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        # (H) Enclosing-scope (nested def) lookup is caller-specific, so it must run
+        # (H) before the module-keyed cache/trie, which would otherwise return a sibling
+        # (H) scope's same-named nested function.
+        if result := self._resolve_enclosing_scope(call_name, caller_qn, module_qn):
+            return result
+
         use_cache = not local_var_types
         if use_cache:
             cache_key = (call_name, module_qn)
