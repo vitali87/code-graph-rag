@@ -123,6 +123,9 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        # (H) Reset per-module PHP use-function state too, so a re-index that drops a
+        # (H) `use function` import does not leave a stale exemption behind.
+        self.php_function_imports.pop(module_qn, None)
 
         try:
             if pre_captures is not None:

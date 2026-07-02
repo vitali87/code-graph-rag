@@ -319,9 +319,8 @@ class CallResolver:
         # (H) `namespace Illuminate\Support` from Collections/functions.php). Treating
         # (H) it as external would suppress the simple-name trie fallback that a bare
         # (H) PHP call already relies on, dropping the call; leave it to the trie.
-        if call_name in self.import_processor.php_function_imports.get(
-            module_qn, frozenset()
-        ):
+        php_imports = self.import_processor.php_function_imports.get(module_qn)
+        if php_imports and call_name in php_imports:
             return False
         # (H) Only dotted absolute-path imports (Python/Java `pkg.mod.Name`) are
         # (H) judged here. Rust/C++ record relative or `::`-separated targets
