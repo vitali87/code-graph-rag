@@ -60,3 +60,24 @@ def test_go_callback_invoked_in_closure_is_traced(tmp_path: Path) -> None:
     )
     calls = _run_calls(tmp_path, {"m.go": src})
     assert _has(calls, "m.apply", "m.target")
+
+
+def test_go_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
+    # (H) run := makeRunner(); run(target): run is unresolved (holds a returned func
+    # (H) value), so target is kept reachable by the reference edge from the calling
+    # (H) scope. The precise closure edge needs the func literal to be a registered
+    # (H) function, which Go does not provide, but the callback must not be dropped.
+    src = (
+        "package m\n\n"
+        "func makeRunner() func(func() int) int {\n"
+        "\trunner := func(cb func() int) int { return cb() }\n"
+        "\treturn runner\n"
+        "}\n\n"
+        "func target() int { return 1 }\n\n"
+        "func main() {\n"
+        "\trun := makeRunner()\n"
+        "\trun(target)\n"
+        "}\n"
+    )
+    calls = _run_calls(tmp_path, {"m.go": src})
+    assert _has(calls, "m.main", "m.target")

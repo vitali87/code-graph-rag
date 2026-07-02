@@ -110,3 +110,22 @@ def test_js_callback_handed_to_external_callee_is_referenced(tmp_path: Path) -> 
     # (H) enclosing scope must keep target reachable (matching the Python path).
     calls = _run_calls(tmp_path, {"m.js": JS_EXTERNAL_CALLBACK}, "javascript")
     assert _has(calls, "m.liveEntry", "m.target")
+
+
+JS_FACTORY_ALIAS = (
+    "function makeRunner() {\n"
+    "    function runner(cb) { return cb(); }\n"
+    "    return runner;\n"
+    "}\n\n"
+    "function target() { return 1; }\n\n"
+    "const run = makeRunner();\n"
+    "run(target);\n"
+)
+
+
+def test_js_factory_returned_closure_flows_callback(tmp_path: Path) -> None:
+    # (H) const run = makeRunner(); run(target): run holds the closure makeRunner
+    # (H) returns, and invoking it hands target to the closure's cb param, so the
+    # (H) closure that invokes cb must get a CALLS edge to target.
+    calls = _run_calls(tmp_path, {"m.js": JS_FACTORY_ALIAS}, "javascript")
+    assert _has(calls, "m.makeRunner.runner", "m.target")

@@ -44,3 +44,23 @@ def test_cpp_function_pointer_callback_is_traced(tmp_path: Path) -> None:
     )
     calls = _run_calls(tmp_path, {"m.cpp": src})
     assert _has(calls, "apply", "target")
+
+
+def test_cpp_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
+    # (H) auto run = makeRunner(); run(target): run is unresolved (holds a returned
+    # (H) std::function), so target is kept reachable by the reference edge from the
+    # (H) calling scope. The precise closure edge needs the lambda to be a registered
+    # (H) function, which C++ does not provide, but the callback must not be dropped.
+    src = (
+        "#include <functional>\n"
+        "std::function<int(std::function<int()>)> makeRunner() {\n"
+        "    return [](std::function<int()> cb) { return cb(); };\n"
+        "}\n"
+        "int target() { return 1; }\n"
+        "int main() {\n"
+        "    auto run = makeRunner();\n"
+        "    return run(target);\n"
+        "}\n"
+    )
+    calls = _run_calls(tmp_path, {"m.cpp": src})
+    assert _has(calls, "main", "target")

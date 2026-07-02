@@ -961,25 +961,29 @@ class CallProcessor:
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
         caller_params: frozenset[str] = frozenset()
+        ordered_params: list[str] | None = None
         if language == cs.SupportedLanguage.PYTHON:
             ordered_params = python_parameter_names(caller_node)
+        elif language == cs.SupportedLanguage.GO:
+            ordered_params = go_parameter_names(caller_node)
+        elif language in _JS_TS_LANGUAGES:
+            ordered_params = js_ts_parameter_names(caller_node)
+        elif language == cs.SupportedLanguage.CPP:
+            ordered_params = cpp_parameter_names(caller_node)
+        if ordered_params is not None:
+            # (H) Every flow-traced language records its callable params and the
+            # (H) closures it returns, so a later `x = factory(); x(cb)` alias call can
+            # (H) flow cb into the returned closure regardless of source language.
             self._flow_param_names[caller_qn] = ordered_params
             caller_params = frozenset(ordered_params)
             self._collect_returned_callables(
-                caller_node, caller_qn, module_qn, local_var_types, class_context
+                caller_node,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
-        elif language == cs.SupportedLanguage.GO:
-            ordered_params = go_parameter_names(caller_node)
-            self._flow_param_names[caller_qn] = ordered_params
-            caller_params = frozenset(ordered_params)
-        elif language in _JS_TS_LANGUAGES:
-            ordered_params = js_ts_parameter_names(caller_node)
-            self._flow_param_names[caller_qn] = ordered_params
-            caller_params = frozenset(ordered_params)
-        elif language == cs.SupportedLanguage.CPP:
-            ordered_params = cpp_parameter_names(caller_node)
-            self._flow_param_names[caller_qn] = ordered_params
-            caller_params = frozenset(ordered_params)
 
         # (H) Runs independently of call_nodes: a getter access is an attribute, not
         # (H) a call, so callers that read a property but make no other call must
@@ -1072,26 +1076,33 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
-            if not callee_info and is_python and cs.SEPARATOR_DOT not in call_name:
-                # (H) A bare name that resolves to nothing may be a local alias of a
-                # (H) callable (do = self._start; do()). Resolve the assignment's
-                # (H) right-hand side and treat the alias call as a call to it.
-                if alias_map is None:
-                    alias_map = self._build_local_alias_map(
-                        caller_node, queries[language][cs.QUERY_CONFIG], module_qn
-                    )
-                if (rhs := alias_map.get(call_name)) is not None:
-                    callee_info = resolve_func(
-                        rhs, module_qn, local_var_types, class_context
-                    )
-                if callee_info is None:
+            if not callee_info and cs.SEPARATOR_DOT not in call_name:
+                if is_python:
+                    # (H) A bare name that resolves to nothing may be a local alias of a
+                    # (H) callable (do = self._start; do()). Resolve the assignment's
+                    # (H) right-hand side and treat the alias call as a call to it.
+                    if alias_map is None:
+                        alias_map = self._build_local_alias_map(
+                            caller_node, queries[language][cs.QUERY_CONFIG], module_qn
+                        )
+                    if (rhs := alias_map.get(call_name)) is not None:
+                        callee_info = resolve_func(
+                            rhs, module_qn, local_var_types, class_context
+                        )
+                if callee_info is None and is_flow_lang:
                     # (H) `x = factory(...); x(cb)`: x holds a closure returned by a
                     # (H) first-party factory (e.g. a retry/cache decorator applied
                     # (H) imperatively). Record the call so cb flows into that closure's
                     # (H) callable parameter once factory returns are known (finalize).
                     if factory_aliases is None:
                         factory_aliases = self._build_factory_alias_map(
-                            caller_node, module_qn, local_var_types, class_context
+                            caller_node,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            self._flow_scope_boundaries(
+                                queries[language][cs.QUERY_CONFIG]
+                            ),
                         )
                     if (factory_qn := factory_aliases.get(call_name)) is not None:
                         self._record_factory_call(
@@ -1451,6 +1462,18 @@ class CallProcessor:
             ensure_rel,
         )
 
+    @staticmethod
+    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
+        # (H) A nested function/class scope; a scan of a function body must not descend
+        # (H) into one, since its returns and local bindings belong to it, not the
+        # (H) enclosing scope. The Python set is unioned in so Python keeps its exact
+        # (H) prior behaviour (its decorated_definition wrapper is not a config type).
+        return (
+            _PY_SCOPE_BOUNDARY_TYPES
+            | frozenset(lang_config.function_node_types)
+            | frozenset(lang_config.class_node_types)
+        )
+
     def _collect_returned_callables(
         self,
         caller_node: Node,
@@ -1458,6 +1481,7 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        boundary_types: frozenset[str],
     ) -> None:
         # (H) Record which functions/closures this function may return, so a call site
         # (H) that binds and invokes the returned value (x = factory(); x(cb)) can flow
@@ -1468,7 +1492,7 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+            if node.type in boundary_types:
                 continue
             if node.type == cs.TS_PY_RETURN_STATEMENT:
                 for child in node.named_children:
@@ -1497,38 +1521,84 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        boundary_types: frozenset[str],
     ) -> dict[str, str]:
         # (H) Map a local `x` to the function `factory` in `x = factory(...)`, so a
-        # (H) later `x(cb)` can be traced through factory's returned closure.
+        # (H) later `x(cb)` can be traced through factory's returned closure. Handles
+        # (H) each flow language's binding form (Python assignment, JS/TS
+        # (H) variable_declarator, Go short_var_declaration, C++ init_declarator).
         resolve_func = self._resolver.resolve_function_call
         aliases: dict[str, str] = {}
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+            if node.type in boundary_types:
                 continue
-            if node.type == cs.TS_PY_ASSIGNMENT:
-                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+            for var, fn_name in self._factory_bindings(node):
                 if (
-                    left is not None
-                    and left.type == cs.TS_PY_IDENTIFIER
-                    and right is not None
-                    and right.type == cs.TS_PY_CALL
-                    and (var := safe_decode_text(left))
-                    and (fn := right.child_by_field_name(cs.TS_FIELD_FUNCTION))
-                    is not None
-                    and (fn_name := safe_decode_text(fn))
-                    and (
-                        resolved := resolve_func(
-                            fn_name, module_qn, local_var_types, class_context
-                        )
+                    resolved := resolve_func(
+                        fn_name, module_qn, local_var_types, class_context
                     )
-                    is not None
-                ):
+                ) is not None:
                     aliases.setdefault(var, resolved[1])
             stack.extend(node.children)
         return aliases
+
+    def _factory_bindings(self, node: Node) -> list[tuple[str, str]]:
+        # (H) Yield (local_name, called_function_name) for a `x = f(...)` binding node.
+        match node.type:
+            case cs.TS_PY_ASSIGNMENT:
+                return self._simple_factory_binding(
+                    node, cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT, cs.TS_PY_CALL
+                )
+            case cs.TS_VARIABLE_DECLARATOR:
+                return self._simple_factory_binding(
+                    node, cs.TS_FIELD_NAME, cs.FIELD_VALUE, cs.TS_CALL_EXPRESSION
+                )
+            case cs.CppNodeType.INIT_DECLARATOR:
+                return self._simple_factory_binding(
+                    node, cs.TS_FIELD_DECLARATOR, cs.FIELD_VALUE, cs.TS_CALL_EXPRESSION
+                )
+            case cs.TS_GO_SHORT_VAR_DECLARATION:
+                return self._go_factory_bindings(node)
+            case _:
+                return []
+
+    def _simple_factory_binding(
+        self, node: Node, name_field: str, value_field: str, call_type: str
+    ) -> list[tuple[str, str]]:
+        left = node.child_by_field_name(name_field)
+        right = node.child_by_field_name(value_field)
+        if (
+            left is not None
+            and left.type == cs.TS_PY_IDENTIFIER
+            and right is not None
+            and right.type == call_type
+            and (var := safe_decode_text(left))
+            and (fn := right.child_by_field_name(cs.TS_FIELD_FUNCTION)) is not None
+            and (fn_name := safe_decode_text(fn))
+        ):
+            return [(var, fn_name)]
+        return []
+
+    def _go_factory_bindings(self, node: Node) -> list[tuple[str, str]]:
+        # (H) Go `a, b := f(), g()`: pair each left identifier with the call in the
+        # (H) same position of the right expression list.
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if left is None or right is None:
+            return []
+        names = [c for c in left.named_children if c.type == cs.TS_PY_IDENTIFIER]
+        calls = [c for c in right.named_children if c.type == cs.TS_CALL_EXPRESSION]
+        bindings: list[tuple[str, str]] = []
+        for name_node, call in zip(names, calls):
+            if (
+                (var := safe_decode_text(name_node))
+                and (fn := call.child_by_field_name(cs.TS_FIELD_FUNCTION)) is not None
+                and (fn_name := safe_decode_text(fn))
+            ):
+                bindings.append((var, fn_name))
+        return bindings
 
     def _resolve_callback_qn(
         self,
