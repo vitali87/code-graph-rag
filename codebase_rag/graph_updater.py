@@ -437,6 +437,10 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup
         )
         self.ast_cache = BoundedASTCache()
+        # (H) Every file parsed this run, in parse order. The AST cache is bounded
+        # (H) and evicts on large repos, so Pass 3 must iterate this full list (not
+        # (H) the cache) and re-parse evicted files, or their calls are dropped.
+        self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         self.skipped_because_in_sync = False
@@ -1051,15 +1055,42 @@ class GraphUpdater:
             if result:
                 root_node, language = result
                 self.ast_cache[filepath] = (root_node, language)
+                self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
+    def _ast_for(self, file_path: Path, language: cs.SupportedLanguage) -> Node | None:
+        # (H) Return the file's AST from the bounded cache, or re-parse from disk
+        # (H) when it was evicted. Evicted files carry stale captures (nodes from
+        # (H) the discarded tree), so drop them: downstream recomputes captures
+        # (H) from this fresh tree. Re-caching keeps the cache bounded across the
+        # (H) two Pass-3 loops.
+        if file_path in self.ast_cache:
+            return self.ast_cache[file_path][0]
+        parser = self.queries[language].get(cs.KEY_PARSER)
+        if parser is None:
+            return None
+        try:
+            file_bytes = file_path.read_bytes()
+        except OSError as e:
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+            return None
+        root_node = parser.parse(file_bytes).root_node
+        self.ast_cache[file_path] = (root_node, language)
+        self.factory._func_class_captures_cache.pop(file_path, None)
+        return root_node
+
     def _process_function_calls(self) -> None:
         captures_cache = self.factory._func_class_captures_cache
-        ast_cache_items = list(self.ast_cache.items())
-        for file_path, (root_node, language) in ast_cache_items:
+        # (H) Iterate every file parsed this run, not the bounded AST cache: on a
+        # (H) large repo the cache evicts most files, and iterating it drops their
+        # (H) calls (a whole module ends up with zero CALLS edges).
+        for file_path, language in self._parsed_files:
+            root_node = self._ast_for(file_path, language)
+            if root_node is None:
+                continue
             self.factory.call_processor.collect_callable_field_bindings(
                 file_path,
                 root_node,
@@ -1067,7 +1098,10 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
-        for file_path, (root_node, language) in ast_cache_items:
+        for file_path, language in self._parsed_files:
+            root_node = self._ast_for(file_path, language)
+            if root_node is None:
+                continue
             if captures_cache is not None and file_path in captures_cache:
                 cached = captures_cache[file_path]
                 if not cached.get(cs.CAPTURE_CALL) and not cached.get(
