@@ -534,7 +534,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.197"
+version = "0.0.200"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -544,6 +544,7 @@ dependencies = [
     { name = "huggingface-hub", extra = ["hf-xet"] },
     { name = "loguru" },
     { name = "mcp" },
+    { name = "pathspec" },
     { name = "prompt-toolkit" },
     { name = "protobuf" },
     { name = "pydantic-ai" },
@@ -622,6 +623,7 @@ requires-dist = [
     { name = "libclang", marker = "extra == 'test'", specifier = ">=18.1.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.25.0" },
+    { name = "pathspec", specifier = ">=1.0.4" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "protobuf", specifier = ">=6.33.5" },
     { name = "pydantic-ai", specifier = ">=1.102.0" },

@@ -60,6 +60,7 @@ dependencies = [
     # `uv sync` omits griffe and leaves codebase_rag unimportable; declare it
     # explicitly to keep the environment reproducible.
     "griffe>=1.0,<2",
+    "pathspec>=1.0.4",
 ]
 
 [project.scripts]

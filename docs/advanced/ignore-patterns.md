@@ -1,27 +1,32 @@
 ---
-description: "Configure .cgrignore to exclude directories from Code-Graph-RAG analysis."
+description: "Configure .cgrignore to exclude files and directories from Code-Graph-RAG analysis using gitignore-style patterns."
 ---
 
 # Ignore Patterns
 
-You can specify additional directories to exclude from analysis by creating a `.cgrignore` file in your repository root.
+You can specify additional files and directories to exclude from analysis by creating a `.cgrignore` file in your repository root. Patterns follow `.gitignore` conventions.
 
 ## Format
 
 ```
 # Comments start with #
 vendor
-.custom_cache
-my_build_output
+*.gen.ts
+docs/*.md
+/generated
+fixtures/**
+!bin/keep.py
 ```
 
 ## Rules
 
-- One directory name per line
-- Lines starting with `#` are comments
-- Blank lines are ignored
-- Patterns are exact directory name matches (not globs)
-- Patterns from `.cgrignore` are merged with `--exclude` flags and auto-detected directories
+- Patterns follow [gitignore](https://git-scm.com/docs/gitignore) syntax: `*` matches within a path segment, `**` crosses segments, `?` matches a single character
+- A bare name (`vendor`) matches a file or directory with that name at any depth
+- A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
+- A trailing slash (`build/`) matches directories only
+- Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win)
+- Lines starting with `#` are comments; blank lines are ignored
+- Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
 ## Default Exclusions
 

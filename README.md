@@ -756,20 +756,21 @@ Configuration is managed through environment variables in `.env` file:
 
 ### Custom Ignore Patterns
 
-You can specify additional directories to exclude by creating a `.cgrignore` file in your repository root:
+You can specify additional files and directories to exclude by creating a `.cgrignore` file in your repository root. Patterns follow `.gitignore` conventions:
 
 ```
 # Comments start with #
 vendor
-.custom_cache
-my_build_output
+*.gen.ts
+docs/*.md
+/generated
+!bin/keep.py
 ```
 
-- One directory name per line
-- Lines starting with `#` are comments
-- Blank lines are ignored
-- Patterns are exact directory name matches (not globs)
-- Patterns from `.cgrignore` are merged with `--exclude` flags and auto-detected directories
+- Gitignore syntax: `*` matches within a segment, `**` crosses segments, bare names match at any depth, slash-containing patterns are anchored to the root, trailing slash matches directories only
+- Lines starting with `!` un-ignore paths that a default exclusion would skip (explicit excludes always win)
+- Lines starting with `#` are comments; blank lines are ignored
+- Patterns from `.cgrignore` are merged with `--exclude` flags (same syntax) and auto-detected directories
 
 ### Key Dependencies
 
@@ -794,6 +795,7 @@ my_build_output
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 - **griffe**: Signatures for entire Python programs. Extract the structure, the frame, the skeleton of your project, to generate API documentation or find breaking changes in your API.
+- **pathspec**: Utility library for gitignore style pattern matching of file paths.
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools
