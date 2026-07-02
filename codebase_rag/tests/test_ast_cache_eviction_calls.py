@@ -48,3 +48,8 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
         ), (
             f"missing top->helper CALLS edge for evicted module {name}; calls={sorted(calls)}"
         )
+
+    # (H) A reused updater must reset per-run parse tracking, not accumulate.
+    parsed_after_first = len(updater._parsed_files)
+    updater.run(force=True)
+    assert len(updater._parsed_files) == parsed_after_first

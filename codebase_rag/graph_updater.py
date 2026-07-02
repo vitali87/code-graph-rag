@@ -502,6 +502,9 @@ class GraphUpdater:
             py_engine._return_stmt_cache.clear()
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
+        # (H) Reset per-run parse tracking so a reused updater does not reprocess
+        # (H) a previous run's files in Pass 3.
+        self._parsed_files.clear()
         self.ingestor.ensure_node_batch(
             cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
         )
