@@ -314,6 +314,20 @@ class CallResolver:
         target = import_map.get(call_name)
         if not target:
             return False
+        # (H) A PHP `use function A\B\c` target is a namespace path, which never
+        # (H) matches cgr's file-path qualified name (a global helper declares
+        # (H) `namespace Illuminate\Support` from Collections/functions.php). Treating
+        # (H) it as external would suppress the simple-name trie fallback that a bare
+        # (H) PHP call already relies on, dropping the call; leave it to the trie.
+        # (H) LIMITATION: cgr qualifies PHP functions by file path and does not track
+        # (H) the `namespace` declaration anywhere, so a genuinely external
+        # (H) `use function Vendor\pkg\helper` cannot be told apart from a
+        # (H) path-mismatched first-party one; both defer to the trie, exactly as a
+        # (H) bare `helper()` call already does. Precise first-party-vs-external
+        # (H) disambiguation would require systemic PHP namespace tracking.
+        php_imports = self.import_processor.php_function_imports.get(module_qn)
+        if php_imports and call_name in php_imports:
+            return False
         # (H) Only dotted absolute-path imports (Python/Java `pkg.mod.Name`) are
         # (H) judged here. Rust/C++ record relative or `::`-separated targets
         # (H) (`super::b::helper`) that never carry the project prefix and rely on
