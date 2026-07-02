@@ -1092,7 +1092,7 @@ class CallProcessor:
                 )
             else:
                 callee_info = resolve_func(
-                    call_name, module_qn, local_var_types, class_context
+                    call_name, module_qn, local_var_types, class_context, caller_qn
                 )
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
