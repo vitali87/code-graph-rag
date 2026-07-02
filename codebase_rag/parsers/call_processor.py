@@ -134,6 +134,7 @@ class CallProcessor:
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
+        interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -145,6 +146,7 @@ class CallProcessor:
             type_inference=type_inference,
             class_inheritance=class_inheritance,
             type_aliases=type_aliases,
+            interface_implementers=interface_implementers,
         )
         # (H) Inter-procedural callable-parameter flow: ordered params per function and
         # (H) the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -1220,6 +1222,31 @@ class CallProcessor:
                             (conformer_type, qn_key, target_qn),
                         )
                 continue
+
+            if (
+                is_python
+                and callee_type == cs.NodeLabel.METHOD
+                and (
+                    call_name.startswith(cs.PY_SELF_PREFIX)
+                    or call_name.startswith(cs.PY_CLS_PREFIX)
+                )
+            ):
+                # (H) self.M()/cls.M() dispatches at runtime to any subclass override
+                # (H) of M, so emit an edge to each in ADDITION to the resolved base
+                # (H) edge (emitted by the normal path below); otherwise an override
+                # (H) reached only through the base call looks like dead code. Gating on
+                # (H) the self/cls receiver excludes super().M() (an explicit parent
+                # (H) call) and Base.M() (an explicit implementation): neither is virtual
+                # (H) dispatch, and fanning them out would create false edges.
+                for override_type, override_qn in resolver.override_dispatch_targets(
+                    callee_qn
+                ):
+                    for target_qn in resolver.function_registry.variants(override_qn):
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (override_type, qn_key, target_qn),
+                        )
 
             if is_flow_lang:
                 # (H) f(...) invoked through a parameter: the edge runs from the
