@@ -127,7 +127,9 @@ def dead_code_from_graph(
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
             roots.add(qn)
-        elif _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]):
+        elif _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]) and str(
+            props.get(cs.KEY_PATH, "")
+        ).endswith(cs.EXT_PY):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)

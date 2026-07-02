@@ -228,6 +228,32 @@ def test_cgr_dead_code_does_not_flag_context_manager_dunders(tmp_path: Path) -> 
     assert not any(qn.endswith("__aexit__") for qn in dead)
 
 
+def test_dunder_root_is_scoped_to_python() -> None:
+    # (H) Dunder methods are a Python runtime protocol. A function named __unused__ in
+    # (H) another language (a .ts file) is not implicitly invoked, so it must stay a
+    # (H) dead-code candidate; only Python (.py) dunders are rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.ts"},
+            ),
+            (
+                (_FUNCTION, "proj.m.__unused__"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.m.__unused__",
+                    cs.KEY_NAME: "__unused__",
+                    cs.KEY_PATH: "m.ts",
+                    cs.KEY_DECORATORS: [],
+                    cs.KEY_IS_EXPORTED: False,
+                },
+            ),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.m.__unused__" in dead
+
+
 def test_score_dead_code_prf() -> None:
     result = score_dead_code({"a", "b"}, {"a", "c"})
     row = result.rows[0]
