@@ -397,6 +397,26 @@ GLOB_ALL = "*"
 JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
     {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
 )
+# (H) Module file extensions stripped when turning a tsconfig `paths` target into a
+# (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
+# (H) compound suffixes are handled before the bare `.ts`.
+JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
+    ".d.ts",
+    ".tsx",
+    ".ts",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".js",
+)
+TSCONFIG_FILENAMES: tuple[str, ...] = (
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "jsconfig.json",
+)
+TS_COMPILER_OPTIONS_KEY = "compilerOptions"
+TS_PATHS_KEY = "paths"
+TS_BASE_URL_KEY = "baseUrl"
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"

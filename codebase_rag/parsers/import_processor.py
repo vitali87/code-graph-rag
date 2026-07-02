@@ -1,3 +1,4 @@
+import json
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -29,6 +30,73 @@ from .utils import (
 )
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+_JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+_JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _load_jsonc(path: Path) -> dict | None:
+    # (H) tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first
+    # (H) (comment-free configs), then fall back to stripping comments/trailing
+    # (H) commas. The naive strip can mangle `//` inside string values, so it is only
+    # (H) a fallback; on any failure return None (aliases simply stay unresolved).
+    try:
+        text = path.read_text(encoding=cs.ENCODING_UTF8)
+    except OSError:
+        return None
+    for candidate in (text, None):
+        source = candidate
+        if source is None:
+            source = _JSONC_BLOCK_COMMENT_RE.sub("", text)
+            source = _JSONC_LINE_COMMENT_RE.sub("", source)
+            source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
+        try:
+            parsed = json.loads(source)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
+    # (H) Parse tsconfig `compilerOptions.paths` into (match_prefix, target_prefix,
+    # (H) is_wildcard) tuples, folding baseUrl into the target. A `@/*`->`src/*` entry
+    # (H) yields ("@/", "src/", True); an exact `~lib`->`src/lib/index.ts` yields
+    # (H) ("~lib", "src/lib/index.ts", False). `extends` chains are not followed.
+    for name in cs.TSCONFIG_FILENAMES:
+        data = _load_jsonc(repo_path / name)
+        if not data:
+            continue
+        options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+        if not isinstance(options, dict):
+            continue
+        paths = options.get(cs.TS_PATHS_KEY)
+        if not isinstance(paths, dict):
+            continue
+        base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
+        base = str(base).strip(cs.SEPARATOR_SLASH)
+        base_prefix = (
+            "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+        )
+        aliases: list[tuple[str, str, bool]] = []
+        for pattern, targets in paths.items():
+            if not isinstance(targets, list) or not targets:
+                continue
+            target = targets[0]
+            if not isinstance(pattern, str) or not isinstance(target, str):
+                continue
+            if pattern.endswith(cs.GLOB_ALL) and cs.GLOB_ALL in target:
+                aliases.append(
+                    (
+                        pattern[: -len(cs.GLOB_ALL)],
+                        base_prefix + target[: target.index(cs.GLOB_ALL)],
+                        True,
+                    )
+                )
+            elif cs.GLOB_ALL not in pattern:
+                aliases.append((pattern, base_prefix + target, False))
+        return aliases
+    return []
 
 
 def _has_aliased_scheme(specifier: str) -> bool:
@@ -36,11 +104,11 @@ def _has_aliased_scheme(specifier: str) -> bool:
     # (H) which names first-party code under a non-file-path alias. Standard external
     # (H) schemes (node:/npm:/jsr:/http(s):) and bare/scoped package names
     # (H) (`lodash`, `@scope/pkg`) are NOT aliased -> they stay externally suppressed.
-    # (H) LIMITATION: a tsconfig `paths` alias (`@/util`) has no scheme and is
-    # (H) syntactically indistinguishable from a scoped package (`@scope/pkg`), so it
-    # (H) is NOT exempted here -- doing so blindly would rebind genuine scoped-package
-    # (H) calls to same-named first-party symbols. Resolving those precisely needs
-    # (H) reading tsconfig `compilerOptions.paths` / a deno import map (a follow-on).
+    # (H) A tsconfig `paths` alias (`@/util`) has no scheme and is not exempted here
+    # (H) (it would be indistinguishable from a scoped package `@scope/pkg`); it is
+    # (H) instead resolved PRECISELY to its real module upstream by
+    # (H) _resolve_js_module_path via _load_ts_path_aliases, so no trie fallback is
+    # (H) needed for it.
     match = _JS_SCHEME_RE.match(specifier)
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
@@ -54,6 +122,7 @@ class ImportProcessor:
         "import_mapping",
         "php_function_imports",
         "js_ts_bare_imports",
+        "js_path_aliases",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -86,6 +155,12 @@ class ImportProcessor:
         # (H) package specifiers (bare, scoped, node:/npm:) are excluded, so genuine
         # (H) external calls stay suppressed.
         self.js_ts_bare_imports: dict[str, set[str]] = {}
+        # (H) tsconfig `paths` aliases (match_prefix, target_prefix, is_wildcard),
+        # (H) parsed once from the repo-root tsconfig so `@/util` imports resolve to
+        # (H) the real first-party module instead of being dropped as external.
+        self.js_path_aliases: list[tuple[str, str, bool]] = _load_ts_path_aliases(
+            repo_path
+        )
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -524,8 +599,38 @@ class ImportProcessor:
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
 
+    def _ts_alias_module_qn(self, import_path: str) -> str | None:
+        # (H) Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
+        # (H) first-party module qn, so the call binds to the real file instead of
+        # (H) being dropped as external. Precise (maps to the actual path), so no
+        # (H) trie-fallback collision risk. Longest matching prefix wins.
+        best: tuple[int, str] | None = None
+        for prefix, target_prefix, is_wildcard in self.js_path_aliases:
+            if is_wildcard:
+                if import_path.startswith(prefix) and len(prefix) > (
+                    best[0] if best else -1
+                ):
+                    best = (len(prefix), target_prefix + import_path[len(prefix) :])
+            elif import_path == prefix and len(prefix) > (best[0] if best else -1):
+                best = (len(prefix), target_prefix)
+        if best is None:
+            return None
+        path = best[1]
+        while path.startswith(cs.PATH_CURRENT_DIR + cs.SEPARATOR_SLASH):
+            path = path[2:]
+        for ext in cs.JS_TS_MODULE_EXTENSIONS:
+            if path.endswith(ext):
+                path = path[: -len(ext)]
+                break
+        dotted = path.strip(cs.SEPARATOR_SLASH).replace(
+            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+        )
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}" if dotted else None
+
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
+            if aliased := self._ts_alias_module_qn(import_path):
+                return aliased
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
