@@ -319,6 +319,12 @@ class CallResolver:
         # (H) `namespace Illuminate\Support` from Collections/functions.php). Treating
         # (H) it as external would suppress the simple-name trie fallback that a bare
         # (H) PHP call already relies on, dropping the call; leave it to the trie.
+        # (H) LIMITATION: cgr qualifies PHP functions by file path and does not track
+        # (H) the `namespace` declaration anywhere, so a genuinely external
+        # (H) `use function Vendor\pkg\helper` cannot be told apart from a
+        # (H) path-mismatched first-party one; both defer to the trie, exactly as a
+        # (H) bare `helper()` call already does. Precise first-party-vs-external
+        # (H) disambiguation would require systemic PHP namespace tracking.
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
