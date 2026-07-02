@@ -135,5 +135,6 @@ class ProcessorFactory:
                 type_inference=self.type_inference,
                 class_inheritance=self.definition_processor.class_inheritance,
                 type_aliases=self.definition_processor.type_aliases,
+                interface_implementers=self.definition_processor.interface_implementers,
             )
         return self._call_processor
