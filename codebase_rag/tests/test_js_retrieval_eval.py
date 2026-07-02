@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from evals import constants as ec
 from evals.js_retrieval import (
     cgr_js_call_edges,
@@ -10,8 +11,27 @@ from evals.js_retrieval import (
 )
 from evals.oracles import typescript_available
 
+
+def _js_grammar_available() -> bool:
+    # (H) cgr loads the JavaScript tree-sitter grammar only when the optional
+    # (H) grammar extra is installed; without it cgr indexes zero .js functions, so
+    # (H) the cgr-vs-oracle test must skip (like the Go/Rust/Java evals do on a
+    # (H) missing toolchain) rather than hard-fail on an empty cgr graph.
+    from codebase_rag.parser_loader import load_parsers
+
+    try:
+        parsers, _ = load_parsers()
+    except Exception:
+        return False
+    return cs.SupportedLanguage.JS in parsers
+
+
 needs_node = pytest.mark.skipif(
     not typescript_available(), reason="node toolchain not installed"
+)
+needs_js_grammar = pytest.mark.skipif(
+    not _js_grammar_available(),
+    reason="cgr javascript tree-sitter grammar not installed",
 )
 
 
@@ -55,6 +75,7 @@ def test_oracle_captures_first_party_js_calls(tmp_path: Path) -> None:
 
 
 @needs_node
+@needs_js_grammar
 def test_cgr_matches_oracle_on_clean_js_project(tmp_path: Path) -> None:
     _make_project(tmp_path)
     oracle, declared = oracle_js_call_edges(tmp_path)

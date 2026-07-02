@@ -1,6 +1,27 @@
 from pathlib import Path
 
+import pytest
+
+from codebase_rag import constants as cs
 from evals.cgr_graph import _capture
+
+
+def _js_grammar_available() -> bool:
+    # (H) Skip when cgr's optional JavaScript tree-sitter grammar is not installed
+    # (H) (cgr would index zero .js functions), rather than hard-fail.
+    from codebase_rag.parser_loader import load_parsers
+
+    try:
+        parsers, _ = load_parsers()
+    except Exception:
+        return False
+    return cs.SupportedLanguage.JS in parsers
+
+
+needs_js_grammar = pytest.mark.skipif(
+    not _js_grammar_available(),
+    reason="cgr javascript tree-sitter grammar not installed",
+)
 
 
 def _make(root: Path) -> None:
@@ -20,6 +41,7 @@ def _make(root: Path) -> None:
     )
 
 
+@needs_js_grammar
 def test_call_inside_anonymous_callback_attributes_to_enclosing_method(
     tmp_path: Path,
 ) -> None:
