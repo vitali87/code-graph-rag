@@ -1988,6 +1988,8 @@ TS_CALL_EXPRESSION = "call_expression"
 TS_EXPORT_CLAUSE = "export_clause"
 TS_EXPORT_SPECIFIER = "export_specifier"
 TS_EXPORT_DEFAULT = "default"
+TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
+TS_PRIVATE = "private"
 
 # (H) Tree-sitter Java import node types
 TS_IMPORT_DECLARATION = "import_declaration"

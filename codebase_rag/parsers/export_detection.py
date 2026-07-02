@@ -62,6 +62,12 @@ def _go_exported(name: str) -> bool:
 
 
 def _js_ts_exported(node: Node, name: str) -> bool:
+    # (H) A `private` class member is never public API, even inside an exported
+    # (H) class, so it must not seed a reachability root. `protected` stays
+    # (H) exported: it is an inheritance surface reachable from other modules,
+    # (H) matching the Java rule and staying conservative against false dead-flags.
+    if _js_ts_private_member(node):
+        return False
     # (H) Two export forms: the declaration wrapped by `export` (caught by the
     # (H) ancestor walk), and a separate `export { name }` / `export { x as y }`
     # (H) list elsewhere in the module, which does not wrap the declaration and so
@@ -69,6 +75,15 @@ def _js_ts_exported(node: Node, name: str) -> bool:
     if _has_export_ancestor(node):
         return True
     return bool(name) and name in _module_export_list_names(node)
+
+
+def _js_ts_private_member(node: Node) -> bool:
+    modifier = next(
+        (c for c in node.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
+    )
+    return modifier is not None and any(
+        c.type == cs.TS_PRIVATE for c in modifier.children
+    )
 
 
 def _has_export_ancestor(node: Node) -> bool:

@@ -102,6 +102,23 @@ export { renamed as publicRenamed };
 """
 
 
+TS_CLASS_ACCESS_SRC = """\
+export class ApiClass {
+    publicMethod() {
+        return 1;
+    }
+
+    private privateMethod() {
+        return 2;
+    }
+
+    protected protectedMethod() {
+        return 3;
+    }
+}
+"""
+
+
 def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
     if "python" not in load_parsers()[0]:
         pytest.skip("python parser not available")
@@ -152,3 +169,15 @@ def test_ts_export_list_marks_exported(tmp_path: Path) -> None:
     assert _one(exported, ".handler") is True
     assert _one(exported, ".renamed") is True  # exported under an alias
     assert _one(exported, ".neverExported") is False
+
+
+def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> None:
+    # (H) A `private` method is not part of the class's public API even when the
+    # (H) class is exported, so it must not seed a reachability root; `protected`
+    # (H) stays exported (an inheritance surface, mirroring the Java rule).
+    if "typescript" not in load_parsers()[0]:
+        pytest.skip("typescript parser not available")
+    exported = _run(tmp_path, {"api.ts": TS_CLASS_ACCESS_SRC})
+    assert _one(exported, ".ApiClass.publicMethod") is True
+    assert _one(exported, ".ApiClass.privateMethod") is False
+    assert _one(exported, ".ApiClass.protectedMethod") is True
