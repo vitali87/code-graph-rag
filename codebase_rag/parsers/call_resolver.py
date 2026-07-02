@@ -17,6 +17,29 @@ _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 _SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
+_CHAIN_OPEN_BRACKETS = "([{"
+_CHAIN_CLOSE_BRACKETS = ")]}"
+
+
+def _split_receiver_chain(expr: str) -> list[str]:
+    # (H) Split a receiver chain (`c.Find(1.5).Root`) on the `.` separators between
+    # (H) hops only -- never on a `.` inside call arguments, an index, or a generic
+    # (H) (`1.5`, `x.y` args, `List<A.B>`), which a naive str.split would mangle.
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in expr:
+        if char in _CHAIN_OPEN_BRACKETS:
+            depth += 1
+        elif char in _CHAIN_CLOSE_BRACKETS:
+            depth = max(0, depth - 1)
+        if char == cs.SEPARATOR_DOT and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
 
 
 class CallResolver:
@@ -937,7 +960,7 @@ class CallResolver:
         # (H) unresolved, never mis-resolved).
         if not local_var_types or not self.type_inference.method_return_types:
             return None
-        parts = object_expr.split(cs.SEPARATOR_DOT)
+        parts = _split_receiver_chain(object_expr)
         base = parts[0]
         if not base or cs.CHAR_PAREN_OPEN in base:
             return None

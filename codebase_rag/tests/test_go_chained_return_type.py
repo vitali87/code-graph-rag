@@ -1,6 +1,15 @@
 from pathlib import Path
 
+from codebase_rag.parsers.call_resolver import _split_receiver_chain
 from evals.cgr_graph import _capture
+
+
+def test_split_receiver_chain_ignores_dots_inside_arguments() -> None:
+    # (H) `.` inside call args / index / generic must not split the receiver chain.
+    assert _split_receiver_chain("c.Find(1.5)") == ["c", "Find(1.5)"]
+    assert _split_receiver_chain("a.b(x.y).c") == ["a", "b(x.y)", "c"]
+    assert _split_receiver_chain("m[k.v].get") == ["m[k.v]", "get"]
+    assert _split_receiver_chain("c.Root") == ["c", "Root"]
 
 
 def _make(root: Path) -> None:
