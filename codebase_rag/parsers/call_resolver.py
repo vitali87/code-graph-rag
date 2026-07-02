@@ -238,6 +238,21 @@ class CallResolver:
                 targets.add((self.function_registry[qn], qn))
         return targets
 
+    def override_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) A call resolved to a base-class method (C.M) may at runtime dispatch to an
+        # (H) override on any subclass, so the sound call graph also emits an edge to M
+        # (H) on every concrete subclass that overrides it. Without this an override
+        # (H) reached only through a base `self.M()` call is wrongly reported dead.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        targets: set[tuple[str, str]] = set()
+        for subclass_qn in self._concrete_subclasses(class_qn):
+            override_qn = f"{subclass_qn}{cs.SEPARATOR_DOT}{method_name}"
+            if override_qn in self.function_registry:
+                targets.add((self.function_registry[override_qn], override_qn))
+        return targets
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:
