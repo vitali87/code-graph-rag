@@ -63,19 +63,49 @@ def first_party_symbols(trees: list[tuple[str, ast.Module]]) -> set[str]:
     return {name for name in names if not _is_dunder(name)}
 
 
+def _decorator_name(dec: ast.expr) -> str | None:
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    if isinstance(dec, ast.Call):
+        return _decorator_name(dec.func)
+    return None
+
+
+def first_party_property_names(trees: list[tuple[str, ast.Module]]) -> set[str]:
+    names: set[str] = set()
+    for _rel, tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and any(
+                _decorator_name(dec) in ec.PROPERTY_DECORATORS
+                for dec in node.decorator_list
+            ):
+                names.add(node.name)
+    return {name for name in names if not _is_dunder(name)}
+
+
 def _edge(file: str, name: str) -> NameEdge:
     return NameEdge(_CALLS, NodeKey(_MODULE, file, ec.MODULE_START_LINE), name)
 
 
 def oracle_call_edges(
-    trees: list[tuple[str, ast.Module]], first_party: set[str]
+    trees: list[tuple[str, ast.Module]],
+    first_party: set[str],
+    property_names: set[str] | None = None,
 ) -> set[NameEdge]:
+    properties = property_names or set()
     edges: set[NameEdge] = set()
     for rel, tree in trees:
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
                 if name in first_party:
                     edges.add(_edge(rel, name))
+            # (H) A bare attribute read of a first-party property getter invokes it;
+            # (H) cgr emits a CALLS edge, so credit it here too (a property is never
+            # (H) syntactically called with parens, so this cannot double-count).
+            elif isinstance(node, ast.Attribute) and node.attr in properties:
+                edges.add(_edge(rel, node.attr))
     return edges
 
 
@@ -201,7 +231,7 @@ def main(
     logger.info(ls.RETRIEVAL_SYMBOLS.format(count=len(first_party)))
 
     logger.info(ls.RETRIEVAL_EXTRACTING_ORACLE.format(target=target))
-    oracle = oracle_call_edges(trees, first_party)
+    oracle = oracle_call_edges(trees, first_party, first_party_property_names(trees))
     logger.success(ls.RETRIEVAL_ORACLE_DONE.format(count=len(oracle)))
 
     logger.info(ls.RETRIEVAL_EXTRACTING_CGR.format(target=target, project=project))

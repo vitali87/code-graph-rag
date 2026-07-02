@@ -118,7 +118,11 @@ first-party symbol universe:
 - **grep_call** (`GrepMode.CALL`): ripgrep for the symbol followed by a paren
   `\b(name)\s*\(`, a call-tuned pattern.
 - **Oracle** (`retrieval.oracle_call_edges`): every `ast.Call` whose callee
-  simple name is first-party and non-dunder, attributed to its file.
+  simple name is first-party and non-dunder, attributed to its file, plus every
+  bare read of a first-party `@property`/`@cached_property` getter
+  (`first_party_property_names`) — such an access invokes the getter, which cgr
+  models as a `CALLS` edge, so the oracle counts it too rather than scoring
+  cgr's property-as-call edges as false positives.
 
 Requires `rg` (ripgrep) on `PATH`; `evals.retrieval` exits cleanly if it is
 missing. Writes `evals/results/retrieval_scores.csv` and
@@ -127,12 +131,24 @@ bare reference or import counts as a hit, and a definition site `def S(` is
 indistinguishable from a call) are pinned by
 `codebase_rag/tests/test_retrieval_eval.py`.
 
-Both grep conditions reach recall 1.0 by construction: the oracle is itself
-name-based, so any called name is present textually and grep cannot miss it. The
-entire story is therefore precision, which is exactly where the resolved graph
-wins. Graph recall below 1.0 reflects the few call edges cgr does not resolve;
-graph false positives are call edges cgr emits that the pure-`ast` notion of a
-call does not see (worth a look, but a small fraction).
+Both grep conditions are name-based, so any called name is present textually.
+Graph recall below 1.0 reflects the few call edges cgr does not resolve; graph
+false positives are call edges cgr emits that the oracle's notion of a call does
+not see.
+
+On a large external corpus (`django/django`, ~2900 files) the resolved graph
+scores precision 0.977, recall 0.938, F1 0.957, decisively ahead of grep
+(grep_call F1 0.789, grep_name F1 0.506). The property-aware oracle is what makes
+that precision faithful: before it, cgr's correct property-getter edges (e.g.
+`self.related_model` on a `@cached_property`) were scored as ~2000 false
+positives, understating precision to 0.838. cgr's property-as-call is
+receiver-aware (a bare method reference or a plain attribute that merely
+name-collides with another class's property emits nothing). The residual false
+positives are a diffuse tail (property `setter` decorators, `gettext` aliasing,
+base-class edges); the recall tail is first-party names colliding with builtins
+(django's own `def super(self)` makes every builtin `super()` call look like a
+missed first-party edge), the same name-based limitation documented for the
+per-language retrieval evals below.
 
 ## Incremental update — incremental vs clean re-index
 

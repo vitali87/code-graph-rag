@@ -7,6 +7,7 @@ from codebase_rag import constants as cs
 from evals import constants as ec
 from evals.retrieval import (
     cgr_call_edges,
+    first_party_property_names,
     first_party_symbols,
     grep_call_edges,
     oracle_call_edges,
@@ -76,6 +77,47 @@ def test_oracle_captures_first_party_calls(repo: Path) -> None:
     assert _edge("pkg/core.py", "build") not in oracle
     # (H) uses.py references symbols but calls none of them.
     assert not any(e.source.file == "pkg/uses.py" for e in oracle)
+
+
+# (H) A property getter is invoked by a bare attribute read (no parens); cgr emits
+# (H) a CALLS edge for it, so the oracle must too, or every such access is a false
+# (H) positive. A bare method reference (no parens) is NOT a call.
+_PROPS = """\
+class Model:
+    @property
+    def related_model(self):
+        return 1
+
+    @cached_property
+    def output_field(self):
+        return 2
+
+    def plain(self):
+        return 3
+
+    def user(self):
+        a = self.related_model
+        b = self.output_field
+        cb = self.plain
+        return a, b, cb
+"""
+
+
+def test_oracle_captures_property_access_as_calls(tmp_path: Path) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "m.py").write_text(_PROPS, encoding="utf-8")
+    trees, _files = parse_py_trees(tmp_path)
+    fp = first_party_symbols(trees)
+    props = first_party_property_names(trees)
+
+    assert props == {"related_model", "output_field"}
+    oracle = oracle_call_edges(trees, fp, props)
+    assert _edge("pkg/m.py", "related_model") in oracle
+    assert _edge("pkg/m.py", "output_field") in oracle
+    # (H) `cb = self.plain` is a bound-method reference, not a call.
+    assert _edge("pkg/m.py", "plain") not in oracle
 
 
 @needs_rg

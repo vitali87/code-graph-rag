@@ -37,6 +37,10 @@ SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
     cs.RelationshipType.IMPORTS,
 )
 INIT_STEM = "__init__"
+# (H) A bare access of an @property/@cached_property getter invokes it, which cgr
+# (H) models as a CALLS edge; the retrieval oracle counts these attribute reads as
+# (H) calls so cgr's property-as-call edges are not scored as false positives.
+PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 SEP = cs.SEPARATOR_DOT
 TRACE_CALL_EVENT = "call"
 L3_DIFF_FILENAME = "calls_diff.json"
