@@ -170,15 +170,16 @@ class _StatefulIngestor:
                     _from_label, from_val, rel_type, _to_label, to_val = edge
                     if rel_type != _INHERITS_REL:
                         continue
-                    raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX, 0)
-                    index = raw_index if isinstance(raw_index, int) else 0
+                    raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX)
+                    index = raw_index if isinstance(raw_index, int) else None
                     inherits.append(
                         (
                             str(_text(from_val)),
-                            index,
+                            index if index is not None else 0,
                             {
                                 cs.KEY_CHILD_QN: _text(from_val),
                                 cs.KEY_BASE_QN: _text(to_val),
+                                cs.KEY_BASE_INDEX: index,
                             },
                         )
                     )

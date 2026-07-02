@@ -329,6 +329,30 @@ class TestIncrementalScenario:
         bases = [r[cs.KEY_BASE_QN] for r in rows if r[cs.KEY_CHILD_QN] == child]
         assert bases == want
 
+    def test_rehydrate_skips_multi_base_class_with_missing_base_index(self) -> None:
+        # (H) Greptile #572: an INHERITS edge written by an older index has no
+        # (H) base_index, so a multi-inheritance class's base order cannot be
+        # (H) trusted after an upgrade. Such a class must NOT be rehydrated (it would
+        # (H) risk binding a call/override to the wrong base); a single-base class is
+        # (H) order-free and is still rehydrated; a fully-ordered class is rehydrated
+        # (H) in base_index order; and a class already parsed locally is left alone.
+        from codebase_rag.graph_updater import GraphUpdater
+
+        rows: list[dict[str, object]] = [
+            # (H) Ordered multi-base -> rehydrated in index order.
+            {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.B", cs.KEY_BASE_INDEX: 1},
+            {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.A", cs.KEY_BASE_INDEX: 0},
+            # (H) Multi-base with a missing index -> skipped entirely.
+            {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.X", cs.KEY_BASE_INDEX: None},
+            {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.Y", cs.KEY_BASE_INDEX: 1},
+            # (H) Single base with a missing index -> still safe to rehydrate.
+            {cs.KEY_CHILD_QN: "p.Solo", cs.KEY_BASE_QN: "p.Z", cs.KEY_BASE_INDEX: None},
+            # (H) Already parsed locally -> not touched.
+            {cs.KEY_CHILD_QN: "p.Local", cs.KEY_BASE_QN: "p.W", cs.KEY_BASE_INDEX: 0},
+        ]
+        result = GraphUpdater._rehydrated_bases_by_child(rows, {"p.Local": ["p.W"]})
+        assert result == {"p.Ok": ["p.A", "p.B"], "p.Solo": ["p.Z"]}
+
     def test_incremental_preserves_multiple_inheritance_dispatch(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
