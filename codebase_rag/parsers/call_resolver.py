@@ -68,7 +68,7 @@ class CallResolver:
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
-        interface_implementers: dict[str, list[str]] | None = None,
+        interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -257,9 +257,9 @@ class CallResolver:
         # (H) precision risk, recall preserved).
         if self._interface_impl_cache is None:
             self._interface_impl_cache = {
-                interface_qn: next(iter(unique))
+                interface_qn: next(iter(implementers))
                 for interface_qn, implementers in self.interface_implementers.items()
-                if len(unique := set(implementers)) == 1
+                if len(implementers) == 1
             }
         return self._interface_impl_cache
 

@@ -104,7 +104,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
-    interface_implementers: dict[str, list[str]]
+    interface_implementers: dict[str, set[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
@@ -426,15 +426,15 @@ class ClassIngestMixin:
                 if owner_type is not None
                 else cs.NodeLabel.CLASS
             )
+            trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
             self.ingestor.ensure_relationship_batch(
                 (owner_label, cs.KEY_QUALIFIED_NAME, class_qn),
                 cs.RelationshipType.IMPLEMENTS,
-                (
-                    cs.NodeLabel.INTERFACE,
-                    cs.KEY_QUALIFIED_NAME,
-                    self._resolve_to_qn(trait_name, owner_module_qn),
-                ),
+                (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, trait_qn),
             )
+            # (H) Record the implementer so a Rust trait call to the sole concrete
+            # (H) impl redirects, matching the class-declaration IMPLEMENTS path.
+            self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
 
         body_node = class_node.child_by_field_name("body")
 

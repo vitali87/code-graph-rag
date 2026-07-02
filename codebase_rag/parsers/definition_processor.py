@@ -56,7 +56,7 @@ class DefinitionProcessor(
         # (H) {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # (H) resolver can redirect an interface-typed call `I.m` to the concrete
         # (H) `Impl.m` when I has exactly one first-party implementer (unambiguous).
-        self.interface_implementers: dict[str, list[str]] = {}
+        self.interface_implementers: dict[str, set[str]] = {}
         # (H) {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # (H) member call `field_.method()` in a (possibly out-of-line, cross-file)
         # (H) method resolves via the field's declared type. Populated at class

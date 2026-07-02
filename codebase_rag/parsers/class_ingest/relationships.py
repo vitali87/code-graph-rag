@@ -29,7 +29,7 @@ def create_class_relationships(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
     function_registry: FunctionRegistryTrieProtocol,
-    interface_implementers: dict[str, list[str]] | None = None,
+    interface_implementers: dict[str, set[str]] | None = None,
 ) -> None:
     parent_classes = pe.extract_parent_classes(
         class_node, module_qn, import_processor, resolve_to_qn
@@ -69,7 +69,7 @@ def create_class_relationships(
             # (H) Record implementers so the resolver can dispatch an interface-typed
             # (H) call to the concrete method when the interface has exactly one impl.
             if interface_implementers is not None:
-                interface_implementers.setdefault(interface_qn, []).append(class_qn)
+                interface_implementers.setdefault(interface_qn, set()).add(class_qn)
 
 
 def get_node_type_for_inheritance(

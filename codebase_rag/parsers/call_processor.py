@@ -134,7 +134,7 @@ class CallProcessor:
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
-        interface_implementers: dict[str, list[str]] | None = None,
+        interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path

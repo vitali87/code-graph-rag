@@ -41,3 +41,17 @@ def test_multi_implementer_interface_call_stays_on_interface(tmp_path: Path) -> 
     assert ("proj.Svc.Client.use(Svc)", "proj.Svc.Svc.run()") in calls
     assert ("proj.Svc.Client.use(Svc)", "proj.Svc.A.run()") not in calls
     assert ("proj.Svc.Client.use(Svc)", "proj.Svc.B.run()") not in calls
+
+
+def test_rust_single_trait_impl_dispatches_to_concrete(tmp_path: Path) -> None:
+    # (H) The Rust `impl Trait for Type` path must also feed the implementers map, so
+    # (H) a trait-typed call redirects to the sole concrete impl.
+    calls = _calls(
+        tmp_path,
+        "m.rs",
+        "trait Svc { fn run(&self) -> i32; }\n"
+        "struct SvcImpl;\n"
+        "impl Svc for SvcImpl { fn run(&self) -> i32 { 1 } }\n"
+        "fn use_it(s: &dyn Svc) -> i32 { s.run() }\n",
+    )
+    assert ("proj.m.use_it", "proj.m.SvcImpl.run") in calls
