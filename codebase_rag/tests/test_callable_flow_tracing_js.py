@@ -93,3 +93,20 @@ def test_js_callback_passed_through_wrapper_is_traced(tmp_path: Path) -> None:
     # (H) the function that actually invokes cb, gets a CALLS edge to target.
     calls = _run_calls(tmp_path, {"m.js": JS_PASS_THROUGH}, "javascript")
     assert _has(calls, "m.apply", "m.target")
+
+
+JS_EXTERNAL_CALLBACK = (
+    "function target() { return 1; }\n\n"
+    "function liveEntry() {\n"
+    "    setTimeout(target, 1);\n"
+    "}\n\n"
+    "liveEntry();\n"
+)
+
+
+def test_js_callback_handed_to_external_callee_is_referenced(tmp_path: Path) -> None:
+    # (H) setTimeout is not first-party, so the chain cannot be followed into it,
+    # (H) but target is handed to it to be invoked; a reference edge from the
+    # (H) enclosing scope must keep target reachable (matching the Python path).
+    calls = _run_calls(tmp_path, {"m.js": JS_EXTERNAL_CALLBACK}, "javascript")
+    assert _has(calls, "m.liveEntry", "m.target")

@@ -85,9 +85,7 @@ _PY_SCOPE_BOUNDARY_TYPES = frozenset(
         cs.TS_PY_DECORATED_DEFINITION,
     }
 )
-_PY_SEQUENCE_LITERAL_TYPES = frozenset(
-    {cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TUPLE}
-)
+_PY_SEQUENCE_LITERAL_TYPES = frozenset({cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TUPLE})
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -104,6 +102,9 @@ _FLOW_ARG_REF_TYPES = frozenset(
         cs.TS_MEMBER_EXPRESSION,
     }
 )
+# (H) Qualified-name prefix marking a resolved callee as a builtin rather than a
+# (H) first-party function whose body the call chain can be followed into.
+_BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 
 
 class CallProcessor:
@@ -1125,12 +1126,13 @@ class CallProcessor:
                 )
 
             if not callee_info:
-                if is_python:
+                if is_flow_lang:
                     # (H) The callee is not first-party (a framework/stdlib call such as
-                    # (H) grpclib Handler(self.__rpc_x) or a runtime dispatcher), so the
-                    # (H) call chain cannot be followed into it. A first-party function
-                    # (H) handed to it as an argument is still wired to be invoked, so
-                    # (H) record it as referenced from this scope to keep it reachable.
+                    # (H) grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
+                    # (H) runtime dispatcher), so the call chain cannot be followed into
+                    # (H) it. A first-party function handed to it as an argument is still
+                    # (H) wired to be invoked, so record it as referenced from this scope
+                    # (H) to keep it reachable, across every flow-traced language.
                     self._ingest_argument_function_references(
                         call_node,
                         caller_spec,
@@ -1144,7 +1146,26 @@ class CallProcessor:
 
             callee_type, callee_qn = callee_info
 
-            if is_flow_lang:
+            # (H) A callee that resolved to a builtin (e.g. JS setTimeout(target))
+            # (H) has no first-party body to follow into, so pass-through flow is
+            # (H) pointless; but a first-party callback handed to it is still invoked,
+            # (H) so record a reference edge from this scope to keep it reachable. The
+            # (H) builtin call edge itself is still emitted by the normal path below.
+            callee_is_builtin = is_flow_lang and callee_qn.startswith(
+                _BUILTIN_QN_PREFIX
+            )
+            if callee_is_builtin:
+                self._ingest_argument_function_references(
+                    call_node,
+                    caller_spec,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                )
+
+            if is_flow_lang and not callee_is_builtin:
                 self._collect_callable_flow(
                     call_node,
                     callee_qn,
@@ -1379,9 +1400,11 @@ class CallProcessor:
                 continue
             if node.type == cs.TS_PY_DICTIONARY:
                 for pair in node.named_children:
-                    if pair.type == cs.TS_PY_PAIR and (
-                        value := pair.child_by_field_name(cs.FIELD_VALUE)
-                    ) is not None:
+                    if (
+                        pair.type == cs.TS_PY_PAIR
+                        and (value := pair.child_by_field_name(cs.FIELD_VALUE))
+                        is not None
+                    ):
                         self._emit_value_function_ref(
                             value,
                             caller_spec,
