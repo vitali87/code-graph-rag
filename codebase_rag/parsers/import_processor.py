@@ -13,6 +13,7 @@ from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from .lua import utils as lua_utils
+from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
     StdlibCacheStats,
@@ -127,6 +128,7 @@ class ImportProcessor:
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
+        "_map_py_source_root",
     )
 
     def __init__(
@@ -167,6 +169,19 @@ class ImportProcessor:
         )
 
         repo_is_package = (repo_path / cs.INIT_PY).is_file()
+
+        # (H) Python packages under nested source roots (src-layout, monorepo
+        # (H) packages, pyproject package-dir remaps) are importable by a name that
+        # (H) differs from their repo-relative path, so absolute imports of them
+        # (H) cannot resolve by the import-name == path assumption. Discover the
+        # (H) name -> dotted-path map once so those imports resolve first-party.
+        py_source_roots = discover_python_source_roots(repo_path)
+
+        @lru_cache(maxsize=4096)
+        def _map_py_source_root_cached(module_name: str) -> str | None:
+            return resolve_via_source_roots(repo_path, py_source_roots, module_name)
+
+        self._map_py_source_root = _map_py_source_root_cached
 
         @lru_cache(maxsize=4096)
         def _is_local_module_cached(module_name: str) -> bool:
@@ -343,6 +358,8 @@ class ImportProcessor:
             return module_name
         if self._is_local_module(top_level):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
+        if mapped := self._map_py_source_root(module_name):
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{mapped}"
         return module_name
 
     def _is_local_module(self, module_name: str) -> bool:

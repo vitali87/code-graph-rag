@@ -482,6 +482,7 @@ IMP_CPP_MODULE_IMPL = "C++20 module implementation: {name}"
 IMP_CPP_MODULE_IFACE = "C++20 module interface: {name}"
 IMP_CPP_PARTITION = "C++20 module partition import: {partition} -> {full}"
 IMP_GENERIC = "Generic import parsing for {language}: {node_type}"
+IMP_PY_SOURCE_ROOT = "Python source root: {name} -> {path}"
 
 # (H) Structure processor logs
 STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"

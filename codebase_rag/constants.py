@@ -1225,6 +1225,9 @@ DIST_DIR = "dist"
 BYTES_PER_MB_FLOAT = 1024 * 1024
 
 PYPROJECT_PATH = "pyproject.toml"
+PYPROJECT_KEY_TOOL = "tool"
+PYPROJECT_KEY_SETUPTOOLS = "setuptools"
+PYPROJECT_KEY_PACKAGE_DIR = "package-dir"
 TREESITTER_EXTRA_KEY = "treesitter-full"
 TREESITTER_PKG_PREFIX = "tree-sitter-"
 

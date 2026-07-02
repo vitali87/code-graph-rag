@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+
+def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
+    # (H) Build the graph for `files` (repo-relative paths) and return CALLS edges.
+    parsers, queries = load_parsers()
+    if "python" not in parsers:
+        pytest.skip("python parser not available")
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="repo",
+    ).run()
+    out: set[tuple[str, str]] = set()
+    for c in mock.ensure_relationship_batch.call_args_list:
+        if c.args[1] == "CALLS":
+            out.add((c.args[0][2], c.args[2][2]))
+    return out
+
+
+def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) -> bool:
+    return any(
+        a.endswith(caller_suffix) and b.endswith(callee_suffix) for a, b in calls
+    )
+
+
+IMPL = "def _handler(ctx):\n    return 1\n"
+CALLER = (
+    "from {pkg}.impls import _handler\n\n\ndef use(ctx):\n    return _handler(ctx)\n"
+)
+DISPATCH = "from {pkg}.impls import _handler\n\nhandlers = {{'a': _handler}}\n"
+
+
+def test_flat_layout_absolute_import(tmp_path: Path) -> None:
+    # (H) Regression: package at the repo root, absolute import (already worked).
+    calls = _run_calls(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/impls.py": IMPL,
+            "pkg/registry.py": CALLER.format(pkg="pkg"),
+        },
+    )
+    assert _has(calls, "pkg.registry.use", "pkg.impls._handler")
+
+
+def test_src_layout_absolute_import(tmp_path: Path) -> None:
+    # (H) src-layout: the package's import name (pkg) differs from its repo-relative
+    # (H) path (packages/a/src/pkg). The absolute import must resolve to the
+    # (H) path-based node, not be judged an external import and dropped.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/pkg/__init__.py": "",
+            "packages/a/src/pkg/impls.py": IMPL,
+            "packages/a/src/pkg/registry.py": CALLER.format(pkg="pkg"),
+        },
+    )
+    assert _has(calls, "src.pkg.registry.use", "src.pkg.impls._handler")
+
+
+def test_src_layout_dispatch_dict_value(tmp_path: Path) -> None:
+    # (H) The dead-code trigger shape: a module-level dispatch dict referencing the
+    # (H) imported handler must produce a Module -> CALLS -> handler reference edge.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/pkg/__init__.py": "",
+            "packages/a/src/pkg/impls.py": IMPL,
+            "packages/a/src/pkg/registry.py": DISPATCH.format(pkg="pkg"),
+        },
+    )
+    assert _has(calls, "src.pkg.registry", "src.pkg.impls._handler")
+
+
+def test_monorepo_cross_package_absolute_import(tmp_path: Path) -> None:
+    # (H) Two packages, each under its own src root; libb absolutely imports liba.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/liba/__init__.py": "",
+            "packages/a/src/liba/impls.py": IMPL,
+            "packages/b/src/libb/__init__.py": "",
+            "packages/b/src/libb/registry.py": CALLER.format(pkg="liba"),
+        },
+    )
+    assert _has(calls, "libb.registry.use", "liba.impls._handler")
+
+
+def test_package_dir_remap_absolute_import(tmp_path: Path) -> None:
+    # (H) setuptools package-dir remap: import name (mypkg) maps to a directory with
+    # (H) a DIFFERENT name (lib/), declared in pyproject.toml.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                "[project]\n"
+                'name = "mypkg"\n'
+                "[tool.setuptools.package-dir]\n"
+                'mypkg = "lib"\n'
+            ),
+            "lib/__init__.py": "",
+            "lib/impls.py": IMPL,
+            "lib/registry.py": CALLER.format(pkg="mypkg"),
+        },
+    )
+    assert _has(calls, "lib.registry.use", "lib.impls._handler")
+
+
+def test_namespace_package_under_src(tmp_path: Path) -> None:
+    # (H) PEP 420 namespace package: no __init__.py anywhere, package under a src
+    # (H) root. The import must still map to the path-based nodes.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/nspkg/impls.py": IMPL,
+            "packages/a/src/nspkg/registry.py": CALLER.format(pkg="nspkg"),
+        },
+    )
+    assert _has(calls, "nspkg.registry.use", "nspkg.impls._handler")
+
+
+def test_same_named_packages_disambiguate_by_submodule(tmp_path: Path) -> None:
+    # (H) Two source roots each expose a top-level `common`, with different
+    # (H) submodules. The import of common.only_in_a must bind to package a's copy.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/common/__init__.py": "",
+            "packages/a/src/common/only_in_a.py": IMPL,
+            "packages/b/src/common/__init__.py": "",
+            "packages/b/src/common/only_in_b.py": IMPL,
+            "packages/b/src/app/__init__.py": "",
+            "packages/b/src/app/registry.py": (
+                "from common.only_in_a import _handler\n\n\n"
+                "def use(ctx):\n"
+                "    return _handler(ctx)\n"
+            ),
+        },
+    )
+    assert _has(calls, "app.registry.use", "a.src.common.only_in_a._handler")
