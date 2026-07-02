@@ -1710,6 +1710,29 @@ class CallProcessor:
                 edges[slot].add((arg.source_caller, arg.source_param))
 
         ensure_rel = self.ingestor.ensure_relationship_batch
+        # (H) A nested closure a function returns is reachable whenever that function
+        # (H) is reached (it is created and handed back as the return value). Nested
+        # (H) functions are no longer roots, so this producer edge keeps a genuinely
+        # (H) used closure (a returned decorator/formatter) live without reviving the
+        # (H) closures of an unreachable outer function.
+        for producer_qn, returned in self._returned_callables.items():
+            producer_type = registry.get(producer_qn)
+            if producer_type is None:
+                continue
+            prefix = f"{producer_qn}{cs.SEPARATOR_DOT}"
+            producer_spec = (producer_type, cs.KEY_QUALIFIED_NAME, producer_qn)
+            for closure_qn in returned:
+                if not closure_qn.startswith(prefix):
+                    continue
+                closure_type = registry.get(closure_qn)
+                if closure_type is None:
+                    continue
+                ensure_rel(
+                    producer_spec,
+                    cs.RelationshipType.CALLS,
+                    (closure_type, cs.KEY_QUALIFIED_NAME, closure_qn),
+                )
+
         for fc in self._factory_calls:
             for closure_qn in self._returned_callables.get(fc.factory_qn, ()):
                 # (H) The returned closure runs when the alias is called, so it is

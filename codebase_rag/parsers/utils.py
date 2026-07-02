@@ -413,8 +413,24 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
             child_type = child.type
             if child_type in _PY_SCOPE_BOUNDARIES:
                 # (H) A nested def/class NAME binds here, but its body has its own
-                # (H) scope; record the name and do not descend.
-                name_node = child.child_by_field_name(cs.FIELD_NAME)
+                # (H) scope; record the name and do not descend. A decorated_definition
+                # (H) has no `name` field of its own -- the name is on the inner
+                # (H) function/class definition it wraps.
+                named = child
+                if child_type == cs.TS_PY_DECORATED_DEFINITION:
+                    named = next(
+                        (
+                            c
+                            for c in child.children
+                            if c.type
+                            in (
+                                cs.TS_PY_FUNCTION_DEFINITION,
+                                cs.TS_PY_CLASS_DEFINITION,
+                            )
+                        ),
+                        child,
+                    )
+                name_node = named.child_by_field_name(cs.FIELD_NAME)
                 if name_node is not None and (name := safe_decode_text(name_node)):
                     out.add(name)
                 continue

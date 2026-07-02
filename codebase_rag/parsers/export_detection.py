@@ -9,7 +9,10 @@ from .cpp import utils as cpp_utils
 # (H) export, so an `export` ancestor beyond this boundary must not count.
 _JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK})
 _JAVA_PUBLIC_MODIFIERS = frozenset(
-    {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_VISIBILITY_PROTECTED}
+    {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
+)
+_PY_FUNCTION_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA}
 )
 
 
@@ -20,7 +23,7 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
     # (H) languages stay conservative (False) as before.
     match language:
         case cs.SupportedLanguage.PYTHON:
-            return _python_exported(name)
+            return _python_exported(node, name)
         case cs.SupportedLanguage.GO:
             return _go_exported(name)
         case lang if lang in cs.JS_TS_LANGUAGES:
@@ -35,10 +38,25 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return False
 
 
-def _python_exported(name: str) -> bool:
+def _python_exported(node: Node, name: str) -> bool:
+    # (H) A function/class nested inside a function is a local closure, never public
+    # (H) API, so it is not a reachability root regardless of its name; it is reached
+    # (H) only through its enclosing scope. Only module-level definitions and class
+    # (H) members (a method's ancestor chain has no enclosing function) are public.
+    if _python_nested_in_function(node):
+        return False
     if name.startswith(cs.PY_NAME_DUNDER) and name.endswith(cs.PY_NAME_DUNDER):
         return True
     return not name.startswith(cs.PY_NAME_UNDERSCORE)
+
+
+def _python_nested_in_function(node: Node) -> bool:
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _PY_FUNCTION_SCOPES:
+            return True
+        parent = parent.parent
+    return False
 
 
 def _go_exported(name: str) -> bool:
