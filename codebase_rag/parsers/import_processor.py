@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -26,6 +27,17 @@ from .utils import (
     safe_decode_with_fallback,
     sorted_captures,
 )
+
+_JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+
+
+def _has_aliased_scheme(specifier: str) -> bool:
+    # (H) True for a JS/TS specifier with a non-standard scheme (`ext:deno_node/x`),
+    # (H) which names first-party code under a non-file-path alias. Standard external
+    # (H) schemes (node:/npm:/jsr:/http(s):) and bare/scoped package names
+    # (H) (`lodash`, `@scope/pkg`) are NOT aliased -> they stay externally suppressed.
+    match = _JS_SCHEME_RE.match(specifier)
+    return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
 
 class ImportProcessor:
@@ -60,13 +72,14 @@ class ImportProcessor:
         # (H) Collections/functions.php), so these must resolve by simple name via
         # (H) the trie rather than being judged external-import and suppressed.
         self.php_function_imports: dict[str, set[str]] = {}
-        # (H) Local names brought in by a JS/TS NON-RELATIVE import specifier, keyed by
-        # (H) module. A bare/scheme/alias specifier (tsconfig `paths` `@/x`, deno
-        # (H) `ext:deno_node/y`, an import map) does not resolve to a file-path module
-        # (H) qn, so the target is unregistered and would be judged external, dropping
-        # (H) the call. Such specifiers are commonly first-party aliases, so these
-        # (H) names defer to the simple-name trie (like a relative import that misses)
-        # (H) instead of being suppressed.
+        # (H) Local names brought in by a JS/TS import with a NON-STANDARD scheme
+        # (H) (`ext:deno_node/y`; see _has_aliased_scheme), keyed by module. Such a
+        # (H) specifier aliases first-party code but does not resolve to a file-path
+        # (H) module qn, so the target is unregistered and would be judged external,
+        # (H) dropping the call. These names defer to the simple-name trie (like a
+        # (H) relative import that misses) instead of being suppressed. Ordinary
+        # (H) package specifiers (bare, scoped, node:/npm:) are excluded, so genuine
+        # (H) external calls stay suppressed.
         self.js_ts_bare_imports: dict[str, set[str]] = {}
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
@@ -481,11 +494,11 @@ class ImportProcessor:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 source_module = None
-                is_relative = False
+                is_aliased_scheme = False
                 for child in import_node.children:
                     if child.type == cs.TS_STRING:
                         source_text = safe_decode_with_fallback(child).strip("'\"")
-                        is_relative = source_text.startswith(cs.PATH_CURRENT_DIR)
+                        is_aliased_scheme = _has_aliased_scheme(source_text)
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
                         )
@@ -497,7 +510,7 @@ class ImportProcessor:
                 for child in import_node.children:
                     if child.type == cs.TS_IMPORT_CLAUSE:
                         self._parse_js_import_clause(
-                            child, source_module, module_qn, is_relative
+                            child, source_module, module_qn, is_aliased_scheme
                         )
 
             elif import_node.type == cs.TS_LEXICAL_DECLARATION:
@@ -529,10 +542,10 @@ class ImportProcessor:
         clause_node: Node,
         source_module: str,
         current_module: str,
-        is_relative: bool = True,
+        is_aliased_scheme: bool = False,
     ) -> None:
         def _note_bare(local_name: str) -> None:
-            if not is_relative:
+            if is_aliased_scheme:
                 self.js_ts_bare_imports.setdefault(current_module, set()).add(
                     local_name
                 )

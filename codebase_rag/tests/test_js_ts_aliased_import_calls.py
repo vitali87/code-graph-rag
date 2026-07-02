@@ -39,6 +39,17 @@ def _make(root: Path) -> None:
         "export function useRel() { return notImplemented('y'); }\n",
         encoding="utf-8",
     )
+    # (H) A genuine external package import whose name collides with a first-party
+    # (H) symbol must NOT be rebound by the trie fallback (regression guard).
+    (root / "collide.ts").write_text(
+        "export function externalCollide(): number { return 1; }\n",
+        encoding="utf-8",
+    )
+    (root / "c.ts").write_text(
+        'import { externalCollide } from "some-npm-pkg";\n'
+        "export function useExternal() { return externalCollide(); }\n",
+        encoding="utf-8",
+    )
 
 
 @needs_ts_grammar
@@ -56,3 +67,6 @@ def test_call_via_non_relative_aliased_import_resolves(tmp_path: Path) -> None:
     }
     assert ("proj.a.useAlias", "proj.util.notImplemented") in calls
     assert ("proj.b.useRel", "proj.util.notImplemented") in calls
+    # (H) `some-npm-pkg` is a real external package (no custom scheme), so its
+    # (H) import stays suppressed and must not rebind to the first-party collision.
+    assert ("proj.c.useExternal", "proj.collide.externalCollide") not in calls

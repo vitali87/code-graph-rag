@@ -328,13 +328,12 @@ class CallResolver:
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
-        # (H) A JS/TS non-relative import specifier (tsconfig `paths` alias, deno
-        # (H) `ext:`/import map) does not resolve to a file-path module qn, so its
-        # (H) target is unregistered and looks external even when it aliases
-        # (H) first-party code. Defer to the simple-name trie (like a relative import
-        # (H) that misses) instead of suppressing, recovering aliased first-party
-        # (H) calls; a genuine external whose name has no first-party symbol still
-        # (H) resolves to nothing.
+        # (H) A JS/TS import with a non-standard scheme (deno `ext:deno_node/x`) does
+        # (H) not resolve to a file-path module qn, so its target is unregistered and
+        # (H) looks external even though it aliases first-party code. Defer to the
+        # (H) simple-name trie (like a relative import that misses) instead of
+        # (H) suppressing. Ordinary package specifiers (bare, scoped, node:/npm:) are
+        # (H) NOT recorded here, so genuine external calls stay suppressed.
         bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
         if bare_imports and call_name in bare_imports:
             return False
