@@ -592,7 +592,10 @@ class GraphUpdater:
         # (H) not re-parsed, so protocol dispatch and inherited-method resolution
         # (H) work in Pass 3 (issue #532 residual). Only fill entries missing
         # (H) locally: a re-parsed class already has its fresh, correctly ordered
-        # (H) bases, so we must not overwrite or duplicate them.
+        # (H) bases, so we must not overwrite or duplicate them. CYPHER_ALL_INHERITS
+        # (H) is ordered by base_index, so a rehydrated class's bases keep their
+        # (H) original source order (multiple inheritance resolves the same base a
+        # (H) clean index would).
         if not isinstance(self.ingestor, QueryProtocol):
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
@@ -607,10 +610,6 @@ class GraphUpdater:
             rehydrated.setdefault(child, []).append(base)
         for child, bases in rehydrated.items():
             class_inheritance[child] = bases
-        # (H) Pass 4 must not re-emit OVERRIDES for these rehydrated (unchanged)
-        # (H) classes: source order is lost, so a multi-inheritance method would be
-        # (H) attributed to the wrong base. Their edges are preserved/restored.
-        self.factory.definition_processor._overrides_skip_classes = set(rehydrated)
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # (H) Record the reference edges that unchanged files point at the

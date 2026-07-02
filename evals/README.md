@@ -179,10 +179,11 @@ fix, verified by this eval, has two parts:
 - **Property and inheritance context** is rehydrated too: the `@property` status
   of methods and the `class_inheritance` hierarchy (from persisted `INHERITS`
   edges) are restored before call resolution, so a re-parsed caller still resolves
-  property access and protocol dispatch into unchanged files. Rehydrated bases
-  carry no source order, so `OVERRIDES` re-emission (Pass 4) skips those unchanged
-  classes to avoid attributing a multi-inheritance method to the wrong base; their
-  override edges are already preserved or restored.
+  property access and protocol dispatch into unchanged files. Each `INHERITS` edge
+  persists a `base_index`, and rehydration orders the bases by it, so multiple
+  inheritance keeps its original source order (method resolution and override
+  attribution are first-match-wins over the base list, so a lost order would bind
+  a call to the wrong base).
 
 Residual divergence is now confined to a small tail of the changed file's own
 calls resolved through deeper type inference, and to import-granularity

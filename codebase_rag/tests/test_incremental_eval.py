@@ -22,7 +22,6 @@ _DEFINES = cs.RelationshipType.DEFINES.value
 _CALLS = cs.RelationshipType.CALLS.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
 _CONTAINS_FILE = cs.RelationshipType.CONTAINS_FILE.value
-_OVERRIDES = cs.RelationshipType.OVERRIDES.value
 
 # (H) The inbound call edge issue #532 drops: caller.use() calls callee.target().
 _INBOUND_CALL = (_FUNCTION, "proj.caller.use", _CALLS, _FUNCTION, "proj.callee.target")
@@ -307,40 +306,69 @@ class TestIncrementalScenario:
         assert concrete in incr.edges
         assert incr == clean
 
-    def test_pass4_skips_rehydrated_classes_for_overrides(self) -> None:
-        # (H) A rehydrated (unchanged) class's bases come back from INHERITS edges
-        # (H) with no source order, so a multi-inheritance method's BFS could pick
-        # (H) the wrong base and emit a spurious OVERRIDES. Pass 4 must skip such
-        # (H) classes; their real OVERRIDES are preserved/restored. Here Combined
-        # (H) has bases in scrambled order [MixinB, MixinA]; without the skip it
-        # (H) would emit OVERRIDES to MixinB.shared (first base), which is exactly
-        # (H) the divergence from a clean index.
-        from codebase_rag.graph_updater import FunctionRegistryTrie
-        from codebase_rag.parsers.class_ingest.method_override import (
-            process_all_method_overrides,
-        )
-        from codebase_rag.types_defs import NodeType
+    def test_all_inherits_query_returns_bases_in_base_index_order(self) -> None:
+        # (H) Rehydration replays INHERITS edges into class_inheritance; multiple
+        # (H) inheritance is order-sensitive (method resolution and override
+        # (H) attribution walk the base list first-match-wins). The persisted
+        # (H) base_index must restore source order regardless of the order the edges
+        # (H) were stored in. Insert five bases in reverse index order; the query
+        # (H) must return them by base_index (the store is a set, so without the
+        # (H) base_index ordering the returned order would not be base0..base4).
+        klass = cs.NodeLabel.CLASS.value
+        s = _StatefulIngestor()
+        child = "proj.combined.Combined"
+        want = [f"proj.mixins.Base{i}" for i in range(5)]
+        for index in reversed(range(5)):
+            s.ensure_relationship_batch(
+                (klass, _QN, child),
+                cs.RelationshipType.INHERITS.value,
+                (klass, _QN, want[index]),
+                {cs.KEY_BASE_INDEX: index},
+            )
+        rows = s.fetch_all(cs.CYPHER_ALL_INHERITS)
+        bases = [r[cs.KEY_BASE_QN] for r in rows if r[cs.KEY_CHILD_QN] == child]
+        assert bases == want
 
-        registry = FunctionRegistryTrie()
-        for qn in (
-            "proj.combined.Combined.shared",
+    def test_incremental_preserves_multiple_inheritance_dispatch(
+        self, tmp_path: Path, parsers_queries: tuple[object, object]
+    ) -> None:
+        # (H) Issue #532 residual (Greptile #572): editing the caller rehydrates
+        # (H) class_inheritance for the unchanged Combined(MixinA, MixinB). Python
+        # (H) MRO resolves c.shared() to MixinA.shared (first base). If rehydration
+        # (H) lost base order, an incremental run could bind it to MixinB.shared,
+        # (H) diverging from a clean index. base_index ordering keeps them equal.
+        method = cs.NodeLabel.METHOD.value
+        first_base = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
             "proj.mixins.MixinA.shared",
-            "proj.mixins.MixinB.shared",
-        ):
-            registry[qn] = NodeType.METHOD
-        inheritance = {
-            "proj.combined.Combined": ["proj.mixins.MixinB", "proj.mixins.MixinA"]
-        }
-
-        skipped = _StatefulIngestor()
-        process_all_method_overrides(
-            registry, inheritance, skipped, {"proj.combined.Combined"}
         )
-        assert not any(e[2] == _OVERRIDES for e in skipped.edges)
-
-        not_skipped = _StatefulIngestor()
-        process_all_method_overrides(registry, inheritance, not_skipped, set())
-        assert any(e[2] == _OVERRIDES for e in not_skipped.edges)
+        src = tmp_path / "proj"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "mixins.py").write_text(
+            "class MixinA:\n    def shared(self):\n        return 1\n\n\n"
+            "class MixinB:\n    def shared(self):\n        return 2\n",
+            encoding="utf-8",
+        )
+        (src / "combined.py").write_text(
+            "from proj.mixins import MixinA, MixinB\n\n\n"
+            "class Combined(MixinA, MixinB):\n    pass\n",
+            encoding="utf-8",
+        )
+        (src / "client.py").write_text(
+            "from proj.combined import Combined\n\n\n"
+            "def use(c: Combined):\n    return c.shared()\n",
+            encoding="utf-8",
+        )
+        parsers, queries = parsers_queries
+        incr, clean = run_neutral_edit_scenario(
+            src, "proj", "client.py", parsers, queries, tmp_path / "scn"
+        )
+        assert first_base in clean.edges
+        assert incr == clean
 
     def test_compare_states_flags_missing_edge(self) -> None:
         from evals.types_defs import GraphState

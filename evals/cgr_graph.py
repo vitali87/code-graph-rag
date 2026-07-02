@@ -94,6 +94,7 @@ class _StatefulIngestor:
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
+        self.edge_props: dict[_RelTuple, PropertyDict] = {}
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         uid = properties[cs.NODE_UNIQUE_CONSTRAINTS[label]]
@@ -108,9 +109,10 @@ class _StatefulIngestor:
     ) -> None:
         from_label, _from_key, from_val = from_spec
         to_label, _to_key, to_val = to_spec
-        self.edges.add(
-            (str(from_label), from_val, str(rel_type), str(to_label), to_val)
-        )
+        edge = (str(from_label), from_val, str(rel_type), str(to_label), to_val)
+        self.edges.add(edge)
+        if properties:
+            self.edge_props[edge] = dict(properties)
 
     def flush_all(self) -> None:
         return None
@@ -163,17 +165,25 @@ class _StatefulIngestor:
                     defs.append(row)
                 return defs
             case cs.CYPHER_ALL_INHERITS:
-                inherits: list[ResultRow] = []
-                for from_label, from_val, rel_type, _to_label, to_val in self.edges:
+                inherits: list[tuple[str, int, ResultRow]] = []
+                for edge in self.edges:
+                    _from_label, from_val, rel_type, _to_label, to_val = edge
                     if rel_type != _INHERITS_REL:
                         continue
+                    raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX, 0)
+                    index = raw_index if isinstance(raw_index, int) else 0
                     inherits.append(
-                        {
-                            cs.KEY_CHILD_QN: _text(from_val),
-                            cs.KEY_BASE_QN: _text(to_val),
-                        }
+                        (
+                            str(_text(from_val)),
+                            index,
+                            {
+                                cs.KEY_CHILD_QN: _text(from_val),
+                                cs.KEY_BASE_QN: _text(to_val),
+                            },
+                        )
                     )
-                return inherits
+                inherits.sort(key=lambda item: (item[0], item[1]))
+                return [row for _child, _index, row in inherits]
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():

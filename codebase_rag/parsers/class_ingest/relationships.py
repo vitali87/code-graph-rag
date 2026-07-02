@@ -48,9 +48,14 @@ def create_class_relationships(
             (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
-    for parent_class_qn in parent_classes:
+    for base_index, parent_class_qn in enumerate(parent_classes):
         create_inheritance_relationship(
-            node_type, class_qn, parent_class_qn, function_registry, ingestor
+            node_type,
+            class_qn,
+            parent_class_qn,
+            function_registry,
+            ingestor,
+            base_index,
         )
 
     # (H) A class OR an enum can `implements` interfaces; both expose them via the
@@ -76,12 +81,18 @@ def create_inheritance_relationship(
     parent_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
     ingestor: IngestorProtocol,
+    base_index: int = 0,
 ) -> None:
     parent_type = get_node_type_for_inheritance(parent_qn, function_registry)
+    # (H) Persist the base's position in the child's base list. An incremental run
+    # (H) rehydrates class_inheritance from these edges; ordering by base_index
+    # (H) restores the original source order, which method resolution (Pass 3) and
+    # (H) override attribution (Pass 4) depend on for multiple inheritance.
     ingestor.ensure_relationship_batch(
         (child_node_type, cs.KEY_QUALIFIED_NAME, child_qn),
         cs.RelationshipType.INHERITS,
         (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
+        {cs.KEY_BASE_INDEX: base_index},
     )
 
 
