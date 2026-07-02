@@ -70,6 +70,39 @@ def test_self_call_dispatches_to_transitive_override(tmp_path: Path) -> None:
     assert _has(calls, "m.Base.run", "m.Leaf.op")
 
 
+def test_super_call_does_not_fan_out_to_own_override(tmp_path: Path) -> None:
+    # (H) Sub.op delegates to the parent with super().op(); this explicitly targets
+    # (H) Base.op, not a virtual dispatch, so it must NOT create a false recursive
+    # (H) Sub.op -> Sub.op edge via override fan-out.
+    src = (
+        "class Base:\n"
+        "    def op(self):\n"
+        "        return 0\n\n\n"
+        "class Sub(Base):\n"
+        "    def op(self):\n"
+        "        return super().op()\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert not _has(calls, "m.Sub.op", "m.Sub.op")
+
+
+def test_explicit_base_qualified_call_does_not_fan_out(tmp_path: Path) -> None:
+    # (H) A call naming the exact implementation (Base.op(x)) is not a virtual
+    # (H) dispatch, so it must not fan out to subclass overrides.
+    src = (
+        "class Base:\n"
+        "    def op(self):\n"
+        "        return 0\n\n\n"
+        "class Sub(Base):\n"
+        "    def op(self):\n"
+        "        return 1\n\n\n"
+        "def run(b):\n"
+        "    return Base.op(b)\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert not _has(calls, "m.run", "m.Sub.op")
+
+
 def test_no_override_dispatch_without_subclasses(tmp_path: Path) -> None:
     # (H) A method with no overriding subclass must not gain spurious edges.
     src = (

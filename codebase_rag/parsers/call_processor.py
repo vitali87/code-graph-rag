@@ -1221,11 +1221,21 @@ class CallProcessor:
                         )
                 continue
 
-            if is_python and callee_type == cs.NodeLabel.METHOD:
+            if (
+                is_python
+                and callee_type == cs.NodeLabel.METHOD
+                and (
+                    call_name.startswith(cs.PY_SELF_PREFIX)
+                    or call_name.startswith(cs.PY_CLS_PREFIX)
+                )
+            ):
                 # (H) self.M()/cls.M() dispatches at runtime to any subclass override
                 # (H) of M, so emit an edge to each in ADDITION to the resolved base
                 # (H) edge (emitted by the normal path below); otherwise an override
-                # (H) reached only through the base call looks like dead code.
+                # (H) reached only through the base call looks like dead code. Gating on
+                # (H) the self/cls receiver excludes super().M() (an explicit parent
+                # (H) call) and Base.M() (an explicit implementation): neither is virtual
+                # (H) dispatch, and fanning them out would create false edges.
                 for override_type, override_qn in resolver.override_dispatch_targets(
                     callee_qn
                 ):

@@ -243,6 +243,8 @@ class CallResolver:
         # (H) override on any subclass, so the sound call graph also emits an edge to M
         # (H) on every concrete subclass that overrides it. Without this an override
         # (H) reached only through a base `self.M()` call is wrongly reported dead.
+        if not callee_qn:
+            return set()
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep:
             return set()

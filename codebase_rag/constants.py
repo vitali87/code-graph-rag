@@ -2690,6 +2690,7 @@ HIGHER_ORDER_BUILTINS: frozenset[str] = frozenset({"sorted", "min", "max", "redu
 
 # (H) Python attribute prefixes
 PY_SELF_PREFIX = "self."
+PY_CLS_PREFIX = "cls."
 
 # (H) Python type inference patterns
 PY_VAR_PATTERN_ALL = "all_"
