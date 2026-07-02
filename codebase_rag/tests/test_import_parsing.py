@@ -293,7 +293,7 @@ class TestExternalModuleNodeCreation:
 
         assert len(mock_ingestor.nodes_created) == 1
         label, props = mock_ingestor.nodes_created[0]
-        assert label == cs.NodeLabel.MODULE
+        assert label == cs.NodeLabel.EXTERNAL_MODULE
         assert props[cs.KEY_QUALIFIED_NAME] == "java.util"
         assert props[cs.KEY_NAME] == "util", (
             f"Expected name='util' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
@@ -317,7 +317,7 @@ class TestExternalModuleNodeCreation:
         assert module_path == "std::collections"
         assert len(mock_ingestor.nodes_created) == 1
         label, props = mock_ingestor.nodes_created[0]
-        assert label == cs.NodeLabel.MODULE
+        assert label == cs.NodeLabel.EXTERNAL_MODULE
         assert props[cs.KEY_QUALIFIED_NAME] == "std::collections"
 
     def test_rust_external_module_name_uses_module_path(

@@ -27,14 +27,15 @@ def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
 
 def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
     query = """
-    MATCH (from:Module)-[r:IMPORTS]->(to:Module)
+    MATCH (from:Module)-[r:IMPORTS]->(to)
+    WHERE to:Module OR to:ExternalModule
     RETURN from.qualified_name AS from_qn, to.qualified_name AS to_qn
     """
     return ingestor.fetch_all(query)
 
 
 def get_module_qualified_names(ingestor: MemgraphIngestor) -> set[str]:
-    query = "MATCH (m:Module) RETURN m.qualified_name AS qn"
+    query = "MATCH (m) WHERE m:Module OR m:ExternalModule RETURN m.qualified_name AS qn"
     results = ingestor.fetch_all(query)
     return {r["qn"] for r in results}
 
