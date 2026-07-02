@@ -117,3 +117,33 @@ def test_gradle_multimodule_calls(tmp_path: Path) -> None:
     )
     assert _has(calls, "app.Main.Main.run()", "util.Helper.Helper.help()")
     assert _has(calls, "app.Main.Main.runInst()", "util.Helper.Helper.inst()")
+
+
+ENUM_SRC = (
+    "package com.foo.util;\n\n"
+    "public enum Mode {\n"
+    "    FAST, SLOW;\n"
+    "    public static Mode parse() { return FAST; }\n"
+    "}\n"
+)
+ENUM_MAIN = (
+    "package com.foo.app;\n\n"
+    "import com.foo.util.Mode;\n\n"
+    "public class EnumMain {\n"
+    "    public Mode pick() { return Mode.parse(); }\n"
+    "}\n"
+)
+
+
+def test_flat_layout_enum_static_call(tmp_path: Path) -> None:
+    # (H) An imported enum's static method: enums register as NodeType.ENUM, so the
+    # (H) imported-class normalization must accept them, or the flat-layout call is
+    # (H) still dropped.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "com/foo/util/Mode.java": ENUM_SRC,
+            "com/foo/app/EnumMain.java": ENUM_MAIN,
+        },
+    )
+    assert _has(calls, "app.EnumMain.EnumMain.pick()", "util.Mode.Mode.parse()")

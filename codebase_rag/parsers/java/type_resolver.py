@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
     from ..import_processor import ImportProcessor
 
+# (H) Node types an imported Java name can declare (records and annotation types
+# (H) register as CLASS).
+_JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+
 
 class JavaTypeResolverMixin:
     __slots__ = ()
@@ -109,15 +113,15 @@ class JavaTypeResolverMixin:
         # (H) fallback. Append the imported simple name when THAT is the registered
         # (H) class. Registry-guarded, so targets that are already class qns and
         # (H) external fqns pass through unchanged.
-        if target in self.function_registry and self.function_registry[target] in (
-            NodeType.CLASS,
-            NodeType.INTERFACE,
+        if (
+            target in self.function_registry
+            and self.function_registry[target] in _JAVA_TYPE_DECL_NODE_TYPES
         ):
             return target
         class_qn = f"{target}{cs.SEPARATOR_DOT}{type_name}"
-        if class_qn in self.function_registry and self.function_registry[class_qn] in (
-            NodeType.CLASS,
-            NodeType.INTERFACE,
+        if (
+            class_qn in self.function_registry
+            and self.function_registry[class_qn] in _JAVA_TYPE_DECL_NODE_TYPES
         ):
             return class_qn
         return target
