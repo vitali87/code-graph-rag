@@ -280,6 +280,25 @@ def test_dunder_root_is_scoped_to_python() -> None:
     assert "proj.m.__unused__" in dead
 
 
+def test_abstract_method_is_a_root() -> None:
+    # (H) An @abstractmethod is a contract invoked polymorphically through concrete
+    # (H) overrides, never by a direct call the graph can trace, so the abstract stub
+    # (H) must not be reported dead (SqsBatchJob._raw_batch_operation shape).
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.Base._raw", decorators=["@abstractmethod"]),
+            _fn("proj.m.Base._also", decorators=["@abc.abstractmethod"]),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, config)
+    assert dead == set()
+
+
 def test_score_dead_code_prf() -> None:
     result = score_dead_code({"a", "b"}, {"a", "c"})
     row = result.rows[0]

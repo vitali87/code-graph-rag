@@ -471,6 +471,7 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "root_validator",
         "field_serializer",
         "model_serializer",
+        "abstractmethod",
     }
 )
 
