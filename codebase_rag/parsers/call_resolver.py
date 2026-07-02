@@ -49,6 +49,8 @@ class CallResolver:
         "type_inference",
         "class_inheritance",
         "type_aliases",
+        "interface_implementers",
+        "_interface_impl_cache",
         "_simple_resolution_cache",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -66,11 +68,19 @@ class CallResolver:
         type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
+        interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        # (H) {interface_qn: [implementer_qns]} (shared ref, populated during
+        # (H) ingestion). Used to redirect an interface-typed call to the single
+        # (H) concrete implementer's method (call-graph accuracy; single-impl only).
+        self.interface_implementers = (
+            interface_implementers if interface_implementers is not None else {}
+        )
+        self._interface_impl_cache: dict[str, str] | None = None
         # (H) C++ typedef/using alias -> underlying bare type, consulted when a
         # (H) receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
@@ -238,6 +248,21 @@ class CallResolver:
                 targets.add((self.function_registry[qn], qn))
         return targets
 
+    def _interface_impl_map(self) -> dict[str, str]:
+        # (H) Map an interface to its SOLE first-party implementer. A call typed to an
+        # (H) interface resolves to the interface's own method declaration; when the
+        # (H) interface has exactly one implementer the concrete method is the one that
+        # (H) runs, so redirect to it (call-graph accuracy). >1 implementer is
+        # (H) ambiguous -> not mapped -> the call stays on the interface method (no
+        # (H) precision risk, recall preserved).
+        if self._interface_impl_cache is None:
+            self._interface_impl_cache = {
+                interface_qn: next(iter(implementers))
+                for interface_qn, implementers in self.interface_implementers.items()
+                if len(implementers) == 1
+            }
+        return self._interface_impl_cache
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:
@@ -246,7 +271,9 @@ class CallResolver:
         class_qn, sep, method_name = result[1].rpartition(cs.SEPARATOR_DOT)
         if not sep:
             return result
-        impl_qn = self._protocol_impl_map().get(class_qn)
+        impl_qn = self._protocol_impl_map().get(
+            class_qn
+        ) or self._interface_impl_map().get(class_qn)
         if impl_qn is None:
             return result
         redirected = f"{impl_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -1250,8 +1277,8 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 
-        result = java_engine.resolve_java_method_call(
-            call_node, local_var_types, module_qn
+        result = self._redirect_protocol_method(
+            java_engine.resolve_java_method_call(call_node, local_var_types, module_qn)
         )
 
         if result:
