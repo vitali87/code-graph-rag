@@ -378,6 +378,18 @@ class TestBuildDeadCodeQueryUnit:
         assert "Module" in query
         assert "[:CALLS]-(" in query
 
+    def test_test_patterns_cover_js_ts_convention(self) -> None:
+        from codebase_rag.constants import TEST_PATH_PATTERNS
+
+        # (H) *.test.ts / *.spec.tsx / __tests__/ are test files; without these
+        # (H) substrings every symbol in them is wrongly reported as dead.
+        for path in (
+            "src/solution.test.ts",
+            "app/foo.spec.tsx",
+            "src/__tests__/helper.ts",
+        ):
+            assert any(p in path for p in TEST_PATH_PATTERNS), path
+
     def test_include_classes_adds_class_candidates(self) -> None:
         with_classes = build_dead_code_query(include_tests=False, include_classes=True)
         assert "Function|Method|Class" in with_classes
