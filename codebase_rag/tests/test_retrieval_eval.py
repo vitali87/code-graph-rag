@@ -79,9 +79,10 @@ def test_oracle_captures_first_party_calls(repo: Path) -> None:
     assert not any(e.source.file == "pkg/uses.py" for e in oracle)
 
 
-# (H) A property getter is invoked by a bare attribute read (no parens); cgr emits
-# (H) a CALLS edge for it, so the oracle must too, or every such access is a false
-# (H) positive. A bare method reference (no parens) is NOT a call.
+# (H) A property is invoked by a bare attribute read (getter, Load) or write
+# (H) (setter, Store) with no parens; both are descriptor-method calls cgr emits a
+# (H) CALLS edge for, so the oracle counts both. A `del` (deleter) is not a
+# (H) retrieval call, and a bare method reference (no parens) is not a call.
 _PROPS = """\
 class Model:
     @property
@@ -92,6 +93,18 @@ class Model:
     def output_field(self):
         return 2
 
+    @property
+    def slot(self):
+        return 4
+
+    @slot.setter
+    def slot(self, v):
+        self._slot = v
+
+    @property
+    def gone(self):
+        return 5
+
     def plain(self):
         return 3
 
@@ -100,6 +113,10 @@ class Model:
         b = self.output_field
         cb = self.plain
         return a, b, cb
+
+    def writer(self, x):
+        self.slot = x
+        del self.gone
 """
 
 
@@ -112,12 +129,16 @@ def test_oracle_captures_property_access_as_calls(tmp_path: Path) -> None:
     fp = first_party_symbols(trees)
     props = first_party_property_names(trees)
 
-    assert props == {"related_model", "output_field"}
+    assert props == {"related_model", "output_field", "slot", "gone"}
     oracle = oracle_call_edges(trees, fp, props)
+    # (H) getter read (Load) and setter write (Store) both count.
     assert _edge("pkg/m.py", "related_model") in oracle
     assert _edge("pkg/m.py", "output_field") in oracle
+    assert _edge("pkg/m.py", "slot") in oracle
     # (H) `cb = self.plain` is a bound-method reference, not a call.
     assert _edge("pkg/m.py", "plain") not in oracle
+    # (H) `del self.gone` (Del) is the only access of gone and is not a call.
+    assert _edge("pkg/m.py", "gone") not in oracle
 
 
 @needs_rg

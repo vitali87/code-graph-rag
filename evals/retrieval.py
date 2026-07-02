@@ -101,10 +101,16 @@ def oracle_call_edges(
             if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
                 if name in first_party:
                     edges.add(_edge(rel, name))
-            # (H) A bare attribute read of a first-party property getter invokes it;
-            # (H) cgr emits a CALLS edge, so credit it here too (a property is never
-            # (H) syntactically called with parens, so this cannot double-count).
-            elif isinstance(node, ast.Attribute) and node.attr in properties:
+            # (H) A bare READ of a first-party property getter invokes it; cgr emits
+            # (H) a CALLS edge, so credit it here too (a property is never
+            # (H) syntactically called with parens, so this cannot double-count). Only
+            # (H) a Load counts: a Store (`self.x = v`) invokes the setter and a Del
+            # (H) the deleter, neither of which cgr models as a plain getter call.
+            elif (
+                isinstance(node, ast.Attribute)
+                and node.attr in properties
+                and isinstance(node.ctx, ast.Load | ast.Store)
+            ):
                 edges.add(_edge(rel, node.attr))
     return edges
 
