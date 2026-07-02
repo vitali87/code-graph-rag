@@ -94,6 +94,28 @@ def test_decorated_function_is_a_root() -> None:
     assert dead == set()
 
 
+def test_pydantic_validator_is_a_root() -> None:
+    # (H) Pydantic invokes @field_validator/@model_validator methods by registration
+    # (H) through library code that is not in the first-party graph, so reachability
+    # (H) cannot trace the call; the default decorator set must seed them as roots.
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn(
+                "proj.m.C._check",
+                decorators=["@pydantic.field_validator('x')"],
+            ),
+            _fn("proj.m.C._verify", decorators=["@model_validator(mode='after')"]),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, config)
+    assert dead == set()
+
+
 def test_non_test_module_does_not_keep_code_alive_when_tests_excluded() -> None:
     # (H) With tests excluded, a call from a test module must not root project code.
     nodes = dict(

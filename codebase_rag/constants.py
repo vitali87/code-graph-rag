@@ -418,7 +418,8 @@ class QueryFormat(StrEnum):
 
 
 # (H) Decorators whose presence marks a function/method as an implicit entry point
-# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners).
+# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
+# (H) Pydantic validators/serializers the framework invokes by registration).
 DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     {
         "route",
@@ -436,6 +437,12 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "app",
         "on_event",
         "listener",
+        "validator",
+        "field_validator",
+        "model_validator",
+        "root_validator",
+        "field_serializer",
+        "model_serializer",
     }
 )
 
