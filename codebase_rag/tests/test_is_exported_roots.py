@@ -132,6 +132,25 @@ export class Store {
 """
 
 
+RUST_SRC = """\
+pub fn public_api() -> i32 {
+    crate_only()
+}
+
+pub(crate) fn crate_only() -> i32 {
+    1
+}
+
+pub(super) fn parent_only() -> i32 {
+    2
+}
+
+fn private_helper() -> i32 {
+    3
+}
+"""
+
+
 def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
     if "python" not in load_parsers()[0]:
         pytest.skip("python parser not available")
@@ -194,6 +213,19 @@ def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> 
     assert _one(exported, ".ApiClass.publicMethod") is True
     assert _one(exported, ".ApiClass.privateMethod") is False
     assert _one(exported, ".ApiClass.protectedMethod") is True
+
+
+def test_rust_only_unrestricted_pub_is_exported(tmp_path: Path) -> None:
+    # (H) Only bare `pub` is an external API root. `pub(crate)`/`pub(super)` are
+    # (H) visible only within the crate/parent module, so an uncalled one is
+    # (H) genuinely dead and must not be seeded as a reachability root.
+    if "rust" not in load_parsers()[0]:
+        pytest.skip("rust parser not available")
+    exported = _run(tmp_path, {"m.rs": RUST_SRC})
+    assert _one(exported, ".public_api") is True
+    assert _one(exported, ".crate_only") is False
+    assert _one(exported, ".parent_only") is False
+    assert _one(exported, ".private_helper") is False
 
 
 def test_js_hash_private_method_of_exported_class_is_not_exported(

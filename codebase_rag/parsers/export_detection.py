@@ -150,4 +150,11 @@ def _java_exported(node: Node) -> bool:
 
 
 def _rust_exported(node: Node) -> bool:
-    return any(c.type == cs.TS_PHP_VISIBILITY_MODIFIER for c in node.children)
+    # (H) Only unrestricted `pub` is an external API root. A restricted visibility
+    # (H) (`pub(crate)`, `pub(super)`, `pub(in path)`) is visible only within the
+    # (H) crate/module, so an uncalled one is genuinely dead and must not be seeded
+    # (H) as a root. Bare `pub` is a lone keyword child; a restriction adds `(...)`.
+    modifier = next(
+        (c for c in node.children if c.type == cs.TS_PHP_VISIBILITY_MODIFIER), None
+    )
+    return modifier is not None and modifier.child_count == 1

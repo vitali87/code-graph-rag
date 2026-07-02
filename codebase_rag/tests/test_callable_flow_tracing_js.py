@@ -129,3 +129,20 @@ def test_js_factory_returned_closure_flows_callback(tmp_path: Path) -> None:
     # (H) closure that invokes cb must get a CALLS edge to target.
     calls = _run_calls(tmp_path, {"m.js": JS_FACTORY_ALIAS}, "javascript")
     assert _has(calls, "m.makeRunner.runner", "m.target")
+
+
+JS_DISPATCH_TABLE = (
+    "function _handleA() { return 1; }\n"
+    "function _handleB() { return 2; }\n\n"
+    "const HANDLERS = { a: _handleA, b: _handleB };\n"
+    "const LIST = [_handleA];\n"
+)
+
+
+def test_js_object_dispatch_table_keeps_handlers_reachable(tmp_path: Path) -> None:
+    # (H) Handlers stored only in an object/array dispatch table are wired to be
+    # (H) invoked later (HANDLERS[key](...)); the enclosing scope must reference them
+    # (H) so they are not reported dead, matching the Python dispatch-table behaviour.
+    calls = _run_calls(tmp_path, {"m.js": JS_DISPATCH_TABLE}, "javascript")
+    assert _has(calls, "m", "m._handleA")
+    assert _has(calls, "m", "m._handleB")

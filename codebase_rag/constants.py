@@ -2659,6 +2659,7 @@ GUARD_INHERITED_METHOD = "_inherited_method_guard"
 # (H) JS/TS ingest node types
 TS_PAIR = "pair"
 TS_OBJECT = "object"
+TS_ARRAY = "array"
 TS_FUNCTION_EXPRESSION = "function_expression"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"

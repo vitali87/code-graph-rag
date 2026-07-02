@@ -86,6 +86,11 @@ _PY_SCOPE_BOUNDARY_TYPES = frozenset(
     }
 )
 _PY_SEQUENCE_LITERAL_TYPES = frozenset({cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TUPLE})
+# (H) Dispatch-table literals whose values may name handler functions: Python dict
+# (H) and JS/TS object (key/value pairs), and Python list/set/tuple and JS/TS array
+# (H) (positional elements). All use the `pair`/named-child shapes handled below.
+_DICT_LIKE_COLLECTION_TYPES = frozenset({cs.TS_PY_DICTIONARY, cs.TS_OBJECT})
+_SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_ARRAY})
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -406,17 +411,20 @@ class CallProcessor:
             # (H) module-load CALLS before the empty-`all_call_nodes` early return,
             # (H) since a file may have decorators but no other calls. Classes can
             # (H) be decorated too, so include captured class nodes.
-            if language == cs.SupportedLanguage.PYTHON:
-                # (H) A dispatch table (HANDLERS = {"k": fn}) at module scope keeps its
-                # (H) entries reachable; scan before the no-calls early return so a file
-                # (H) that only defines functions and a table is still covered.
+            # (H) A dispatch table (HANDLERS = {"k": fn}) at module scope keeps its
+            # (H) entries reachable; scan before the no-calls early return so a file
+            # (H) that only defines functions and a table is still covered. Runs for
+            # (H) every flow language with an object/array/dict literal form.
+            if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
                 self._ingest_collection_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
                     None,
                     None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
+            if language == cs.SupportedLanguage.PYTHON:
                 decorator_targets = list(sorted_func_nodes or [])
                 if combined_captures and (
                     class_nodes := combined_captures.get(cs.CAPTURE_CLASS)
@@ -1008,12 +1016,20 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
-            # (H) Module-scope literals are scanned explicitly in process_calls_in_file
-            # (H) (before the no-calls early return), so only nested scopes here.
-            if caller_type != cs.NodeLabel.MODULE:
-                self._ingest_collection_function_references(
-                    caller_node, caller_spec, module_qn, local_var_types, class_context
-                )
+        # (H) Dispatch-table handler references, for every flow language. Module-scope
+        # (H) literals are scanned explicitly in process_calls_in_file (before the
+        # (H) no-calls early return), so only nested scopes here.
+        if (
+            language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES
+        ) and caller_type != cs.NodeLabel.MODULE:
+            self._ingest_collection_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -1394,11 +1410,12 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        boundary_types: frozenset[str],
     ) -> None:
-        # (H) A function/method placed as a value in a dict/list/set/tuple literal is a
-        # (H) dispatch table wired to be invoked later (handlers[key](...)), commonly
-        # (H) dispatched by a dynamic string key or in another module where the call
-        # (H) site is not statically resolvable. Treat each such reference as a call
+        # (H) A function/method placed as a value in a dict/object or list/array literal
+        # (H) is a dispatch table wired to be invoked later (handlers[key](...)),
+        # (H) commonly dispatched by a dynamic string key or in another module where the
+        # (H) call site is not statically resolvable. Treat each such reference as a call
         # (H) from the enclosing scope so the handler is reachable. The walk stops at
         # (H) nested function/class boundaries, so a table built inside a nested scope
         # (H) is attributed to that scope's own pass, not this one.
@@ -1407,9 +1424,9 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+            if node.type in boundary_types:
                 continue
-            if node.type == cs.TS_PY_DICTIONARY:
+            if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
                     if (
                         pair.type == cs.TS_PY_PAIR
@@ -1425,7 +1442,7 @@ class CallProcessor:
                             resolve_func,
                             ensure_rel,
                         )
-            elif node.type in _PY_SEQUENCE_LITERAL_TYPES:
+            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
                 for element in node.named_children:
                     self._emit_value_function_ref(
                         element,
@@ -1448,9 +1465,11 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
     ) -> None:
-        # (H) Only a bare name / attribute in value position names a function; a call,
-        # (H) comprehension or literal is not a reference to a callable itself.
-        if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+        # (H) Only a bare name / attribute / member-expression in value position names
+        # (H) a function; a call, comprehension or literal is not a reference to a
+        # (H) callable itself. Reuses the flow-arg ref types (identifier, Python
+        # (H) attribute, Go selector, JS/TS member expression).
+        if node.type not in _FLOW_ARG_REF_TYPES:
             return
         self._emit_callback_edge(
             caller_spec,
