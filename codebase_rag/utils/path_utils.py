@@ -95,6 +95,15 @@ def should_skip_path(
     # (H) unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
         return False
+    if (
+        not _is_file
+        and unignore_paths
+        and any(unignore_could_match_within(u, rel_path_str) for u in unignore_paths)
+    ):
+        # (H) structure traversal must descend into a built-in-ignored dir when
+        # (H) an unignore pattern can match beneath it (mirrors _should_keep_dir),
+        # (H) or rescued files get no Folder/Package ancestry in the graph.
+        return False
     dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
 

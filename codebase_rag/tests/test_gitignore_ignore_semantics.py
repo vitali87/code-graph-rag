@@ -136,3 +136,31 @@ class TestDirPruning:
         assert updater._should_keep_dir("bin", "")
         updater_none = self._updater(None, None)
         assert not updater_none._should_keep_dir("bin", "")
+
+
+class TestDirectoryStructureRescue:
+    # (H) greptile P1 round 2 on #596: structure traversal must not skip a
+    # (H) built-in-ignored directory when an unignore pattern targets files
+    # (H) beneath it, or rescued files lose their Folder/Package ancestry.
+    def test_builtin_dir_kept_when_unignore_targets_beneath(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "bin"
+        assert should_skip_path(target, tmp_path, is_file=False)
+        assert not should_skip_path(
+            target,
+            tmp_path,
+            unignore_paths=frozenset({"bin/*.py"}),
+            is_file=False,
+        )
+
+    def test_excluded_dir_not_rescued(self, tmp_path: Path) -> None:
+        # (H) explicit excludes still beat unignore at the directory level.
+        target = tmp_path / "gen"
+        assert should_skip_path(
+            target,
+            tmp_path,
+            exclude_paths=frozenset({"gen"}),
+            unignore_paths=frozenset({"gen/*.py"}),
+            is_file=False,
+        )
