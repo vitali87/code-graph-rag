@@ -134,6 +134,7 @@ WHERE n.qualified_name STARTS WITH $project_prefix
         WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
               IN $root_decorators)
     OR n.is_exported = true
+    OR (n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4)
     OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
     OR {module_clause}{test_clause}
   )

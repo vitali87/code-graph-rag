@@ -65,6 +65,17 @@ def _norm_decorator(decorator: str) -> str:
     return head.split(cs.SEPARATOR_DOT)[-1].lower()
 
 
+def _is_dunder(name: str) -> bool:
+    # (H) A __dunder__ method is invoked by the Python runtime (async with, iteration,
+    # (H) operators, ...), never by an explicit call the call graph can see, so it is a
+    # (H) reachability root rather than dead code.
+    return (
+        len(name) > len(cs.PY_NAME_DUNDER) * 2
+        and name.startswith(cs.PY_NAME_DUNDER)
+        and name.endswith(cs.PY_NAME_DUNDER)
+    )
+
+
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
@@ -115,6 +126,8 @@ def dead_code_from_graph(
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
+            roots.add(qn)
+        elif _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
