@@ -72,9 +72,7 @@ def semantic_code_search(
                     )
                 )
 
-        logger.info(
-            ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query)
-        )
+        logger.info(ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query))
         return formatted_results
 
     except Exception as e:
@@ -120,9 +118,7 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
-        results = await asyncio.to_thread(
-            semantic_code_search, ingestor, query, top_k
-        )
+        results = await asyncio.to_thread(semantic_code_search, ingestor, query, top_k)
 
         if not results:
             return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)

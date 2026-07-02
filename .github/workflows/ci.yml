@@ -68,7 +68,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra semantic --group dev
+          uv sync --extra treesitter-full --extra semantic --extra test --group dev
 
       - name: Run type checking
         run: |
