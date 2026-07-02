@@ -161,6 +161,125 @@ def test_cgr_dead_code_matches_known_dead_set(tmp_path: Path) -> None:
     assert "proj.m.helper" not in dead
 
 
+def _method(uid: str, path: str = "m.py") -> tuple:
+    return (
+        (cs.NodeLabel.METHOD.value, uid),
+        {
+            cs.KEY_QUALIFIED_NAME: uid,
+            cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            cs.KEY_PATH: path,
+            cs.KEY_DECORATORS: [],
+            cs.KEY_IS_EXPORTED: False,
+        },
+    )
+
+
+def test_dunder_root_is_limited_to_methods() -> None:
+    # (H) Implicit dunder dispatch applies to special METHODS on objects, not to a
+    # (H) module-level function that merely has a dunder-shaped name, so an uncalled
+    # (H) function named __unused__ must stay a dead-code candidate.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            (
+                (_FUNCTION, "proj.m.__unused__"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.m.__unused__",
+                    cs.KEY_NAME: "__unused__",
+                    cs.KEY_PATH: "m.py",
+                    cs.KEY_DECORATORS: [],
+                    cs.KEY_IS_EXPORTED: False,
+                },
+            ),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.m.__unused__" in dead
+
+
+def test_dunder_method_is_a_root() -> None:
+    # (H) __aenter__/__aexit__ are invoked by the `async with` protocol, never by an
+    # (H) explicit call, so cgr cannot see an inbound edge. They are runtime protocol
+    # (H) hooks and must be treated as reachable roots, while a plain private method
+    # (H) with no caller stays dead.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.Inner.__aenter__"),
+            _method("proj.m.Inner.__aexit__"),
+            _method("proj.m.Inner._helper"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.m.Inner.__aenter__" not in dead
+    assert "proj.m.Inner.__aexit__" not in dead
+    assert "proj.m.Inner._helper" in dead
+
+
+def _make_async_cm_repo(root: Path) -> None:
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "m.py").write_text(
+        "class Counter:\n"
+        "    def __call__(self):\n"
+        "        class Inner:\n"
+        "            async def __aenter__(self):\n"
+        "                return None\n"
+        "            async def __aexit__(self, *a):\n"
+        "                return None\n"
+        "        return Inner()\n\n\n"
+        "async def use():\n"
+        "    c = Counter()\n"
+        "    async with c():\n"
+        "        pass\n\n\n"
+        "use()\n",
+        encoding="utf-8",
+    )
+
+
+def test_cgr_dead_code_does_not_flag_context_manager_dunders(tmp_path: Path) -> None:
+    # (H) __aenter__/__aexit__ on the Inner class returned by Counter.__call__ are
+    # (H) driven by `async with` and can never show an inbound call edge; they must
+    # (H) not be reported dead (full parse -> graph -> reachability path).
+    src = tmp_path / "proj"
+    _make_async_cm_repo(src)
+    dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
+    assert not any(qn.endswith("__aenter__") for qn in dead)
+    assert not any(qn.endswith("__aexit__") for qn in dead)
+
+
+def test_dunder_root_is_scoped_to_python() -> None:
+    # (H) Dunder methods are a Python runtime protocol. A function named __unused__ in
+    # (H) another language (a .ts file) is not implicitly invoked, so it must stay a
+    # (H) dead-code candidate; only Python (.py) dunders are rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.ts"},
+            ),
+            (
+                (_FUNCTION, "proj.m.__unused__"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.m.__unused__",
+                    cs.KEY_NAME: "__unused__",
+                    cs.KEY_PATH: "m.ts",
+                    cs.KEY_DECORATORS: [],
+                    cs.KEY_IS_EXPORTED: False,
+                },
+            ),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.m.__unused__" in dead
+
+
 def test_score_dead_code_prf() -> None:
     result = score_dead_code({"a", "b"}, {"a", "c"})
     row = result.rows[0]
