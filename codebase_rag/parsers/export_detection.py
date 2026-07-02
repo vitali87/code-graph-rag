@@ -11,9 +11,7 @@ _JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK})
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
-_PY_FUNCTION_SCOPES = frozenset(
-    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA}
-)
+_PY_FUNCTION_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 
 def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
@@ -27,7 +25,7 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
         case cs.SupportedLanguage.GO:
             return _go_exported(name)
         case lang if lang in cs.JS_TS_LANGUAGES:
-            return _has_export_ancestor(node)
+            return _js_ts_exported(node, name)
         case cs.SupportedLanguage.JAVA:
             return _java_exported(node)
         case cs.SupportedLanguage.RUST:
@@ -63,6 +61,16 @@ def _go_exported(name: str) -> bool:
     return bool(name) and name[0].isupper()
 
 
+def _js_ts_exported(node: Node, name: str) -> bool:
+    # (H) Two export forms: the declaration wrapped by `export` (caught by the
+    # (H) ancestor walk), and a separate `export { name }` / `export { x as y }`
+    # (H) list elsewhere in the module, which does not wrap the declaration and so
+    # (H) must be matched by name against the module's export clauses.
+    if _has_export_ancestor(node):
+        return True
+    return bool(name) and name in _module_export_list_names(node)
+
+
 def _has_export_ancestor(node: Node) -> bool:
     current = node.parent
     while current is not None:
@@ -72,6 +80,43 @@ def _has_export_ancestor(node: Node) -> bool:
             return False
         current = current.parent
     return False
+
+
+def _module_export_list_names(node: Node) -> set[str]:
+    # (H) Local names exported by module-level `export { ... }` / `export default`
+    # (H) statements. `export { local as exported }` still makes `local` reachable,
+    # (H) so the specifier's local name (its first identifier) is what counts.
+    # ponytail: rescanned per declaration; fine for real files, revisit if a module
+    # ponytail: ever has enough top-level export statements to matter.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    names: set[str] = set()
+    for statement in root.children:
+        if statement.type != cs.TS_EXPORT_STATEMENT:
+            continue
+        if any(child.type == cs.TS_STRING for child in statement.children):
+            continue  # re-export from another module: not this file's declaration
+        clause = next(
+            (c for c in statement.children if c.type == cs.TS_EXPORT_CLAUSE), None
+        )
+        if clause is not None:
+            for specifier in clause.children:
+                if specifier.type != cs.TS_EXPORT_SPECIFIER:
+                    continue
+                local = next(
+                    (c for c in specifier.children if c.type == cs.TS_IDENTIFIER), None
+                )
+                if local is not None:
+                    names.add(local.text.decode())
+            continue
+        if any(c.type == cs.TS_EXPORT_DEFAULT for c in statement.children):
+            ident = next(
+                (c for c in statement.children if c.type == cs.TS_IDENTIFIER), None
+            )
+            if ident is not None:
+                names.add(ident.text.decode())
+    return names
 
 
 def _java_exported(node: Node) -> bool:

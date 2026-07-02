@@ -84,6 +84,23 @@ function localHelper() {
 export const Widget = () => 3;
 """
 
+TS_EXPORT_LIST_SRC = """\
+function handler() {
+    return 1;
+}
+
+function renamed() {
+    return 2;
+}
+
+function neverExported() {
+    return 3;
+}
+
+export { handler };
+export { renamed as publicRenamed };
+"""
+
 
 def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
     if "python" not in load_parsers()[0]:
@@ -100,12 +117,7 @@ def test_nested_python_function_is_not_a_root(tmp_path: Path) -> None:
     # (H) A function nested inside another function is a local closure, never public
     # (H) API, so it must not be seeded as a reachability root even if its name is
     # (H) public -- otherwise an unreachable outer function's helpers look live.
-    src = (
-        "def outer():\n"
-        "    def helper():\n"
-        "        return 1\n"
-        "    return helper()\n"
-    )
+    src = "def outer():\n    def helper():\n        return 1\n    return helper()\n"
     exported = _run(tmp_path, {"m.py": src})
     assert _one(exported, ".outer") is True
     assert _one(exported, ".outer.helper") is False
@@ -128,3 +140,15 @@ def test_ts_export_keyword_marks_exported(tmp_path: Path) -> None:
     assert _one(exported, ".useThing") is True
     assert _one(exported, ".Widget") is True
     assert _one(exported, ".localHelper") is False
+
+
+def test_ts_export_list_marks_exported(tmp_path: Path) -> None:
+    # (H) A separate `export { handler }` list (and `export { x as y }` rename) is
+    # (H) the common JS/TS export form: the declaration is not wrapped by `export`,
+    # (H) so its name must be matched against module-level export clauses instead.
+    if "typescript" not in load_parsers()[0]:
+        pytest.skip("typescript parser not available")
+    exported = _run(tmp_path, {"api.ts": TS_EXPORT_LIST_SRC})
+    assert _one(exported, ".handler") is True
+    assert _one(exported, ".renamed") is True  # exported under an alias
+    assert _one(exported, ".neverExported") is False
