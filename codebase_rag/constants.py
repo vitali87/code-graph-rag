@@ -414,6 +414,7 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.base.json",
     "jsconfig.json",
 )
+JS_INDEX_STEM = "index"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"

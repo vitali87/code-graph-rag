@@ -30,7 +30,8 @@ def _make(root: Path) -> None:
         "  // project config\n"
         '  "compilerOptions": {\n'
         '    "baseUrl": ".",\n'
-        '    "paths": { "@/*": ["src/*"], "~lib": ["src/lib/index.ts"] }\n'
+        '    "paths": { "@/*": ["src/*"], "~lib": ["src/lib/index.ts"],\n'
+        '      "*": ["src/*"] }\n'
         "  }\n"
         "}\n",
         encoding="utf-8",
@@ -43,10 +44,16 @@ def _make(root: Path) -> None:
     (src / "lib" / "index.ts").write_text(
         "export function libEntry(): number { return 2; }\n", encoding="utf-8"
     )
+    # (H) A first-party function whose name collides with an external package import.
+    (src / "collide.ts").write_text(
+        "export function pkgCollide(): number { return 9; }\n", encoding="utf-8"
+    )
     (root / "a.ts").write_text(
         'import { aliasedHelper } from "@/util";\n'
         'import { libEntry } from "~lib";\n'
-        "export function useAliases() { return aliasedHelper() + libEntry(); }\n",
+        'import { pkgCollide } from "lodash";\n'
+        "export function useAliases() { return aliasedHelper() + libEntry(); }\n"
+        "export function useExternal() { return pkgCollide(); }\n",
         encoding="utf-8",
     )
 
@@ -66,3 +73,7 @@ def test_tsconfig_paths_alias_calls_resolve_to_first_party_files(
     assert ("proj.a.useAliases", "proj.src.util.aliasedHelper") in calls
     # (H) exact (non-wildcard) alias `~lib` -> `src/lib/index.ts`
     assert ("proj.a.useAliases", "proj.src.lib.index.libEntry") in calls
+    # (H) the catch-all `"*": ["src/*"]` maps `lodash` -> `src/lodash`, which has NO
+    # (H) first-party file, so the alias must NOT apply and the external `pkgCollide`
+    # (H) call must not rebind to the first-party `src/collide.pkgCollide`.
+    assert ("proj.a.useExternal", "proj.src.collide.pkgCollide") not in calls

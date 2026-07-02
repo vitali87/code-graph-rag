@@ -1,4 +1,5 @@
 import json
+import posixpath
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -616,16 +617,37 @@ class ImportProcessor:
         if best is None:
             return None
         path = best[1]
-        while path.startswith(cs.PATH_CURRENT_DIR + cs.SEPARATOR_SLASH):
-            path = path[2:]
         for ext in cs.JS_TS_MODULE_EXTENSIONS:
             if path.endswith(ext):
                 path = path[: -len(ext)]
                 break
-        dotted = path.strip(cs.SEPARATOR_SLASH).replace(
-            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
-        )
-        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}" if dotted else None
+        # (H) normpath collapses `.`/`..` so the qn is clean and an escaping alias
+        # (H) (`../x`) is rejected below.
+        normalized = posixpath.normpath(path)
+        if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
+            cs.PATH_PARENT_DIR
+        ):
+            return None
+        # (H) Only accept the alias when it maps to a real first-party file on disk.
+        # (H) A broad/catch-all alias (`"*": ["src/*"]`) would otherwise capture bare
+        # (H) package imports (`lodash` -> `proj.src.lodash`) and let their calls
+        # (H) rebind to same-named first-party symbols (the #580 collision). A missing
+        # (H) target falls through to the normal external handling.
+        module_rel: str | None = None
+        if any(
+            (self.repo_path / f"{normalized}{ext}").is_file()
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+        ):
+            module_rel = normalized
+        elif (self.repo_path / normalized).is_dir() and any(
+            (self.repo_path / normalized / f"{cs.JS_INDEX_STEM}{ext}").is_file()
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+        ):
+            module_rel = f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
+        if module_rel is None:
+            return None
+        dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
