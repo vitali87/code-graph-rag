@@ -26,6 +26,16 @@ def extract_receiver_type_name(node: Node) -> str | None:
     return None
 
 
+def extract_return_type_name(node: Node) -> str | None:
+    # (H) Bare name of a Go function/method's single return type (`Root() *Command`
+    # (H) -> "Command"), for chained-call resolution. A parameter_list result
+    # (H) (multiple/named returns) is ambiguous for chaining, so it is skipped.
+    result = node.child_by_field_name(cs.FIELD_RESULT)
+    if result is None or result.type == cs.TS_GO_PARAMETER_LIST:
+        return None
+    return type_identifier_text(result)
+
+
 def type_identifier_text(type_node: Node) -> str | None:
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
         return safe_decode_text(type_node)

@@ -63,6 +63,10 @@ class DefinitionProcessor(
         # (H) across all files (an alias in a header is used in a .cc), read by the
         # (H) resolver when mapping a receiver type name to a class.
         self.type_aliases: dict[str, str] = {}
+        # (H) {func_or_method_qn: bare_return_type_name} captured at definition
+        # (H) ingestion, so a chained call `x.foo().bar()` can resolve `bar` on the
+        # (H) type `foo()` returns. Read by the resolver's chained-call path.
+        self.method_return_types: dict[str, str] = {}
         # (H) Alias names seen with conflicting underlying types across scopes/files;
         # (H) dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()

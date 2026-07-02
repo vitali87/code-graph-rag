@@ -32,6 +32,7 @@ class TypeInferenceEngine:
         "class_inheritance",
         "simple_name_lookup",
         "class_field_types",
+        "method_return_types",
         "_java_type_inference",
         "_lua_type_inference",
         "_js_type_inference",
@@ -52,6 +53,7 @@ class TypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]] | None = None,
+        method_return_types: dict[str, str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -68,6 +70,12 @@ class TypeInferenceEngine:
         # (H) silently lose every field type written afterward.
         self.class_field_types = (
             class_field_types if class_field_types is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): DefinitionProcessor's
+        # (H) func_qn -> return-type map, populated during ingestion and read by the
+        # (H) resolver's chained-call path.
+        self.method_return_types = (
+            method_return_types if method_return_types is not None else {}
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None

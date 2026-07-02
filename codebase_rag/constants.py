@@ -763,6 +763,7 @@ FIELD_DECLARATOR = "declarator"
 FIELD_PARAMETERS = "parameters"
 FIELD_RECEIVER = "receiver"
 FIELD_TYPE = "type"
+FIELD_RESULT = "result"
 # (H) Rust impl `trait`/`type` fields and a trait's supertrait `bounds`.
 FIELD_TRAIT = "trait"
 FIELD_BOUNDS = "bounds"

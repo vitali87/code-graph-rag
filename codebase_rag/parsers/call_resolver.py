@@ -923,6 +923,35 @@ class CallResolver:
 
         return None
 
+    def _infer_chained_object_type(
+        self,
+        object_expr: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> str | None:
+        # (H) Type of a chained receiver expression like `c.Root()` using the shared
+        # (H) method_return_types map: the base is a typed local (`c` -> Command), and
+        # (H) each `.method()` hop advances the type by that method's return type
+        # (H) (Root() -> Command). Language-agnostic; returns the bare type name of the
+        # (H) final hop, or None if any hop is untyped/unknown (then the chain stays
+        # (H) unresolved, never mis-resolved).
+        if not local_var_types or not self.type_inference.method_return_types:
+            return None
+        parts = object_expr.split(cs.SEPARATOR_DOT)
+        base = parts[0]
+        if not base or cs.CHAR_PAREN_OPEN in base:
+            return None
+        current_type = local_var_types.get(base)
+        for part in parts[1:]:
+            if not current_type or cs.CHAR_PAREN_OPEN not in part:
+                return None
+            method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            class_qn = self._resolve_class_name(current_type, module_qn) or current_type
+            current_type = self.type_inference.method_return_types.get(
+                f"{class_qn}{cs.SEPARATOR_DOT}{method}"
+            )
+        return current_type
+
     def _is_method_chain(self, call_name: str) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
             return False
@@ -946,12 +975,13 @@ class CallResolver:
 
         object_expr = call_name[: match.start()]
 
-        if (
-            object_type
-            := self.type_inference.python_type_inference._infer_expression_return_type(
+        object_type = (
+            self.type_inference.python_type_inference._infer_expression_return_type(
                 object_expr, module_qn, local_var_types
             )
-        ):
+            or self._infer_chained_object_type(object_expr, module_qn, local_var_types)
+        )
+        if object_type:
             full_object_type = object_type
             if cs.SEPARATOR_DOT not in object_type:
                 if resolved_class := self._resolve_class_name(object_type, module_qn):
