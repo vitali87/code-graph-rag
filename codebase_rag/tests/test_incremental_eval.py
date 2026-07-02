@@ -256,6 +256,144 @@ class TestIncrementalScenario:
         assert prop_call in incr.edges
         assert incr == clean
 
+    def test_incremental_preserves_protocol_dispatch_editing_caller(
+        self, tmp_path: Path, parsers_queries: tuple[object, object]
+    ) -> None:
+        # (H) Issue #532 residual: editing client.py re-parses only it, so
+        # (H) class_inheritance no longer records that GreeterProtocol subclasses
+        # (H) Protocol (iface.py was not re-parsed). Protocol dispatch keys off that
+        # (H) hierarchy: a clean index redirects g.greet() from the Protocol stub to
+        # (H) the concrete Greeter.greet, but without rehydrating class_inheritance
+        # (H) the incremental run leaves the call on the stub. The fix rehydrates the
+        # (H) hierarchy from persisted INHERITS edges before Pass 3.
+        method = cs.NodeLabel.METHOD.value
+        concrete = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.impl.Greeter.greet",
+        )
+        stub = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.iface.GreeterProtocol.greet",
+        )
+        src = tmp_path / "proj"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "iface.py").write_text(
+            "from typing import Protocol\n\n\n"
+            "class GreeterProtocol(Protocol):\n    def greet(self):\n        ...\n",
+            encoding="utf-8",
+        )
+        (src / "impl.py").write_text(
+            "class Greeter:\n    def greet(self):\n        return 1\n", encoding="utf-8"
+        )
+        (src / "client.py").write_text(
+            "from proj.iface import GreeterProtocol\n\n\n"
+            "def use(g: GreeterProtocol):\n    return g.greet()\n",
+            encoding="utf-8",
+        )
+        parsers, queries = parsers_queries
+        incr, clean = run_neutral_edit_scenario(
+            src, "proj", "client.py", parsers, queries, tmp_path / "scn"
+        )
+        assert concrete in clean.edges
+        assert stub not in clean.edges
+        assert concrete in incr.edges
+        assert incr == clean
+
+    def test_all_inherits_query_returns_bases_in_base_index_order(self) -> None:
+        # (H) Rehydration replays INHERITS edges into class_inheritance; multiple
+        # (H) inheritance is order-sensitive (method resolution and override
+        # (H) attribution walk the base list first-match-wins). The persisted
+        # (H) base_index must restore source order regardless of the order the edges
+        # (H) were stored in. Insert five bases in reverse index order; the query
+        # (H) must return them by base_index (the store is a set, so without the
+        # (H) base_index ordering the returned order would not be base0..base4).
+        klass = cs.NodeLabel.CLASS.value
+        s = _StatefulIngestor()
+        child = "proj.combined.Combined"
+        want = [f"proj.mixins.Base{i}" for i in range(5)]
+        for index in reversed(range(5)):
+            s.ensure_relationship_batch(
+                (klass, _QN, child),
+                cs.RelationshipType.INHERITS.value,
+                (klass, _QN, want[index]),
+                {cs.KEY_BASE_INDEX: index},
+            )
+        rows = s.fetch_all(cs.CYPHER_ALL_INHERITS)
+        bases = [r[cs.KEY_BASE_QN] for r in rows if r[cs.KEY_CHILD_QN] == child]
+        assert bases == want
+
+    def test_rehydrate_skips_multi_base_class_with_missing_base_index(self) -> None:
+        # (H) Greptile #572: an INHERITS edge written by an older index has no
+        # (H) base_index, so a multi-inheritance class's base order cannot be
+        # (H) trusted after an upgrade. Such a class must NOT be rehydrated (it would
+        # (H) risk binding a call/override to the wrong base); a single-base class is
+        # (H) order-free and is still rehydrated; a fully-ordered class is rehydrated
+        # (H) in base_index order; and a class already parsed locally is left alone.
+        from codebase_rag.graph_updater import GraphUpdater
+
+        rows: list[dict[str, object]] = [
+            # (H) Ordered multi-base -> rehydrated in index order.
+            {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.B", cs.KEY_BASE_INDEX: 1},
+            {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.A", cs.KEY_BASE_INDEX: 0},
+            # (H) Multi-base with a missing index -> skipped entirely.
+            {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.X", cs.KEY_BASE_INDEX: None},
+            {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.Y", cs.KEY_BASE_INDEX: 1},
+            # (H) Single base with a missing index -> still safe to rehydrate.
+            {cs.KEY_CHILD_QN: "p.Solo", cs.KEY_BASE_QN: "p.Z", cs.KEY_BASE_INDEX: None},
+            # (H) Already parsed locally -> not touched.
+            {cs.KEY_CHILD_QN: "p.Local", cs.KEY_BASE_QN: "p.W", cs.KEY_BASE_INDEX: 0},
+        ]
+        result = GraphUpdater._rehydrated_bases_by_child(rows, {"p.Local": ["p.W"]})
+        assert result == {"p.Ok": ["p.A", "p.B"], "p.Solo": ["p.Z"]}
+
+    def test_incremental_preserves_multiple_inheritance_dispatch(
+        self, tmp_path: Path, parsers_queries: tuple[object, object]
+    ) -> None:
+        # (H) Issue #532 residual (Greptile #572): editing the caller rehydrates
+        # (H) class_inheritance for the unchanged Combined(MixinA, MixinB). Python
+        # (H) MRO resolves c.shared() to MixinA.shared (first base). If rehydration
+        # (H) lost base order, an incremental run could bind it to MixinB.shared,
+        # (H) diverging from a clean index. base_index ordering keeps them equal.
+        method = cs.NodeLabel.METHOD.value
+        first_base = (
+            _FUNCTION,
+            "proj.client.use",
+            _CALLS,
+            method,
+            "proj.mixins.MixinA.shared",
+        )
+        src = tmp_path / "proj"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("", encoding="utf-8")
+        (src / "mixins.py").write_text(
+            "class MixinA:\n    def shared(self):\n        return 1\n\n\n"
+            "class MixinB:\n    def shared(self):\n        return 2\n",
+            encoding="utf-8",
+        )
+        (src / "combined.py").write_text(
+            "from proj.mixins import MixinA, MixinB\n\n\n"
+            "class Combined(MixinA, MixinB):\n    pass\n",
+            encoding="utf-8",
+        )
+        (src / "client.py").write_text(
+            "from proj.combined import Combined\n\n\n"
+            "def use(c: Combined):\n    return c.shared()\n",
+            encoding="utf-8",
+        )
+        parsers, queries = parsers_queries
+        incr, clean = run_neutral_edit_scenario(
+            src, "proj", "client.py", parsers, queries, tmp_path / "scn"
+        )
+        assert first_base in clean.edges
+        assert incr == clean
+
     def test_compare_states_flags_missing_edge(self) -> None:
         from evals.types_defs import GraphState
 

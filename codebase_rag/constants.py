@@ -1133,6 +1133,25 @@ CYPHER_INBOUND_EDGES = (
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
     "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
 )
+# (H) Rehydrate class_inheritance on an incremental run: every INHERITS edge
+# (H) (child -> base) with resolved qns, so protocol dispatch and inherited-method
+# (H) resolution still see the hierarchy of classes defined in files that were not
+# (H) re-parsed. Without it, editing a caller drops the protocol/inheritance
+# (H) redirect (issue #532 residual): a call resolves to the Protocol stub instead
+# (H) of the concrete implementer because _protocol_classes() is empty. Ordered by
+# (H) base_index so multiple-inheritance base order matches the original source,
+# (H) which method resolution and override attribution depend on.
+CYPHER_ALL_INHERITS = (
+    "MATCH (child)-[r:INHERITS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
+    "r.base_index AS base_index "
+    "ORDER BY child_qn, base_index"
+)
+KEY_CHILD_QN = "child_qn"
+KEY_BASE_QN = "base_qn"
+KEY_BASE_INDEX = "base_index"
+
 CYPHER_PARAM_PATHS = "paths"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"

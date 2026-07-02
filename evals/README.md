@@ -176,11 +176,18 @@ fix, verified by this eval, has two parts:
   than re-resolved, which would diverge: cgr resolution is context-sensitive).
 - **Outbound** resolution rehydrates the function registry from the persisted
   graph so calls into unchanged files resolve again.
+- **Property and inheritance context** is rehydrated too: the `@property` status
+  of methods and the `class_inheritance` hierarchy (from persisted `INHERITS`
+  edges) are restored before call resolution, so a re-parsed caller still resolves
+  property access and protocol dispatch into unchanged files. Each `INHERITS` edge
+  persists a `base_index`, and rehydration orders the bases by it, so multiple
+  inheritance keeps its original source order (method resolution and override
+  attribution are first-match-wins over the base list, so a lost order would bind
+  a call to the wrong base).
 
-Residual divergence is confined to the changed file's own calls resolved through
-type inference / protocol dispatch (e.g. `self.x.method()`), which need the full
-cross-file type context that a single-file reprocess does not rebuild; this is
-documented as a deeper follow-on, not a regression. Writes
+Residual divergence is now confined to a small tail of the changed file's own
+calls resolved through deeper type inference, and to import-granularity
+differences; these are documented as follow-ons, not regressions. Writes
 `evals/results/incremental_scores.csv` and `evals/results/incremental_diff.json`.
 
 Inbound capture is intentionally scoped to re-indexed files (changed, **not** new

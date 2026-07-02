@@ -591,6 +591,59 @@ class GraphUpdater:
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)
+        self._rehydrate_class_inheritance_from_graph()
+
+    def _rehydrate_class_inheritance_from_graph(self) -> None:
+        # (H) Incremental runs rebuild class_inheritance only from re-parsed files.
+        # (H) Restore the child->bases map for classes defined in files that were
+        # (H) not re-parsed, so protocol dispatch and inherited-method resolution
+        # (H) work in Pass 3 (issue #532 residual). Only fill entries missing
+        # (H) locally: a re-parsed class already has its fresh, correctly ordered
+        # (H) bases, so we must not overwrite or duplicate them. CYPHER_ALL_INHERITS
+        # (H) is ordered by base_index, so a rehydrated class's bases keep their
+        # (H) original source order (multiple inheritance resolves the same base a
+        # (H) clean index would).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        class_inheritance = self.factory.definition_processor.class_inheritance
+        rows = self.ingestor.fetch_all(cs.CYPHER_ALL_INHERITS)
+        for child, bases in self._rehydrated_bases_by_child(
+            rows, class_inheritance
+        ).items():
+            class_inheritance[child] = bases
+
+    @staticmethod
+    def _rehydrated_bases_by_child(
+        rows: list[ResultRow], existing: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
+        # (H) Group persisted INHERITS rows into child -> ordered bases, restoring
+        # (H) the original source order from base_index. Skip children already
+        # (H) present locally (freshly re-parsed). A class with more than one base
+        # (H) needs a reliable order (method resolution / override attribution are
+        # (H) first-match-wins over the base list); if any of its edges lacks a
+        # (H) base_index -- e.g. an INHERITS relationship written by an older index
+        # (H) before base_index existed -- the order cannot be trusted, so that
+        # (H) class is NOT rehydrated and falls back to name-based resolution rather
+        # (H) than risk binding to the wrong base. Single-base classes are
+        # (H) order-independent and always safe.
+        collected: dict[str, list[tuple[int | None, str]]] = {}
+        for row in rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            base = row.get(cs.KEY_BASE_QN)
+            if not isinstance(child, str) or not isinstance(base, str):
+                continue
+            if child in existing:
+                continue
+            raw_index = row.get(cs.KEY_BASE_INDEX)
+            index = raw_index if isinstance(raw_index, int) else None
+            collected.setdefault(child, []).append((index, base))
+        result: dict[str, list[str]] = {}
+        for child, pairs in collected.items():
+            if len(pairs) > 1 and any(index is None for index, _ in pairs):
+                continue
+            pairs.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
+            result[child] = [base for _index, base in pairs]
+        return result
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # (H) Record the reference edges that unchanged files point at the
