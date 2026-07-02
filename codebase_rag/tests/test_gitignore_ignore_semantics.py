@@ -3,7 +3,10 @@
 # (H) lines rescuing built-in ignores. Bare-name patterns keep their existing
 # (H) match-at-any-depth behavior, so old ignore files stay valid.
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import should_skip_path, should_skip_rel_file
 
 
@@ -103,3 +106,33 @@ class TestGitignoreUnignoreSemantics:
             exclude=frozenset({"gen"}),
             unignore=frozenset({"gen/x.py"}),
         )
+
+
+class TestDirPruning:
+    # (H) greptile P1 on #596: an explicitly excluded directory must stay pruned
+    # (H) even when an unignore pattern targets something beneath it, because
+    # (H) excludes always beat unignores at the file level anyway.
+    def _updater(
+        self,
+        exclude: frozenset[str] | None,
+        unignore: frozenset[str] | None,
+    ) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=MagicMock(),
+            repo_path=Path("/t"),
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclude,
+            unignore_paths=unignore,
+        )
+
+    def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
+        updater = self._updater(frozenset({"gen"}), frozenset({"gen/keep.py"}))
+        assert not updater._should_keep_dir("gen", "")
+
+    def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
+        updater = self._updater(None, frozenset({"bin/keep.py"}))
+        assert updater._should_keep_dir("bin", "")
+        updater_none = self._updater(None, None)
+        assert not updater_none._should_keep_dir("bin", "")

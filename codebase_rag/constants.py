@@ -1111,7 +1111,7 @@ IGNORE_SUFFIXES = frozenset(
 )
 
 # (H) pathspec style for .cgrignore / --exclude patterns (#495).
-GITWILDMATCH_STYLE = "gitwildmatch"
+GITWILDMATCH_STYLE = "gitignore"
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"

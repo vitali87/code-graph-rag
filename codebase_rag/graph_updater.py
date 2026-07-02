@@ -841,11 +841,13 @@ class GraphUpdater:
 
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         rel_dir = f"{dir_prefix}{dirname}"
-        excluded = bool(
-            self.exclude_paths
-            and matches_ignore_patterns(f"{rel_dir}/", self.exclude_paths)
-        )
-        if not excluded and dirname not in cs.IGNORE_PATTERNS:
+        # (H) an explicit exclude can never be rescued by unignore (excludes win
+        # (H) at the file level too), so prune the subtree outright.
+        if self.exclude_paths and matches_ignore_patterns(
+            f"{rel_dir}/", self.exclude_paths
+        ):
+            return False
+        if dirname not in cs.IGNORE_PATTERNS:
             return True
         return bool(
             self.unignore_paths
