@@ -11,6 +11,7 @@ from .php_oracle import php_oracle_available, run_php_call_oracle, run_php_oracl
 from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_available
 from .scala_oracle import run_scala_call_oracle, run_scala_oracle, scala_available
 from .typescript_oracle import (
+    run_javascript_call_oracle,
     run_javascript_oracle,
     run_typescript_call_oracle,
     run_typescript_oracle,
@@ -40,6 +41,7 @@ __all__ = [
     "run_scala_call_oracle",
     "run_scala_oracle",
     "scala_available",
+    "run_javascript_call_oracle",
     "run_javascript_oracle",
     "run_typescript_call_oracle",
     "run_typescript_oracle",

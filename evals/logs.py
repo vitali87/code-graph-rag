@@ -105,6 +105,12 @@ TS_RETRIEVAL_CGR = (
     "Building cgr TypeScript CALLS edges for {target} (project={project})"
 )
 TS_RETRIEVAL_CGR_DONE = "cgr TypeScript call edges (first-party): {count}"
+JS_RETRIEVAL_ORACLE = "Running tsc call oracle ({binary}) over {target} (.js/.jsx)"
+JS_RETRIEVAL_ORACLE_DONE = "tsc first-party JS call edges: {count}"
+JS_RETRIEVAL_CGR = (
+    "Building cgr JavaScript CALLS edges for {target} (project={project})"
+)
+JS_RETRIEVAL_CGR_DONE = "cgr JavaScript call edges (first-party): {count}"
 PHP_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
 PHP_RETRIEVAL_ORACLE = "Running php-parser call oracle ({binary}) over {target}"
 PHP_RETRIEVAL_ORACLE_DONE = "php-parser first-party call edges: {count}"
