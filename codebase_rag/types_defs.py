@@ -524,6 +524,10 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}",
     ),
     NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
+    NodeSchema(
+        NodeLabel.EXTERNAL_MODULE,
+        "{qualified_name: string, name: string, path: string}",
+    ),
 )
 
 
@@ -561,7 +565,7 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.IMPORTS,
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.EXTERNAL_MODULE),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE,),

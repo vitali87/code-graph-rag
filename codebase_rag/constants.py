@@ -202,7 +202,6 @@ KEY_TO_VAL = "to_val"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
-KEY_IS_EXTERNAL = "is_external"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
@@ -228,6 +227,7 @@ ONEOF_FUNCTION = "function"
 ONEOF_METHOD = "method"
 ONEOF_FILE = "file"
 ONEOF_EXTERNAL_PACKAGE = "external_package"
+ONEOF_EXTERNAL_MODULE = "external_module"
 ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
 ONEOF_MODULE_INTERFACE = "module_interface"
 ONEOF_INTERFACE = "interface_node"
@@ -508,6 +508,7 @@ class NodeLabel(StrEnum):
     MODULE_INTERFACE = "ModuleInterface"
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
+    EXTERNAL_MODULE = "ExternalModule"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -526,6 +527,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
+    NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -1131,7 +1133,7 @@ CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # (H) Removes external import-target Module nodes that no module imports anymore
 # (H) (e.g. an imported name that was renamed/removed on an incremental rebuild).
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
-    "MATCH (m:Module) WHERE m.is_external = true AND NOT (m)<--() DETACH DELETE m"
+    "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
 
 # (H) Queries for orphan pruning — returns all paths stored in the graph
@@ -1139,8 +1141,7 @@ CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
-    "MATCH (m:Module) WHERE m.is_external IS NULL OR m.is_external = false "
-    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+    "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_ALL_FOLDER_PATHS = (
     "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"

@@ -106,6 +106,7 @@ message GraphCodeIndex {
       Enum enum_node = 13;
       Type type_node = 14;
       Union union_node = 15;
+      ExternalModule external_module = 16;
     }
   }
 
@@ -173,6 +174,14 @@ message GraphCodeIndex {
   }
 
   message Module {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+  }
+
+  message ExternalModule {
     // Primary Key
     string qualified_name = 1;
 

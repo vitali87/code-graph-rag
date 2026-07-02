@@ -15,6 +15,7 @@ from evals.incremental import (
 )
 
 _MODULE = cs.NodeLabel.MODULE.value
+_EXTERNAL_MODULE = cs.NodeLabel.EXTERNAL_MODULE.value
 _FILE = cs.NodeLabel.FILE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
 _QN = cs.KEY_QUALIFIED_NAME
@@ -83,7 +84,7 @@ class TestStatefulStore:
         s = _StatefulIngestor()
         _node(s, _FILE, path="a.py", absolute_path="/x/a.py")
         _node(s, _MODULE, qualified_name="proj.a", path="a.py")
-        _node(s, _MODULE, qualified_name="ext", path="ext", is_external=True)
+        _node(s, _EXTERNAL_MODULE, qualified_name="ext", path="ext")
 
         files = s.fetch_all(cs.CYPHER_ALL_FILE_PATHS)
         assert {r[cs.KEY_PATH] for r in files} == {"a.py"}
@@ -92,16 +93,16 @@ class TestStatefulStore:
 
     def test_delete_orphan_external_modules(self) -> None:
         s = _StatefulIngestor()
-        _node(s, _MODULE, qualified_name="ext.orphan", path="ext", is_external=True)
-        _node(s, _MODULE, qualified_name="ext.used", path="ext2", is_external=True)
+        _node(s, _EXTERNAL_MODULE, qualified_name="ext.orphan", path="ext")
+        _node(s, _EXTERNAL_MODULE, qualified_name="ext.used", path="ext2")
         _node(s, _MODULE, qualified_name="proj.m", path="m.py")
         s.ensure_relationship_batch(
-            (_MODULE, _QN, "proj.m"), _IMPORTS, (_MODULE, _QN, "ext.used")
+            (_MODULE, _QN, "proj.m"), _IMPORTS, (_EXTERNAL_MODULE, _QN, "ext.used")
         )
         s.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
 
-        assert (_MODULE, "ext.orphan") not in s.nodes
-        assert (_MODULE, "ext.used") in s.nodes
+        assert (_EXTERNAL_MODULE, "ext.orphan") not in s.nodes
+        assert (_EXTERNAL_MODULE, "ext.used") in s.nodes
 
     def test_edges_are_deduped(self) -> None:
         s = _StatefulIngestor()

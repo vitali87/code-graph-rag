@@ -47,6 +47,7 @@ class _CapturingIngestor:
 
 
 _MODULE_LABEL = cs.NodeLabel.MODULE.value
+_EXTERNAL_MODULE_LABEL = cs.NodeLabel.EXTERNAL_MODULE.value
 _FILE_LABEL = cs.NodeLabel.FILE.value
 _FOLDER_LABEL = cs.NodeLabel.FOLDER.value
 _DEFINES_RELS = frozenset(
@@ -188,7 +189,7 @@ class _StatefulIngestor:
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL or props.get(cs.KEY_IS_EXTERNAL) is True:
+                    if label != _MODULE_LABEL:
                         continue
                     row: ResultRow = {
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
@@ -252,9 +253,7 @@ class _StatefulIngestor:
         doomed = {
             (label, uid)
             for (label, uid), props in self.nodes.items()
-            if label == _MODULE_LABEL
-            and props.get(cs.KEY_IS_EXTERNAL) is True
-            and (label, uid) not in incoming
+            if label == _EXTERNAL_MODULE_LABEL and (label, uid) not in incoming
         }
         self._detach_delete(doomed)
 

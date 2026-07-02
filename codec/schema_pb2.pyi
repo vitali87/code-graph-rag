@@ -1,12 +1,10 @@
-from collections.abc import Iterable as _Iterable
-from collections.abc import Mapping as _Mapping
-from typing import ClassVar as _ClassVar
-
-from google.protobuf import descriptor as _descriptor
-from google.protobuf import message as _message
 from google.protobuf import struct_pb2 as _struct_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
+from google.protobuf import descriptor as _descriptor
+from google.protobuf import message as _message
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -16,11 +14,7 @@ class GraphCodeIndex(_message.Message):
     RELATIONSHIPS_FIELD_NUMBER: _ClassVar[int]
     nodes: _containers.RepeatedCompositeFieldContainer[Node]
     relationships: _containers.RepeatedCompositeFieldContainer[Relationship]
-    def __init__(
-        self,
-        nodes: _Iterable[Node | _Mapping] | None = ...,
-        relationships: _Iterable[Relationship | _Mapping] | None = ...,
-    ) -> None: ...
+    def __init__(self, nodes: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., relationships: _Optional[_Iterable[_Union[Relationship, _Mapping]]] = ...) -> None: ...
 
 class Node(_message.Message):
     __slots__ = ()
@@ -35,6 +29,11 @@ class Node(_message.Message):
     EXTERNAL_PACKAGE_FIELD_NUMBER: _ClassVar[int]
     MODULE_IMPLEMENTATION_FIELD_NUMBER: _ClassVar[int]
     MODULE_INTERFACE_FIELD_NUMBER: _ClassVar[int]
+    INTERFACE_NODE_FIELD_NUMBER: _ClassVar[int]
+    ENUM_NODE_FIELD_NUMBER: _ClassVar[int]
+    TYPE_NODE_FIELD_NUMBER: _ClassVar[int]
+    UNION_NODE_FIELD_NUMBER: _ClassVar[int]
+    EXTERNAL_MODULE_FIELD_NUMBER: _ClassVar[int]
     project: Project
     package: Package
     folder: Folder
@@ -46,20 +45,12 @@ class Node(_message.Message):
     external_package: ExternalPackage
     module_implementation: ModuleImplementation
     module_interface: ModuleInterface
-    def __init__(
-        self,
-        project: Project | _Mapping | None = ...,
-        package: Package | _Mapping | None = ...,
-        folder: Folder | _Mapping | None = ...,
-        module: Module | _Mapping | None = ...,
-        class_node: Class | _Mapping | None = ...,
-        function: Function | _Mapping | None = ...,
-        method: Method | _Mapping | None = ...,
-        file: File | _Mapping | None = ...,
-        external_package: ExternalPackage | _Mapping | None = ...,
-        module_implementation: ModuleImplementation | _Mapping | None = ...,
-        module_interface: ModuleInterface | _Mapping | None = ...,
-    ) -> None: ...
+    interface_node: Interface
+    enum_node: Enum
+    type_node: Type
+    union_node: Union
+    external_module: ExternalModule
+    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ...) -> None: ...
 
 class Relationship(_message.Message):
     __slots__ = ()
@@ -79,7 +70,8 @@ class Relationship(_message.Message):
         DEPENDS_ON_EXTERNAL: _ClassVar[Relationship.RelationshipType]
         IMPLEMENTS_MODULE: _ClassVar[Relationship.RelationshipType]
         IMPLEMENTS: _ClassVar[Relationship.RelationshipType]
-
+        EXPORTS: _ClassVar[Relationship.RelationshipType]
+        EXPORTS_MODULE: _ClassVar[Relationship.RelationshipType]
     RELATIONSHIP_TYPE_UNSPECIFIED: Relationship.RelationshipType
     CONTAINS_PACKAGE: Relationship.RelationshipType
     CONTAINS_FOLDER: Relationship.RelationshipType
@@ -94,6 +86,8 @@ class Relationship(_message.Message):
     DEPENDS_ON_EXTERNAL: Relationship.RelationshipType
     IMPLEMENTS_MODULE: Relationship.RelationshipType
     IMPLEMENTS: Relationship.RelationshipType
+    EXPORTS: Relationship.RelationshipType
+    EXPORTS_MODULE: Relationship.RelationshipType
     TYPE_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_ID_FIELD_NUMBER: _ClassVar[int]
@@ -106,21 +100,13 @@ class Relationship(_message.Message):
     properties: _struct_pb2.Struct
     source_label: str
     target_label: str
-    def __init__(
-        self,
-        type: Relationship.RelationshipType | str | None = ...,
-        source_id: str | None = ...,
-        target_id: str | None = ...,
-        properties: _struct_pb2.Struct | _Mapping | None = ...,
-        source_label: str | None = ...,
-        target_label: str | None = ...,
-    ) -> None: ...
+    def __init__(self, type: _Optional[_Union[Relationship.RelationshipType, str]] = ..., source_id: _Optional[str] = ..., target_id: _Optional[str] = ..., properties: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., source_label: _Optional[str] = ..., target_label: _Optional[str] = ...) -> None: ...
 
 class Project(_message.Message):
     __slots__ = ()
     NAME_FIELD_NUMBER: _ClassVar[int]
     name: str
-    def __init__(self, name: str | None = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class Package(_message.Message):
     __slots__ = ()
@@ -130,12 +116,7 @@ class Package(_message.Message):
     qualified_name: str
     name: str
     path: str
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        path: str | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
 
 class Folder(_message.Message):
     __slots__ = ()
@@ -143,7 +124,7 @@ class Folder(_message.Message):
     NAME_FIELD_NUMBER: _ClassVar[int]
     path: str
     name: str
-    def __init__(self, path: str | None = ..., name: str | None = ...) -> None: ...
+    def __init__(self, path: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
 
 class File(_message.Message):
     __slots__ = ()
@@ -153,12 +134,7 @@ class File(_message.Message):
     path: str
     name: str
     extension: str
-    def __init__(
-        self,
-        path: str | None = ...,
-        name: str | None = ...,
-        extension: str | None = ...,
-    ) -> None: ...
+    def __init__(self, path: _Optional[str] = ..., name: _Optional[str] = ..., extension: _Optional[str] = ...) -> None: ...
 
 class Module(_message.Message):
     __slots__ = ()
@@ -168,12 +144,17 @@ class Module(_message.Message):
     qualified_name: str
     name: str
     path: str
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        path: str | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
+
+class ExternalModule(_message.Message):
+    __slots__ = ()
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    path: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
 
 class ModuleImplementation(_message.Message):
     __slots__ = ()
@@ -185,13 +166,7 @@ class ModuleImplementation(_message.Message):
     name: str
     path: str
     implements_module: str
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        path: str | None = ...,
-        implements_module: str | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., implements_module: _Optional[str] = ...) -> None: ...
 
 class ModuleInterface(_message.Message):
     __slots__ = ()
@@ -201,18 +176,13 @@ class ModuleInterface(_message.Message):
     qualified_name: str
     name: str
     path: str
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        path: str | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
 
 class ExternalPackage(_message.Message):
     __slots__ = ()
     NAME_FIELD_NUMBER: _ClassVar[int]
     name: str
-    def __init__(self, name: str | None = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class Function(_message.Message):
     __slots__ = ()
@@ -230,16 +200,7 @@ class Function(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        docstring: str | None = ...,
-        start_line: int | None = ...,
-        end_line: int | None = ...,
-        decorators: _Iterable[str] | None = ...,
-        is_exported: bool | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
 
 class Method(_message.Message):
     __slots__ = ()
@@ -255,15 +216,7 @@ class Method(_message.Message):
     start_line: int
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        docstring: str | None = ...,
-        start_line: int | None = ...,
-        end_line: int | None = ...,
-        decorators: _Iterable[str] | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Class(_message.Message):
     __slots__ = ()
@@ -281,13 +234,44 @@ class Class(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(
-        self,
-        qualified_name: str | None = ...,
-        name: str | None = ...,
-        docstring: str | None = ...,
-        start_line: int | None = ...,
-        end_line: int | None = ...,
-        decorators: _Iterable[str] | None = ...,
-        is_exported: bool | None = ...,
-    ) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
+
+class Interface(_message.Message):
+    __slots__ = ()
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    path: str
+    absolute_path: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
+
+class Enum(_message.Message):
+    __slots__ = ()
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    path: str
+    absolute_path: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
+
+class Type(_message.Message):
+    __slots__ = ()
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+
+class Union(_message.Message):
+    __slots__ = ()
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...

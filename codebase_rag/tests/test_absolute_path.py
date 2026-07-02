@@ -85,8 +85,7 @@ class TestAbsolutePathOnNodes:
         if cs.SupportedLanguage.PYTHON not in parsers_and_queries[0]:
             pytest.skip("Python parser not available")
         run_updater(python_project, mock_ingestor)
-        module_nodes = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
-        internal_modules = [c for c in module_nodes if not c[0][1].get("is_external")]
+        internal_modules = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
         assert len(internal_modules) > 0
         for node_call in internal_modules:
             props = node_call[0][1]

@@ -293,7 +293,7 @@ class ImportProcessor:
                         ),
                         cs.RelationshipType.IMPORTS,
                         (
-                            cs.NodeLabel.MODULE,
+                            self._module_label(module_path),
                             cs.KEY_QUALIFIED_NAME,
                             module_path,
                         ),
@@ -399,6 +399,15 @@ class ImportProcessor:
     def _is_local_rust_import(self, import_path: str) -> bool:
         return import_path.startswith(cs.RUST_CRATE_PREFIX)
 
+    def _module_label(self, module_path: str) -> cs.NodeLabel:
+        # (H) #498: import targets outside the project prefix live under the
+        # (H) dedicated ExternalModule label (mirroring Package/ExternalPackage).
+        if module_path == self.project_name or module_path.startswith(
+            self.project_name + cs.SEPARATOR_DOT
+        ):
+            return cs.NodeLabel.MODULE
+        return cs.NodeLabel.EXTERNAL_MODULE
+
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
         if not self.ingestor or not module_path:
             return
@@ -407,12 +416,11 @@ class ImportProcessor:
         else:
             name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         self.ingestor.ensure_node_batch(
-            cs.NodeLabel.MODULE,
+            cs.NodeLabel.EXTERNAL_MODULE,
             {
                 cs.KEY_NAME: name,
                 cs.KEY_QUALIFIED_NAME: module_path,
                 cs.KEY_PATH: full_name,
-                cs.KEY_IS_EXTERNAL: True,
             },
         )
 
