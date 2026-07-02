@@ -505,6 +505,38 @@ inside anonymous (returned/inline) arrows, method dispatch on typed receivers, a
 the name-based oracle's over-count of common method names (`error` on a receiver
 cgr cannot type) — documented rather than scoped away.
 
+## Multi-language retrieval (JavaScript) — JS CALLS vs the TypeScript compiler API
+
+The same harness over `.js`/`.jsx`: the `tsc` oracle parses JavaScript
+syntactically (independent of cgr's tree-sitter JS frontend), so it grades cgr's
+JS `CALLS` resolution against ground truth for a language cgr handles through a
+partly distinct path (CommonJS `require`/`module.exports`, prototype methods, no
+type annotations).
+
+```bash
+uv run python -m evals.js_retrieval --target <js-sources>
+```
+
+Requires `node`/`npm`; pinned by `codebase_rag/tests/test_js_retrieval_eval.py`
+(cgr matches the oracle on a clean ES-module fixture).
+
+Running it on a real corpus (`webpack/lib`, 577 files, classic CommonJS) surfaced
+one dominant cgr bug and drove recall from 0.61 to 0.83 at precision ~1.0.
+**Calls inside an anonymous arrow passed as an argument were dropped:** a callback
+like `compiler.hooks.compilation.tap(NAME, (compilation) => { getReplacements() })`
+has no name and no binding, so the call pass skipped the arrow, and
+`_calls_owned_by` had already excluded its calls from the enclosing method — so the
+call attributed to nothing and vanished. Since webpack (and most modern JS) is
+saturated with this `hooks.tap(name, (x) => …)` pattern, it was the leading recall
+killer. Fixed by excluding only *attributable* nested functions (named, or arrows
+bound to a name) from the enclosing scope, so an anonymous arrow's calls bubble up
+to the nearest named function/method — matching where the oracle attributes them
+(`codebase_rag/tests/test_js_anonymous_callback_calls.py`). The remaining gap is
+method dispatch on receivers cgr cannot type and the name-based oracle's over-count
+of calls through function parameters (`callback`/`fn`) and Node built-ins
+(`join`/`resolve`) whose names collide with first-party declarations — documented
+rather than scoped away.
+
 ## Multi-language retrieval (PHP) — PHP CALLS vs `php-parser`
 
 The same harness applied to PHP: for each first-party PHP symbol, which files
