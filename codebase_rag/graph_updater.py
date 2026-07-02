@@ -116,8 +116,7 @@ class FunctionRegistryTrie:
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if self._simple_name_lookup is not None:
             self._simple_name_lookup[simple_name].add(qualified_name)
-        if self._ending_with_cache:
-            self._ending_with_cache.pop(simple_name, None)
+        self._invalidate_ending_with_cache(qualified_name, simple_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
@@ -169,8 +168,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
-        if self._ending_with_cache:
-            self._ending_with_cache.pop(simple_name, None)
+        self._invalidate_ending_with_cache(qualified_name, simple_name)
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -253,6 +251,20 @@ class FunctionRegistryTrie:
         )
         return [qn for qn, _ in matches]
 
+    def _invalidate_ending_with_cache(
+        self, qualified_name: QualifiedName, simple_name: str
+    ) -> None:
+        if not self._ending_with_cache:
+            return
+        self._ending_with_cache.pop(simple_name, None)
+        # (H) dotted suffixes are cached too (#513); drop any the qn ends with.
+        for key in [
+            k
+            for k in self._ending_with_cache
+            if cs.SEPARATOR_DOT in k and qualified_name.endswith(f".{k}")
+        ]:
+            del self._ending_with_cache[key]
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         cached = self._ending_with_cache.get(suffix)
         if cached is not None:
@@ -260,7 +272,16 @@ class FunctionRegistryTrie:
         if self._simple_name_lookup is not None:
             if suffix in self._simple_name_lookup:
                 result = sorted(self._simple_name_lookup[suffix])
+            elif cs.SEPARATOR_DOT in suffix:
+                # (H) #513: the index only holds last segments, so a dotted
+                # (H) suffix ("Class.method") always misses it; fall back to
+                # (H) the linear scan instead of dropping the match.
+                result = sorted(
+                    qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
+                )
             else:
+                # (H) dot-free miss is authoritative: insert() indexes every
+                # (H) entry's last segment, so nothing can end with ".suffix".
                 result = []
         else:
             result = sorted(
