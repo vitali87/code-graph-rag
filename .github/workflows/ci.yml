@@ -75,13 +75,14 @@ jobs:
           uv run ty check codebase_rag --exclude codebase_rag/tests/
 
   test-unit:
-    name: Unit Tests (${{ matrix.os }})
+    name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Checkout code
@@ -99,24 +100,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --group dev
 
       - name: Run unit tests (parallel, with coverage)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
           uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
-        if: matrix.os != 'macos-latest'
+        if: matrix.os != 'macos-latest' || matrix.python-version != '3.12'
         run: |
           uv run pytest -n auto -m "not integration" --tb=short
 
       - name: Upload coverage to Codecov
-        if: always() && matrix.os == 'macos-latest'
+        if: always() && matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
         with:
           files: ./coverage.xml
