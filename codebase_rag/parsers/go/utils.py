@@ -33,7 +33,24 @@ def extract_return_type_name(node: Node) -> str | None:
     result = node.child_by_field_name(cs.FIELD_RESULT)
     if result is None or result.type == cs.TS_GO_PARAMETER_LIST:
         return None
-    return type_identifier_text(result)
+    return _return_type_identifier(result)
+
+
+def _return_type_identifier(type_node: Node) -> str | None:
+    # (H) Like type_identifier_text but does NOT unwrap composite types: a
+    # (H) `[]Command`/`map[k]Command`/`chan Command` return is a container, and a
+    # (H) chained call lands on the container, not the element, so it must not be
+    # (H) unwrapped to "Command" (which would emit a false edge). Only a plain
+    # (H) type_identifier, a pointer to one (`*Command`), or a generic base resolves.
+    if type_node.type in cs.TS_GO_CONTAINER_TYPES:
+        return None
+    if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
+        return safe_decode_text(type_node)
+    if type_node.type in (cs.TS_GO_POINTER_TYPE, cs.TS_GENERIC_TYPE):
+        for child in type_node.children:
+            if name := _return_type_identifier(child):
+                return name
+    return None
 
 
 def type_identifier_text(type_node: Node) -> str | None:

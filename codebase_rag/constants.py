@@ -2114,6 +2114,12 @@ TS_GO_EXPRESSION_LIST = "expression_list"
 TS_GO_COMPOSITE_LITERAL = "composite_literal"
 TS_GO_UNARY_EXPRESSION = "unary_expression"
 TS_GO_POINTER_TYPE = "pointer_type"
+# (H) Go composite types a method may return; a chained call lands on the CONTAINER,
+# (H) not its element, so return-type inference must not unwrap these to an element
+# (H) name (a `[]Command` return must not resolve `.Run()` to `Command.Run`).
+TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
+    {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
+)
 FIELD_OPERAND = "operand"
 
 # (H) Tree-sitter Scala node types

@@ -30,3 +30,38 @@ def test_go_chained_return_type_resolves_second_hop(tmp_path: Path) -> None:
     assert ("proj.m.Command.Use", "proj.m.Command.Root") in calls
     # (H) second hop needs Root()'s return type (*Command) to resolve Run().
     assert ("proj.m.Command.Use", "proj.m.Command.Run") in calls
+
+
+def _calls(tmp_path: Path, body: str) -> set[tuple[str, str]]:
+    (tmp_path / "m.go").write_text(body, encoding="utf-8")
+    ingestor = _capture(tmp_path, "proj")
+    return {(str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"}
+
+
+def test_chained_call_on_container_return_does_not_misresolve(tmp_path: Path) -> None:
+    # (H) Kids() returns []Command (a slice); a chained `.Run()` is called on the
+    # (H) slice, NOT on a Command, so it must NOT resolve to Command.Run. Unwrapping
+    # (H) the container to its element type would emit a false edge.
+    calls = _calls(
+        tmp_path,
+        "package p\n"
+        "type Command struct{}\n"
+        "func (c *Command) Kids() []Command { return nil }\n"
+        "func (c *Command) Run() int { return 1 }\n"
+        "func (c *Command) Use() int { return c.Kids().Run() }\n",
+    )
+    assert ("proj.m.Command.Use", "proj.m.Command.Run") not in calls
+
+
+def test_chained_call_with_dotted_argument_resolves(tmp_path: Path) -> None:
+    # (H) A dotted call argument (`1.5`) must not break the chain split: Find(1.5)
+    # (H) returns *Command, so Run() still resolves.
+    calls = _calls(
+        tmp_path,
+        "package p\n"
+        "type Command struct{}\n"
+        "func (c *Command) Find(x float64) *Command { return c }\n"
+        "func (c *Command) Run() int { return 1 }\n"
+        "func (c *Command) Use() int { return c.Find(1.5).Run() }\n",
+    )
+    assert ("proj.m.Command.Use", "proj.m.Command.Run") in calls
