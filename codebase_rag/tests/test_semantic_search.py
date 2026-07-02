@@ -58,7 +58,9 @@ def test_semantic_code_search_returns_empty_without_dependencies() -> None:
     assert results == []
 
 
-@patch("codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True)
+@patch(
+    "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
+)
 @patch("codebase_rag.vector_store.search_embeddings")
 @patch("codebase_rag.embedder.embed_code")
 def test_semantic_code_search_reuses_injected_ingestor(
@@ -93,7 +95,9 @@ def test_semantic_code_search_reuses_injected_ingestor(
     assert results[0]["score"] == 0.99
 
 
-@patch("codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True)
+@patch(
+    "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
+)
 @patch("codebase_rag.vector_store.search_embeddings")
 @patch("codebase_rag.embedder.embed_code")
 def test_semantic_code_search_tolerates_missing_result_fields(
