@@ -35,6 +35,7 @@ class ImportProcessor:
         "ingestor",
         "function_registry",
         "import_mapping",
+        "php_function_imports",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -52,6 +53,12 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # (H) Local names brought in by a PHP `use function A\B\c` import, keyed by
+        # (H) module. A PHP namespace path never matches cgr's file-path qualified
+        # (H) name (a global helper declares `namespace Illuminate\Support` from
+        # (H) Collections/functions.php), so these must resolve by simple name via
+        # (H) the trie rather than being judged external-import and suppressed.
+        self.php_function_imports: dict[str, set[str]] = {}
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -854,6 +861,9 @@ class ImportProcessor:
                 self._handle_php_include_require(import_node, module_qn)
 
     def _handle_php_use_declaration(self, use_node: Node, module_qn: str) -> None:
+        # (H) `use function A\B\c` / `use const A\B\C` carry the modifier either on the
+        # (H) declaration (older grammar) or inside each clause (current grammar).
+        decl_is_function = any(c.type == cs.TS_PHP_FUNCTION for c in use_node.children)
         for child in use_node.named_children:
             if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
                 continue
@@ -874,6 +884,10 @@ class ImportProcessor:
                 parts = imported_path.split(cs.SEPARATOR_DOT)
                 local_name = parts[-1] if parts else imported_path
             self.import_mapping[module_qn][local_name] = imported_path
+            if decl_is_function or any(
+                c.type == cs.TS_PHP_FUNCTION for c in child.children
+            ):
+                self.php_function_imports.setdefault(module_qn, set()).add(local_name)
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
         for child in node.children:
