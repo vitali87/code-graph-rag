@@ -78,6 +78,7 @@ class FunctionIngestMixin:
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
+    method_return_types: dict[str, str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -392,6 +393,15 @@ class FunctionIngestMixin:
                 file_path=entry.file_path,
                 repo_path=self.repo_path,
             )
+            # (H) Record the method's return type so a chained call `c.Root().Run()`
+            # (H) can resolve `Run` on the type `Root()` returns.
+            method_name = self._extract_function_name(entry.method_node)
+            if method_name and (
+                return_type := go_utils.extract_return_type_name(entry.method_node)
+            ):
+                self.method_return_types[
+                    f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+                ] = return_type
         ingested = len(deferred)
         self._deferred_go_methods = []
         return ingested
