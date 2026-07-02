@@ -1225,28 +1225,33 @@ class CallProcessor:
 
             if (
                 is_python
-                and callee_type == cs.NodeLabel.METHOD
+                and class_context
                 and (
                     call_name.startswith(cs.PY_SELF_PREFIX)
                     or call_name.startswith(cs.PY_CLS_PREFIX)
                 )
             ):
-                # (H) self.M()/cls.M() dispatches at runtime to any subclass override
-                # (H) of M, so emit an edge to each in ADDITION to the resolved base
-                # (H) edge (emitted by the normal path below); otherwise an override
-                # (H) reached only through the base call looks like dead code. Gating on
-                # (H) the self/cls receiver excludes super().M() (an explicit parent
-                # (H) call) and Base.M() (an explicit implementation): neither is virtual
-                # (H) dispatch, and fanning them out would create false edges.
-                for override_type, override_qn in resolver.override_dispatch_targets(
-                    callee_qn
-                ):
-                    for target_qn in resolver.function_registry.variants(override_qn):
-                        ensure_rel(
-                            caller_spec,
-                            calls_rel,
-                            (override_type, qn_key, target_qn),
-                        )
+                # (H) self.M()/cls.M() statically targets the enclosing class's own or
+                # (H) inherited M and dynamically dispatches to every concrete subclass
+                # (H) override, so emit an edge to each in ADDITION to the resolved edge
+                # (H) below; otherwise the base (or an override) reached only through the
+                # (H) self-call looks like dead code. Anchor on the enclosing class, not
+                # (H) the resolved callee: when M is abstract with several overrides the
+                # (H) trie resolves the call to an arbitrary sibling override, so
+                # (H) anchoring there would miss the base and the other overrides. The
+                # (H) self/cls receiver excludes super().M() and Base.M() (not virtual
+                # (H) dispatch). Skip self.attr.M() (a call on a member, not on self).
+                _, _, self_method = call_name.partition(cs.SEPARATOR_DOT)
+                if cs.SEPARATOR_DOT not in self_method:
+                    for target_type, target_qn in resolver.self_dispatch_targets(
+                        class_context, self_method
+                    ):
+                        for variant in resolver.function_registry.variants(target_qn):
+                            ensure_rel(
+                                caller_spec,
+                                calls_rel,
+                                (target_type, qn_key, variant),
+                            )
 
             if is_flow_lang:
                 # (H) f(...) invoked through a parameter: the edge runs from the

@@ -248,20 +248,32 @@ class CallResolver:
                 targets.add((self.function_registry[qn], qn))
         return targets
 
-    def override_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
-        # (H) A call resolved to a base-class method (C.M) may at runtime dispatch to an
-        # (H) override on any subclass, so the sound call graph also emits an edge to M
-        # (H) on every concrete subclass that overrides it. Without this an override
-        # (H) reached only through a base `self.M()` call is wrongly reported dead.
-        if not callee_qn:
-            return set()
-        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
+    def self_dispatch_targets(
+        self, class_context: str, method_name: str
+    ) -> set[tuple[str, str]]:
+        # (H) self.M()/cls.M() statically targets the enclosing class's own or inherited
+        # (H) M, and dynamically dispatches to any concrete subclass override of M. Anchor
+        # (H) on the ENCLOSING class (not the resolved callee, which the trie may pick as
+        # (H) an arbitrary sibling override when M is abstract with several overrides) and
+        # (H) emit an edge to the enclosing-class method AND every concrete override, so an
+        # (H) override or an abstract base reached only through a self-call is not reported
+        # (H) dead.
+        if not class_context or not method_name:
             return set()
         targets: set[tuple[str, str]] = set()
-        for subclass_qn in self._concrete_subclasses(class_qn):
+        # (H) Skip abstract targets: an @abstractmethod stub never runs (the concrete
+        # (H) override does), so it must not be a call target -- a concrete sibling/impl
+        # (H) wins. Abstract methods that are only "reached" polymorphically are handled
+        # (H) as dead-code roots, not by a spurious CALLS edge.
+        if (base := self._try_resolve_method(class_context, method_name)) and (
+            not self.function_registry.is_abstract(base[1])
+        ):
+            targets.add(base)
+        for subclass_qn in self._concrete_subclasses(class_context):
             override_qn = f"{subclass_qn}{cs.SEPARATOR_DOT}{method_name}"
-            if override_qn in self.function_registry:
+            if override_qn in self.function_registry and not (
+                self.function_registry.is_abstract(override_qn)
+            ):
                 targets.add((self.function_registry[override_qn], override_qn))
         return targets
 
