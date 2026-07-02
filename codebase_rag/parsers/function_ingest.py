@@ -18,6 +18,7 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from . import export_detection
 from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .lua import utils as lua_utils
@@ -175,11 +176,7 @@ class FunctionIngestMixin:
         func_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
         simple_name = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
-        is_exported = (
-            cpp_utils.is_exported(func_node)
-            if language == cs.SupportedLanguage.CPP
-            else False
-        )
+        is_exported = export_detection.is_exported(func_node, simple_name, language)
         return FunctionResolution(func_qn, simple_name, is_exported)
 
     def _fallback_function_resolution(
@@ -435,7 +432,8 @@ class FunctionIngestMixin:
         func_qn = self._build_function_qn(
             func_node, module_qn, func_name, language, lang_config
         )
-        return FunctionResolution(func_qn, func_name, is_exported=False)
+        is_exported = export_detection.is_exported(func_node, func_name, language)
+        return FunctionResolution(func_qn, func_name, is_exported)
 
     def _build_function_qn(
         self,

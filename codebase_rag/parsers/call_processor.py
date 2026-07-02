@@ -24,8 +24,11 @@ from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    cpp_parameter_names,
     get_function_captures,
+    go_parameter_names,
     is_method_node,
+    js_ts_parameter_names,
     python_parameter_names,
     safe_decode_text,
     sorted_captures,
@@ -42,6 +45,17 @@ class _CallableFlowArg(NamedTuple):
     source_concrete: str
     source_caller: str
     source_param: str
+
+
+class _FactoryCall(NamedTuple):
+    # (H) A call `x(args)` where x was bound by `x = factory(...)`. Each returned
+    # (H) closure of factory receives args, so a callback argument flows into that
+    # (H) closure's callable parameter (positional index or keyword name). Resolved
+    # (H) in finalize once every function's returned callables are known.
+    scope_qn: str
+    factory_qn: str
+    positional: tuple[str, ...]
+    keyword: tuple[tuple[str, str], ...]
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -62,6 +76,35 @@ _TYPED_LANGUAGES = frozenset(
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = frozenset({cs.SupportedLanguage.JS, cs.SupportedLanguage.TS})
 
+# (H) Python nested-scope boundaries and sequence-literal node types used when
+# (H) scanning a scope for dispatch tables of function references.
+_PY_SCOPE_BOUNDARY_TYPES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_PY_DECORATED_DEFINITION,
+    }
+)
+_PY_SEQUENCE_LITERAL_TYPES = frozenset(
+    {cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TUPLE}
+)
+_CALLABLE_NODE_LABELS = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+)
+# (H) Node types of a call argument that may name a callable: a bare identifier
+# (H) (Python/Go/JS/TS), a Python attribute (self.method), a Go selector (x.Method),
+# (H) or a JS/TS member expression (obj.method).
+_FLOW_ARG_REF_TYPES = frozenset(
+    {
+        cs.TS_PY_IDENTIFIER,
+        cs.TS_PY_ATTRIBUTE,
+        cs.TS_SELECTOR_EXPRESSION,
+        cs.TS_MEMBER_EXPRESSION,
+    }
+)
+
 
 class CallProcessor:
     __slots__ = (
@@ -71,6 +114,8 @@ class CallProcessor:
         "_resolver",
         "_flow_param_names",
         "_flow_args",
+        "_returned_callables",
+        "_factory_calls",
     )
 
     def __init__(
@@ -99,6 +144,12 @@ class CallProcessor:
         # (H) the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
         self._flow_args: list[_CallableFlowArg] = []
+        # (H) Return-value / factory tracing: functions each function may return
+        # (H) (nested closures), and call sites `x = factory(...); x(cb)` where cb
+        # (H) flows into the returned closure's callable parameter. Resolved to a
+        # (H) fixpoint in finalize, so factory and call site may be in any file order.
+        self._returned_callables: dict[str, set[str]] = {}
+        self._factory_calls: list[_FactoryCall] = []
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
@@ -355,6 +406,16 @@ class CallProcessor:
             # (H) since a file may have decorators but no other calls. Classes can
             # (H) be decorated too, so include captured class nodes.
             if language == cs.SupportedLanguage.PYTHON:
+                # (H) A dispatch table (HANDLERS = {"k": fn}) at module scope keeps its
+                # (H) entries reachable; scan before the no-calls early return so a file
+                # (H) that only defines functions and a table is still covered.
+                self._ingest_collection_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                )
                 decorator_targets = list(sorted_func_nodes or [])
                 if combined_captures and (
                     class_nodes := combined_captures.get(cs.CAPTURE_CLASS)
@@ -903,6 +964,21 @@ class CallProcessor:
             ordered_params = python_parameter_names(caller_node)
             self._flow_param_names[caller_qn] = ordered_params
             caller_params = frozenset(ordered_params)
+            self._collect_returned_callables(
+                caller_node, caller_qn, module_qn, local_var_types, class_context
+            )
+        elif language == cs.SupportedLanguage.GO:
+            ordered_params = go_parameter_names(caller_node)
+            self._flow_param_names[caller_qn] = ordered_params
+            caller_params = frozenset(ordered_params)
+        elif language in _JS_TS_LANGUAGES:
+            ordered_params = js_ts_parameter_names(caller_node)
+            self._flow_param_names[caller_qn] = ordered_params
+            caller_params = frozenset(ordered_params)
+        elif language == cs.SupportedLanguage.CPP:
+            ordered_params = cpp_parameter_names(caller_node)
+            self._flow_param_names[caller_qn] = ordered_params
+            caller_params = frozenset(ordered_params)
 
         # (H) Runs independently of call_nodes: a getter access is an attribute, not
         # (H) a call, so callers that read a property but make no other call must
@@ -927,6 +1003,12 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
+            # (H) Module-scope literals are scanned explicitly in process_calls_in_file
+            # (H) (before the no-calls early return), so only nested scopes here.
+            if caller_type != cs.NodeLabel.MODULE:
+                self._ingest_collection_function_references(
+                    caller_node, caller_spec, module_qn, local_var_types, class_context
+                )
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -954,7 +1036,17 @@ class CallProcessor:
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
         is_python = language == cs.SupportedLanguage.PYTHON
+        # (H) Languages with interprocedural callable-parameter flow enabled: a
+        # (H) callback passed to a first-party function whose parameter is invoked
+        # (H) (directly or in a nested closure) is traced to the concrete callback.
+        is_flow_lang = (
+            is_python
+            or language == cs.SupportedLanguage.GO
+            or language in _JS_TS_LANGUAGES
+            or is_cpp
+        )
         alias_map: dict[str, str] | None = None
+        factory_aliases: dict[str, str] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -991,6 +1083,24 @@ class CallProcessor:
                     callee_info = resolve_func(
                         rhs, module_qn, local_var_types, class_context
                     )
+                if callee_info is None:
+                    # (H) `x = factory(...); x(cb)`: x holds a closure returned by a
+                    # (H) first-party factory (e.g. a retry/cache decorator applied
+                    # (H) imperatively). Record the call so cb flows into that closure's
+                    # (H) callable parameter once factory returns are known (finalize).
+                    if factory_aliases is None:
+                        factory_aliases = self._build_factory_alias_map(
+                            caller_node, module_qn, local_var_types, class_context
+                        )
+                    if (factory_qn := factory_aliases.get(call_name)) is not None:
+                        self._record_factory_call(
+                            call_node,
+                            caller_qn,
+                            factory_qn,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                        )
 
             if not callee_info and is_python and cs.SEPARATOR_DOT in call_name:
                 # (H) recv.field(...) where field is a callable struct field:
@@ -1015,11 +1125,26 @@ class CallProcessor:
                 )
 
             if not callee_info:
+                if is_python:
+                    # (H) The callee is not first-party (a framework/stdlib call such as
+                    # (H) grpclib Handler(self.__rpc_x) or a runtime dispatcher), so the
+                    # (H) call chain cannot be followed into it. A first-party function
+                    # (H) handed to it as an argument is still wired to be invoked, so
+                    # (H) record it as referenced from this scope to keep it reachable.
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                    )
                 continue
 
             callee_type, callee_qn = callee_info
 
-            if is_python:
+            if is_flow_lang:
                 self._collect_callable_flow(
                     call_node,
                     callee_qn,
@@ -1044,7 +1169,7 @@ class CallProcessor:
                         )
                 continue
 
-            if is_python:
+            if is_flow_lang:
                 # (H) f(...) invoked through a parameter: the edge runs from the
                 # (H) callee to whatever each call site binds to that parameter.
                 self._ingest_callable_param_calls(
@@ -1230,6 +1355,205 @@ class CallProcessor:
                 )
         return True
 
+    def _ingest_collection_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        # (H) A function/method placed as a value in a dict/list/set/tuple literal is a
+        # (H) dispatch table wired to be invoked later (handlers[key](...)), commonly
+        # (H) dispatched by a dynamic string key or in another module where the call
+        # (H) site is not statically resolvable. Treat each such reference as a call
+        # (H) from the enclosing scope so the handler is reachable. The walk stops at
+        # (H) nested function/class boundaries, so a table built inside a nested scope
+        # (H) is attributed to that scope's own pass, not this one.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+                continue
+            if node.type == cs.TS_PY_DICTIONARY:
+                for pair in node.named_children:
+                    if pair.type == cs.TS_PY_PAIR and (
+                        value := pair.child_by_field_name(cs.FIELD_VALUE)
+                    ) is not None:
+                        self._emit_value_function_ref(
+                            value,
+                            caller_spec,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                        )
+            elif node.type in _PY_SEQUENCE_LITERAL_TYPES:
+                for element in node.named_children:
+                    self._emit_value_function_ref(
+                        element,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                    )
+            stack.extend(node.children)
+
+    def _emit_value_function_ref(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        # (H) Only a bare name / attribute in value position names a function; a call,
+        # (H) comprehension or literal is not a reference to a callable itself.
+        if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            return
+        self._emit_callback_edge(
+            caller_spec,
+            node,
+            module_qn,
+            local_var_types,
+            class_context,
+            resolve_func,
+            ensure_rel,
+        )
+
+    def _collect_returned_callables(
+        self,
+        caller_node: Node,
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        # (H) Record which functions/closures this function may return, so a call site
+        # (H) that binds and invokes the returned value (x = factory(); x(cb)) can flow
+        # (H) cb into the returned closure. Only this scope's own return statements
+        # (H) count; a nested function's returns belong to it.
+        registry = self._resolver.function_registry
+        resolve_func = self._resolver.resolve_function_call
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+                continue
+            if node.type == cs.TS_PY_RETURN_STATEMENT:
+                for child in node.named_children:
+                    if child.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+                        continue
+                    if not (name := safe_decode_text(child)):
+                        continue
+                    nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
+                    if nested_qn in registry:
+                        self._returned_callables.setdefault(caller_qn, set()).add(
+                            nested_qn
+                        )
+                    elif (
+                        resolved := resolve_func(
+                            name, module_qn, local_var_types, class_context
+                        )
+                    ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
+                        self._returned_callables.setdefault(caller_qn, set()).add(
+                            resolved[1]
+                        )
+            stack.extend(node.children)
+
+    def _build_factory_alias_map(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> dict[str, str]:
+        # (H) Map a local `x` to the function `factory` in `x = factory(...)`, so a
+        # (H) later `x(cb)` can be traced through factory's returned closure.
+        resolve_func = self._resolver.resolve_function_call
+        aliases: dict[str, str] = {}
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+                continue
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if (
+                    left is not None
+                    and left.type == cs.TS_PY_IDENTIFIER
+                    and right is not None
+                    and right.type == cs.TS_PY_CALL
+                    and (var := safe_decode_text(left))
+                    and (fn := right.child_by_field_name(cs.TS_FIELD_FUNCTION))
+                    is not None
+                    and (fn_name := safe_decode_text(fn))
+                    and (
+                        resolved := resolve_func(
+                            fn_name, module_qn, local_var_types, class_context
+                        )
+                    )
+                    is not None
+                ):
+                    aliases.setdefault(var, resolved[1])
+            stack.extend(node.children)
+        return aliases
+
+    def _resolve_callback_qn(
+        self,
+        node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> str | None:
+        if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            return None
+        if not (text := safe_decode_text(node)):
+            return None
+        resolved = self._resolver.resolve_function_call(
+            text, module_qn, local_var_types, class_context
+        )
+        if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
+            return None
+        return resolved[1]
+
+    def _record_factory_call(
+        self,
+        call_node: Node,
+        scope_qn: str,
+        factory_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        positional, keyword = self._parse_call_arguments(call_node)
+        pos_qns = tuple(
+            self._resolve_callback_qn(n, module_qn, local_var_types, class_context)
+            or ""
+            for n in positional
+        )
+        kw_qns = tuple(
+            (name, qn)
+            for name, value in keyword.items()
+            if (
+                qn := self._resolve_callback_qn(
+                    value, module_qn, local_var_types, class_context
+                )
+            )
+        )
+        if any(pos_qns) or kw_qns:
+            self._factory_calls.append(
+                _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
+            )
+
     def _parse_call_arguments(
         self, call_node: Node
     ) -> tuple[list[Node], dict[str, Node]]:
@@ -1340,7 +1664,7 @@ class CallProcessor:
             cs.NodeLabel.CLASS,
         )
         for position, keyword_name, arg_node in items:
-            if arg_node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            if arg_node.type not in _FLOW_ARG_REF_TYPES:
                 continue
             arg_text = safe_decode_text(arg_node)
             if not arg_text:
@@ -1385,6 +1709,33 @@ class CallProcessor:
             else:
                 edges[slot].add((arg.source_caller, arg.source_param))
 
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for fc in self._factory_calls:
+            for closure_qn in self._returned_callables.get(fc.factory_qn, ()):
+                # (H) The returned closure runs when the alias is called, so it is
+                # (H) reachable from the enclosing scope.
+                closure_type = registry.get(closure_qn)
+                if closure_type is None:
+                    continue
+                scope_type = registry.get(fc.scope_qn) or cs.NodeLabel.MODULE
+                ensure_rel(
+                    (scope_type, cs.KEY_QUALIFIED_NAME, fc.scope_qn),
+                    cs.RelationshipType.CALLS,
+                    (closure_type, cs.KEY_QUALIFIED_NAME, closure_qn),
+                )
+                # (H) Each argument the closure receives seeds its callable parameter,
+                # (H) so the callback is reached wherever the closure invokes it.
+                closure_params = self._flow_param_names.get(closure_qn)
+                for index, callback_qn in enumerate(fc.positional):
+                    if (
+                        callback_qn
+                        and closure_params is not None
+                        and index < len(closure_params)
+                    ):
+                        seeds[(closure_qn, closure_params[index])].add(callback_qn)
+                for keyword_name, callback_qn in fc.keyword:
+                    seeds[(closure_qn, keyword_name)].add(callback_qn)
+
         bindings: dict[tuple[str, str], set[str]] = {
             k: set(v) for k, v in seeds.items()
         }
@@ -1401,7 +1752,6 @@ class CallProcessor:
                         bindings[slot] |= reachable
                         changed = True
 
-        ensure_rel = self.ingestor.ensure_relationship_batch
         for func_qn, invoked in (
             (qn, registry.callable_params(qn)) for qn in self._flow_param_names
         ):
@@ -1453,6 +1803,31 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
     ) -> None:
+        positional, keyword = self._parse_call_arguments(call_node)
+        for arg_node in (*positional, *keyword.values()):
+            self._emit_callback_edge(
+                caller_spec,
+                arg_node,
+                module_qn,
+                local_var_types,
+                class_context,
+                resolve_func,
+                ensure_rel,
+            )
+
+    def _ingest_argument_function_references(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
+        ensure_rel,
+    ) -> None:
+        # (H) For a call whose callee is not first-party, a function/method passed as
+        # (H) an argument is handed off to be invoked by that external callee; emit a
+        # (H) reference edge from the enclosing scope so it stays reachable.
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
             self._emit_callback_edge(

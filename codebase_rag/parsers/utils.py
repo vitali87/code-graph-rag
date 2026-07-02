@@ -156,25 +156,282 @@ def _python_parameter_name(param_node: Node) -> str | None:
     return None
 
 
+_PY_CLOSURE_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA}
+)
+_GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
+
+
+class _CallableScanConfig(NamedTuple):
+    # (H) Node types that let the invoked-parameter scan work per language: the call
+    # (H) node whose `function` field names the callee, the identifier node for a bare
+    # (H) callee, the nested closure scopes that capture an enclosing parameter, and
+    # (H) the class-like scopes that are not closures (skipped, never descended).
+    call_type: str
+    identifier_type: str
+    closure_types: frozenset[str]
+    opaque_types: frozenset[str]
+
+
+_PY_SCAN = _CallableScanConfig(
+    cs.TS_PY_CALL,
+    cs.TS_PY_IDENTIFIER,
+    _PY_CLOSURE_SCOPES,
+    frozenset({cs.TS_PY_CLASS_DEFINITION}),
+)
+_GO_SCAN = _CallableScanConfig(
+    cs.TS_GO_CALL_EXPRESSION,
+    cs.TS_IDENTIFIER,
+    _GO_CLOSURE_SCOPES,
+    frozenset(),
+)
+_JS_TS_CLOSURE_SCOPES = frozenset(
+    {
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_FUNCTION_DECLARATION,
+    }
+)
+_JS_SCAN = _CallableScanConfig(
+    cs.TS_CALL_EXPRESSION,
+    cs.TS_IDENTIFIER,
+    _JS_TS_CLOSURE_SCOPES,
+    frozenset({cs.TS_CLASS_DECLARATION}),
+)
+_JS_TS_TYPED_PARAMETERS = frozenset(
+    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+)
+_CPP_CLOSURE_SCOPES = frozenset({cs.TS_CPP_LAMBDA_EXPRESSION})
+_CPP_SCAN = _CallableScanConfig(
+    cs.TS_CPP_CALL_EXPRESSION,
+    cs.CppNodeType.IDENTIFIER,
+    _CPP_CLOSURE_SCOPES,
+    frozenset(),
+)
+_CPP_PARAMETER_DECLARATIONS = frozenset(
+    {
+        cs.CppNodeType.PARAMETER_DECLARATION,
+        cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+    }
+)
+
+
 def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
     invoked: set[str] = set()
-    stack = [body_node]
+    _scan_invoked_parameters(
+        body_node, set(candidates), invoked, _PY_SCAN, _python_scope_bound_names
+    )
+    return invoked
+
+
+def _go_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+    invoked: set[str] = set()
+    _scan_invoked_parameters(
+        body_node, set(candidates), invoked, _GO_SCAN, _go_scope_bound_names
+    )
+    return invoked
+
+
+def _js_ts_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+    invoked: set[str] = set()
+    _scan_invoked_parameters(
+        body_node, set(candidates), invoked, _JS_SCAN, _js_ts_scope_bound_names
+    )
+    return invoked
+
+
+def _cpp_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+    invoked: set[str] = set()
+    _scan_invoked_parameters(
+        body_node, set(candidates), invoked, _CPP_SCAN, _cpp_scope_bound_names
+    )
+    return invoked
+
+
+def _cpp_scope_bound_names(scope_node: Node) -> set[str]:
+    # (H) A C++ lambda's own parameters are hard to enumerate uniformly (abstract
+    # (H) function declarators); shadowing a captured callable parameter with a
+    # (H) same-named lambda parameter and invoking it is vanishingly rare, so no
+    # (H) subtraction is applied. This only risks an extra (conservative) edge.
+    return set()
+
+
+def _cpp_declarator_name(declarator: Node | None) -> str | None:
+    # (H) Unwrap pointer/reference/parenthesized/function declarators down to the
+    # (H) bound identifier (`int (*cb)()` -> cb, `T& x` -> x, `Fn cb` -> cb).
+    current = declarator
+    while current is not None:
+        if current.type in (
+            cs.CppNodeType.IDENTIFIER,
+            cs.CppNodeType.FIELD_IDENTIFIER,
+        ):
+            return safe_decode_text(current)
+        if (inner := current.child_by_field_name(cs.FIELD_DECLARATOR)) is not None:
+            current = inner
+            continue
+        current = next(
+            (
+                child
+                for child in current.children
+                if child.is_named and cs.CPP_DECLARATOR_SUFFIX in child.type
+            ),
+            None,
+        )
+    return None
+
+
+def cpp_parameter_names(func_node: Node) -> list[str]:
+    # (H) Ordered parameter names from the function declarator's parameter_list,
+    # (H) unwrapping each parameter's declarator to its bound identifier.
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return []
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return []
+    names: list[str] = []
+    for declaration in params.named_children:
+        if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        if (name := _cpp_declarator_name(param_declarator)) is not None:
+            names.append(name)
+    return names
+
+
+def _find_descendant(node: Node | None, node_type: str) -> Node | None:
+    if node is None:
+        return None
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == node_type:
+            return current
+        stack.extend(current.children)
+    return None
+
+
+def _js_ts_scope_bound_names(scope_node: Node) -> set[str]:
+    # (H) A nested arrow/function's own parameters shadow a same-named captured
+    # (H) parameter of the enclosing function.
+    return set(js_ts_parameter_names(scope_node))
+
+
+def js_ts_parameter_names(func_node: Node) -> list[str]:
+    # (H) Ordered parameter names. TypeScript wraps each in required_parameter /
+    # (H) optional_parameter (name under the `pattern` field); JavaScript uses a bare
+    # (H) identifier. A single-parameter arrow without parens has no formal_parameters
+    # (H) list -- its parameter is on the `parameter` field. Destructuring patterns
+    # (H) bind no single callable name and are skipped.
+    names: list[str] = []
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is not None:
+        for child in params.named_children:
+            if child.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_text(child):
+                    names.append(name)
+            elif child.type in _JS_TS_TYPED_PARAMETERS:
+                pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
+                if (
+                    pattern is not None
+                    and pattern.type == cs.TS_IDENTIFIER
+                    and (name := safe_decode_text(pattern))
+                ):
+                    names.append(name)
+        return names
+    single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None and single.type == cs.TS_IDENTIFIER:
+        if name := safe_decode_text(single):
+            names.append(name)
+    return names
+
+
+def _scan_invoked_parameters(
+    scope_node: Node,
+    candidates: set[str],
+    invoked: set[str],
+    config: _CallableScanConfig,
+    bound_names: Callable[[Node], set[str]],
+) -> None:
+    # (H) Mark a candidate parameter invoked when it is called by bare name in this
+    # (H) lexical scope. Descend into nested closures that CAPTURE a candidate (do not
+    # (H) rebind it) so `outer(cb) { inner() { cb() } }` still attributes cb to outer
+    # (H) -- the closure form used by decorator/formatter factories. A nested scope's
+    # (H) own bound names are removed first so a shadowing local cannot masquerade as
+    # (H) the captured outer parameter. Class-like scopes are skipped entirely.
+    if not candidates:
+        return
+    stack: list[Node] = [scope_node]
     while stack:
         node = stack.pop()
-        if node.type == cs.TS_PY_CALL:
-            fn = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if (
-                fn is not None
-                and fn.type == cs.TS_PY_IDENTIFIER
-                and (name := safe_decode_text(fn)) in candidates
-            ):
-                invoked.add(name)
         for child in node.children:
-            # (H) Nested def/class bodies rebind the param name, so do not let an
-            # (H) inner call to a same-named local masquerade as the outer param.
-            if child.type not in _PY_SCOPE_BOUNDARIES:
-                stack.append(child)
-    return invoked
+            if child.type == config.call_type:
+                fn = child.child_by_field_name(cs.FIELD_FUNCTION)
+                if (
+                    fn is not None
+                    and fn.type == config.identifier_type
+                    and (name := safe_decode_text(fn)) in candidates
+                ):
+                    invoked.add(name)
+            if child.type in config.closure_types:
+                inner = candidates - bound_names(child)
+                _scan_invoked_parameters(child, inner, invoked, config, bound_names)
+                continue
+            if child.type in config.opaque_types:
+                continue
+            stack.append(child)
+
+
+def _go_scope_bound_names(scope_node: Node) -> set[str]:
+    # (H) A nested func_literal's own parameters shadow a same-named captured
+    # (H) parameter of the enclosing function.
+    return set(go_parameter_names(scope_node))
+
+
+def _python_scope_bound_names(scope_node: Node) -> set[str]:
+    # (H) Names a nested function/lambda binds itself, which shadow a same-named
+    # (H) captured parameter of an enclosing function: its parameters plus local
+    # (H) assignment targets and nested def/class names in its body.
+    bound: set[str] = set()
+    params = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is not None:
+        for child in params.named_children:
+            if (name := _python_parameter_name(child)) is not None:
+                bound.add(name)
+    body = scope_node.child_by_field_name(cs.FIELD_BODY)
+    if body is not None:
+        _python_collect_bound_targets(body, bound)
+    return bound
+
+
+def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        for child in current.children:
+            child_type = child.type
+            if child_type in _PY_SCOPE_BOUNDARIES:
+                # (H) A nested def/class NAME binds here, but its body has its own
+                # (H) scope; record the name and do not descend.
+                name_node = child.child_by_field_name(cs.FIELD_NAME)
+                if name_node is not None and (name := safe_decode_text(name_node)):
+                    out.add(name)
+                continue
+            if child_type == cs.TS_PY_ASSIGNMENT:
+                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    _python_collect_target_identifiers(left, out)
+            stack.append(child)
+
+
+def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
+    if node.type == cs.TS_PY_IDENTIFIER:
+        if name := safe_decode_text(node):
+            out.add(name)
+        return
+    for child in node.children:
+        _python_collect_target_identifiers(child, out)
 
 
 def python_parameter_names(func_node: Node) -> list[str]:
@@ -198,16 +455,43 @@ def callable_parameter_indices(
     # (H) Maps each parameter that is invoked as a call inside the function body
     # (H) to its positional index in the call-site argument list (self/cls
     # (H) dropped so the index lines up with how bound methods are invoked).
-    if language != cs.SupportedLanguage.PYTHON:
+    if language == cs.SupportedLanguage.PYTHON:
+        names = python_parameter_names(func_node)
+        invoke = _python_invoked_parameter_names
+    elif language == cs.SupportedLanguage.GO:
+        names = go_parameter_names(func_node)
+        invoke = _go_invoked_parameter_names
+    elif language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+        names = js_ts_parameter_names(func_node)
+        invoke = _js_ts_invoked_parameter_names
+    elif language == cs.SupportedLanguage.CPP:
+        names = cpp_parameter_names(func_node)
+        invoke = _cpp_invoked_parameter_names
+    else:
         return {}
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
-    if body_node is None or not (names := python_parameter_names(func_node)):
+    if body_node is None or not names:
         return {}
-
-    invoked = _python_invoked_parameter_names(body_node, set(names))
+    invoked = invoke(body_node, set(names))
     if not invoked:
         return {}
     return {name: index for index, name in enumerate(names) if name in invoked}
+
+
+def go_parameter_names(func_node: Node) -> list[str]:
+    # (H) Ordered parameter names from the `parameters` list (the receiver of a
+    # (H) method is a separate field, so indices line up with call-site arguments).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return []
+    names: list[str] = []
+    for declaration in params.named_children:
+        if declaration.type != cs.TS_GO_PARAMETER_DECLARATION:
+            continue
+        for child in declaration.children:
+            if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
+                names.append(name)
+    return names
 
 
 def _js_ts_field_member_name(
@@ -273,6 +557,9 @@ def ingest_method(
 
     decorators = extract_decorators_func(method_node) if extract_decorators_func else []
 
+    # (H) Local import breaks the export_detection -> cpp.utils -> utils cycle.
+    from . import export_detection
+
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
         cs.KEY_NAME: method_name,
@@ -280,6 +567,11 @@ def ingest_method(
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
+        cs.KEY_IS_EXPORTED: (
+            export_detection.is_exported(method_node, method_name, language)
+            if language is not None
+            else False
+        ),
     }
     if file_path is not None and repo_path is not None:
         method_props[cs.KEY_PATH] = cached_relative_path(
