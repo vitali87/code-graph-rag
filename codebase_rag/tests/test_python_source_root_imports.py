@@ -154,3 +154,74 @@ def test_same_named_packages_disambiguate_by_submodule(tmp_path: Path) -> None:
         },
     )
     assert _has(calls, "app.registry.use", "a.src.common.only_in_a._handler")
+
+
+def test_package_dir_default_key_remap(tmp_path: Path) -> None:
+    # (H) setuptools' default remap `"" = "lib"` relocates the whole package
+    # (H) namespace; a namespace package under it (no __init__.py, dir not named
+    # (H) src) has no other discovery signal and must still resolve.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                '[project]\nname = "proj"\n[tool.setuptools.package-dir]\n"" = "lib"\n'
+            ),
+            "lib/nspkg/impls.py": IMPL,
+            "lib/nspkg/registry.py": CALLER.format(pkg="nspkg"),
+        },
+    )
+    assert _has(calls, "nspkg.registry.use", "lib.nspkg.impls._handler")
+
+
+def test_single_module_under_src_resolves_to_module(tmp_path: Path) -> None:
+    # (H) A single-module file directly under src (src/mymod.py) is importable as
+    # (H) `mymod`; the import must resolve to the module's own path QN, not to the
+    # (H) containing src directory.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "packages/a/src/mymod.py": IMPL,
+            "packages/a/src/consumer.py": (
+                "from mymod import _handler\n\n\n"
+                "def use(ctx):\n"
+                "    return _handler(ctx)\n"
+            ),
+        },
+    )
+    assert _has(calls, "src.consumer.use", "src.mymod._handler")
+
+
+def test_package_dir_escaping_repo_does_not_crash(tmp_path: Path) -> None:
+    # (H) A package-dir pointing outside the repo (`..`) must be skipped, not crash
+    # (H) discovery with a relative_to ValueError; sibling code still resolves.
+    (tmp_path.parent / "outside").mkdir(exist_ok=True)
+    calls = _run_calls(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                "[project]\n"
+                'name = "proj"\n'
+                "[tool.setuptools.package-dir]\n"
+                'escapee = "../outside"\n'
+            ),
+            "pkg/__init__.py": "",
+            "pkg/impls.py": IMPL,
+            "pkg/registry.py": CALLER.format(pkg="pkg"),
+        },
+    )
+    assert _has(calls, "pkg.registry.use", "pkg.impls._handler")
+
+
+def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
+    # (H) The discovery map must key a single-module file to the module's OWN dotted
+    # (H) path (…src.mymod), not its containing directory (…src), or resolution
+    # (H) returns a directory QN and downstream lookups depend on trie luck.
+    from codebase_rag.parsers.python_source_roots import (
+        discover_python_source_roots,
+        resolve_via_source_roots,
+    )
+
+    (tmp_path / "packages/a/src").mkdir(parents=True)
+    (tmp_path / "packages/a/src/mymod.py").write_text(IMPL, encoding="utf-8")
+    roots = discover_python_source_roots(tmp_path)
+    assert resolve_via_source_roots(tmp_path, roots, "mymod") == "packages.a.src.mymod"

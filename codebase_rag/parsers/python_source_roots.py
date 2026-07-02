@@ -14,30 +14,48 @@ def _dotted(rel_dir: Path) -> str:
     return str(rel_dir).replace(os.sep, cs.SEPARATOR_DOT)
 
 
-def _package_dir_remaps(pyproject: Path, repo_path: Path) -> dict[str, str]:
+def _package_dir_remaps(pyproject: Path, repo_path: Path) -> list[tuple[str, str]]:
     # (H) setuptools `[tool.setuptools.package-dir]` maps an import name to the
     # (H) directory that IS that package (`mypkg = "lib"` -> lib/__init__.py is
-    # (H) mypkg), so the import name maps to the remapped directory's dotted path.
+    # (H) mypkg). The empty-string key is the DEFAULT remap (`"" = "lib"` -> the
+    # (H) whole package namespace lives under lib/), so lib's children become the
+    # (H) importable top-level names. A remap escaping the repo is skipped.
     try:
         data = tomllib.loads(pyproject.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, tomllib.TOMLDecodeError):
-        return {}
+        return []
     section = data
     for key in (cs.PYPROJECT_KEY_TOOL, cs.PYPROJECT_KEY_SETUPTOOLS):
         section = section.get(key, {})
         if not isinstance(section, dict):
-            return {}
+            return []
     package_dir = section.get(cs.PYPROJECT_KEY_PACKAGE_DIR, {})
     if not isinstance(package_dir, dict):
-        return {}
-    remaps: dict[str, str] = {}
+        return []
+    remaps: list[tuple[str, str]] = []
     base = pyproject.parent
     for name, rel in package_dir.items():
-        if not name or not isinstance(rel, str):
+        if not isinstance(rel, str):
             continue
         target = (base / rel).resolve()
-        if target.is_dir():
-            remaps[name] = _dotted(target.relative_to(repo_path))
+        if not target.is_dir():
+            continue
+        try:
+            dotted_dir = _dotted(target.relative_to(repo_path))
+        except ValueError:
+            continue
+        if name:
+            remaps.append((name, dotted_dir))
+            continue
+        for child in sorted(target.iterdir()):
+            if child.is_dir():
+                remaps.append(
+                    (child.name, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.name}")
+                )
+            elif child.suffix == cs.EXT_PY and child.name != cs.INIT_PY:
+                remaps.append(
+                    (child.stem, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.stem}")
+                )
     return remaps
 
 
@@ -79,11 +97,12 @@ def discover_python_source_roots(repo_path: Path) -> dict[str, list[str]]:
                     _add(child, _dotted(rel / child))
             for filename in filenames:
                 if filename.endswith(cs.EXT_PY) and filename != cs.INIT_PY:
-                    _add(filename[: -len(cs.EXT_PY)], _dotted(rel))
+                    stem = filename[: -len(cs.EXT_PY)]
+                    _add(stem, _dotted(rel / stem))
         if cs.PYPROJECT_PATH in filenames:
             for name, dotted_dir in _package_dir_remaps(
                 current / cs.PYPROJECT_PATH, repo_path
-            ).items():
+            ):
                 _add(name, dotted_dir)
     return roots
 
