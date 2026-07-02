@@ -78,6 +78,12 @@ def _js_ts_exported(node: Node, name: str) -> bool:
 
 
 def _js_ts_private_member(node: Node) -> bool:
+    # (H) TypeScript marks privacy with an `accessibility_modifier` (`private`),
+    # (H) while the ECMAScript form is a `#name` method whose name node is a
+    # (H) `private_property_identifier`; both are private regardless of an
+    # (H) exported enclosing class.
+    if any(c.type == cs.TS_PRIVATE_PROPERTY_IDENTIFIER for c in node.children):
+        return True
     modifier = next(
         (c for c in node.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
     )
@@ -101,8 +107,8 @@ def _module_export_list_names(node: Node) -> set[str]:
     # (H) Local names exported by module-level `export { ... }` / `export default`
     # (H) statements. `export { local as exported }` still makes `local` reachable,
     # (H) so the specifier's local name (its first identifier) is what counts.
-    # ponytail: rescanned per declaration; fine for real files, revisit if a module
-    # ponytail: ever has enough top-level export statements to matter.
+    # (H) Rescanned per declaration; fine for real files, since a module rarely has
+    # (H) enough top-level export statements for the linear scan to matter.
     root = node
     while root.parent is not None:
         root = root.parent
@@ -110,8 +116,10 @@ def _module_export_list_names(node: Node) -> set[str]:
     for statement in root.children:
         if statement.type != cs.TS_EXPORT_STATEMENT:
             continue
+        # (H) A re-export (`export { x } from './y'`) names another module's
+        # (H) symbol, not this file's declaration, so skip clauses with a source.
         if any(child.type == cs.TS_STRING for child in statement.children):
-            continue  # re-export from another module: not this file's declaration
+            continue
         clause = next(
             (c for c in statement.children if c.type == cs.TS_EXPORT_CLAUSE), None
         )

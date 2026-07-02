@@ -1990,6 +1990,7 @@ TS_EXPORT_SPECIFIER = "export_specifier"
 TS_EXPORT_DEFAULT = "default"
 TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
 TS_PRIVATE = "private"
+TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
 # (H) Tree-sitter Java import node types
 TS_IMPORT_DECLARATION = "import_declaration"

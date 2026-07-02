@@ -119,13 +119,26 @@ export class ApiClass {
 """
 
 
+JS_CLASS_HASH_PRIVATE_SRC = """\
+export class Store {
+    read() {
+        return this.#load();
+    }
+
+    #load() {
+        return 1;
+    }
+}
+"""
+
+
 def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
     if "python" not in load_parsers()[0]:
         pytest.skip("python parser not available")
     exported = _run(tmp_path, {"srg.py": PY_SRC})
     assert _one(exported, ".to_srg") is True
     assert _one(exported, ".parse") is True
-    assert _one(exported, ".__init__") is True  # dunder: runtime-invoked
+    assert _one(exported, ".__init__") is True  # (H) dunder: runtime-invoked
     assert _one(exported, "._predicates") is False
     assert _one(exported, "._extract") is False
 
@@ -167,7 +180,7 @@ def test_ts_export_list_marks_exported(tmp_path: Path) -> None:
         pytest.skip("typescript parser not available")
     exported = _run(tmp_path, {"api.ts": TS_EXPORT_LIST_SRC})
     assert _one(exported, ".handler") is True
-    assert _one(exported, ".renamed") is True  # exported under an alias
+    assert _one(exported, ".renamed") is True  # (H) exported under an alias
     assert _one(exported, ".neverExported") is False
 
 
@@ -181,3 +194,15 @@ def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> 
     assert _one(exported, ".ApiClass.publicMethod") is True
     assert _one(exported, ".ApiClass.privateMethod") is False
     assert _one(exported, ".ApiClass.protectedMethod") is True
+
+
+def test_js_hash_private_method_of_exported_class_is_not_exported(
+    tmp_path: Path,
+) -> None:
+    # (H) An ECMAScript `#name` method is private to the class even when the class
+    # (H) is exported, so it must not seed a reachability root.
+    if "javascript" not in load_parsers()[0]:
+        pytest.skip("javascript parser not available")
+    exported = _run(tmp_path, {"store.js": JS_CLASS_HASH_PRIVATE_SRC})
+    assert _one(exported, ".Store.read") is True
+    assert _one(exported, ".Store.#load") is False
