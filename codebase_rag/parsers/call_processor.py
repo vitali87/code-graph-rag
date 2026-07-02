@@ -623,6 +623,10 @@ class CallProcessor:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         lang_config = queries[language][cs.QUERY_CONFIG]
+        # (H) Only functions that get their own caller node exclude their calls from
+        # (H) the enclosing scope; anonymous arrows (skipped below) must not, so
+        # (H) their calls bubble up instead of dropping.
+        owned_func_nodes = self._js_ts_attributable_nodes(method_nodes, language)
         for method_node in method_nodes:
             if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
@@ -641,7 +645,7 @@ class CallProcessor:
             )
             filtered = (
                 self._calls_owned_by(
-                    method_node, method_nodes, all_call_nodes, call_starts
+                    method_node, owned_func_nodes, all_call_nodes, call_starts
                 )
                 if all_call_nodes is not None and call_starts is not None
                 else None
@@ -1711,6 +1715,26 @@ class CallProcessor:
         ):
             return None
         return safe_decode_text(name_node)
+
+    def _js_ts_attributable_nodes(
+        self, func_nodes: list[Node], language: cs.SupportedLanguage
+    ) -> list[Node]:
+        # (H) The func nodes that will get their own caller node: named functions
+        # (H) plus arrows/function-expressions bound to a name. An anonymous arrow
+        # (H) passed directly as an argument (`hooks.tap(name, (x) => {...})`) has
+        # (H) neither, so it is skipped by the call loop. Its calls must therefore
+        # (H) NOT be excluded from the enclosing named scope by _calls_owned_by;
+        # (H) otherwise they attribute to nothing and drop (webpack is saturated
+        # (H) with this callback pattern). Returning only attributable nodes as the
+        # (H) exclusion set lets an anonymous arrow's calls bubble up to the nearest
+        # (H) named function/method, matching where the oracle attributes them.
+        if language not in _JS_TS_LANGUAGES:
+            return func_nodes
+        return [
+            n
+            for n in func_nodes
+            if self._get_node_name(n) or self._js_ts_arrow_binding_name(n)
+        ]
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)

@@ -72,7 +72,23 @@ def run_typescript_call_oracle(
     # (H) callee whose simple name is a declared Function/Method), with the declared
     # (H) name universe so the cgr side can be held to the same set. Mirrors the Go,
     # (H) Rust, and Java call oracles.
-    payload = _run_payload(target, ec.TS_SUFFIXES)
+    return _call_edges(target, ec.TS_SUFFIXES)
+
+
+def run_javascript_call_oracle(
+    target: Path,
+) -> tuple[set[tuple[str, str]], frozenset[str]]:
+    # (H) File-level JavaScript call sites, same tsc oracle over .js/.jsx. tsc's
+    # (H) syntactic parse handles JS, so this is independent of cgr's tree-sitter JS
+    # (H) frontend and measures cgr's cross-file JS call resolution against ground
+    # (H) truth (mirrors run_typescript_call_oracle).
+    return _call_edges(target, ec.JS_SUFFIXES)
+
+
+def _call_edges(
+    target: Path, suffixes: tuple[str, ...]
+) -> tuple[set[tuple[str, str]], frozenset[str]]:
+    payload = _run_payload(target, suffixes)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]
         for rec in payload.get(ec.ORACLE_KEY_NODES, [])
