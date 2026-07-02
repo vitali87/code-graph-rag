@@ -73,3 +73,23 @@ def test_js_callback_invoked_in_arrow_closure_is_traced(tmp_path: Path) -> None:
 def test_ts_typed_callback_param_is_traced(tmp_path: Path) -> None:
     calls = _run_calls(tmp_path, {"m.ts": TS_TYPED}, "typescript")
     assert _has(calls, "m.apply", "m.target")
+
+
+JS_PASS_THROUGH = (
+    "function apply(cb) {\n"
+    "    return cb();\n"
+    "}\n\n"
+    "function wrapper(cb) {\n"
+    "    return apply(cb);\n"
+    "}\n\n"
+    "function target() { return 1; }\n\n"
+    "wrapper(target);\n"
+)
+
+
+def test_js_callback_passed_through_wrapper_is_traced(tmp_path: Path) -> None:
+    # (H) target flows into wrapper's cb param, which wrapper hands to apply; the
+    # (H) fixpoint must propagate target through the pass-through param so apply,
+    # (H) the function that actually invokes cb, gets a CALLS edge to target.
+    calls = _run_calls(tmp_path, {"m.js": JS_PASS_THROUGH}, "javascript")
+    assert _has(calls, "m.apply", "m.target")
