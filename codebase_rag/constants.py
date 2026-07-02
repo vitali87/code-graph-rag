@@ -390,6 +390,13 @@ DUP_QN_MARKER = "@"
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
 GLOB_ALL = "*"
+# (H) JS/TS import specifier schemes that name genuinely external code (node
+# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
+# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
+# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
+JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
+    {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
+)
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"

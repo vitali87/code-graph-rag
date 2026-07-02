@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,6 +28,22 @@ from .utils import (
     sorted_captures,
 )
 
+_JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+
+
+def _has_aliased_scheme(specifier: str) -> bool:
+    # (H) True for a JS/TS specifier with a non-standard scheme (`ext:deno_node/x`),
+    # (H) which names first-party code under a non-file-path alias. Standard external
+    # (H) schemes (node:/npm:/jsr:/http(s):) and bare/scoped package names
+    # (H) (`lodash`, `@scope/pkg`) are NOT aliased -> they stay externally suppressed.
+    # (H) LIMITATION: a tsconfig `paths` alias (`@/util`) has no scheme and is
+    # (H) syntactically indistinguishable from a scoped package (`@scope/pkg`), so it
+    # (H) is NOT exempted here -- doing so blindly would rebind genuine scoped-package
+    # (H) calls to same-named first-party symbols. Resolving those precisely needs
+    # (H) reading tsconfig `compilerOptions.paths` / a deno import map (a follow-on).
+    match = _JS_SCHEME_RE.match(specifier)
+    return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
+
 
 class ImportProcessor:
     __slots__ = (
@@ -36,6 +53,7 @@ class ImportProcessor:
         "function_registry",
         "import_mapping",
         "php_function_imports",
+        "js_ts_bare_imports",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -59,6 +77,15 @@ class ImportProcessor:
         # (H) Collections/functions.php), so these must resolve by simple name via
         # (H) the trie rather than being judged external-import and suppressed.
         self.php_function_imports: dict[str, set[str]] = {}
+        # (H) Local names brought in by a JS/TS import with a NON-STANDARD scheme
+        # (H) (`ext:deno_node/y`; see _has_aliased_scheme), keyed by module. Such a
+        # (H) specifier aliases first-party code but does not resolve to a file-path
+        # (H) module qn, so the target is unregistered and would be judged external,
+        # (H) dropping the call. These names defer to the simple-name trie (like a
+        # (H) relative import that misses) instead of being suppressed. Ordinary
+        # (H) package specifiers (bare, scoped, node:/npm:) are excluded, so genuine
+        # (H) external calls stay suppressed.
+        self.js_ts_bare_imports: dict[str, set[str]] = {}
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -126,6 +153,7 @@ class ImportProcessor:
         # (H) Reset per-module PHP use-function state too, so a re-index that drops a
         # (H) `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
+        self.js_ts_bare_imports.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -471,9 +499,11 @@ class ImportProcessor:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 source_module = None
+                is_aliased_scheme = False
                 for child in import_node.children:
                     if child.type == cs.TS_STRING:
                         source_text = safe_decode_with_fallback(child).strip("'\"")
+                        is_aliased_scheme = _has_aliased_scheme(source_text)
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
                         )
@@ -484,7 +514,9 @@ class ImportProcessor:
 
                 for child in import_node.children:
                     if child.type == cs.TS_IMPORT_CLAUSE:
-                        self._parse_js_import_clause(child, source_module, module_qn)
+                        self._parse_js_import_clause(
+                            child, source_module, module_qn, is_aliased_scheme
+                        )
 
             elif import_node.type == cs.TS_LEXICAL_DECLARATION:
                 self._parse_js_require(import_node, module_qn)
@@ -511,14 +543,25 @@ class ImportProcessor:
         return cs.SEPARATOR_DOT.join(current_parts)
 
     def _parse_js_import_clause(
-        self, clause_node: Node, source_module: str, current_module: str
+        self,
+        clause_node: Node,
+        source_module: str,
+        current_module: str,
+        is_aliased_scheme: bool = False,
     ) -> None:
+        def _note_bare(local_name: str) -> None:
+            if is_aliased_scheme:
+                self.js_ts_bare_imports.setdefault(current_module, set()).add(
+                    local_name
+                )
+
         for child in clause_node.children:
             if child.type == cs.TS_IDENTIFIER:
                 imported_name = safe_decode_with_fallback(child)
                 self.import_mapping[current_module][imported_name] = (
                     f"{source_module}{cs.IMPORT_DEFAULT_SUFFIX}"
                 )
+                _note_bare(imported_name)
                 logger.debug(
                     ls.IMP_JS_DEFAULT, name=imported_name, module=source_module
                 )
@@ -538,6 +581,7 @@ class ImportProcessor:
                             self.import_mapping[current_module][local_name] = (
                                 f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
                             )
+                            _note_bare(local_name)
                             logger.debug(
                                 ls.IMP_JS_NAMED,
                                 local=local_name,
