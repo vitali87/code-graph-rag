@@ -36,6 +36,11 @@ def _has_aliased_scheme(specifier: str) -> bool:
     # (H) which names first-party code under a non-file-path alias. Standard external
     # (H) schemes (node:/npm:/jsr:/http(s):) and bare/scoped package names
     # (H) (`lodash`, `@scope/pkg`) are NOT aliased -> they stay externally suppressed.
+    # (H) LIMITATION: a tsconfig `paths` alias (`@/util`) has no scheme and is
+    # (H) syntactically indistinguishable from a scoped package (`@scope/pkg`), so it
+    # (H) is NOT exempted here -- doing so blindly would rebind genuine scoped-package
+    # (H) calls to same-named first-party symbols. Resolving those precisely needs
+    # (H) reading tsconfig `compilerOptions.paths` / a deno import map (a follow-on).
     match = _JS_SCHEME_RE.match(specifier)
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
