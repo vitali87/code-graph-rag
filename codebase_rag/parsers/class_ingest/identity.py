@@ -7,6 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
+from .. import export_detection
 from ..cpp import utils as cpp_utils
 from ..rs import utils as rs_utils
 from ..utils import safe_decode_text
@@ -38,10 +39,15 @@ def resolve_class_identity(
             # (H) qualified name as the prefix rather than recomputing from the path,
             # (H) so same-stem cross-language siblings get distinct class/method qns.
             class_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
-            is_exported = language == cs.SupportedLanguage.CPP and (
-                class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
-                or cpp_utils.is_exported(class_node)
-            )
+            if language == cs.SupportedLanguage.CPP:
+                is_exported = (
+                    class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
+                    or cpp_utils.is_exported(class_node)
+                )
+            else:
+                is_exported = export_detection.is_exported(
+                    class_node, class_name, language
+                )
             return class_qn, class_name, is_exported
 
     return resolve_class_identity_fallback(class_node, module_qn, language, lang_config)
@@ -72,7 +78,8 @@ def resolve_class_identity_fallback(
     nested_qn = build_nested_qualified_name_for_class(
         class_node, module_qn, class_name, lang_config
     )
-    return nested_qn or f"{module_qn}.{class_name}", class_name, False
+    is_exported = export_detection.is_exported(class_node, class_name, language)
+    return nested_qn or f"{module_qn}.{class_name}", class_name, is_exported
 
 
 def extract_cpp_class_name(class_node: Node) -> str | None:

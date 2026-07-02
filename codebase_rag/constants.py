@@ -446,7 +446,8 @@ class QueryFormat(StrEnum):
 
 
 # (H) Decorators whose presence marks a function/method as an implicit entry point
-# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners).
+# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
+# (H) Pydantic validators/serializers the framework invokes by registration).
 DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     {
         "route",
@@ -464,6 +465,12 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "app",
         "on_event",
         "listener",
+        "validator",
+        "field_validator",
+        "model_validator",
+        "root_validator",
+        "field_serializer",
+        "model_serializer",
     }
 )
 
@@ -2027,6 +2034,10 @@ TS_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CALL_EXPRESSION = "call_expression"
 TS_EXPORT_CLAUSE = "export_clause"
 TS_EXPORT_SPECIFIER = "export_specifier"
+TS_EXPORT_DEFAULT = "default"
+TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
+TS_PRIVATE = "private"
+TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
 # (H) Tree-sitter Java import node types
 TS_IMPORT_DECLARATION = "import_declaration"
@@ -2100,6 +2111,7 @@ TS_GO_TYPE_ALIAS = "type_alias"
 TS_GO_STRUCT_TYPE = "struct_type"
 TS_GO_INTERFACE_TYPE = "interface_type"
 TS_GO_PARAMETER_DECLARATION = "parameter_declaration"
+TS_GO_FUNC_LITERAL = "func_literal"
 TS_GO_SOURCE_FILE = "source_file"
 TS_GO_FUNCTION_DECLARATION = "function_declaration"
 TS_GO_METHOD_DECLARATION = "method_declaration"
@@ -2191,6 +2203,10 @@ TS_CPP_BINARY_EXPRESSION = "binary_expression"
 TS_CPP_UNARY_EXPRESSION = "unary_expression"
 TS_CPP_UPDATE_EXPRESSION = "update_expression"
 TS_CPP_FUNCTION_DECLARATOR = "function_declarator"
+# (H) Substring shared by C++ declarator node types (pointer_declarator,
+# (H) reference_declarator, parenthesized_declarator, ...), used to unwrap a
+# (H) parameter declarator down to its bound identifier.
+CPP_DECLARATOR_SUFFIX = "declarator"
 
 # (H) Tree-sitter Java node types for language_spec
 TS_JAVA_METHOD_INVOCATION = "method_invocation"
@@ -2584,6 +2600,10 @@ TS_PY_TYPED_DEFAULT_PARAMETER = "typed_default_parameter"
 TS_PY_ATTRIBUTE = "attribute"
 TS_PY_CALL = "call"
 TS_PY_LIST = "list"
+TS_PY_DICTIONARY = "dictionary"
+TS_PY_PAIR = "pair"
+TS_PY_SET = "set"
+TS_PY_TUPLE = "tuple"
 TS_PY_LIST_COMPREHENSION = "list_comprehension"
 TS_PY_FOR_STATEMENT = "for_statement"
 TS_PY_FOR_IN_CLAUSE = "for_in_clause"
@@ -2593,6 +2613,7 @@ PY_RETURN_QUERY = "(return_statement) @return_stmt"
 TS_PY_CLASS_DEFINITION = "class_definition"
 TS_PY_BLOCK = "block"
 TS_PY_FUNCTION_DEFINITION = "function_definition"
+TS_PY_LAMBDA = "lambda"
 TS_PY_RETURN_STATEMENT = "return_statement"
 TS_PY_RETURN = "return"
 TS_PY_KEYWORD = "keyword"
@@ -2641,6 +2662,10 @@ PY_NONE = "None"
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"
+# (H) Visibility by naming convention: a leading underscore marks a private
+# (H) symbol, while a dunder (__x__) is public API invoked by the runtime.
+PY_NAME_UNDERSCORE = "_"
+PY_NAME_DUNDER = "__"
 # (H) typing.Protocol base name and the conventional XxxProtocol class suffix
 # (H) used to map a Protocol to its concrete implementer.
 PY_PROTOCOL = "Protocol"
@@ -2682,8 +2707,13 @@ GUARD_INHERITED_METHOD = "_inherited_method_guard"
 # (H) JS/TS ingest node types
 TS_PAIR = "pair"
 TS_OBJECT = "object"
+TS_ARRAY = "array"
 TS_FUNCTION_EXPRESSION = "function_expression"
 TS_ARROW_FUNCTION = "arrow_function"
+TS_REQUIRED_PARAMETER = "required_parameter"
+TS_OPTIONAL_PARAMETER = "optional_parameter"
+TS_FIELD_PATTERN = "pattern"
+TS_FIELD_PARAMETER = "parameter"
 TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 TS_STATIC = "static"
