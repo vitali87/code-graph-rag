@@ -156,9 +156,7 @@ def _python_parameter_name(param_node: Node) -> str | None:
     return None
 
 
-_PY_CLOSURE_SCOPES = frozenset(
-    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA}
-)
+_PY_CLOSURE_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 _GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
 
 
@@ -249,11 +247,13 @@ def _cpp_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[s
 
 
 def _cpp_scope_bound_names(scope_node: Node) -> set[str]:
-    # (H) A C++ lambda's own parameters are hard to enumerate uniformly (abstract
-    # (H) function declarators); shadowing a captured callable parameter with a
-    # (H) same-named lambda parameter and invoking it is vanishingly rare, so no
-    # (H) subtraction is applied. This only risks an extra (conservative) edge.
-    return set()
+    # (H) A C++ lambda's own parameters shadow a same-named captured parameter of the
+    # (H) enclosing function, so they must be subtracted before scanning the lambda
+    # (H) body -- otherwise the lambda invoking its own `cb` looks like an invocation
+    # (H) of the outer `cb`. The lambda's parameters hang off its `declarator` (an
+    # (H) abstract_function_declarator whose `parameters` list mirrors a function's).
+    declarator = scope_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    return set(_cpp_declarator_param_names(declarator))
 
 
 def _cpp_declarator_name(declarator: Node | None) -> str | None:
@@ -285,9 +285,15 @@ def cpp_parameter_names(func_node: Node) -> list[str]:
     # (H) unwrapping each parameter's declarator to its bound identifier.
     declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
     func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
-    if func_declarator is None:
+    return _cpp_declarator_param_names(func_declarator)
+
+
+def _cpp_declarator_param_names(declarator: Node | None) -> list[str]:
+    # (H) Bound parameter names from a (function|abstract_function) declarator's
+    # (H) `parameters` list, unwrapping each parameter's declarator to its identifier.
+    if declarator is None:
         return []
-    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
     if params is None:
         return []
     names: list[str] = []
