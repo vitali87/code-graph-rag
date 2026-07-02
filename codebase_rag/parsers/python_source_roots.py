@@ -59,23 +59,27 @@ def _package_dir_remaps(pyproject: Path, repo_path: Path) -> list[tuple[str, str
     return remaps
 
 
-def discover_python_source_roots(repo_path: Path) -> dict[str, list[str]]:
-    # (H) Map each importable top-level name to the dotted repo-relative directory
-    # (H) that holds its contents, for packages NOT at the repo root (root-level
-    # (H) packages already resolve via the import name == path assumption). Found
-    # (H) from three signals: a package (__init__.py) whose parent is not itself a
-    # (H) package, children of a `src` directory (covers PEP 420 namespace packages
-    # (H) and single-module files), and pyproject `package-dir` remaps. Multiple
+def discover_python_source_roots(repo_path: Path) -> dict[str, list[tuple[str, str]]]:
+    # (H) Map each importable top-level name to (import_prefix, dotted_dir) pairs,
+    # (H) where import_prefix is the importable name the directory answers for (a
+    # (H) bare name, or a dotted one from a `"acme.widgets" = "lib/widgets"`
+    # (H) package-dir remap) and dotted_dir is its repo-relative dotted path. Only
+    # (H) packages NOT at the repo root are mapped (root-level packages already
+    # (H) resolve via the import name == path assumption). Found from three
+    # (H) signals: a package (__init__.py) whose parent is not itself a package,
+    # (H) children of a `src` directory (covers PEP 420 namespace packages and
+    # (H) single-module files), and pyproject `package-dir` remaps. Multiple
     # (H) same-named roots keep all candidates; resolution disambiguates by which
     # (H) candidate actually contains the imported submodule on disk.
-    roots: dict[str, list[str]] = {}
+    roots: dict[str, list[tuple[str, str]]] = {}
 
     def _add(name: str, dotted_dir: str) -> None:
         if dotted_dir == name:
             return
-        candidates = roots.setdefault(name, [])
-        if dotted_dir not in candidates:
-            candidates.append(dotted_dir)
+        top_level = name.split(cs.SEPARATOR_DOT)[0]
+        candidates = roots.setdefault(top_level, [])
+        if (name, dotted_dir) not in candidates:
+            candidates.append((name, dotted_dir))
             logger.debug(ls.IMP_PY_SOURCE_ROOT, name=name, path=dotted_dir)
 
     repo_path = repo_path.resolve()
@@ -108,18 +112,27 @@ def discover_python_source_roots(repo_path: Path) -> dict[str, list[str]]:
 
 
 def resolve_via_source_roots(
-    repo_path: Path, roots: dict[str, list[str]], module_name: str
+    repo_path: Path, roots: dict[str, list[tuple[str, str]]], module_name: str
 ) -> str | None:
     # (H) Translate an absolute import name (`pkg.impls`) whose top-level package
     # (H) lives under a nested source root into the path-based dotted QN cgr
-    # (H) registers nodes under (`packages.a.src.pkg.impls`). Among same-named
-    # (H) roots, the one that actually contains the imported submodule on disk
-    # (H) wins; with no on-disk confirmation, a sole candidate is trusted.
-    top_level, _, rest = module_name.partition(cs.SEPARATOR_DOT)
+    # (H) registers nodes under (`packages.a.src.pkg.impls`). Candidates whose
+    # (H) import_prefix is dotted match by longest prefix (a `"acme.widgets"`
+    # (H) remap answers `acme.widgets.impl`). Among matching roots, the one that
+    # (H) actually contains the imported submodule on disk wins; with no on-disk
+    # (H) confirmation, a sole match is trusted.
+    top_level = module_name.split(cs.SEPARATOR_DOT)[0]
     candidates = roots.get(top_level)
     if not candidates:
         return None
-    for dotted_dir in candidates:
+    matches: list[tuple[str, str]] = []
+    for prefix, dotted_dir in candidates:
+        if module_name == prefix:
+            matches.append(("", dotted_dir))
+        elif module_name.startswith(prefix + cs.SEPARATOR_DOT):
+            matches.append((module_name[len(prefix) + 1 :], dotted_dir))
+    matches.sort(key=lambda m: len(m[0]))
+    for rest, dotted_dir in matches:
         target = repo_path / dotted_dir.replace(cs.SEPARATOR_DOT, os.sep)
         if rest:
             sub = target / rest.replace(cs.SEPARATOR_DOT, os.sep)
@@ -131,7 +144,7 @@ def resolve_via_source_roots(
                 return f"{dotted_dir}{cs.SEPARATOR_DOT}{rest}"
         elif target.is_dir() or target.with_suffix(cs.EXT_PY).is_file():
             return dotted_dir
-    if len(candidates) == 1:
-        dotted_dir = candidates[0]
+    if len(matches) == 1:
+        rest, dotted_dir = matches[0]
         return f"{dotted_dir}{cs.SEPARATOR_DOT}{rest}" if rest else dotted_dir
     return None

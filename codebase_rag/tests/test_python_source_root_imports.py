@@ -225,3 +225,29 @@ def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
     (tmp_path / "packages/a/src/mymod.py").write_text(IMPL, encoding="utf-8")
     roots = discover_python_source_roots(tmp_path)
     assert resolve_via_source_roots(tmp_path, roots, "mymod") == "packages.a.src.mymod"
+
+
+def test_package_dir_dotted_key_remap(tmp_path: Path) -> None:
+    # (H) package-dir keys can name a dotted subpackage ("acme.widgets" =
+    # (H) "lib/widgets"); the import's top-level segment (acme) has no entry of its
+    # (H) own, so resolution must match the longest dotted prefix, not just the
+    # (H) top-level name.
+    calls = _run_calls(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                "[project]\n"
+                'name = "acme-widgets"\n'
+                "[tool.setuptools.package-dir]\n"
+                '"acme.widgets" = "lib/widgets"\n'
+            ),
+            "lib/widgets/__init__.py": "",
+            "lib/widgets/impl.py": IMPL,
+            "app.py": (
+                "from acme.widgets.impl import _handler\n\n\n"
+                "def use(ctx):\n"
+                "    return _handler(ctx)\n"
+            ),
+        },
+    )
+    assert _has(calls, "app.use", "lib.widgets.impl._handler")
