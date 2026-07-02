@@ -99,6 +99,7 @@ def dead_code_from_graph(
 
     candidates: set[str] = set()
     props_by_qn: dict[str, PropertyDict] = {}
+    method_qns: set[str] = set()
     module_path: dict[str, str] = {}
     for (label, uid), props in nodes.items():
         if label == _MODULE:
@@ -106,6 +107,8 @@ def dead_code_from_graph(
         elif label in labels and str(uid).startswith(project_prefix):
             candidates.add(str(uid))
             props_by_qn[str(uid)] = props
+            if label == _METHOD:
+                method_qns.add(str(uid))
 
     roots: set[str] = set()
     for from_label, from_val, rel_type, _to_label, to_val in rels:
@@ -127,9 +130,11 @@ def dead_code_from_graph(
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
             roots.add(qn)
-        elif _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]) and str(
-            props.get(cs.KEY_PATH, "")
-        ).endswith(cs.EXT_PY):
+        elif (
+            qn in method_qns
+            and _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
+        ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)

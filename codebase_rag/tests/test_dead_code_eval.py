@@ -174,6 +174,32 @@ def _method(uid: str, path: str = "m.py") -> tuple:
     )
 
 
+def test_dunder_root_is_limited_to_methods() -> None:
+    # (H) Implicit dunder dispatch applies to special METHODS on objects, not to a
+    # (H) module-level function that merely has a dunder-shaped name, so an uncalled
+    # (H) function named __unused__ must stay a dead-code candidate.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            (
+                (_FUNCTION, "proj.m.__unused__"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.m.__unused__",
+                    cs.KEY_NAME: "__unused__",
+                    cs.KEY_PATH: "m.py",
+                    cs.KEY_DECORATORS: [],
+                    cs.KEY_IS_EXPORTED: False,
+                },
+            ),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.m.__unused__" in dead
+
+
 def test_dunder_method_is_a_root() -> None:
     # (H) __aenter__/__aexit__ are invoked by the `async with` protocol, never by an
     # (H) explicit call, so cgr cannot see an inbound edge. They are runtime protocol
