@@ -118,3 +118,53 @@ def test_no_override_dispatch_without_subclasses(tmp_path: Path) -> None:
         a.endswith("m.Only.run") and b.endswith(".op") and not b.endswith("Only.op")
         for a, b in calls
     )
+
+
+def test_self_call_in_abstract_base_reaches_all_overrides(tmp_path: Path) -> None:
+    # (H) Base._chunk calls self._raw(); Base._raw is @abstractmethod and TWO subclasses
+    # (H) override it. The edge must anchor on the enclosing class (Base) and reach BOTH
+    # (H) overrides plus the base declaration, not just the alphabetically-first override
+    # (H) the trie happens to pick (SqsBatchJob/SqsKick/SqsDelete shape).
+    src = (
+        "from abc import ABC, abstractmethod\n"
+        "class Base(ABC):\n"
+        "    @abstractmethod\n"
+        "    def _raw(self, ctx):\n"
+        "        pass\n"
+        "    def _chunk(self, ctx):\n"
+        "        return self._raw(ctx)\n\n\n"
+        "class Kick(Base):\n"
+        "    def _raw(self, ctx):\n"
+        "        return 1\n\n\n"
+        "class Delete(Base):\n"
+        "    def _raw(self, ctx):\n"
+        "        return 2\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert _has(calls, "m.Base._chunk", "m.Kick._raw")
+    assert _has(calls, "m.Base._chunk", "m.Delete._raw")
+
+
+def test_self_call_binds_to_own_class_method_amid_cousin_overrides(
+    tmp_path: Path,
+) -> None:
+    # (H) OpenAIClient.gen calls self._generate(); a sibling subclass AnthropicClient also
+    # (H) defines _generate. The call must bind to the ENCLOSING class's own method
+    # (H) (OpenAIClient._generate), not an arbitrary cousin override (OpenAIClient shape).
+    src = (
+        "from abc import ABC, abstractmethod\n"
+        "class BaseLLM(ABC):\n"
+        "    @abstractmethod\n"
+        "    def _generate(self, m):\n"
+        "        pass\n\n\n"
+        "class OpenAIClient(BaseLLM):\n"
+        "    def _generate(self, m):\n"
+        "        return 1\n"
+        "    def gen(self, m):\n"
+        "        return self._generate(m)\n\n\n"
+        "class AnthropicClient(BaseLLM):\n"
+        "    def _generate(self, m):\n"
+        "        return 2\n"
+    )
+    calls = _run_calls(tmp_path, {"m.py": src})
+    assert _has(calls, "m.OpenAIClient.gen", "m.OpenAIClient._generate")
