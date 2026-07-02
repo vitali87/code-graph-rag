@@ -1109,7 +1109,7 @@ class CallProcessor:
                         )
                     if (rhs := alias_map.get(call_name)) is not None:
                         callee_info = resolve_func(
-                            rhs, module_qn, local_var_types, class_context
+                            rhs, module_qn, local_var_types, class_context, caller_qn
                         )
                 if callee_info is None and is_flow_lang:
                     # (H) `x = factory(...); x(cb)`: x holds a closure returned by a
@@ -1125,6 +1125,7 @@ class CallProcessor:
                             self._flow_scope_boundaries(
                                 queries[language][cs.QUERY_CONFIG]
                             ),
+                            caller_qn,
                         )
                     if (factory_qn := factory_aliases.get(call_name)) is not None:
                         self._record_factory_call(
@@ -1156,6 +1157,7 @@ class CallProcessor:
                     class_context,
                     resolve_func,
                     ensure_rel,
+                    caller_qn,
                 )
 
             if not callee_info:
@@ -1174,6 +1176,7 @@ class CallProcessor:
                         class_context,
                         resolve_func,
                         ensure_rel,
+                        caller_qn,
                     )
                 continue
 
@@ -1196,6 +1199,7 @@ class CallProcessor:
                     class_context,
                     resolve_func,
                     ensure_rel,
+                    caller_qn,
                 )
 
             if is_flow_lang and not callee_is_builtin:
@@ -1260,6 +1264,7 @@ class CallProcessor:
                     class_context,
                     resolve_func,
                     ensure_rel,
+                    caller_qn,
                 )
 
             if callee_type == class_label:
@@ -1557,7 +1562,7 @@ class CallProcessor:
                         )
                     elif (
                         resolved := resolve_func(
-                            name, module_qn, local_var_types, class_context
+                            name, module_qn, local_var_types, class_context, caller_qn
                         )
                     ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
                         self._returned_callables.setdefault(caller_qn, set()).add(
@@ -1572,6 +1577,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         boundary_types: frozenset[str],
+        caller_qn: str | None = None,
     ) -> dict[str, str]:
         # (H) Map a local `x` to the function `factory` in `x = factory(...)`, so a
         # (H) later `x(cb)` can be traced through factory's returned closure. Handles
@@ -1587,7 +1593,7 @@ class CallProcessor:
             for var, fn_name in self._factory_bindings(node):
                 if (
                     resolved := resolve_func(
-                        fn_name, module_qn, local_var_types, class_context
+                        fn_name, module_qn, local_var_types, class_context, caller_qn
                     )
                 ) is not None:
                     aliases.setdefault(var, resolved[1])
@@ -1656,13 +1662,14 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        caller_qn: str | None = None,
     ) -> str | None:
         if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
             return None
         if not (text := safe_decode_text(node)):
             return None
         resolved = self._resolver.resolve_function_call(
-            text, module_qn, local_var_types, class_context
+            text, module_qn, local_var_types, class_context, caller_qn
         )
         if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
             return None
@@ -1679,7 +1686,9 @@ class CallProcessor:
     ) -> None:
         positional, keyword = self._parse_call_arguments(call_node)
         pos_qns = tuple(
-            self._resolve_callback_qn(n, module_qn, local_var_types, class_context)
+            self._resolve_callback_qn(
+                n, module_qn, local_var_types, class_context, scope_qn
+            )
             or ""
             for n in positional
         )
@@ -1688,7 +1697,7 @@ class CallProcessor:
             for name, value in keyword.items()
             if (
                 qn := self._resolve_callback_qn(
-                    value, module_qn, local_var_types, class_context
+                    value, module_qn, local_var_types, class_context, scope_qn
                 )
             )
         )
@@ -1728,12 +1737,13 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         if not (arg_text := safe_decode_text(arg_node)):
             return
         if not (
             resolved := resolve_func(
-                arg_text, module_qn, local_var_types, class_context
+                arg_text, module_qn, local_var_types, class_context, caller_qn
             )
         ):
             return
@@ -1762,6 +1772,7 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         if not (params := self._resolver.function_registry.callable_params(callee_qn)):
             return
@@ -1780,6 +1791,7 @@ class CallProcessor:
                     class_context,
                     resolve_func,
                     ensure_rel,
+                    caller_qn,
                 )
 
     def _collect_callable_flow(
@@ -1820,7 +1832,7 @@ class CallProcessor:
                 )
                 continue
             resolved = self._resolver.resolve_function_call(
-                arg_text, module_qn, local_var_types, class_context
+                arg_text, module_qn, local_var_types, class_context, caller_qn
             )
             if resolved is not None and resolved[0] in callable_labels:
                 self._flow_args.append(
@@ -1968,6 +1980,7 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
@@ -1979,6 +1992,7 @@ class CallProcessor:
                 class_context,
                 resolve_func,
                 ensure_rel,
+                caller_qn,
             )
 
     def _ingest_argument_function_references(
@@ -1990,6 +2004,7 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         # (H) For a call whose callee is not first-party, a function/method passed as
         # (H) an argument is handed off to be invoked by that external callee; emit a
@@ -2004,6 +2019,7 @@ class CallProcessor:
                 class_context,
                 resolve_func,
                 ensure_rel,
+                caller_qn,
             )
 
     def _build_local_alias_map(
@@ -2176,7 +2192,11 @@ class CallProcessor:
                     )
                     if not is_call_target and (
                         callee_info := resolve_func(
-                            attr_text, module_qn, local_var_types, class_context
+                            attr_text,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            caller_qn,
                         )
                     ):
                         callee_qn = callee_info[1]
