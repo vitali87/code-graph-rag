@@ -64,3 +64,20 @@ def test_cpp_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
     )
     calls = _run_calls(tmp_path, {"m.cpp": src})
     assert _has(calls, "main", "target")
+
+
+def test_cpp_nested_lambda_shadowing_suppresses_forbidden_edge(tmp_path: Path) -> None:
+    # (H) shadow's own cb parameter is never invoked; the nested lambda has its own
+    # (H) cb parameter that shadows it, and only that inner cb is called. The flow
+    # (H) tracer must subtract the lambda's bound names before descending, so it must
+    # (H) NOT conclude shadow invokes its cb and emit shadow -> target.
+    src = (
+        "int target() { return 1; }\n"
+        "int shadow(int (*cb)()) {\n"
+        "    auto inner = [](int (*cb)()) { return cb(); };\n"
+        "    return 0;\n"
+        "}\n"
+        "int main() { return shadow(target); }\n"
+    )
+    calls = _run_calls(tmp_path, {"m.cpp": src})
+    assert not _has(calls, "shadow", "target")
