@@ -26,6 +26,7 @@ from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 console_target = Path(ec.IMPORTS_DEFAULT_TARGET)
 
 _MODULE = cs.NodeLabel.MODULE.value
+_EXTERNAL_MODULE = cs.NodeLabel.EXTERNAL_MODULE.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
@@ -71,9 +72,9 @@ def cgr_import_deps(target: Path, project: str) -> set[ImportDep]:
     is_external: dict[str, bool] = {}
     internal_file: dict[str, str] = {}
     for (label, uid), props in ingestor.nodes.items():
-        if label != _MODULE:
+        external = label == _EXTERNAL_MODULE
+        if label != _MODULE and not external:
             continue
-        external = props.get(cs.KEY_IS_EXTERNAL) is True
         is_external[str(uid)] = external
         path = props.get(cs.KEY_PATH)
         if not external and path and str(path).endswith(ec.PY_SUFFIX):

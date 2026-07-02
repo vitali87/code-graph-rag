@@ -29,9 +29,7 @@ def _index(ingestor: MemgraphIngestor, project_path: Path, force: bool) -> None:
 
 
 def _external_module_qns(ingestor: MemgraphIngestor) -> set[str]:
-    rows = ingestor.fetch_all(
-        "MATCH (m:Module) WHERE m.is_external = true RETURN m.qualified_name AS qn"
-    )
+    rows = ingestor.fetch_all("MATCH (m:ExternalModule) RETURN m.qualified_name AS qn")
     return {r["qn"] for r in rows if r.get("qn")}
 
 

@@ -675,6 +675,7 @@ The knowledge graph uses the following node types and relationships:
 | ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
+| ExternalModule | `{qualified_name: string, name: string, path: string}` |
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
@@ -704,7 +705,7 @@ The knowledge graph uses the following node types and relationships:
 | Project, Package, Folder | CONTAINS_MODULE | Module |
 | Module | DEFINES | Class, Function |
 | Class | DEFINES_METHOD | Method |
-| Module | IMPORTS | Module |
+| Module | IMPORTS | Module, ExternalModule |
 | Module | EXPORTS | Class, Function |
 | Module | EXPORTS_MODULE | ModuleInterface |
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |

@@ -266,7 +266,7 @@ class TestCImportsRelationships:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         module_nodes = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
-        external_modules = [n for n in module_nodes if n[0][1].get(cs.KEY_IS_EXTERNAL)]
+        external_modules = get_nodes(mock_ingestor, cs.NodeLabel.EXTERNAL_MODULE)
         has_stdio = any("stdio" in str(n) for n in external_modules)
         has_utils = any(
             "utils" in n[0][1].get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes
