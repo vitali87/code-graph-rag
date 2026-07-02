@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -5,7 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType
+from codebase_rag.types_defs import NodeType, SimpleNameLookup
 
 
 class TestTrieOptimization:
@@ -63,6 +64,30 @@ class TestTrieOptimization:
 
         results = trie.find_ending_with("info")
         assert results == ["project.utils.logger.Logger.info"]
+
+    def test_find_ending_with_dotted_suffix_falls_back_to_scan(self) -> None:
+        # (H) #513: a dotted suffix ("Class.method") can never be a key in the
+        # (H) simple-name index (it only holds last segments), so a lookup miss
+        # (H) must fall back to the linear scan instead of returning [].
+        lookup: SimpleNameLookup = defaultdict(set)
+        trie = FunctionRegistryTrie(simple_name_lookup=lookup)
+        trie.insert("proj.mod.Class.method", NodeType.FUNCTION)
+        trie.insert("proj.other.Class.unrelated", NodeType.FUNCTION)
+
+        assert trie.find_ending_with("Class.method") == ["proj.mod.Class.method"]
+        # (H) dot-free misses stay on the O(1) path: the index holds every
+        # (H) entry's last segment, so a miss genuinely means no match.
+        assert trie.find_ending_with("missing") == []
+
+        # (H) cached dotted results must be invalidated by inserts/deletes
+        # (H) (incremental updates), not just simple-name cache entries.
+        trie.insert("pkg.sub.Class.method", NodeType.FUNCTION)
+        assert trie.find_ending_with("Class.method") == [
+            "pkg.sub.Class.method",
+            "proj.mod.Class.method",
+        ]
+        del trie["proj.mod.Class.method"]
+        assert trie.find_ending_with("Class.method") == ["pkg.sub.Class.method"]
 
     def test_trie_performance_optimization(self) -> None:
         """Test that Trie provides performance benefits over naive search."""
