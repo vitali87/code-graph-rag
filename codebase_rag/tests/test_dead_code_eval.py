@@ -328,6 +328,70 @@ def test_registration_decorated_nested_function_is_a_root() -> None:
     assert dead == {"proj.m.outer._unused"}
 
 
+def test_closure_of_dead_function_is_not_a_root() -> None:
+    # (H) The registration exemption is tied to a LIVE owner: when the enclosing
+    # (H) function is itself unreachable its decorated closure never registers, so
+    # (H) the closure and the helper only it calls are dead too, not hidden.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.main"),
+            _fn("proj.m.dead_outer"),
+            _fn("proj.m.dead_outer._ghost", decorators=["@bindings.add('c-x')"]),
+            _fn("proj.m.victim"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m.main"),
+        (
+            _FUNCTION,
+            "proj.m.dead_outer",
+            _DEFINES,
+            _FUNCTION,
+            "proj.m.dead_outer._ghost",
+        ),
+        (_FUNCTION, "proj.m.dead_outer._ghost", _CALLS, _FUNCTION, "proj.m.victim"),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {
+        "proj.m.dead_outer",
+        "proj.m.dead_outer._ghost",
+        "proj.m.victim",
+    }
+
+
+def test_closure_callee_of_live_function_stays_live() -> None:
+    # (H) The registered closure of a LIVE owner runs, so a helper reachable only
+    # (H) through the closure's calls is live as well.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.outer"),
+            _fn("proj.m.outer._submit", decorators=["@bindings.add('c-j')"]),
+            _fn("proj.m._only_from_closure"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m.outer"),
+        (_FUNCTION, "proj.m.outer", _DEFINES, _FUNCTION, "proj.m.outer._submit"),
+        (
+            _FUNCTION,
+            "proj.m.outer._submit",
+            _CALLS,
+            _FUNCTION,
+            "proj.m._only_from_closure",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == set()
+
+
 def test_typer_callback_decorator_is_a_root() -> None:
     # (H) typer invokes @app.callback() functions by registration, so the default
     # (H) decorator whitelist must seed them as roots (codebase_rag.cli shape).

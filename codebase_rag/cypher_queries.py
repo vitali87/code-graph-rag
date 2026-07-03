@@ -115,16 +115,9 @@ _DEAD_CODE_MODULE_ROOT_NON_TEST = (
     " WHERE NOT ANY(p IN $test_patterns WHERE m.path CONTAINS p) | 1]) > 0"
 )
 
-# (H) A decorated function DEFINED by a function/method (prompt_toolkit
-# (H) @bindings.add, MCP @server.list_tools, nested typer/click commands) is handed
-# (H) to a framework when the enclosing function runs, so it is a root: the
-# (H) decorator-name whitelist cannot enumerate every registration API. A method
-# (H) whose class INHERITS typing.Protocol is an interface stub; callers resolve to
-# (H) the implementations, never to the stub, so every Protocol method is a root.
-_DEAD_CODE_NESTED_REGISTRATION_CLAUSE = (
-    "(size(coalesce(n.decorators, [])) > 0"
-    " AND size([(n)<-[:DEFINES]-(:Function|Method) | 1]) > 0)"
-)
+# (H) A method whose class INHERITS typing.Protocol is an interface stub; callers
+# (H) resolve to the implementations, never to the stub, so every Protocol method
+# (H) is a root.
 _DEAD_CODE_PROTOCOL_STUB_CLAUSE = (
     "size([(n)<-[:DEFINES_METHOD]-(:Class)-[:INHERITS]->(p:Class)"
     " WHERE p.qualified_name IN [{protocol_bases}] | 1]) > 0"
@@ -142,6 +135,15 @@ _DEAD_CODE_PROTOCOL_STUB_CLAUSE = (
 # (H) excludes the source node, so the roots are unioned into the live set. The
 # (H) CASE keeps one row when there are no roots (UNWIND of [] yields zero rows,
 # (H) which would drop the final MATCH and wrongly report nothing as dead).
+# (H) After the base round, a second expansion roots decorated functions DEFINED
+# (H) by a LIVE function/method (prompt_toolkit @bindings.add, MCP
+# (H) @server.list_tools, nested typer/click commands): the enclosing function
+# (H) executes the registration, so the closure and its callees are live. The
+# (H) exemption is tied to owner liveness on purpose — a decorated closure of a
+# (H) DEAD owner never registers and is reported with its whole cluster.
+# (H) ponytail: one expansion round, so a registration chain nested two closures
+# (H) deep is missed; add a third round (or iterate to fixed point) if real code
+# (H) ever registers closures from inside registered closures.
 _DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (
@@ -149,7 +151,6 @@ WHERE n.qualified_name STARTS WITH $project_prefix
         WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
               IN $root_decorators)
     OR n.is_exported = true
-    OR {nested_registration_clause}
     OR {protocol_stub_clause}
     OR ('Method' IN labels(n)
         AND n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4
@@ -162,6 +163,16 @@ UNWIND (CASE WHEN size(roots) = 0 THEN [null] ELSE roots END) AS r
 OPTIONAL MATCH (r)-[:{traversal}*BFS]->(reached)
 WITH roots, collect(DISTINCT reached) AS reached_set
 WITH roots + reached_set AS live_set
+OPTIONAL MATCH (o:Function|Method)-[:DEFINES]->(c:Function|Method)
+WHERE o IN live_set AND size(coalesce(c.decorators, [])) > 0
+  AND NOT c IN live_set
+WITH live_set, collect(DISTINCT c) AS closure_roots
+UNWIND (
+  CASE WHEN size(closure_roots) = 0 THEN [null] ELSE closure_roots END
+) AS cr
+OPTIONAL MATCH (cr)-[:{traversal}*BFS]->(cr_reached)
+WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
+WITH live_set + closure_roots + cr_reached_set AS live_set
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set
@@ -192,7 +203,6 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
         traversal=traversal,
         module_clause=module_clause,
         test_clause=test_clause,
-        nested_registration_clause=_DEAD_CODE_NESTED_REGISTRATION_CLAUSE,
         protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
             protocol_bases=protocol_bases
         ),
