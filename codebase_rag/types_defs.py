@@ -614,6 +614,11 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.REFERENCES,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.INSTANTIATES,
         (NodeLabel.CLASS,),
     ),

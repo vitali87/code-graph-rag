@@ -303,3 +303,61 @@ def test_score_dead_code_prf() -> None:
     result = score_dead_code({"a", "b"}, {"a", "c"})
     row = result.rows[0]
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
+
+
+def test_referenced_function_is_reachable() -> None:
+    # (H) A function reachable only through a REFERENCES edge (passed as a callback
+    # (H) into first-party plumbing that stores it) is live; a sibling with no
+    # (H) inbound edge stays dead.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m._main"),
+            _fn("proj.m._main.create_context"),
+            _fn("proj.m._orphan"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m._main"),
+        (
+            _FUNCTION,
+            "proj.m._main",
+            cs.RelationshipType.REFERENCES.value,
+            _FUNCTION,
+            "proj.m._main.create_context",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert "proj.m._main.create_context" not in dead
+    assert "proj.m._orphan" in dead
+
+
+def _make_callback_repo(root: Path) -> None:
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "brrrlib.py").write_text(
+        "def with_brrr_from_cfg(cfg, handlers, create_context=None):\n"
+        "    cfg.ctx_factory = create_context\n"
+        "    return cfg\n",
+        encoding="utf-8",
+    )
+    (root / "worker.py").write_text(
+        "from proj.brrrlib import with_brrr_from_cfg\n\n\n"
+        "def main(cfg, handlers, extra):\n"
+        "    def create_context(active_worker, meta):\n"
+        "        return (active_worker, extra)\n"
+        "    return with_brrr_from_cfg(cfg, handlers, create_context=create_context)\n",
+        encoding="utf-8",
+    )
+
+
+def test_cgr_dead_code_keeps_stored_callback_alive(tmp_path: Path) -> None:
+    # (H) Full pipeline: a nested callback passed by keyword into first-party
+    # (H) plumbing that stores it must not be reported dead (create_context shape).
+    src = tmp_path / "proj"
+    _make_callback_repo(src)
+    dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
+    assert not any(qn.endswith("create_context") for qn in dead)
