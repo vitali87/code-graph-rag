@@ -85,9 +85,11 @@ def test_callback_kwarg_to_constructor_is_referenced(tmp_path: Path) -> None:
 
 
 def test_callback_to_misbound_external_method_is_referenced(tmp_path: Path) -> None:
-    # (H) df.apply is external (pandas), but a same-named first-party method makes the
-    # (H) trie bind the call to it; the passed callback must STILL be referenced from
-    # (H) the passing scope (build_suggestion shape).
+    # (H) df arrives as an UNTYPED parameter, so the trie binds df.apply by bare name
+    # (H) to a same-named first-party method; the passed callback must STILL be
+    # (H) referenced from the passing scope (build_suggestion shape). A locally
+    # (H) constructed receiver (df = pd.DataFrame(...)) is instead typed external and
+    # (H) suppressed outright -- covered in test_external_receiver_misbind.py.
     files = {
         "strategies.py": (
             "class BatchingStrategyBase:\n"
@@ -95,9 +97,7 @@ def test_callback_to_misbound_external_method_is_referenced(tmp_path: Path) -> N
             "        return batch\n"
         ),
         "report.py": (
-            "import pandas as pd\n\n"
-            "def write_report(results):\n"
-            "    df = pd.DataFrame(results)\n"
+            "def write_report(df):\n"
             "    def build_suggestion(row):\n"
             "        return row\n"
             "    df['suggestions'] = df.apply(build_suggestion, axis=1)\n"
