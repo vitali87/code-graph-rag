@@ -182,3 +182,24 @@ def test_function_assigned_to_object_attribute_is_referenced(tmp_path: Path) -> 
         cs.RelationshipType.CALLS.value,
         "MockHTTPRouter._handle_post",
     )
+
+
+def test_monkeypatch_assignment_is_referenced(tmp_path: Path) -> None:
+    # (H) A function assigned over a third-party attribute chain
+    # (H) (genai.Client.__init__ = _vertex_ai_client_init) is invoked by the
+    # (H) patched class later; the assignment must reference it
+    # (H) (_vertex_ai_client_init shape).
+    files = {
+        "helpers.py": (
+            "import google.genai as genai_client\n\n"
+            "def _vertex_ai_client_init(self, **kwargs):\n"
+            "    kwargs.pop('api_key', None)\n"
+            "    return None\n\n"
+            "def install_patch():\n"
+            "    genai_client.Client.__init__ = _vertex_ai_client_init\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "helpers.install_patch", REFERENCES, "helpers._vertex_ai_client_init"
+    )
