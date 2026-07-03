@@ -427,6 +427,17 @@ class CallProcessor:
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
             if language == cs.SupportedLanguage.PYTHON:
+                # (H) A module-scope first-class assignment (registry_handler =
+                # (H) handle_event) references its target even in a file with no
+                # (H) call expressions, so scan before the no-calls early return.
+                self._ingest_assignment_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
                 decorator_targets = list(sorted_func_nodes or [])
                 if combined_captures and (
                     class_nodes := combined_captures.get(cs.CAPTURE_CLASS)

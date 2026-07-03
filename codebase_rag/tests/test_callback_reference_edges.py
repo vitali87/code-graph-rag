@@ -203,3 +203,20 @@ def test_monkeypatch_assignment_is_referenced(tmp_path: Path) -> None:
     assert _has(
         rels, "helpers.install_patch", REFERENCES, "helpers._vertex_ai_client_init"
     )
+
+
+def test_module_level_assignment_in_callless_module_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # (H) A module whose ONLY statement is a first-class function assignment (no call
+    # (H) expressions at all) must still emit the Module -> REFERENCES edge; the
+    # (H) call-driven pass early-returns on such modules, so the assignment scan has
+    # (H) to run before it.
+    files = {
+        "handlers.py": "def handle_event(evt):\n    return evt\n",
+        "registry.py": (
+            "from handlers import handle_event\n\nregistry_handler = handle_event\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "registry", REFERENCES, "handlers.handle_event")
