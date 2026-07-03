@@ -135,20 +135,6 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
 
-    def _traverse_for_assignments(
-        self,
-        node: Node,
-        local_var_types: dict[str, str],
-        module_qn: str,
-        processor: Callable[[Node, dict[str, str], str], None],
-    ) -> None:
-        stack: list[Node] = [node]
-        while stack:
-            current = stack.pop()
-            if current.type == cs.TS_PY_ASSIGNMENT:
-                processor(current, local_var_types, module_qn)
-            stack.extend(reversed(current.children))
-
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
