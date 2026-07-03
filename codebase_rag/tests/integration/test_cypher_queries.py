@@ -397,13 +397,13 @@ class TestBuildDeadCodeQueryUnit:
         # (H) substring check would no longer prove class traversal is off.
         with_classes = build_dead_code_query(include_tests=False, include_classes=True)
         assert "Function|Method|Class" in with_classes
-        assert "CALLS|INSTANTIATES|INHERITS*BFS" in with_classes
+        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" in with_classes
 
         without_classes = build_dead_code_query(
             include_tests=False, include_classes=False
         )
         assert "Function|Method|Class" not in without_classes
-        assert "CALLS|INSTANTIATES|INHERITS*BFS" not in without_classes
+        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" not in without_classes
 
 
 @pytest.mark.integration
