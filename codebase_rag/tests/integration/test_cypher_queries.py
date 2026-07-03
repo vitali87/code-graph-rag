@@ -392,15 +392,18 @@ class TestBuildDeadCodeQueryUnit:
             assert any(p in path for p in TEST_PATH_PATTERNS), path
 
     def test_include_classes_adds_class_candidates(self) -> None:
+        # (H) the INHERITS check targets the *BFS traversal set: the protocol-stub
+        # (H) root clause mentions INHERITS in every query variant, so a bare
+        # (H) substring check would no longer prove class traversal is off.
         with_classes = build_dead_code_query(include_tests=False, include_classes=True)
         assert "Function|Method|Class" in with_classes
-        assert "INHERITS" in with_classes
+        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" in with_classes
 
         without_classes = build_dead_code_query(
             include_tests=False, include_classes=False
         )
         assert "Function|Method|Class" not in without_classes
-        assert "INHERITS" not in without_classes
+        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" not in without_classes
 
 
 @pytest.mark.integration
@@ -644,6 +647,77 @@ class TestBuildDeadCodeQueryIntegration:
         assert {r["qualified_name"] for r in results} == {
             "proj.mod.a",
             "proj.mod.b",
+        }
+
+    def test_registration_closure_and_protocol_stub_are_roots(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # (H) a decorated closure DEFINED by a LIVE function (prompt_toolkit
+        # (H) @bindings.add, MCP @server.list_tools) is registered when the enclosing
+        # (H) function runs, and it keeps its own callees live; a method of a
+        # (H) typing.Protocol subclass is an interface stub whose callers resolve to
+        # (H) the implementations. Neither is dead, while an undecorated closure, a
+        # (H) plain private method, and the whole cluster under a DEAD enclosing
+        # (H) function (owner, decorated closure, closure-only callee) are.
+        memgraph_ingestor._execute_query(
+            "CREATE "
+            "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
+            "(outer:Function {qualified_name: 'proj.mod.outer', name: 'outer', "
+            "  start_line: 1, end_line: 8, decorators: [], path: 'proj/mod.py'}), "
+            "(submit:Function {qualified_name: 'proj.mod.outer._submit', "
+            "  name: '_submit', start_line: 2, end_line: 3, "
+            "  decorators: ['@bindings.add(\"c-j\")'], path: 'proj/mod.py'}), "
+            "(unused:Function {qualified_name: 'proj.mod.outer._unused', "
+            "  name: '_unused', start_line: 5, end_line: 6, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(proto:Class {qualified_name: 'typing.Protocol', name: 'Protocol'}), "
+            "(loadable:Class {qualified_name: 'proj.mod.Loadable', "
+            "  name: 'Loadable', path: 'proj/mod.py'}), "
+            "(stub:Method {qualified_name: 'proj.mod.Loadable._ensure_loaded', "
+            "  name: '_ensure_loaded', start_line: 10, end_line: 10, "
+            "  decorators: [], path: 'proj/mod.py'}), "
+            "(plain:Class {qualified_name: 'proj.mod.Plain', name: 'Plain', "
+            "  path: 'proj/mod.py'}), "
+            "(helper:Method {qualified_name: 'proj.mod.Plain._helper', "
+            "  name: '_helper', start_line: 12, end_line: 13, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(live_callee:Function {qualified_name: 'proj.mod._only_from_closure', "
+            "  name: '_only_from_closure', start_line: 15, end_line: 16, "
+            "  decorators: [], path: 'proj/mod.py'}), "
+            "(dead_outer:Function {qualified_name: 'proj.mod.dead_outer', "
+            "  name: 'dead_outer', start_line: 18, end_line: 24, decorators: [], "
+            "  path: 'proj/mod.py'}), "
+            "(ghost:Function {qualified_name: 'proj.mod.dead_outer._ghost', "
+            "  name: '_ghost', start_line: 19, end_line: 20, "
+            "  decorators: ['@bindings.add(\"c-x\")'], path: 'proj/mod.py'}), "
+            "(victim:Function {qualified_name: 'proj.mod.victim', name: 'victim', "
+            "  start_line: 26, end_line: 27, decorators: [], path: 'proj/mod.py'}), "
+            "(m)-[:CALLS]->(outer), "
+            "(outer)-[:DEFINES]->(submit), "
+            "(outer)-[:DEFINES]->(unused), "
+            "(submit)-[:CALLS]->(live_callee), "
+            "(dead_outer)-[:DEFINES]->(ghost), "
+            "(ghost)-[:CALLS]->(victim), "
+            "(loadable)-[:INHERITS]->(proto), "
+            "(loadable)-[:DEFINES_METHOD]->(stub), "
+            "(plain)-[:DEFINES_METHOD]->(helper)"
+        )
+        params: dict[str, PropertyValue] = {
+            "project_prefix": "proj.",
+            "root_decorators": [],
+            "entry_points": [],
+            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
+        }
+
+        results = memgraph_ingestor._execute_query(
+            build_dead_code_query(include_tests=False), params
+        )
+        assert {r["qualified_name"] for r in results} == {
+            "proj.mod.outer._unused",
+            "proj.mod.Plain._helper",
+            "proj.mod.dead_outer",
+            "proj.mod.dead_outer._ghost",
+            "proj.mod.victim",
         }
 
     def test_module_load_callee_is_a_root(

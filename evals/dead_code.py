@@ -33,6 +33,8 @@ _CALLS = cs.RelationshipType.CALLS.value
 _REFERENCES = cs.RelationshipType.REFERENCES.value
 _INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _INHERITS = cs.RelationshipType.INHERITS.value
+_DEFINES = cs.RelationshipType.DEFINES.value
+_DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 _NodeId = tuple[str, PropertyValue]
@@ -84,6 +86,16 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
 
 
+def _walk(frontier: set[str], adjacency: dict[str, set[str]], live: set[str]) -> None:
+    stack = list(frontier)
+    while stack:
+        current = stack.pop()
+        for nxt in adjacency.get(current, ()):
+            if nxt not in live:
+                live.add(nxt)
+                stack.append(nxt)
+
+
 def dead_code_from_graph(
     nodes: dict[_NodeId, PropertyDict],
     rels: list[_RelTuple],
@@ -112,7 +124,20 @@ def dead_code_from_graph(
                 method_qns.add(str(uid))
 
     roots: set[str] = set()
+    # (H) Mirror the query's protocol root clause and closure expansion inputs: a
+    # (H) method of a typing.Protocol subclass is an interface stub whose callers
+    # (H) resolve to the implementations, and DEFINES edges from functions/methods
+    # (H) feed the live-owner registration round below.
+    defines_pairs: list[tuple[str, str]] = []
+    protocol_classes: set[str] = set()
+    class_methods: list[tuple[str, str]] = []
     for from_label, from_val, rel_type, _to_label, to_val in rels:
+        if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
+            defines_pairs.append((str(from_val), str(to_val)))
+        elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
+            protocol_classes.add(str(from_val))
+        elif rel_type == _DEFINES_METHOD:
+            class_methods.append((str(from_val), str(to_val)))
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
@@ -122,6 +147,7 @@ def dead_code_from_graph(
         is_test = any(pattern in path for pattern in config.test_patterns)
         if config.include_tests or not is_test:
             roots.add(target_qn)
+    protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
 
     for qn in candidates:
         if qn in roots:
@@ -130,6 +156,8 @@ def dead_code_from_graph(
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
+            roots.add(qn)
+        elif qn in protocol_stubs:
             roots.add(qn)
         elif (
             qn in method_qns
@@ -151,13 +179,23 @@ def dead_code_from_graph(
             adjacency[str(from_val)].add(str(to_val))
 
     live = set(roots)
-    stack = list(roots)
-    while stack:
-        current = stack.pop()
-        for nxt in adjacency.get(current, ()):
-            if nxt not in live:
-                live.add(nxt)
-                stack.append(nxt)
+    _walk(roots, adjacency, live)
+
+    # (H) Second expansion, mirroring the query: a decorated function DEFINED by a
+    # (H) LIVE owner is framework-registered when the owner runs, so it and its
+    # (H) callees are live; the closure of a DEAD owner never registers and stays
+    # (H) in the reported cluster. ponytail: one round, same depth-2 ceiling as the
+    # (H) Cypher template (see _DEAD_CODE_QUERY_TEMPLATE).
+    closure_roots = {
+        c
+        for o, c in defines_pairs
+        if o in live
+        and c not in live
+        and c in props_by_qn
+        and props_by_qn[c].get(cs.KEY_DECORATORS)
+    }
+    live |= closure_roots
+    _walk(closure_roots, adjacency, live)
 
     return candidates - live
 
