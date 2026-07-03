@@ -106,15 +106,19 @@ jobs:
         run: |
           uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --group dev
 
+      # (H) --no-sync is required: a bare `uv run` re-syncs to .python-version
+      # (H) (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
+      # (H) where interpreter discovery mismatches the venv) it silently rebuilds
+      # (H) the venv without the test extra and pytest loses the xdist -n flag.
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
-          uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
         if: matrix.os != 'macos-latest' || matrix.python-version != '3.12'
         run: |
-          uv run pytest -n auto -m "not integration" --tb=short
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short
 
       - name: Upload coverage to Codecov
         if: always() && matrix.os == 'macos-latest' && matrix.python-version == '3.12'
