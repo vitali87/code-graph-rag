@@ -30,6 +30,7 @@ _FUNCTION = cs.NodeLabel.FUNCTION.value
 _METHOD = cs.NodeLabel.METHOD.value
 _CLASS = cs.NodeLabel.CLASS.value
 _CALLS = cs.RelationshipType.CALLS.value
+_REFERENCES = cs.RelationshipType.REFERENCES.value
 _INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
@@ -102,8 +103,8 @@ def dead_code_from_graph(
     config: DeadCodeConfig,
 ) -> set[str]:
     labels = {_FUNCTION, _METHOD}
-    traversal = {_CALLS}
-    module_rels = {_CALLS}
+    traversal = {_CALLS, _REFERENCES}
+    module_rels = {_CALLS, _REFERENCES}
     if config.include_classes:
         labels.add(_CLASS)
         traversal |= {_INSTANTIATES, _INHERITS}

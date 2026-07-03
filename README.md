@@ -715,6 +715,7 @@ The knowledge graph uses the following node types and relationships:
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Function, Method | CALLS | Function, Method |
+| Module, Function, Method | REFERENCES | Function, Method |
 | Module, Function, Method | INSTANTIATES | Class |
 <!-- /SECTION:relationship_schemas -->
 

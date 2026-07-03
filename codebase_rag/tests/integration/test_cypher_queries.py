@@ -355,8 +355,9 @@ class TestBuildDeadCodeQueryUnit:
         assert "$entry_points" in query
         assert "is_exported" in query
         # (H) BFS expansion: visits each reachable node once instead of
-        # (H) enumerating every path (which times out on real graphs).
-        assert "CALLS*BFS" in query
+        # (H) enumerating every path (which times out on real graphs). REFERENCES
+        # (H) (a function passed/stored as a value) keeps callbacks reachable.
+        assert "CALLS|REFERENCES*BFS" in query
         # (H) test functions are roots when tests are included
         assert "n.path CONTAINS" in query
 
@@ -376,7 +377,7 @@ class TestBuildDeadCodeQueryUnit:
 
         # (H) a function called by a Module node runs at import, so it is a root
         assert "Module" in query
-        assert "[:CALLS]-(" in query
+        assert "[:CALLS|REFERENCES]-(" in query
 
     def test_test_patterns_cover_js_ts_convention(self) -> None:
         from codebase_rag.constants import TEST_PATH_PATTERNS

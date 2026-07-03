@@ -185,12 +185,12 @@ ORDER BY qualified_name"""
 def build_dead_code_query(include_tests: bool, include_classes: bool = False) -> str:
     if include_classes:
         labels = "Function|Method|Class"
-        traversal = "CALLS|INSTANTIATES|INHERITS"
-        module_rels = "CALLS|INSTANTIATES"
+        traversal = "CALLS|REFERENCES|INSTANTIATES|INHERITS"
+        module_rels = "CALLS|REFERENCES|INSTANTIATES"
     else:
         labels = "Function|Method"
-        traversal = "CALLS"
-        module_rels = "CALLS"
+        traversal = "CALLS|REFERENCES"
+        module_rels = "CALLS|REFERENCES"
     if include_tests:
         module_clause = _DEAD_CODE_MODULE_ROOT_ANY.format(module_rels=module_rels)
         test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE

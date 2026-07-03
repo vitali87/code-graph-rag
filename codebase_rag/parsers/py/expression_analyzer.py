@@ -67,14 +67,28 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and func_node.type == cs.TS_PY_ATTRIBUTE
                 and (method_call_text := self._extract_full_method_call(func_node))
             ):
-                return self._infer_method_call_return_type(
+                if inferred := self._infer_method_call_return_type(
                     method_call_text, module_qn, None
-                )
+                ):
+                    return inferred
+                return self._attribute_constructor_type(method_call_text)
 
         elif node.type == cs.TS_PY_LIST_COMPREHENSION:
             if body_node := node.child_by_field_name(cs.TS_FIELD_BODY):
                 return self._infer_type_from_expression(body_node, module_qn)
 
+        return None
+
+    def _attribute_constructor_type(self, method_call_text: str) -> str | None:
+        # (H) alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
+        # (H) genai.Client, models.Helper), not a method call: the variable's type is
+        # (H) the dotted class itself. Without this the receiver stays untyped, the
+        # (H) known-external suppression cannot fire, and a later member call on it
+        # (H) (df.apply) rebinds by bare name to an unrelated first-party method.
+        # (H) Mirrors the bare `ClassName(...)` uppercase heuristic.
+        simple_name = method_call_text.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if simple_name and simple_name[0].isupper():
+            return method_call_text
         return None
 
     def _infer_type_from_expression_simple(
@@ -107,9 +121,11 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and func_node.type == cs.TS_PY_ATTRIBUTE
                 and (method_call_text := self._extract_full_method_call(func_node))
             ):
-                return self._infer_method_call_return_type(
+                if inferred := self._infer_method_call_return_type(
                     method_call_text, module_qn, local_var_types
-                )
+                ):
+                    return inferred
+                return self._attribute_constructor_type(method_call_text)
 
         return None
 

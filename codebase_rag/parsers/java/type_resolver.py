@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
     from ..import_processor import ImportProcessor
 
+# (H) Node types an imported Java name can declare (records and annotation types
+# (H) register as CLASS).
+_JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+
 
 class JavaTypeResolverMixin:
     __slots__ = ()
@@ -101,6 +105,27 @@ class JavaTypeResolverMixin:
 
         return []
 
+    def _imported_class_qn(self, target: str, type_name: str) -> str:
+        # (H) A LOCAL Java import is recorded as the imported file's MODULE qn
+        # (H) (repo.com.foo.util.Helper), but the registered class qn duplicates the
+        # (H) class segment (repo.com.foo.util.Helper.Helper); the raw target then
+        # (H) dead-ends because the project prefix also disables the fqn-map
+        # (H) fallback. Append the imported simple name when THAT is the registered
+        # (H) class. Registry-guarded, so targets that are already class qns and
+        # (H) external fqns pass through unchanged.
+        if (
+            target in self.function_registry
+            and self.function_registry[target] in _JAVA_TYPE_DECL_NODE_TYPES
+        ):
+            return target
+        class_qn = f"{target}{cs.SEPARATOR_DOT}{type_name}"
+        if (
+            class_qn in self.function_registry
+            and self.function_registry[class_qn] in _JAVA_TYPE_DECL_NODE_TYPES
+        ):
+            return class_qn
+        return target
+
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
         if not type_name:
             return cs.JAVA_TYPE_OBJECT
@@ -126,7 +151,7 @@ class JavaTypeResolverMixin:
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if type_name in import_map:
-                return import_map[type_name]
+                return self._imported_class_qn(import_map[type_name], type_name)
 
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
         if same_package_qn in self.function_registry and self.function_registry[

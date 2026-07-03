@@ -38,6 +38,9 @@ class JavaMethodResolverMixin:
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
 
     @abstractmethod
+    def _imported_class_qn(self, target: str, type_name: str) -> str: ...
+
+    @abstractmethod
     def _rank_module_candidates(
         self, candidates: list[str], class_qn: str, current_module_qn: str | None
     ) -> list[str]: ...
@@ -109,7 +112,7 @@ class JavaMethodResolverMixin:
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if object_ref in import_map:
-                return import_map[object_ref]
+                return self._imported_class_qn(import_map[object_ref], object_ref)
 
         simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
