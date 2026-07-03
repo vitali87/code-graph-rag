@@ -715,6 +715,7 @@ The knowledge graph uses the following node types and relationships:
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Function, Method | CALLS | Function, Method |
+| Module, Function, Method | REFERENCES | Function, Method |
 | Module, Function, Method | INSTANTIATES | Class |
 <!-- /SECTION:relationship_schemas -->
 
@@ -778,7 +779,7 @@ docs/*.md
 <!-- SECTION:dependencies -->
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
-- **pydantic-ai**: Agent Framework / shim to use Pydantic with LLMs
+- **pydantic-ai**: AI Agent Framework, the Pydantic way
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
