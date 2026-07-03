@@ -1,4 +1,4 @@
-from .constants import CYPHER_DEFAULT_LIMIT
+from .constants import CYPHER_DEFAULT_LIMIT, PROTOCOL_BASE_QNS
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
@@ -115,6 +115,21 @@ _DEAD_CODE_MODULE_ROOT_NON_TEST = (
     " WHERE NOT ANY(p IN $test_patterns WHERE m.path CONTAINS p) | 1]) > 0"
 )
 
+# (H) A decorated function DEFINED by a function/method (prompt_toolkit
+# (H) @bindings.add, MCP @server.list_tools, nested typer/click commands) is handed
+# (H) to a framework when the enclosing function runs, so it is a root: the
+# (H) decorator-name whitelist cannot enumerate every registration API. A method
+# (H) whose class INHERITS typing.Protocol is an interface stub; callers resolve to
+# (H) the implementations, never to the stub, so every Protocol method is a root.
+_DEAD_CODE_NESTED_REGISTRATION_CLAUSE = (
+    "(size(coalesce(n.decorators, [])) > 0"
+    " AND size([(n)<-[:DEFINES]-(:Function|Method) | 1]) > 0)"
+)
+_DEAD_CODE_PROTOCOL_STUB_CLAUSE = (
+    "size([(n)<-[:DEFINES_METHOD]-(:Class)-[:INHERITS]->(p:Class)"
+    " WHERE p.qualified_name IN [{protocol_bases}] | 1]) > 0"
+)
+
 # (H) Reachability walks CALLS only by default. With classes included it also
 # (H) walks INSTANTIATES (construction keeps a class live) and INHERITS forward
 # (H) from subclass to base, so a base is kept live only by a REACHABLE subclass.
@@ -134,6 +149,8 @@ WHERE n.qualified_name STARTS WITH $project_prefix
         WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
               IN $root_decorators)
     OR n.is_exported = true
+    OR {nested_registration_clause}
+    OR {protocol_stub_clause}
     OR ('Method' IN labels(n)
         AND n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4
         AND n.path ENDS WITH '.py')
@@ -169,11 +186,16 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
     else:
         module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST.format(module_rels=module_rels)
         test_clause = ""
+    protocol_bases = ", ".join(f"'{qn}'" for qn in PROTOCOL_BASE_QNS)
     return _DEAD_CODE_QUERY_TEMPLATE.format(
         labels=labels,
         traversal=traversal,
         module_clause=module_clause,
         test_clause=test_clause,
+        nested_registration_clause=_DEAD_CODE_NESTED_REGISTRATION_CLAUSE,
+        protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
+            protocol_bases=protocol_bases
+        ),
     )
 
 

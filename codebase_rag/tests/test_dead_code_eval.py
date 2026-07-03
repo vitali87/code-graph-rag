@@ -11,7 +11,11 @@ from evals.dead_code import (
 
 _MODULE = cs.NodeLabel.MODULE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
+_CLASS = cs.NodeLabel.CLASS.value
 _CALLS = cs.RelationshipType.CALLS.value
+_DEFINES = cs.RelationshipType.DEFINES.value
+_DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
+_INHERITS = cs.RelationshipType.INHERITS.value
 _PREFIX = "proj."
 _CONFIG = DeadCodeConfig(
     include_tests=False,
@@ -297,6 +301,121 @@ def test_abstract_method_is_a_root() -> None:
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, config)
     assert dead == set()
+
+
+def test_registration_decorated_nested_function_is_a_root() -> None:
+    # (H) A decorated function nested inside another function (prompt_toolkit
+    # (H) @bindings.add, MCP @server.list_tools) is handed to a framework when the
+    # (H) enclosing function runs, so it is live regardless of the decorator-name
+    # (H) whitelist; an undecorated uncalled sibling closure stays dead.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.outer"),
+            _fn("proj.m.outer._submit", decorators=["@bindings.add('c-j')"]),
+            _fn("proj.m.outer._unused"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m.outer"),
+        (_FUNCTION, "proj.m.outer", _DEFINES, _FUNCTION, "proj.m.outer._submit"),
+        (_FUNCTION, "proj.m.outer", _DEFINES, _FUNCTION, "proj.m.outer._unused"),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.outer._unused"}
+
+
+def test_typer_callback_decorator_is_a_root() -> None:
+    # (H) typer invokes @app.callback() functions by registration, so the default
+    # (H) decorator whitelist must seed them as roots (codebase_rag.cli shape).
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m._global_options", decorators=["@app.callback()"]),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, config)
+    assert dead == set()
+
+
+def _class(uid: str, path: str = "m.py") -> tuple:
+    return (
+        (_CLASS, uid),
+        {cs.KEY_QUALIFIED_NAME: uid, cs.KEY_PATH: path},
+    )
+
+
+def test_protocol_stub_method_is_a_root() -> None:
+    # (H) A method of a typing.Protocol subclass is an interface stub; callers are
+    # (H) traced to the implementations, never to the stub itself, so the stub must
+    # (H) not be reported dead while a plain class's uncalled private method is.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _class("proj.m.Loadable"),
+            _class("proj.m.Plain"),
+            _method("proj.m.Loadable._ensure_loaded"),
+            _method("proj.m.Plain._helper"),
+        ]
+    )
+    rels = [
+        (_CLASS, "proj.m.Loadable", _INHERITS, _CLASS, "typing.Protocol"),
+        (
+            _CLASS,
+            "proj.m.Loadable",
+            _DEFINES_METHOD,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Loadable._ensure_loaded",
+        ),
+        (
+            _CLASS,
+            "proj.m.Plain",
+            _DEFINES_METHOD,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Plain._helper",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.Plain._helper"}
+
+
+def _make_registration_repo(root: Path) -> None:
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "m.py").write_text(
+        "from typing import Protocol\n\n\n"
+        "class Loadable(Protocol):\n"
+        "    def _ensure_loaded(self) -> None: ...\n\n\n"
+        "def get_input(bindings):\n"
+        "    @bindings.add('c-j')\n"
+        "    def _submit(event):\n"
+        "        return event\n"
+        "    return bindings\n\n\n"
+        "get_input(None)\n",
+        encoding="utf-8",
+    )
+
+
+def test_cgr_dead_code_keeps_registration_closures_and_protocol_stubs(
+    tmp_path: Path,
+) -> None:
+    # (H) Full parse -> graph -> reachability: the @bindings.add closure and the
+    # (H) Protocol stub must not be flagged (the 2026-07-03 false-positive shapes).
+    src = tmp_path / "proj"
+    _make_registration_repo(src)
+    dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
+    assert "proj.m.get_input._submit" not in dead
+    assert "proj.m.Loadable._ensure_loaded" not in dead
 
 
 def test_score_dead_code_prf() -> None:

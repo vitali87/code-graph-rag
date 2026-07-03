@@ -32,6 +32,8 @@ _CLASS = cs.NodeLabel.CLASS.value
 _CALLS = cs.RelationshipType.CALLS.value
 _INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _INHERITS = cs.RelationshipType.INHERITS.value
+_DEFINES = cs.RelationshipType.DEFINES.value
+_DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 _NodeId = tuple[str, PropertyValue]
@@ -111,7 +113,20 @@ def dead_code_from_graph(
                 method_qns.add(str(uid))
 
     roots: set[str] = set()
+    # (H) Mirror the query's registration/protocol root clauses: a decorated
+    # (H) function DEFINED by a function/method is handed to a framework when the
+    # (H) enclosing function runs, and a method of a typing.Protocol subclass is an
+    # (H) interface stub whose callers resolve to the implementations.
+    callable_defined: set[str] = set()
+    protocol_classes: set[str] = set()
+    class_methods: list[tuple[str, str]] = []
     for from_label, from_val, rel_type, _to_label, to_val in rels:
+        if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
+            callable_defined.add(str(to_val))
+        elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
+            protocol_classes.add(str(from_val))
+        elif rel_type == _DEFINES_METHOD:
+            class_methods.append((str(from_val), str(to_val)))
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
@@ -121,6 +136,7 @@ def dead_code_from_graph(
         is_test = any(pattern in path for pattern in config.test_patterns)
         if config.include_tests or not is_test:
             roots.add(target_qn)
+    protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
 
     for qn in candidates:
         if qn in roots:
@@ -129,6 +145,10 @@ def dead_code_from_graph(
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
+            roots.add(qn)
+        elif qn in callable_defined and props.get(cs.KEY_DECORATORS):
+            roots.add(qn)
+        elif qn in protocol_stubs:
             roots.add(qn)
         elif (
             qn in method_qns
