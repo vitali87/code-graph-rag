@@ -1022,6 +1022,15 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
+            self._ingest_assignment_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                caller_qn,
+            )
         # (H) Dispatch-table handler references, for every flow language. Module-scope
         # (H) literals are scanned explicitly in process_calls_in_file (before the
         # (H) no-calls early return), so only nested scopes here.
@@ -1211,6 +1220,23 @@ class CallProcessor:
                     module_qn,
                     local_var_types,
                     class_context,
+                )
+                # (H) Functions are first-class values: a first-party callee may STORE
+                # (H) a passed callback for later dynamic dispatch (config objects,
+                # (H) codecs, registries), which callable-param flow cannot trace, or
+                # (H) the callee may even be a same-named misbind of an external
+                # (H) method. Record the pass itself as a REFERENCES edge from the
+                # (H) passing scope so the callback is never reported dead.
+                self._ingest_argument_function_references(
+                    call_node,
+                    caller_spec,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                    caller_qn,
+                    cs.RelationshipType.REFERENCES,
                 )
 
             if is_python and (
@@ -1443,6 +1469,48 @@ class CallProcessor:
                     (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
         return True
+
+    def _ingest_assignment_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+    ) -> None:
+        # (H) `x = some_function` binds a first-class function value to a name; the
+        # (H) alias is then stored, passed onward, or returned for dynamic dispatch
+        # (H) (http_callback = llm_http_task_closure_with_context), so the assignment
+        # (H) itself references the function and must keep it reachable. Only a plain
+        # (H) name/attribute RHS counts (calls resolve as calls); the walk stops at
+        # (H) nested scope boundaries, which own their own pass.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types:
+                continue
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if right is not None and right.type in (
+                    cs.TS_PY_IDENTIFIER,
+                    cs.TS_PY_ATTRIBUTE,
+                ):
+                    self._emit_callback_edge(
+                        caller_spec,
+                        right,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                        cs.RelationshipType.REFERENCES,
+                    )
+            stack.extend(node.children)
 
     def _ingest_collection_function_references(
         self,
@@ -1743,6 +1811,7 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
         caller_qn: str | None = None,
+        rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
         if not (arg_text := safe_decode_text(arg_node)):
             return
@@ -1763,7 +1832,7 @@ class CallProcessor:
         for target_qn in registry.variants(res_qn):
             ensure_rel(
                 source_spec,
-                cs.RelationshipType.CALLS,
+                rel_type,
                 (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
@@ -2010,10 +2079,15 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
         caller_qn: str | None = None,
+        rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
-        # (H) For a call whose callee is not first-party, a function/method passed as
-        # (H) an argument is handed off to be invoked by that external callee; emit a
-        # (H) reference edge from the enclosing scope so it stays reachable.
+        # (H) A function/method passed as an argument is a first-class value the
+        # (H) callee may invoke (external framework) or store for later dynamic
+        # (H) dispatch (first-party plumbing); either way the passing scope holds a
+        # (H) live reference, so emit an edge to keep the callback reachable.
+        # (H) External/builtin callees keep the historical CALLS edge; first-party
+        # (H) callees record the pass as REFERENCES (the precise invocation edge, if
+        # (H) any, comes from callable-param flow).
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
             self._emit_callback_edge(
@@ -2025,6 +2099,7 @@ class CallProcessor:
                 resolve_func,
                 ensure_rel,
                 caller_qn,
+                rel_type,
             )
 
     def _build_local_alias_map(

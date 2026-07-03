@@ -553,6 +553,7 @@ class RelationshipType(StrEnum):
     IMPLEMENTS = "IMPLEMENTS"
     OVERRIDES = "OVERRIDES"
     CALLS = "CALLS"
+    REFERENCES = "REFERENCES"
     INSTANTIATES = "INSTANTIATES"
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
 
@@ -1167,7 +1168,7 @@ CYPHER_ALL_DEFINITION_QNS = (
 # (H) cgr's call resolution is context-sensitive (protocol vs concrete receiver,
 # (H) import granularity); the original edges already match a clean re-index.
 CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
+    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
