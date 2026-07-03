@@ -220,3 +220,19 @@ def test_module_level_assignment_in_callless_module_is_referenced(
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, "registry", REFERENCES, "handlers.handle_event")
+
+
+def test_annotated_assignment_is_referenced(tmp_path: Path) -> None:
+    # (H) An annotated assignment (handler: Callable = handle_event) parses as the
+    # (H) same tree-sitter `assignment` node with an extra type child; the walker
+    # (H) must reference its RHS exactly like an unannotated one.
+    files = {
+        "handlers.py": "def handle_event(evt):\n    return evt\n",
+        "registry.py": (
+            "from typing import Callable\n"
+            "from handlers import handle_event\n\n"
+            "handler: Callable = handle_event\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "registry", REFERENCES, "handlers.handle_event")
