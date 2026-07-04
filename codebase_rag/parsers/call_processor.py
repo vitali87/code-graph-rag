@@ -16,6 +16,7 @@ from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
+from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -907,6 +908,13 @@ class CallProcessor:
         # (H) their calls bubble up instead of dropping.
         owned_func_nodes = self._js_ts_attributable_nodes(method_nodes, language)
         for method_node in method_nodes:
+            # (H) The body byte-range slice also captures functions of a NESTED
+            # (H) class (Outer body contains Inner.run); those belong to the
+            # (H) nested class and are processed when it is iterated, so skip any
+            # (H) whose nearest enclosing class is not this one (else run would
+            # (H) also emit as the phantom Outer.run).
+            if not self._method_in_class_body(method_node, body_node, lang_config):
+                continue
             if language in _C_FAMILY_LANGUAGES:
                 method_name = cpp_utils.extract_function_name(method_node)
             else:
@@ -983,6 +991,26 @@ class CallProcessor:
         param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
         return f"{name}{param_sig}"
 
+    @staticmethod
+    def _method_in_class_body(
+        method_node: Node, class_body: Node, lang_config: LanguageSpec
+    ) -> bool:
+        # (H) True when method_node's nearest enclosing class is the one whose
+        # (H) body is class_body: walk up, and the first class ancestor's body
+        # (H) must be this body (compared by byte span). A method with no
+        # (H) enclosing class (out-of-class C++ definition captured elsewhere)
+        # (H) returns True so existing handling is unaffected.
+        current = method_node.parent
+        while current is not None:
+            if current.type in lang_config.class_node_types:
+                body = current.child_by_field_name(cs.FIELD_BODY)
+                return body is not None and (
+                    body.start_byte == class_body.start_byte
+                    and body.end_byte == class_body.end_byte
+                )
+            current = current.parent
+        return True
+
     def _calls_owned_by(
         self,
         func_node: Node,
@@ -1040,15 +1068,27 @@ class CallProcessor:
             class_name = self._get_class_name_for_node(class_node, language)
             if not class_name:
                 continue
-            # (H) A C++ class inside a namespace is bound by the definition pass via
-            # (H) build_qualified_name (qn `module.ns.Class`); the bare join would drop
-            # (H) the namespace, dangling every inline method's CALLS source. Use the
-            # (H) same builder so the class qn (and thus method caller qns) agree.
-            class_qn = (
-                cpp_utils.build_qualified_name(class_node, module_qn, class_name)
-                if language == cs.SupportedLanguage.CPP
-                else f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
-            )
+            # (H) A C++ class inside a namespace, or a NESTED class (Outer.Inner),
+            # (H) is bound by the definition pass through its enclosing scope
+            # (H) (qn `module.ns.Class` / `module.Outer.Inner`); the bare
+            # (H) `module.class_name` join drops those ancestors, dangling every
+            # (H) inline method's CALLS source off a phantom node. Use the SAME
+            # (H) builders the definition pass uses so the class qn (and thus
+            # (H) method caller qns) agree.
+            if language == cs.SupportedLanguage.CPP:
+                class_qn = cpp_utils.build_qualified_name(
+                    class_node, module_qn, class_name
+                )
+            else:
+                class_qn = (
+                    build_nested_qualified_name_for_class(
+                        class_node,
+                        module_qn,
+                        class_name,
+                        queries[language][cs.QUERY_CONFIG],
+                    )
+                    or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+                )
             if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
                 self._process_methods_in_class(
                     body_node,
