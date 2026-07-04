@@ -104,7 +104,7 @@ class DefinitionProcessor(
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = cached_relative_path(file_path, self.repo_path)
-        relative_path_str = str(relative_path)
+        relative_path_str = relative_path.as_posix()
         logger.info(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
         )
@@ -159,7 +159,7 @@ class DefinitionProcessor(
                 (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
                 if parent_container_qn
                 else (
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(parent_rel_path))
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
                     if parent_rel_path != Path(".")
                     else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
                 )

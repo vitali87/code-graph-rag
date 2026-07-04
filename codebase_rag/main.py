@@ -694,7 +694,7 @@ def _git_state() -> tuple[str, bool] | None:
             check=True,
             cwd=repo,
         )
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, OSError):
         return None
     lines = result.stdout.splitlines()
     if not lines or not lines[0].startswith("## "):
@@ -785,9 +785,13 @@ def _abbreviated_repo(p: Path | None) -> str:
         return ""
     try:
         home = Path.home()
-        return f"~/{p.relative_to(home)}" if p.is_relative_to(home) else str(p)
+        return (
+            f"~/{p.relative_to(home).as_posix()}"
+            if p.is_relative_to(home)
+            else p.as_posix()
+        )
     except (ValueError, OSError):
-        return str(p)
+        return p.as_posix()
 
 
 def _config_segments() -> list[tuple[str, str]]:
