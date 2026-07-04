@@ -360,13 +360,13 @@ class AppConfig(BaseSettings):
 settings = AppConfig()
 
 CGRIGNORE_FILENAME = ".cgrignore"
+GITIGNORE_FILENAME = ".gitignore"
 
 
 EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
 
 
-def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
-    ignore_file = repo_path / CGRIGNORE_FILENAME
+def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
     if not ignore_file.is_file():
         return EMPTY_CGRIGNORE
 
@@ -394,9 +394,29 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
             exclude=frozenset(exclude),
             unignore=frozenset(unignore),
         )
-    except OSError as e:
+    except (OSError, ValueError) as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
         return EMPTY_CGRIGNORE
+
+
+def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
+    return _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
+
+
+def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
+    # (H) Merged exclude/unignore set for indexing: root .gitignore (gitignored
+    # (H) paths are build artifacts / generated output whose symbols pollute the
+    # (H) graph and the dead-code report) plus .cgrignore, which stays the
+    # (H) cgr-specific override channel -- a `!pattern` there re-includes
+    # (H) something .gitignore excludes. Both files share gitwildmatch semantics.
+    # (H) ponytail: root .gitignore only; read nested .gitignore files if a real
+    # (H) repo ever relies on them for indexing scope.
+    cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
+    git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
+    return CgrignorePatterns(
+        exclude=cgr.exclude | git.exclude,
+        unignore=cgr.unignore | git.unignore,
+    )
 
 
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"

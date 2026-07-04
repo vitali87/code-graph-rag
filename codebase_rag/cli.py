@@ -16,7 +16,7 @@ from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
-from .config import load_cgrignore_patterns, settings
+from .config import load_ignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
     _create_configuration_table,
@@ -192,7 +192,7 @@ def _run_graph_sync(
     clean: bool = False,
     output: str | None = None,
 ) -> None:
-    cgrignore = load_cgrignore_patterns(repo)
+    cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
     exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None
@@ -535,7 +535,7 @@ def index(
 
     _info(style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN))
 
-    cgrignore = load_cgrignore_patterns(repo_to_index)
+    cgrignore = load_ignore_patterns(repo_to_index)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
     exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None = None
