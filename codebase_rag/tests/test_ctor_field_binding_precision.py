@@ -103,3 +103,33 @@ def test_positional_namedtuple_field_binds(tmp_path: Path) -> None:
     }
     calls = _run_calls(tmp_path, files)
     assert _has(calls, "spec.use", "spec.py_name")
+
+
+def test_nested_helper_store_does_not_clobber_ctor_rename(tmp_path: Path) -> None:
+    # (H) A `self.cb = handler` inside a nested helper in __init__ must NOT be
+    # (H) recorded as the constructor-store rename: the real store is
+    # (H) `self.handler = handler` in the __init__ body, and the field
+    # (H) invocation goes through self.handler(). The rename walk must skip
+    # (H) nested function/class scopes or the nested attr overrides the real one.
+    files = {
+        "config.py": (
+            "class Config:\n"
+            "    def __init__(self, handler):\n"
+            "        self.handler = handler\n\n"
+            "        def later():\n"
+            "            self.cb = handler\n\n"
+            "        self._later = later\n\n"
+            "    def run(self):\n"
+            "        return self.handler()\n"
+        ),
+        "app.py": (
+            "from config import Config\n\n\n"
+            "def on_event():\n"
+            "    return 1\n\n\n"
+            "def main():\n"
+            "    cfg = Config(on_event)\n"
+            "    return cfg.run()\n"
+        ),
+    }
+    calls = _run_calls(tmp_path, files)
+    assert _has(calls, "Config.run", "app.on_event")

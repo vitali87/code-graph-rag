@@ -461,6 +461,12 @@ class CallProcessor:
         stack: list[Node] = list(body.children)
         while stack:
             node = stack.pop()
+            # (H) A `self.x = param` inside a nested helper (def later():
+            # (H) self.cb = handler) is that helper's store, not a constructor
+            # (H) rename; descending into it would let it override the real
+            # (H) __init__ store (one attr per param), so stop at nested scopes.
+            if node.type in _PY_SCOPE_BOUNDARY_TYPES:
+                continue
             if node.type == cs.TS_PY_ASSIGNMENT:
                 left = node.child_by_field_name(cs.TS_FIELD_LEFT)
                 right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
