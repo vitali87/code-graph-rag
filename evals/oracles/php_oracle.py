@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
 from pathlib import Path
 
 from codebase_rag import constants as cs
 
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
-from ._common import is_ignored, payload_to_graph
+from ._common import is_ignored, payload_to_graph, run_node_oracle_payload
 
 _ORACLE_DIR = Path(__file__).parent / ec.PHP_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.PHP_ORACLE_SCRIPT
@@ -23,34 +21,8 @@ def php_oracle_available() -> bool:
     )
 
 
-def _ensure_deps() -> None:
-    if _NODE_MODULES.is_dir():
-        return
-    npm = shutil.which(ec.NPM_BIN)
-    if npm is None:
-        return
-    subprocess.run(
-        [npm, ec.NPM_INSTALL, *ec.NPM_FLAGS],
-        cwd=str(_ORACLE_DIR),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
 def _run_php_oracle_payload(target: Path) -> OraclePayload:
-    _ensure_deps()
-    node = shutil.which(ec.NODE_BIN)
-    if node is None:
-        return OraclePayload(nodes=[], edges=[], name_edges=[])
-    proc = subprocess.run(
-        [node, str(_SCRIPT), str(target)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    payload: OraclePayload = json.loads(proc.stdout or "{}")
-    return payload
+    return run_node_oracle_payload(_ORACLE_DIR, _SCRIPT, (str(target),))
 
 
 def run_php_oracle(target: Path) -> GraphData:

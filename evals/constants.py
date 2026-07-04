@@ -343,6 +343,14 @@ NPM_BIN = "npm"
 NPM_INSTALL = "install"
 NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")
 NODE_MODULES_DIRNAME = "node_modules"
+# (H) npm creates node_modules before populating it, so its existence is not
+# (H) proof of a completed install; the marker is written only after npm exits 0,
+# (H) and the lock directory serializes concurrent pytest-xdist installers.
+NODE_DEPS_MARKER = ".node-deps-installed"
+NODE_DEPS_LOCK = ".node-deps-lock"
+NODE_DEPS_LOCK_TRIES = 600
+NODE_DEPS_LOCK_POLL_SECONDS = 0.5
+NODE_ORACLE_FAILED = "{script} exited {code}: {stderr}"
 TS_DTS_SUFFIX = ".d.ts"
 TS_SCORES_FILENAME = "ts_scores.csv"
 TS_DIFF_FILENAME = "ts_diff.json"

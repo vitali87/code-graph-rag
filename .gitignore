@@ -37,6 +37,9 @@ evals/oracles/java_oracle/*.class
 evals/oracles/lua_oracle/node_modules/
 # PHP oracle deps (the source + package-lock.json are committed)
 evals/oracles/php_oracle/node_modules/
+# Node oracle install bookkeeping (completion marker + concurrent-install lock)
+evals/oracles/*/.node-deps-installed
+evals/oracles/*/.node-deps-lock/
 # Scala oracle build artifacts (the source is committed; scala-cli fetches deps)
 evals/oracles/scala_oracle/.scala-build/
 evals/oracles/scala_oracle/.bsp/

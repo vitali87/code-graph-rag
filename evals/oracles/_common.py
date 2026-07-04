@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+import json
+import shutil
+import subprocess
+import time
+from pathlib import Path, PurePosixPath
 
 from codebase_rag import constants as cs
 
@@ -17,6 +21,68 @@ from ..types_defs import (
     OraclePayload,
     OracleRecord,
 )
+
+
+def ensure_node_deps(oracle_dir: Path) -> None:
+    # (H) The marker (written only after npm exits 0) is the completion signal;
+    # (H) node_modules existing is not, because npm creates it before populating
+    # (H) it and a concurrent pytest-xdist worker would run the oracle against a
+    # (H) half-installed tree. The mkdir lock is atomic on every platform.
+    # (H) ponytail: a stale lock (installer killed mid-run) is waited out for
+    # (H) TRIES*POLL seconds and then skipped, letting the node run surface the
+    # (H) real error; clean the lock dir manually if that ever happens.
+    marker = oracle_dir / ec.NODE_DEPS_MARKER
+    if marker.exists():
+        return
+    npm = shutil.which(ec.NPM_BIN)
+    if npm is None:
+        return
+    lock = oracle_dir / ec.NODE_DEPS_LOCK
+    for _ in range(ec.NODE_DEPS_LOCK_TRIES):
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            time.sleep(ec.NODE_DEPS_LOCK_POLL_SECONDS)
+            if marker.exists():
+                return
+    else:
+        return
+    try:
+        if not marker.exists():
+            subprocess.run(
+                [npm, ec.NPM_INSTALL, *ec.NPM_FLAGS],
+                cwd=str(oracle_dir),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            marker.touch()
+    finally:
+        lock.rmdir()
+
+
+def run_node_oracle_payload(
+    oracle_dir: Path, script: Path, args: tuple[str, ...]
+) -> OraclePayload:
+    ensure_node_deps(oracle_dir)
+    node = shutil.which(ec.NODE_BIN)
+    if node is None:
+        return OraclePayload(nodes=[], edges=[], name_edges=[])
+    proc = subprocess.run(
+        [node, str(script), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            ec.NODE_ORACLE_FAILED.format(
+                script=script.name, code=proc.returncode, stderr=proc.stderr
+            )
+        )
+    payload: OraclePayload = json.loads(proc.stdout or "{}")
+    return payload
 
 
 def is_ignored(rel_file: str) -> bool:
