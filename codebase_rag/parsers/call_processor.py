@@ -131,6 +131,13 @@ _ASSIGNMENT_RHS_REF_TYPES = frozenset(
 _JSX_NAMED_ELEMENT_TYPES = frozenset(
     {cs.TS_JSX_SELF_CLOSING_ELEMENT, cs.TS_JSX_OPENING_ELEMENT}
 )
+# (H) Inline function values in an object literal (`{ onSuccess: () => {} }`): the
+# (H) JS/TS definition pass registers these as their own nodes named by the key
+# (H) (scope.onSuccess), so a passed object of callbacks (useMutation/useQuery) must
+# (H) reference each or every TanStack-style callback reports as dead.
+_INLINE_FUNC_VALUE_TYPES = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION}
+)
 
 
 class CallProcessor:
@@ -1844,6 +1851,11 @@ class CallProcessor:
                         and (value := pair.child_by_field_name(cs.FIELD_VALUE))
                         is not None
                     ):
+                        if value.type in _INLINE_FUNC_VALUE_TYPES:
+                            self._emit_inline_value_function_ref(
+                                pair, caller_spec, ensure_rel
+                            )
+                            continue
                         self._emit_value_function_ref(
                             value,
                             caller_spec,
@@ -1891,6 +1903,35 @@ class CallProcessor:
             resolve_func,
             ensure_rel,
         )
+
+    def _emit_inline_value_function_ref(
+        self,
+        pair: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+    ) -> None:
+        # (H) An inline arrow/function-expression object value is registered by the
+        # (H) definition pass under {enclosing_scope}.{key}; that scope is caller_spec's
+        # (H) qn, so reconstruct the qn from the key and reference the registered
+        # (H) node(s) (variants cover same-key duplicates in one scope).
+        key_node = pair.child_by_field_name(cs.FIELD_KEY)
+        if key_node is None or key_node.type not in (
+            cs.TS_PROPERTY_IDENTIFIER,
+            cs.TS_IDENTIFIER,
+        ):
+            return
+        if not (key := safe_decode_text(key_node)):
+            return
+        registry = self._resolver.function_registry
+        base_qn = f"{caller_spec[2]}{cs.SEPARATOR_DOT}{key}"
+        for target_qn in registry.variants(base_qn):
+            if registry.get(target_qn) is None:
+                continue
+            ensure_rel(
+                caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
