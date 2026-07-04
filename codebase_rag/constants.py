@@ -2290,6 +2290,11 @@ CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
     )
 )
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+# (H) JSX element nodes that carry a component name (javascript and tsx
+# (H) grammars share these); the closing element repeats the name and must not
+# (H) double-emit.
+TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
+TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
 
 # (H) Import processor function names
 IMPORT_REQUIRE = "require"
