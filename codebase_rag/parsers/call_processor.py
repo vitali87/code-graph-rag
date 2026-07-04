@@ -110,6 +110,20 @@ _FLOW_ARG_REF_TYPES = frozenset(
 # (H) Qualified-name prefix marking a resolved callee as a builtin rather than a
 # (H) first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# (H) Assignment node type -> RHS field, per language family: Python `assignment`
+# (H) and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
+# (H) `right`; a JS/TS `variable_declarator` (const cb = handler) carries it in
+# (H) `value`.
+_ASSIGNMENT_RHS_FIELDS = {
+    cs.TS_PY_ASSIGNMENT: cs.TS_FIELD_RIGHT,
+    cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
+    cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
+}
+# (H) RHS node types that name a callable value: a bare identifier, a Python
+# (H) attribute (mod.fn), or a JS/TS member expression (handlers.run).
+_ASSIGNMENT_RHS_REF_TYPES = frozenset(
+    {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_MEMBER_EXPRESSION}
+)
 
 
 class CallProcessor:
@@ -426,10 +440,10 @@ class CallProcessor:
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
-            if language == cs.SupportedLanguage.PYTHON:
                 # (H) A module-scope first-class assignment (registry_handler =
-                # (H) handle_event) references its target even in a file with no
-                # (H) call expressions, so scan before the no-calls early return.
+                # (H) handle_event, module.exports.run = run) references its target
+                # (H) even in a file with no call expressions, so scan before the
+                # (H) no-calls early return.
                 self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
@@ -438,6 +452,7 @@ class CallProcessor:
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
+            if language == cs.SupportedLanguage.PYTHON:
                 decorator_targets = list(sorted_func_nodes or [])
                 if combined_captures and (
                     class_nodes := combined_captures.get(cs.CAPTURE_CLASS)
@@ -1033,6 +1048,7 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
+        if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
             self._ingest_assignment_function_references(
                 caller_node,
                 caller_spec,
@@ -1504,12 +1520,9 @@ class CallProcessor:
             node = stack.pop()
             if node.type in boundary_types:
                 continue
-            if node.type == cs.TS_PY_ASSIGNMENT:
-                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-                if right is not None and right.type in (
-                    cs.TS_PY_IDENTIFIER,
-                    cs.TS_PY_ATTRIBUTE,
-                ):
+            if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
+                right = node.child_by_field_name(rhs_field)
+                if right is not None and right.type in _ASSIGNMENT_RHS_REF_TYPES:
                     self._emit_callback_edge(
                         caller_spec,
                         right,
