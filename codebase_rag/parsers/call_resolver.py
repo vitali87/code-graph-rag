@@ -394,6 +394,17 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = None
             return None
 
+        # (H) A dotted call on an import whose target still holds a raw
+        # (H) slash-separated module path (github.com/x/y) is a call into an
+        # (H) EXTERNAL module: local Go paths were rewritten to project qns at
+        # (H) import time, so a surviving slash path is definitionally outside
+        # (H) the repo. The symbol is unindexed; do not let the last-segment trie
+        # (H) fallback rebind it to an unrelated first-party function.
+        if self._is_external_path_import(call_name, module_qn):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = None
+            return None
+
         # (H) A member call `obj.method` whose receiver has a KNOWN inferred type that is
         # (H) not a first-party class is a call on an external object (e.g. a
         # (H) `std::string`). Precise local-type resolution above already failed, so the
@@ -409,6 +420,25 @@ class CallResolver:
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
+        # (H) True when the dotted call's object segment is imported from a target
+        # (H) that is still a slash-separated module path -- for Go, every local
+        # (H) path was rewritten to a project qn at import time, so a surviving
+        # (H) slash means external. JS/TS non-standard-scheme imports
+        # (H) (ext:deno_node/y) alias first-party code and keep their trie
+        # (H) fallback, mirroring _is_external_import.
+        if cs.SEPARATOR_DOT not in call_name:
+            return False
+        object_name = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return False
+        target = import_map.get(object_name)
+        if not target or cs.SEPARATOR_SLASH not in target:
+            return False
+        bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
+        return not (bare_imports and object_name in bare_imports)
 
     def _is_external_import(self, call_name: str, module_qn: str) -> bool:
         # (H) True when call_name is imported in module_qn from a module outside the
@@ -797,7 +827,32 @@ class CallResolver:
                 ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
-        return None
+        return self._try_resolve_package_member(class_qn, method_name)
+
+    def _try_resolve_package_member(
+        self, package_qn: str, member_name: str
+    ) -> tuple[str, str] | None:
+        # (H) A Go package spans multiple files and cgr qualifies its members by
+        # (H) FILE (pkg.file.Func), so an import-mapped package qn plus member
+        # (H) name misses the registry by exactly one segment. Search the
+        # (H) package's file modules for the member; Go names are unique per
+        # (H) package, so at most one function matches (min() keeps a same-named
+        # (H) type-method collision deterministic).
+        project_prefix = f"{self.import_processor.project_name}{cs.SEPARATOR_DOT}"
+        if not package_qn.startswith(project_prefix):
+            return None
+        member_depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+        candidates = [
+            qn
+            for qn, _ in self.function_registry.find_with_prefix(package_qn)
+            if qn.count(cs.SEPARATOR_DOT) == member_depth
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == member_name
+        ]
+        if not candidates:
+            return None
+        member_qn = min(candidates)
+        logger.debug(ls.CALL_PACKAGE_MEMBER, member=member_name, qn=member_qn)
+        return self.function_registry[member_qn], member_qn
 
     def _resolve_imported_class_qn(
         self,
