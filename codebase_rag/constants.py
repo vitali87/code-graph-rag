@@ -453,6 +453,7 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "route",
         "get",
         "post",
+        "callback",
         "put",
         "delete",
         "patch",
@@ -474,6 +475,12 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "abstractmethod",
     }
 )
+
+# (H) Base classes that mark a class as a structural interface: its method stubs
+# (H) are never call targets themselves (callers resolve to the implementations),
+# (H) so dead-code analysis roots every method the class defines.
+# (H) ponytail: direct bases only; transitive Protocol subclassing is not chased.
+PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
 # (H) Substrings in a node's file path that mark it as test code. Covers Python
 # (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
