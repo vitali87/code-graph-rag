@@ -790,7 +790,7 @@ def _abbreviated_repo(p: Path | None) -> str:
             if p.is_relative_to(home)
             else p.as_posix()
         )
-    except (ValueError, OSError):
+    except (ValueError, OSError, RuntimeError):
         return p.as_posix()
 
 

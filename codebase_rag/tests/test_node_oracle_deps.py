@@ -37,6 +37,21 @@ def test_half_installed_node_modules_triggers_install(tmp_path: Path) -> None:
     assert (tmp_path / ec.NODE_DEPS_MARKER).exists()
 
 
+def test_stale_marker_without_node_modules_reinstalls(tmp_path: Path) -> None:
+    # (H) Cache cleanup can remove node_modules but leave the gitignored marker;
+    # (H) the bootstrap must drop the stale marker and reinstall, not run the
+    # (H) oracle with missing packages.
+    (tmp_path / ec.NODE_DEPS_MARKER).touch()
+    with (
+        patch("evals.oracles._common.shutil.which", return_value="npm"),
+        patch(
+            "evals.oracles._common.subprocess.run", return_value=_npm_ok()
+        ) as run_mock,
+    ):
+        ensure_node_deps(tmp_path)
+    run_mock.assert_called_once()
+
+
 def test_completed_marker_skips_install(tmp_path: Path) -> None:
     (tmp_path / ec.NODE_MODULES_DIRNAME).mkdir()
     (tmp_path / ec.NODE_DEPS_MARKER).touch()
@@ -54,6 +69,7 @@ def test_concurrent_installer_lock_is_waited_out(tmp_path: Path) -> None:
     (tmp_path / ec.NODE_DEPS_LOCK).mkdir()
 
     def _finish_install(_seconds: float) -> None:
+        (tmp_path / ec.NODE_MODULES_DIRNAME).mkdir(exist_ok=True)
         (tmp_path / ec.NODE_DEPS_MARKER).touch()
 
     with (
