@@ -271,7 +271,11 @@ class ImportProcessor:
             match language:
                 case cs.SupportedLanguage.PYTHON:
                     self._parse_python_imports(captures, module_qn)
-                case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+                case (
+                    cs.SupportedLanguage.JS
+                    | cs.SupportedLanguage.TS
+                    | cs.SupportedLanguage.TSX
+                ):
                     self._parse_js_ts_imports(captures, module_qn)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
@@ -477,7 +481,11 @@ class ImportProcessor:
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
                     return full_name
-            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+            case (
+                cs.SupportedLanguage.JS
+                | cs.SupportedLanguage.TS
+                | cs.SupportedLanguage.TSX
+            ):
                 if self._is_local_js_import(full_name):
                     return self._resolve_js_internal_module(full_name)
             case cs.SupportedLanguage.RUST:

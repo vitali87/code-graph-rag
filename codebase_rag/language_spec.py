@@ -233,6 +233,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
     cs.SupportedLanguage.TS: TS_FQN_SPEC,
+    cs.SupportedLanguage.TSX: TS_FQN_SPEC,
     cs.SupportedLanguage.RUST: RUST_FQN_SPEC,
     cs.SupportedLanguage.JAVA: JAVA_FQN_SPEC,
     cs.SupportedLanguage.C: C_FQN_SPEC,
@@ -243,6 +244,16 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
 }
 
+
+# (H) Node-type sets shared by the typescript and tsx grammar variants.
+_TS_FUNCTION_NODE_TYPES = cs.JS_TS_FUNCTION_NODES + (cs.TS_FUNCTION_SIGNATURE,)
+_TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
+    cs.TS_ABSTRACT_CLASS_DECLARATION,
+    cs.TS_ENUM_DECLARATION,
+    cs.TS_INTERFACE_DECLARATION,
+    cs.TS_TYPE_ALIAS_DECLARATION,
+    cs.TS_INTERNAL_MODULE,
+)
 
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     cs.SupportedLanguage.PYTHON: LanguageSpec(
@@ -269,15 +280,22 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     cs.SupportedLanguage.TS: LanguageSpec(
         language=cs.SupportedLanguage.TS,
         file_extensions=cs.TS_EXTENSIONS,
-        function_node_types=cs.JS_TS_FUNCTION_NODES + (cs.TS_FUNCTION_SIGNATURE,),
-        class_node_types=cs.JS_TS_CLASS_NODES
-        + (
-            cs.TS_ABSTRACT_CLASS_DECLARATION,
-            cs.TS_ENUM_DECLARATION,
-            cs.TS_INTERFACE_DECLARATION,
-            cs.TS_TYPE_ALIAS_DECLARATION,
-            cs.TS_INTERNAL_MODULE,
-        ),
+        function_node_types=_TS_FUNCTION_NODE_TYPES,
+        class_node_types=_TS_CLASS_NODE_TYPES,
+        module_node_types=cs.SPEC_JS_MODULE_TYPES,
+        call_node_types=cs.SPEC_JS_CALL_TYPES,
+        import_node_types=cs.JS_TS_IMPORT_NODES,
+        import_from_node_types=cs.JS_TS_IMPORT_NODES,
+    ),
+    # (H) .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
+    # (H) JSX into an ERROR forest (dropping every call inside a component), and
+    # (H) the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
+    # (H) legal .ts -- so each extension keeps its own grammar with a shared spec.
+    cs.SupportedLanguage.TSX: LanguageSpec(
+        language=cs.SupportedLanguage.TSX,
+        file_extensions=cs.TSX_EXTENSIONS,
+        function_node_types=_TS_FUNCTION_NODE_TYPES,
+        class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
         import_node_types=cs.JS_TS_IMPORT_NODES,

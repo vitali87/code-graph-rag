@@ -63,6 +63,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.PYTHON,
         cs.SupportedLanguage.JS,
         cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
         cs.SupportedLanguage.JAVA,
         cs.SupportedLanguage.LUA,
         cs.SupportedLanguage.GO,
@@ -74,7 +75,7 @@ _TYPED_LANGUAGES = frozenset(
 # (H) name lives in a nested declarator (no `name` field). Both need the libclang
 # (H) declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
-_JS_TS_LANGUAGES = frozenset({cs.SupportedLanguage.JS, cs.SupportedLanguage.TS})
+_JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 
 # (H) Python nested-scope boundaries and sequence-literal node types used when
 # (H) scanning a scope for dispatch tables of function references.
@@ -1085,7 +1086,7 @@ class CallProcessor:
             return
 
         is_java = language == cs.SupportedLanguage.JAVA
-        is_js_ts = language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS)
+        is_js_ts = language in _JS_TS_LANGUAGES
         is_cpp = language == cs.SupportedLanguage.CPP
         method_invocation_type = cs.TS_METHOD_INVOCATION
         resolver = self._resolver

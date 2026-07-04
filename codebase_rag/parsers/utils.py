@@ -483,7 +483,7 @@ def callable_parameter_indices(
     elif language == cs.SupportedLanguage.GO:
         names = go_parameter_names(func_node)
         invoke = _go_invoked_parameter_names
-    elif language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+    elif language in cs.JS_TS_LANGUAGES:
         names = js_ts_parameter_names(func_node)
         invoke = _js_ts_invoked_parameter_names
     elif language == cs.SupportedLanguage.CPP:
@@ -522,7 +522,7 @@ def _js_ts_field_member_name(
     # (H) The binding name of a JS/TS class-field arrow / fn-expr whose enclosing
     # (H) field definition holds it as its `value` (`helper = () => ...`), so the
     # (H) member is modelled as class_qn.helper. None for other languages/shapes.
-    if language not in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+    if language not in cs.JS_TS_LANGUAGES:
         return None
     if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
         return None

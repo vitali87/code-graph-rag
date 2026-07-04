@@ -17,6 +17,7 @@ _HANDLERS: dict[SupportedLanguage, type[BaseLanguageHandler]] = {
     SupportedLanguage.PYTHON: PythonHandler,
     SupportedLanguage.JS: JsTsHandler,
     SupportedLanguage.TS: JsTsHandler,
+    SupportedLanguage.TSX: JsTsHandler,
     SupportedLanguage.CPP: CppHandler,
     SupportedLanguage.RUST: RustHandler,
     SupportedLanguage.JAVA: JavaHandler,

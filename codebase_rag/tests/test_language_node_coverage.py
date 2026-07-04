@@ -82,7 +82,7 @@ EXTENSION_MAPPING_PARAMS = [
     (".js", SupportedLanguage.JS),
     (".jsx", SupportedLanguage.JS),
     (".ts", SupportedLanguage.TS),
-    (".tsx", SupportedLanguage.TS),
+    (".tsx", SupportedLanguage.TSX),
     (".rs", SupportedLanguage.RUST),
     (".go", SupportedLanguage.GO),
     (".scala", SupportedLanguage.SCALA),
