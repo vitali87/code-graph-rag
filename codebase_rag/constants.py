@@ -101,7 +101,8 @@ EXT_LUA = ".lua"
 # (H) File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX)
-TS_EXTENSIONS = (EXT_TS, EXT_TSX)
+TS_EXTENSIONS = (EXT_TS,)
+TSX_EXTENSIONS = (EXT_TSX,)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -623,6 +624,7 @@ class SupportedLanguage(StrEnum):
     PYTHON = "python"
     JS = "javascript"
     TS = "typescript"
+    TSX = "tsx"
     RUST = "rust"
     GO = "go"
     SCALA = "scala"
@@ -659,6 +661,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
         "TypeScript",
+    ),
+    SupportedLanguage.TSX: LanguageMetadata(
+        LanguageStatus.FULL,
+        "All TypeScript features plus JSX elements and components",
+        "TypeScript (TSX)",
     ),
     SupportedLanguage.C: LanguageMetadata(
         LanguageStatus.FULL,
@@ -754,7 +761,9 @@ JS_TS_FUNCTION_NODES = (
 )
 JS_TS_CLASS_NODES = ("class_declaration", "class")
 JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
-JS_TS_LANGUAGES = frozenset({SupportedLanguage.JS, SupportedLanguage.TS})
+JS_TS_LANGUAGES = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
 
 # (H) C++ import node types
 CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
@@ -1008,6 +1017,7 @@ BUILD_EXT_CMD = "build_ext"
 INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
+LANG_ATTR_TSX = "language_tsx"
 LANG_ATTR_PHP = "language_php"
 
 

@@ -84,11 +84,14 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 def _try_import_language(
     module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
 ) -> LanguageLoader:
+    # (H) AttributeError covers a pip package too old to export the requested
+    # (H) grammar variant (tree_sitter_typescript without language_tsx); fall
+    # (H) back rather than crash parser init for every language.
     try:
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
         return loader
-    except ImportError:
+    except (ImportError, AttributeError):
         return _try_load_from_submodule(lang_name)
 
 
@@ -111,6 +114,17 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.TreeSitterModule.TS,
             cs.LANG_ATTR_TYPESCRIPT,
             cs.SupportedLanguage.TS,
+        ),
+        # (H) Same pip package ships both grammar variants; .tsx needs the tsx
+        # (H) one or JSX parses as an ERROR forest. The submodule fallback name
+        # (H) is TSX on purpose: no grammars/tree-sitter-tsx exists, so a
+        # (H) too-old pip package leaves TSX unavailable instead of silently
+        # (H) binding the wrong (typescript) grammar.
+        LanguageImport(
+            cs.SupportedLanguage.TSX,
+            cs.TreeSitterModule.TS,
+            cs.LANG_ATTR_TSX,
+            cs.SupportedLanguage.TSX,
         ),
         LanguageImport(
             cs.SupportedLanguage.RUST,
@@ -191,7 +205,7 @@ def _get_locals_pattern(lang_name: cs.SupportedLanguage) -> str | None:
     match lang_name:
         case cs.SupportedLanguage.JS:
             return cs.JS_LOCALS_PATTERN
-        case cs.SupportedLanguage.TS:
+        case cs.SupportedLanguage.TS | cs.SupportedLanguage.TSX:
             return cs.TS_LOCALS_PATTERN
         case _:
             return None

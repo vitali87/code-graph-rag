@@ -193,7 +193,7 @@ class DefinitionProcessor(
                 queries,
                 pre_captures=combined_captures,
             )
-            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+            if language in cs.JS_TS_LANGUAGES:
                 self._ingest_missing_import_patterns(
                     root_node, module_qn, language, queries
                 )
@@ -216,7 +216,7 @@ class DefinitionProcessor(
                 queries,
                 combined_captures=combined_captures,
             )
-            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+            if language in cs.JS_TS_LANGUAGES:
                 self._ingest_object_literal_methods(
                     root_node, module_qn, language, queries
                 )

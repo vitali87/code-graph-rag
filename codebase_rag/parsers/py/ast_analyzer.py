@@ -209,7 +209,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                 return self._find_python_method_in_ast(
                     root_node, class_name, method_name
                 )
-            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+            case (
+                cs.SupportedLanguage.JS
+                | cs.SupportedLanguage.TS
+                | cs.SupportedLanguage.TSX
+            ):
                 return find_js_method_in_ast(root_node, class_name, method_name)
             case _:
                 return None

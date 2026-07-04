@@ -157,7 +157,11 @@ class StdlibExtractor:
         match language:
             case cs.SupportedLanguage.PYTHON:
                 return self._extract_python_stdlib_path(full_qualified_name)
-            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+            case (
+                cs.SupportedLanguage.JS
+                | cs.SupportedLanguage.TS
+                | cs.SupportedLanguage.TSX
+            ):
                 return self._extract_js_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.GO:
                 return self._extract_go_stdlib_path(full_qualified_name)
