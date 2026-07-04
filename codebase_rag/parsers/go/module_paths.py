@@ -17,8 +17,8 @@ def _module_directive(gomod: Path) -> str | None:
     except OSError:
         return None
     for line in text.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[0] == cs.GO_KEYWORD_MODULE:
+        parts = line.split(cs.GO_MOD_COMMENT_PREFIX, 1)[0].split()
+        if len(parts) >= 2 and parts[0] == cs.GO_KEYWORD_MODULE:
             return parts[1]
     return None
 

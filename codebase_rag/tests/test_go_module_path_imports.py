@@ -125,6 +125,29 @@ def test_nested_gomod_module_maps_to_its_directory(tmp_path: Path) -> None:
     assert "mytool.handlers.handlers.Handle" not in calls
 
 
+def test_module_directive_with_trailing_comment_still_maps(tmp_path: Path) -> None:
+    # (H) go.mod allows a trailing comment on the module directive, including the
+    # (H) official same-line `// Deprecated:` form; the directive parse must strip
+    # (H) it or every import in the module stays raw and unresolved.
+    files = {
+        "go.mod": (
+            "module github.com/acme/mytool // Deprecated: use mytool/v2\n\ngo 1.22\n"
+        ),
+        "main.go": (
+            "package main\n\n"
+            'import "github.com/acme/mytool/beta/util"\n\n'
+            "func main() {\n"
+            "    util.Greet()\n"
+            "}\n"
+        ),
+        "alpha/util/util.go": GREET_ALPHA,
+        "beta/util/util.go": GREET_BETA,
+    }
+    calls = _calls(_run_rels(tmp_path, files), "main.main")
+    assert "mytool.beta.util.util.Greet" in calls
+    assert "mytool.alpha.util.util.Greet" not in calls
+
+
 def test_flat_single_package_regression(tmp_path: Path) -> None:
     # (H) The unambiguous shape that already resolved (via the trie) must keep
     # (H) resolving through the precise import path.
