@@ -12,6 +12,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from .go import discover_go_module_paths, resolve_go_import_path
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
@@ -129,6 +130,7 @@ class ImportProcessor:
         "_is_local_module_cached",
         "_is_local_java_import_cached",
         "_map_py_source_root",
+        "_map_go_import_path",
     )
 
     def __init__(
@@ -182,6 +184,19 @@ class ImportProcessor:
             return resolve_via_source_roots(repo_path, py_source_roots, module_name)
 
         self._map_py_source_root = _map_py_source_root_cached
+
+        # (H) Go import paths are module-path-prefixed (github.com/acme/tool/pkg),
+        # (H) never repo-relative, so no local Go import resolves by the
+        # (H) name == path assumption. Map each go.mod module directive to its
+        # (H) directory once so local imports rewrite to project-prefixed qns and
+        # (H) unmapped (external) paths stay recognizably slash-separated.
+        go_module_paths = discover_go_module_paths(repo_path)
+
+        @lru_cache(maxsize=4096)
+        def _map_go_import_path_cached(import_path: str) -> str | None:
+            return resolve_go_import_path(go_module_paths, import_path)
+
+        self._map_go_import_path = _map_go_import_path_cached
 
         @lru_cache(maxsize=4096)
         def _is_local_module_cached(module_name: str) -> bool:
@@ -913,6 +928,16 @@ class ImportProcessor:
 
         if import_path:
             package_name = alias_name or import_path.split(cs.SEPARATOR_SLASH)[-1]
+            # (H) A path under a local go.mod module rewrites to the package dir's
+            # (H) project qn ('' remainder = the module root package itself), so
+            # (H) both the IMPORTS edge and call resolution bind first-party.
+            # (H) External paths stay raw.
+            if (mapped := self._map_go_import_path(import_path)) is not None:
+                import_path = (
+                    f"{self.project_name}{cs.SEPARATOR_DOT}{mapped}"
+                    if mapped
+                    else self.project_name
+                )
             self.import_mapping[module_qn][package_name] = import_path
             logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 

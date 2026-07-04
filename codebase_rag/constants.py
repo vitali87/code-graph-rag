@@ -2003,6 +2003,11 @@ DEP_FILE_REQUIREMENTS = "requirements.txt"
 DEP_FILE_PACKAGE_JSON = "package.json"
 DEP_FILE_CARGO = "cargo.toml"
 DEP_FILE_GOMOD = "go.mod"
+# (H) The go.mod directive naming the module path that prefixes every import of
+# (H) the module's packages; a same-line comment (incl. the official
+# (H) `// Deprecated:` form) may trail it.
+GO_KEYWORD_MODULE = "module"
+GO_MOD_COMMENT_PREFIX = "//"
 DEP_FILE_GEMFILE = "gemfile"
 DEP_FILE_COMPOSER = "composer.json"
 
