@@ -1186,6 +1186,10 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
+        # (H) Bindings are pending until every file's ctor metadata (param order,
+        # (H) param->attribute renames) is in: a construction site may be scanned
+        # (H) before the file defining its class.
+        self.factory.call_processor.finalize_callable_field_bindings()
         for file_path, language in self._parsed_files:
             root_node = self._ast_for(file_path, language)
             if root_node is None:

@@ -59,6 +59,9 @@ class CallResolver:
         "_subclass_map_cache",
         "_protocol_classes_cache",
         "_struct_impl_cache",
+        "_ctor_params",
+        "_ctor_param_attrs",
+        "_pending_field_bindings",
     )
 
     def __init__(
@@ -94,6 +97,77 @@ class CallResolver:
         self._subclass_map_cache: dict[str, set[str]] | None = None
         self._protocol_classes_cache: set[str] | None = None
         self._struct_impl_cache: dict[str, set[str]] = {}
+        # (H) Ordered constructor parameter names per class (explicit __init__
+        # (H) params, or annotated class-body fields for NamedTuple/dataclass),
+        # (H) plus the param -> stored-attribute renames found in __init__
+        # (H) bodies (self.ctx_factory = create_context). Construction-site
+        # (H) bindings are held PENDING until every file's ctor metadata is
+        # (H) collected, since a site may be scanned before its class's file.
+        self._ctor_params: dict[str, tuple[str, ...]] = {}
+        self._ctor_param_attrs: dict[tuple[str, str], str] = {}
+        self._pending_field_bindings: list[tuple[str, int | str, str]] = []
+
+    def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
+        self._ctor_params[class_qn] = params
+
+    def record_ctor_param_attr(self, class_qn: str, param: str, attr: str) -> None:
+        self._ctor_param_attrs[(class_qn, param)] = attr
+
+    def record_pending_field_binding(
+        self, class_qn: str, key: int | str, func_qn: str
+    ) -> None:
+        # (H) key: keyword name, or positional index awaiting the ctor param order.
+        self._pending_field_bindings.append((class_qn, key, func_qn))
+
+    def finalize_field_bindings(self) -> None:
+        # (H) Resolve pendings now that every class's ctor metadata is known. A
+        # (H) subclass without its own __init__ inherits the base's params and
+        # (H) field, so both a positional index and a keyword name resolve
+        # (H) against the nearest self-or-ancestor that owns the ctor param, and
+        # (H) the binding is recorded under THAT owner (where the field lives) so
+        # (H) an inherited self.handler() -- typed to the base -- still matches.
+        for class_qn, key, func_qn in self._pending_field_bindings:
+            if isinstance(key, int):
+                owner_qn, params = self._ctor_params_owner(class_qn)
+                if key >= len(params):
+                    continue
+                param = params[key]
+            else:
+                param = key
+                owner_qn = self._ctor_param_owner(class_qn, param)
+            field = self._ctor_param_attrs.get((owner_qn, param), param)
+            self.record_callable_field_binding(owner_qn, field, func_qn)
+        self._pending_field_bindings.clear()
+
+    def _ctor_params_owner(self, class_qn: str) -> tuple[str, tuple[str, ...]]:
+        # (H) Nearest self-or-ancestor with a non-empty recorded ctor param list
+        # (H) (a subclass with no __init__ has an empty list, so keep walking).
+        for ancestor in self._mro(class_qn):
+            if params := self._ctor_params.get(ancestor):
+                return ancestor, params
+        return class_qn, self._ctor_params.get(class_qn, ())
+
+    def _ctor_param_owner(self, class_qn: str, param: str) -> str:
+        # (H) Nearest self-or-ancestor whose ctor declares `param`, so an
+        # (H) inherited keyword binding attaches to the class that owns the field.
+        for ancestor in self._mro(class_qn):
+            if param in self._ctor_params.get(ancestor, ()):
+                return ancestor
+        return class_qn
+
+    def _mro(self, class_qn: str) -> list[str]:
+        # (H) BFS over the inheritance graph, self first; guards cycles.
+        seen: set[str] = set()
+        order: list[str] = []
+        queue: deque[str] = deque([class_qn])
+        while queue:
+            cur = queue.popleft()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            order.append(cur)
+            queue.extend(self.class_inheritance.get(cur, []))
+        return order
 
     def record_callable_field_binding(
         self, class_qn: str, field: str, func_qn: str
