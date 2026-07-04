@@ -12,9 +12,11 @@ from ... import logs as ls
 def _module_directive(gomod: Path) -> str | None:
     # (H) The module path is the sole `module <path>` directive; a parenthesized
     # (H) form does not exist for it, so a line scan suffices.
+    # (H) ValueError covers UnicodeDecodeError on a non-UTF-8 go.mod; skip it
+    # (H) rather than crash indexing.
     try:
         text = gomod.read_text(encoding=cs.ENCODING_UTF8)
-    except OSError:
+    except (OSError, ValueError):
         return None
     for line in text.splitlines():
         parts = line.split(cs.GO_MOD_COMMENT_PREFIX, 1)[0].split()

@@ -166,6 +166,40 @@ def test_flat_single_package_regression(tmp_path: Path) -> None:
     assert "mytool.util.util.Greet" in calls
 
 
+def test_module_root_package_member_resolves(tmp_path: Path) -> None:
+    # (H) Importing the module PATH itself binds the module's root package, whose
+    # (H) mapped qn is exactly the project name (no dot suffix); the member lookup
+    # (H) must accept it, not demand a project-dot prefix.
+    files = {
+        "go.mod": GO_MOD,
+        "version.go": (
+            'package mytool\n\nfunc Version() string {\n    return "1"\n}\n'
+        ),
+        "cmd/main.go": (
+            "package main\n\n"
+            'import tool "github.com/acme/mytool"\n\n'
+            "func main() {\n"
+            "    tool.Version()\n"
+            "}\n"
+        ),
+        "internal/meta/meta.go": (
+            'package meta\n\nfunc Version() string {\n    return "decoy"\n}\n'
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "cmd.main.main")
+    assert "mytool.version.Version" in calls
+    assert "mytool.internal.meta.meta.Version" not in calls
+
+
+def test_invalid_utf8_gomod_does_not_crash(tmp_path: Path) -> None:
+    # (H) read_text raises UnicodeDecodeError (a ValueError, not OSError) on
+    # (H) invalid UTF-8; discovery must skip such a go.mod, not crash indexing.
+    from codebase_rag.parsers.go import discover_go_module_paths
+
+    (tmp_path / "go.mod").write_bytes(b"module github.com/acme/mytool\xff\xfe\n")
+    assert discover_go_module_paths(tmp_path) == []
+
+
 def test_external_import_does_not_misbind_to_local_same_name(tmp_path: Path) -> None:
     # (H) assert.Equal comes from an EXTERNAL module (not under any local go.mod
     # (H) module path); the unindexed call must be dropped, not rebound by bare

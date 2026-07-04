@@ -838,8 +838,12 @@ class CallResolver:
         # (H) package's file modules for the member; Go names are unique per
         # (H) package, so at most one function matches (min() keeps a same-named
         # (H) type-method collision deterministic).
-        project_prefix = f"{self.import_processor.project_name}{cs.SEPARATOR_DOT}"
-        if not package_qn.startswith(project_prefix):
+        # (H) The module ROOT package maps to the bare project name (no dot), so
+        # (H) accept it alongside project-dot-prefixed package qns.
+        project_name = self.import_processor.project_name
+        if package_qn != project_name and not package_qn.startswith(
+            f"{project_name}{cs.SEPARATOR_DOT}"
+        ):
             return None
         member_depth = package_qn.count(cs.SEPARATOR_DOT) + 2
         candidates = [
