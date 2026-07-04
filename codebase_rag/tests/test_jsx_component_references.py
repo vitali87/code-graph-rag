@@ -105,6 +105,29 @@ def test_jsx_component_usage_in_js_is_referenced(tmp_path: Path) -> None:
     assert _has(rels, "page.Page", REFERENCES, "widget.Widget")
 
 
+def test_tsx_class_component_usage_is_referenced(tmp_path: Path) -> None:
+    # (H) A React class component resolves to a CLASS node, not a function; the
+    # (H) JSX usage must still reference the class. JS/TS classes have no
+    # (H) __init__, so routing through the Python callback helper (which
+    # (H) redirects CLASS -> Class.__init__) would silently drop the edge.
+    files = {
+        "card.tsx": (
+            "import * as React from 'react'\n"
+            "export class Card extends React.Component {\n"
+            "  render() { return <div>x</div> }\n"
+            "}\n"
+        ),
+        "app.tsx": (
+            "import { Card } from './card'\n\n"
+            "export function App() {\n"
+            "  return <Card />\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    assert _has(rels, "app.App", REFERENCES, "card.Card")
+
+
 def test_html_tags_are_not_referenced(tmp_path: Path) -> None:
     # (H) Lowercase tags are HTML elements, not components; a same-named local
     # (H) function (div) must not be misbound.

@@ -1581,8 +1581,14 @@ class CallProcessor:
         # (H) The walk stops at nested scope boundaries (each nested function's
         # (H) own pass covers its JSX), but continues THROUGH jsx elements so
         # (H) nested markup is covered by the scope that renders it.
+        # (H) Resolve and emit directly rather than via _emit_callback_edge: a
+        # (H) class component resolves to a CLASS node whose reference must point
+        # (H) at the class itself, but that helper redirects CLASS -> __init__
+        # (H) (Python construction semantics) and drops the edge when __init__ is
+        # (H) absent, as it always is for a JS/TS class.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
+        registry = self._resolver.function_registry
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
@@ -1592,17 +1598,17 @@ class CallProcessor:
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
                 name_text = safe_decode_text(name_node) if name_node else None
                 if name_text and name_text[0].isupper():
-                    self._emit_callback_edge(
-                        caller_spec,
-                        name_node,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn,
-                        cs.RelationshipType.REFERENCES,
+                    resolved = resolve_func(
+                        name_text, module_qn, local_var_types, class_context, caller_qn
                     )
+                    if resolved:
+                        res_type, res_qn = resolved
+                        for target_qn in registry.variants(res_qn):
+                            ensure_rel(
+                                caller_spec,
+                                cs.RelationshipType.REFERENCES,
+                                (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                            )
             stack.extend(node.children)
 
     def _ingest_collection_function_references(
