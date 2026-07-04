@@ -153,7 +153,7 @@ class TestDeadCodeCommand:
             )
 
         assert result.exit_code == 0
-        payload = json.loads(out.read_text())
+        payload = json.loads(out.read_text(encoding="utf-8"))
         assert len(payload) == 2
 
     def test_writes_table_to_output_file(
@@ -165,7 +165,7 @@ class TestDeadCodeCommand:
             result = runner.invoke(app, ["dead-code", "--output", str(out)])
 
         assert result.exit_code == 0
-        written = out.read_text()
+        written = out.read_text(encoding="utf-8")
         assert "orphan_one" in written
 
     def test_handles_connection_error(self, runner: CliRunner) -> None:
