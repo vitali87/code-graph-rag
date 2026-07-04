@@ -120,21 +120,54 @@ class CallResolver:
         self._pending_field_bindings.append((class_qn, key, func_qn))
 
     def finalize_field_bindings(self) -> None:
-        # (H) Resolve pendings now that every class's ctor metadata is known: a
-        # (H) positional index maps through the param order (dropped when the
-        # (H) class has none recorded), and a param maps to its stored attribute
-        # (H) name when __init__ renames it (self.ctx_factory = create_context).
+        # (H) Resolve pendings now that every class's ctor metadata is known. A
+        # (H) subclass without its own __init__ inherits the base's params and
+        # (H) field, so both a positional index and a keyword name resolve
+        # (H) against the nearest self-or-ancestor that owns the ctor param, and
+        # (H) the binding is recorded under THAT owner (where the field lives) so
+        # (H) an inherited self.handler() -- typed to the base -- still matches.
         for class_qn, key, func_qn in self._pending_field_bindings:
             if isinstance(key, int):
-                params = self._ctor_params.get(class_qn)
-                if not params or key >= len(params):
+                owner_qn, params = self._ctor_params_owner(class_qn)
+                if key >= len(params):
                     continue
                 param = params[key]
             else:
                 param = key
-            field = self._ctor_param_attrs.get((class_qn, param), param)
-            self.record_callable_field_binding(class_qn, field, func_qn)
+                owner_qn = self._ctor_param_owner(class_qn, param)
+            field = self._ctor_param_attrs.get((owner_qn, param), param)
+            self.record_callable_field_binding(owner_qn, field, func_qn)
         self._pending_field_bindings.clear()
+
+    def _ctor_params_owner(self, class_qn: str) -> tuple[str, tuple[str, ...]]:
+        # (H) Nearest self-or-ancestor with a non-empty recorded ctor param list
+        # (H) (a subclass with no __init__ has an empty list, so keep walking).
+        for ancestor in self._mro(class_qn):
+            if params := self._ctor_params.get(ancestor):
+                return ancestor, params
+        return class_qn, self._ctor_params.get(class_qn, ())
+
+    def _ctor_param_owner(self, class_qn: str, param: str) -> str:
+        # (H) Nearest self-or-ancestor whose ctor declares `param`, so an
+        # (H) inherited keyword binding attaches to the class that owns the field.
+        for ancestor in self._mro(class_qn):
+            if param in self._ctor_params.get(ancestor, ()):
+                return ancestor
+        return class_qn
+
+    def _mro(self, class_qn: str) -> list[str]:
+        # (H) BFS over the inheritance graph, self first; guards cycles.
+        seen: set[str] = set()
+        order: list[str] = []
+        queue: deque[str] = deque([class_qn])
+        while queue:
+            cur = queue.popleft()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            order.append(cur)
+            queue.extend(self.class_inheritance.get(cur, []))
+        return order
 
     def record_callable_field_binding(
         self, class_qn: str, field: str, func_qn: str

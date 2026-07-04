@@ -171,6 +171,32 @@ def test_nested_class_ctor_field_binding_is_recorded(tmp_path: Path) -> None:
     }
 
 
+def test_inherited_ctor_positional_arg_binds(tmp_path: Path) -> None:
+    # (H) Sub has no __init__: Sub(on_event) uses the inherited Base.__init__,
+    # (H) which stores self.handler. The positional binding must resolve through
+    # (H) the base's ctor params and record under Base (where the field lives),
+    # (H) or inherited self.handler() never resolves.
+    files = {
+        "base.py": (
+            "class Base:\n"
+            "    def __init__(self, handler):\n"
+            "        self.handler = handler\n\n"
+            "    def run(self):\n"
+            "        return self.handler()\n"
+        ),
+        "sub.py": ("from base import Base\n\n\nclass Sub(Base):\n    pass\n"),
+        "app.py": (
+            "from sub import Sub\n\n\n"
+            "def on_event():\n"
+            "    return 1\n\n\n"
+            "def main():\n"
+            "    return Sub(on_event).run()\n"
+        ),
+    }
+    calls = _run_calls(tmp_path, files)
+    assert _has(calls, "Base.run", "app.on_event")
+
+
 def test_nested_helper_store_does_not_clobber_ctor_rename(tmp_path: Path) -> None:
     # (H) A `self.cb = handler` inside a nested helper in __init__ must NOT be
     # (H) recorded as the constructor-store rename: the real store is
