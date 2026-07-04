@@ -407,15 +407,21 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # (H) Merged exclude/unignore set for indexing: root .gitignore (gitignored
     # (H) paths are build artifacts / generated output whose symbols pollute the
     # (H) graph and the dead-code report) plus .cgrignore, which stays the
-    # (H) cgr-specific override channel -- a `!pattern` there re-includes
-    # (H) something .gitignore excludes. Both files share gitwildmatch semantics.
-    # (H) ponytail: root .gitignore only; read nested .gitignore files if a real
-    # (H) repo ever relies on them for indexing scope.
+    # (H) authoritative cgr-specific channel. The runtime skip check gives
+    # (H) excludes precedence over unignores, so a negation can only override a
+    # (H) .gitignore exclude by CANCELLING the exact same pattern string here at
+    # (H) load time (`!generated/` drops `generated/`). .cgrignore excludes are
+    # (H) never cancelled by .gitignore negations.
+    # (H) ponytail: root .gitignore only, exact-string cancellation only; a
+    # (H) finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
+    # (H) cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
+    # (H) the upgrade path if real repos need it.
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
     git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
+    negations = cgr.unignore | git.unignore
     return CgrignorePatterns(
-        exclude=cgr.exclude | git.exclude,
-        unignore=cgr.unignore | git.unignore,
+        exclude=cgr.exclude | (git.exclude - negations),
+        unignore=negations,
     )
 
 
