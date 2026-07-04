@@ -120,6 +120,32 @@ def test_pydantic_validator_is_a_root() -> None:
     assert dead == set()
 
 
+def test_test_file_symbols_are_not_candidates_when_tests_excluded() -> None:
+    # (H) A helper defined INSIDE a test file is test infrastructure, not
+    # (H) production dead code. With tests excluded its only callers (test
+    # (H) functions) can never root it, so reporting it is unconditional noise
+    # (H) (the MockHTTPRouter/mock-helper cluster); production code reached only
+    # (H) from tests must still be reported.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.tests.test_m"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.tests.test_m",
+                    cs.KEY_PATH: "tests/test_m.py",
+                },
+            ),
+            _fn("proj.tests.test_m._helper", path="tests/test_m.py"),
+            _fn("proj.m.only_tested"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.tests.test_m", _CALLS, _FUNCTION, "proj.m.only_tested"),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.only_tested"}
+
+
 def test_non_test_module_does_not_keep_code_alive_when_tests_excluded() -> None:
     # (H) With tests excluded, a call from a test module must not root project code.
     nodes = dict(
