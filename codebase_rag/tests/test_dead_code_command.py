@@ -203,7 +203,10 @@ class TestDeadCodeCommand:
         # (H) test functions themselves are not roots.
         assert "test_patterns" in params
         assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
-        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" in query
+        assert (
+            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
+            in query
+        )
 
     def test_classes_flag_includes_class_candidates(
         self, runner: CliRunner, dead_rows: list[ResultRow]

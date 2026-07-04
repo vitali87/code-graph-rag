@@ -123,7 +123,7 @@ def dead_code_from_graph(
             # (H) roots, so reporting it is unconditional noise (test helpers
             # (H) and mocks are infrastructure, not dead production code).
             if not config.include_tests and any(
-                pattern in str(props.get(cs.KEY_PATH, ""))
+                pattern in str(props.get(cs.KEY_PATH) or "")
                 for pattern in config.test_patterns
             ):
                 continue

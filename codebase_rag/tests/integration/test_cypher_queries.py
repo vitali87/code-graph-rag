@@ -375,14 +375,20 @@ class TestBuildDeadCodeQueryUnit:
         # (H) callers are excluded as roots, so reporting them is unconditional
         # (H) noise (test helpers/mocks are infrastructure, not dead production
         # (H) code).
-        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" in query
+        assert (
+            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
+            in query
+        )
 
     def test_include_tests_reports_test_file_candidates(self) -> None:
         query = build_dead_code_query(include_tests=True)
 
         # (H) with tests included, test-file symbols are roots AND stay
         # (H) reportable candidates; no candidate-side path filter exists.
-        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
+        assert (
+            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
+            not in query
+        )
 
     def test_module_load_callees_are_roots(self) -> None:
         query = build_dead_code_query(include_tests=False)

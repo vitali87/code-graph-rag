@@ -106,8 +106,10 @@ _DEAD_CODE_TEST_ROOT_CLAUSE = (
 # (H) and mocks are test infrastructure, not dead production code. Filter them
 # (H) from the reported candidates; production code reached only from tests is
 # (H) still reported.
+# (H) coalesce: a null path must not null out the NOT and silently drop the
+# (H) node from the report (NOT null = null in Cypher).
 _DEAD_CODE_CANDIDATE_NON_TEST = (
-    "\n  AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
+    "\n  AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
 )
 
 # (H) A node reached by a Module node runs at import (top-level statement,
