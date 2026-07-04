@@ -11,9 +11,12 @@ from codebase_rag.parser_loader import load_parsers
 
 def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
     # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # (H) Skip on the parser each fixture actually needs: an environment can have
+    # (H) typescript without tsx (pip package predating language_tsx).
     parsers, queries = load_parsers()
-    if "typescript" not in parsers:
-        pytest.skip("typescript parser not available")
+    required = {"tsx" if rel.endswith(".tsx") else "typescript" for rel in files}
+    if missing := sorted(required - parsers.keys()):
+        pytest.skip(f"parsers not available: {', '.join(missing)}")
     for rel, content in files.items():
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
