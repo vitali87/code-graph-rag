@@ -47,7 +47,7 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import ModelConfig, load_cgrignore_patterns, settings
+from .config import ModelConfig, load_ignore_patterns, settings
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -1453,7 +1453,7 @@ def prompt_for_unignored_directories(
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
     detected = detect_excludable_directories(repo_path)
-    cgrignore = load_cgrignore_patterns(repo_path)
+    cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
     pre_excluded = cli_patterns | cgrignore.exclude
 

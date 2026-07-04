@@ -119,7 +119,7 @@ class TestCleanWithoutUpdateGraph:
 class TestCleanWithUpdateGraph:
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_clean_with_update_deletes_hash_cache(
         self,
         mock_cgrignore: MagicMock,
@@ -145,7 +145,7 @@ class TestCleanWithUpdateGraph:
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_clean_with_update_calls_clean_database(
         self,
         mock_cgrignore: MagicMock,
@@ -169,7 +169,7 @@ class TestCleanWithUpdateGraph:
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_update_without_clean_preserves_hash_cache(
         self,
         mock_cgrignore: MagicMock,

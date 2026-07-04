@@ -284,7 +284,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_loads_cgrignore_without_interactive_setup(
         self,
         mock_load_cgrignore: MagicMock,
@@ -314,7 +314,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.ProtobufFileIngestor")
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_index_loads_cgrignore_without_interactive_setup(
         self,
         mock_load_cgrignore: MagicMock,
@@ -344,7 +344,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_merges_cli_excludes_with_cgrignore(
         self,
         mock_load_cgrignore: MagicMock,
@@ -379,7 +379,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
     @patch("codebase_rag.cli.prompt_for_unignored_directories")
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_does_not_prompt_without_interactive_setup(
         self,
         mock_load_cgrignore: MagicMock,
