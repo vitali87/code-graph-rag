@@ -2754,6 +2754,13 @@ GUARD_INHERITED_METHOD = "_inherited_method_guard"
 TS_PAIR = "pair"
 TS_OBJECT = "object"
 TS_ARRAY = "array"
+
+# (H) When a variable_declarator's value is one of these, the variable binds the
+# (H) call/construction RESULT, not a function -- so an arrow found inside its
+# (H) arguments (`const m = useMutation({fn: () => {}})`) must not inherit the
+# (H) variable's name. Object-literal / arrow values are not here, so arrows nested
+# (H) directly under an object bound to a const still take the object's name.
+JS_CALL_RESULT_VALUE_TYPES = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
 TS_FUNCTION_EXPRESSION = "function_expression"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
