@@ -105,6 +105,72 @@ def test_positional_namedtuple_field_binds(tmp_path: Path) -> None:
     assert _has(calls, "spec.use", "spec.py_name")
 
 
+def test_typed_default_param_binds_positionally(tmp_path: Path) -> None:
+    # (H) A typed default parameter (handler: Callable = None) exposes its name as
+    # (H) an `identifier` under the `name` field, so param-order extraction gets
+    # (H) 'handler', not the whole 'handler: Callable' annotation.
+    files = {
+        "config.py": (
+            "from typing import Callable\n\n\n"
+            "class Config:\n"
+            "    def __init__(self, handler: Callable = None):\n"
+            "        self.handler = handler\n\n"
+            "    def run(self):\n"
+            "        return self.handler()\n"
+        ),
+        "app.py": (
+            "from config import Config\n\n\n"
+            "def on_event():\n"
+            "    return 1\n\n\n"
+            "def main():\n"
+            "    return Config(on_event).run()\n"
+        ),
+    }
+    calls = _run_calls(tmp_path, files)
+    assert _has(calls, "Config.run", "app.on_event")
+
+
+def test_nested_class_ctor_field_binding_is_recorded(tmp_path: Path) -> None:
+    # (H) A nested class (Inner inside Outer) must resolve to Outer.Inner via the
+    # (H) enclosing-class qn, not a bare module.Inner lookup that misses, so its
+    # (H) positional ctor field binding IS recorded (finding: nested-class params
+    # (H) and renames were silently dropped). Asserted at the binding level: the
+    # (H) CALLS EDGE additionally depends on nested-class method-qn attribution,
+    # (H) a separate pre-existing concern outside constructor-field binding.
+    parsers, queries = load_parsers()
+    if "python" not in parsers:
+        pytest.skip("python parser not available")
+    files = {
+        "outer.py": (
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        def __init__(self, handler):\n"
+            "            self.handler = handler\n\n"
+            "        def run(self):\n"
+            "            return self.handler()\n"
+        ),
+        "app.py": (
+            "from outer import Outer\n\n\n"
+            "def on_event():\n"
+            "    return 1\n\n\n"
+            "def main():\n"
+            "    return Outer.Inner(on_event).run()\n"
+        ),
+    }
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    updater = GraphUpdater(
+        ingestor=MagicMock(), repo_path=tmp_path, parsers=parsers, queries=queries
+    )
+    updater.run()
+    resolver = updater.factory.call_processor._resolver
+    assert resolver.callable_field_targets("handler") == {
+        f"{tmp_path.name}.app.on_event"
+    }
+
+
 def test_nested_helper_store_does_not_clobber_ctor_rename(tmp_path: Path) -> None:
     # (H) A `self.cb = handler` inside a nested helper in __init__ must NOT be
     # (H) recorded as the constructor-store rename: the real store is

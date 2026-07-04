@@ -374,30 +374,50 @@ class CallProcessor:
         # (H) names (__init__ params, or annotated class-body fields for
         # (H) NamedTuple/dataclass classes without __init__) and the
         # (H) param -> attribute renames from `self.attr = param` statements.
-        # (H) ponytail: top-level and class-nested walks share the plain stack;
-        # (H) a class inside a FUNCTION is skipped (its qn is caller-scoped).
+        # (H) The stack carries each node's ENCLOSING class qn so a nested class
+        # (H) (Inner inside Outer) resolves to module.Outer.Inner: a bare
+        # (H) resolve_function_call("Inner", module_qn) would look for
+        # (H) module.Inner and miss it. A class inside a FUNCTION is skipped (its
+        # (H) qn is caller-scoped), so nested-in-method classes never reach here.
         resolver = self._resolver
-        stack: list[Node] = list(root_node.children)
+        registry = resolver.function_registry
+        stack: list[tuple[Node, str | None]] = [
+            (child, None) for child in root_node.children
+        ]
         while stack:
-            node = stack.pop()
+            node, enclosing_qn = stack.pop()
             if node.type == cs.TS_PY_DECORATED_DEFINITION:
-                stack.extend(node.children)
+                stack.extend((c, enclosing_qn) for c in node.children)
                 continue
             if node.type == cs.TS_PY_FUNCTION_DEFINITION:
                 continue
             if node.type != cs.TS_PY_CLASS_DEFINITION:
-                stack.extend(node.children)
+                stack.extend((c, enclosing_qn) for c in node.children)
                 continue
             name_node = node.child_by_field_name(cs.FIELD_NAME)
             class_name = safe_decode_text(name_node) if name_node else None
             body = node.child_by_field_name(cs.FIELD_BODY)
             if not class_name or body is None:
                 continue
-            stack.extend(body.children)
-            resolved = resolver.resolve_function_call(class_name, module_qn)
-            if not resolved or resolved[0] != cs.NodeLabel.CLASS:
+            if enclosing_qn is not None:
+                candidate_qn = f"{enclosing_qn}{cs.SEPARATOR_DOT}{class_name}"
+                class_qn = (
+                    candidate_qn
+                    if registry.get(candidate_qn) == cs.NodeLabel.CLASS
+                    else None
+                )
+            else:
+                resolved = resolver.resolve_function_call(class_name, module_qn)
+                class_qn = (
+                    resolved[1]
+                    if resolved and resolved[0] == cs.NodeLabel.CLASS
+                    else None
+                )
+            # (H) Descend into the body with THIS class as the enclosing scope so
+            # (H) its nested classes resolve; skip metadata when unresolved.
+            stack.extend((c, class_qn) for c in body.children)
+            if class_qn is None:
                 continue
-            class_qn = resolved[1]
             if init_node := self._find_init_method(body):
                 params = self._ordered_param_names(init_node)
                 resolver.record_ctor_params(class_qn, params)
