@@ -320,14 +320,18 @@ class CallProcessor:
         # (H) Pre-pass: record which functions are bound to a class's callable
         # (H) fields (FQNSpec(get_name=_python_get_name, ...)). Runs before call
         # (H) resolution so a field invocation can resolve regardless of which
-        # (H) file the construction site lives in. Keyword bindings only;
-        # (H) positional callable args would need declared field order.
+        # (H) file the construction site lives in. Bindings are recorded PENDING
+        # (H) (keyword name or positional index) and resolved by
+        # (H) finalize_field_bindings after every file's ctor metadata (param
+        # (H) order + param->attribute renames) has been collected.
         if language != cs.SupportedLanguage.PYTHON:
             return
         try:
             module_qn = self._module_qn(
                 cached_relative_path(file_path, self.repo_path), file_path.name
             )
+            resolver = self._resolver
+            self._collect_ctor_field_metadata(root_node, module_qn)
             if (
                 func_class_captures_cache is not None
                 and file_path in func_class_captures_cache
@@ -339,12 +343,11 @@ class CallProcessor:
                 call_nodes, _ = self._collect_all_call_nodes(
                     root_node, language, queries
                 )
-            resolver = self._resolver
             registry = resolver.function_registry
             callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
             for call_node in call_nodes:
-                _positional, keyword = self._parse_call_arguments(call_node)
-                if not keyword:
+                positional, keyword = self._parse_call_arguments(call_node)
+                if not positional and not keyword:
                     continue
                 name = self._get_call_target_name(call_node)
                 if not name:
@@ -352,16 +355,150 @@ class CallProcessor:
                 callee = resolver.resolve_function_call(name, module_qn)
                 if not callee or callee[0] != cs.NodeLabel.CLASS:
                     continue
-                for field, value_node in keyword.items():
+                arg_entries: list[tuple[int | str, Node]] = list(enumerate(positional))
+                arg_entries.extend(keyword.items())
+                for key, value_node in arg_entries:
                     if not (value_text := safe_decode_text(value_node)):
                         continue
                     bound = resolver.resolve_function_call(value_text, module_qn)
                     if bound and bound[0] in callable_labels and bound[1] in registry:
-                        resolver.record_callable_field_binding(
-                            callee[1], field, bound[1]
-                        )
+                        resolver.record_pending_field_binding(callee[1], key, bound[1])
         except Exception as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+
+    def finalize_callable_field_bindings(self) -> None:
+        self._resolver.finalize_field_bindings()
+
+    def _collect_ctor_field_metadata(self, root_node: Node, module_qn: str) -> None:
+        # (H) For every class defined in this file, record the ordered ctor param
+        # (H) names (__init__ params, or annotated class-body fields for
+        # (H) NamedTuple/dataclass classes without __init__) and the
+        # (H) param -> attribute renames from `self.attr = param` statements.
+        # (H) ponytail: top-level and class-nested walks share the plain stack;
+        # (H) a class inside a FUNCTION is skipped (its qn is caller-scoped).
+        resolver = self._resolver
+        stack: list[Node] = list(root_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_DECORATED_DEFINITION:
+                stack.extend(node.children)
+                continue
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                continue
+            if node.type != cs.TS_PY_CLASS_DEFINITION:
+                stack.extend(node.children)
+                continue
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            class_name = safe_decode_text(name_node) if name_node else None
+            body = node.child_by_field_name(cs.FIELD_BODY)
+            if not class_name or body is None:
+                continue
+            stack.extend(body.children)
+            resolved = resolver.resolve_function_call(class_name, module_qn)
+            if not resolved or resolved[0] != cs.NodeLabel.CLASS:
+                continue
+            class_qn = resolved[1]
+            if init_node := self._find_init_method(body):
+                params = self._ordered_param_names(init_node)
+                resolver.record_ctor_params(class_qn, params)
+                self._record_param_attr_renames(init_node, class_qn, set(params))
+            else:
+                resolver.record_ctor_params(class_qn, self._annotated_field_names(body))
+
+    @staticmethod
+    def _find_init_method(class_body: Node) -> Node | None:
+        for child in class_body.children:
+            candidate = child
+            if candidate.type == cs.TS_PY_DECORATED_DEFINITION:
+                candidate = (
+                    candidate.child_by_field_name(cs.FIELD_DEFINITION) or candidate
+                )
+            if candidate.type != cs.TS_PY_FUNCTION_DEFINITION:
+                continue
+            name_node = candidate.child_by_field_name(cs.FIELD_NAME)
+            if name_node is not None and safe_decode_text(name_node) == (
+                cs.PY_METHOD_INIT
+            ):
+                return candidate
+        return None
+
+    @staticmethod
+    def _ordered_param_names(init_node: Node) -> tuple[str, ...]:
+        params_node = init_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params_node is None:
+            return ()
+        names: list[str] = []
+        for child in params_node.named_children:
+            match child.type:
+                case cs.TS_PY_IDENTIFIER:
+                    name = safe_decode_text(child)
+                case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+                    name_node = child.child_by_field_name(cs.FIELD_NAME)
+                    name = safe_decode_text(name_node) if name_node else None
+                case cs.TS_PY_TYPED_PARAMETER:
+                    inner = child.named_children[0] if child.named_children else None
+                    name = (
+                        safe_decode_text(inner)
+                        if inner is not None and inner.type == cs.TS_PY_IDENTIFIER
+                        else None
+                    )
+                case _:
+                    # (H) *args/**kwargs/keyword_separator never bind fields.
+                    name = None
+            if name and name != cs.PY_KEYWORD_SELF:
+                names.append(name)
+        return tuple(names)
+
+    def _record_param_attr_renames(
+        self, init_node: Node, class_qn: str, params: set[str]
+    ) -> None:
+        # (H) `self.ctx_factory = create_context` stores the param under a
+        # (H) DIFFERENT name; the field invocation goes through the attribute.
+        body = init_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return
+        self_prefix = f"{cs.PY_KEYWORD_SELF}{cs.SEPARATOR_DOT}"
+        stack: list[Node] = list(body.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if (
+                    left is not None
+                    and right is not None
+                    and left.type == cs.TS_PY_ATTRIBUTE
+                    and right.type == cs.TS_PY_IDENTIFIER
+                    and (left_text := safe_decode_text(left))
+                    and left_text.startswith(self_prefix)
+                    and (param := safe_decode_text(right)) in params
+                ):
+                    attr = left_text[len(self_prefix) :]
+                    if attr != param:
+                        self._resolver.record_ctor_param_attr(class_qn, param, attr)
+            stack.extend(node.children)
+
+    @staticmethod
+    def _annotated_field_names(class_body: Node) -> tuple[str, ...]:
+        # (H) NamedTuple/dataclass field order = annotated class-body assignments
+        # (H) (`fetch_name: Callable`, `other: int = 3`) in declaration order.
+        names: list[str] = []
+        for child in class_body.children:
+            if child.type != cs.TS_PY_EXPRESSION_STATEMENT or not child.named_children:
+                continue
+            stmt = child.named_children[0]
+            if stmt.type != cs.TS_PY_ASSIGNMENT:
+                continue
+            left = stmt.child_by_field_name(cs.TS_FIELD_LEFT)
+            has_type = stmt.child_by_field_name(cs.FIELD_TYPE) is not None
+            if (
+                left is not None
+                and left.type == cs.TS_PY_IDENTIFIER
+                and has_type
+                and (name := safe_decode_text(left))
+            ):
+                names.append(name)
+        return tuple(names)
 
     def process_calls_in_file(
         self,

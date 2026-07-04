@@ -59,6 +59,9 @@ class CallResolver:
         "_subclass_map_cache",
         "_protocol_classes_cache",
         "_struct_impl_cache",
+        "_ctor_params",
+        "_ctor_param_attrs",
+        "_pending_field_bindings",
     )
 
     def __init__(
@@ -94,6 +97,44 @@ class CallResolver:
         self._subclass_map_cache: dict[str, set[str]] | None = None
         self._protocol_classes_cache: set[str] | None = None
         self._struct_impl_cache: dict[str, set[str]] = {}
+        # (H) Ordered constructor parameter names per class (explicit __init__
+        # (H) params, or annotated class-body fields for NamedTuple/dataclass),
+        # (H) plus the param -> stored-attribute renames found in __init__
+        # (H) bodies (self.ctx_factory = create_context). Construction-site
+        # (H) bindings are held PENDING until every file's ctor metadata is
+        # (H) collected, since a site may be scanned before its class's file.
+        self._ctor_params: dict[str, tuple[str, ...]] = {}
+        self._ctor_param_attrs: dict[tuple[str, str], str] = {}
+        self._pending_field_bindings: list[tuple[str, int | str, str]] = []
+
+    def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
+        self._ctor_params[class_qn] = params
+
+    def record_ctor_param_attr(self, class_qn: str, param: str, attr: str) -> None:
+        self._ctor_param_attrs[(class_qn, param)] = attr
+
+    def record_pending_field_binding(
+        self, class_qn: str, key: int | str, func_qn: str
+    ) -> None:
+        # (H) key: keyword name, or positional index awaiting the ctor param order.
+        self._pending_field_bindings.append((class_qn, key, func_qn))
+
+    def finalize_field_bindings(self) -> None:
+        # (H) Resolve pendings now that every class's ctor metadata is known: a
+        # (H) positional index maps through the param order (dropped when the
+        # (H) class has none recorded), and a param maps to its stored attribute
+        # (H) name when __init__ renames it (self.ctx_factory = create_context).
+        for class_qn, key, func_qn in self._pending_field_bindings:
+            if isinstance(key, int):
+                params = self._ctor_params.get(class_qn)
+                if not params or key >= len(params):
+                    continue
+                param = params[key]
+            else:
+                param = key
+            field = self._ctor_param_attrs.get((class_qn, param), param)
+            self.record_callable_field_binding(class_qn, field, func_qn)
+        self._pending_field_bindings.clear()
 
     def record_callable_field_binding(
         self, class_qn: str, field: str, func_qn: str
