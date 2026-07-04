@@ -42,6 +42,54 @@ def _has(
     )
 
 
+def _function_qns(tmp_path: Path, files: dict[str, str], lang_key: str) -> set[str]:
+    # (H) Build the graph and return the qualified names of all FUNCTION nodes.
+    parsers, queries = load_parsers()
+    if lang_key not in parsers:
+        pytest.skip(f"{lang_key} parser not available")
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
+    ).run()
+    return {
+        c.args[1][cs.KEY_QUALIFIED_NAME]
+        for c in mock.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.FUNCTION
+    }
+
+
+def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> None:
+    # (H) `const mutation = useMutation({...})` binds a call_expression, not a
+    # (H) function. The inner object-literal arrows (mutationFn/onSuccess) must NOT
+    # (H) climb past the pair/call up to the `mutation` declarator and register a
+    # (H) bogus FUNCTION node named after the variable -- that phantom node has no
+    # (H) incoming edge and reports as dead code (~27 of the template's remaining
+    # (H) false positives).
+    files = {
+        "AddUser.tsx": (
+            "import { useMutation } from '@tanstack/react-query'\n\n\n"
+            "const AddUser = () => {\n"
+            "  const mutation = useMutation({\n"
+            "    mutationFn: (d) => save(d),\n"
+            "    onSuccess: () => { reset() },\n"
+            "  })\n"
+            "  return mutation\n"
+            "}\n\n\n"
+            "function save(d) { return d }\n"
+            "function reset() {}\n"
+            "export default AddUser\n"
+        ),
+    }
+    fns = _function_qns(tmp_path, files, "typescript")
+    assert not any(qn.split(".")[-1].split("@")[0] == "mutation" for qn in fns), (
+        f"variable `mutation` wrongly registered as a function; fns={fns}"
+    )
+
+
 def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # (H) useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
     # (H) inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the

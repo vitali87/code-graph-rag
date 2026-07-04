@@ -552,6 +552,16 @@ class FunctionIngestMixin:
             current = func_node.parent
             while current:
                 if current.type == cs.TS_VARIABLE_DECLARATOR:
+                    # (H) `const m = useMutation({fn: () => {}})` binds the CALL
+                    # (H) result to `m`, not the inner arrow; naming the arrow `m`
+                    # (H) invents a phantom function (dead-code false positive). Only
+                    # (H) claim the declarator name when its value is not a call.
+                    value = current.child_by_field_name(cs.FIELD_VALUE)
+                    if (
+                        value is not None
+                        and value.type in cs.JS_CALL_RESULT_VALUE_TYPES
+                    ):
+                        return None
                     for child in current.children:
                         if child.type == cs.TS_IDENTIFIER and child.text:
                             return safe_decode_text(child)
