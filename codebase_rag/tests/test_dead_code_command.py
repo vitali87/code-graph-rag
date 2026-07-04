@@ -199,9 +199,11 @@ class TestDeadCodeCommand:
         assert result.exit_code == 0
         query, params = mock_ingestor.fetch_all.call_args.args
         # (H) test_patterns is still passed (it filters test modules out of the
-        # (H) module-load roots), but test functions themselves are not roots.
+        # (H) module-load roots and test-file symbols out of the report), but
+        # (H) test functions themselves are not roots.
         assert "test_patterns" in params
-        assert "n.path CONTAINS" not in query
+        assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
+        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" in query
 
     def test_classes_flag_includes_class_candidates(
         self, runner: CliRunner, dead_rows: list[ResultRow]

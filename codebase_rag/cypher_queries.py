@@ -101,6 +101,15 @@ _DEAD_CODE_TEST_ROOT_CLAUSE = (
     "\n    OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
 )
 
+# (H) When tests are excluded, a test-file symbol's only callers (test functions)
+# (H) are excluded as roots, so reporting it is unconditional noise: test helpers
+# (H) and mocks are test infrastructure, not dead production code. Filter them
+# (H) from the reported candidates; production code reached only from tests is
+# (H) still reported.
+_DEAD_CODE_CANDIDATE_NON_TEST = (
+    "\n  AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
+)
+
 # (H) A node reached by a Module node runs at import (top-level statement,
 # (H) `if __name__ == "__main__"`, a bare decorator, or a module-scope
 # (H) construction), so it is a root. `size([...])` avoids the non-standard
@@ -175,7 +184,7 @@ WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
 WITH live_set + closure_roots + cr_reached_set AS live_set
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
-  AND NOT n IN live_set
+  AND NOT n IN live_set{candidate_clause}
 RETURN labels(n)[0] AS label, n.name AS name,
        n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line
@@ -194,15 +203,18 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
     if include_tests:
         module_clause = _DEAD_CODE_MODULE_ROOT_ANY.format(module_rels=module_rels)
         test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE
+        candidate_clause = ""
     else:
         module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST.format(module_rels=module_rels)
         test_clause = ""
+        candidate_clause = _DEAD_CODE_CANDIDATE_NON_TEST
     protocol_bases = ", ".join(f"'{qn}'" for qn in PROTOCOL_BASE_QNS)
     return _DEAD_CODE_QUERY_TEMPLATE.format(
         labels=labels,
         traversal=traversal,
         module_clause=module_clause,
         test_clause=test_clause,
+        candidate_clause=candidate_clause,
         protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
             protocol_bases=protocol_bases
         ),

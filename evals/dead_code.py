@@ -118,6 +118,15 @@ def dead_code_from_graph(
         if label == _MODULE:
             module_path[str(uid)] = str(props.get(cs.KEY_PATH, ""))
         elif label in labels and str(uid).startswith(project_prefix):
+            # (H) Mirror the query's candidate-side test filter: with tests
+            # (H) excluded, a test-file symbol's only callers are excluded as
+            # (H) roots, so reporting it is unconditional noise (test helpers
+            # (H) and mocks are infrastructure, not dead production code).
+            if not config.include_tests and any(
+                pattern in str(props.get(cs.KEY_PATH, ""))
+                for pattern in config.test_patterns
+            ):
+                continue
             candidates.add(str(uid))
             props_by_qn[str(uid)] = props
             if label == _METHOD:

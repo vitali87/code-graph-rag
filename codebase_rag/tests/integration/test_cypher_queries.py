@@ -365,12 +365,24 @@ class TestBuildDeadCodeQueryUnit:
         query = build_dead_code_query(include_tests=False)
 
         # (H) test functions are NOT roots when excluding tests ...
-        assert "n.path CONTAINS" not in query
+        assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
         # (H) ... but test_patterns still filters test modules out of the
         # (H) module-load root clause so test-only code is not kept alive.
         assert "$test_patterns" in query
         assert "m.path CONTAINS" in query
         assert "$project_prefix" in query
+        # (H) ... and test-file symbols are excluded from the REPORT: their only
+        # (H) callers are excluded as roots, so reporting them is unconditional
+        # (H) noise (test helpers/mocks are infrastructure, not dead production
+        # (H) code).
+        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" in query
+
+    def test_include_tests_reports_test_file_candidates(self) -> None:
+        query = build_dead_code_query(include_tests=True)
+
+        # (H) with tests included, test-file symbols are roots AND stay
+        # (H) reportable candidates; no candidate-side path filter exists.
+        assert "AND NOT ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
 
     def test_module_load_callees_are_roots(self) -> None:
         query = build_dead_code_query(include_tests=False)
@@ -475,10 +487,11 @@ class TestBuildDeadCodeQueryIntegration:
         )
 
         names = {r["qualified_name"] for r in results}
-        # (H) without test roots, the test fn and its helper are no longer reachable
+        # (H) without test roots, production code reached only from tests (helper)
+        # (H) is reported; the test fn itself is test infrastructure, filtered
+        # (H) from candidates by path.
         assert names == {
             "proj.mod.orphan",
-            "proj.tests.test_runs",
             "proj.mod.helper",
         }
 
