@@ -85,6 +85,33 @@ def test_object_literal_inline_function_expr_is_referenced(tmp_path: Path) -> No
     assert _has(rels, "config.build", REFERENCES, "config.build.handler")
 
 
+def test_arrow_const_component_object_callbacks_referenced(tmp_path: Path) -> None:
+    # (H) The real FastAPI-template shape: the component is an arrow bound to a const
+    # (H) (const AddUser = () => {...}), and useMutation callbacks live inside it. The
+    # (H) definition pass must nest those object-arrows under the component
+    # (H) (module.AddUser.mutationFn), matching the component's own qn and the call
+    # (H) pass, so the REFERENCES edge connects; otherwise every TanStack callback in
+    # (H) an arrow-const component (the whole template) stays dead.
+    files = {
+        "AddUser.tsx": (
+            "import { useMutation } from '@tanstack/react-query'\n\n\n"
+            "const AddUser = () => {\n"
+            "  const mutation = useMutation({\n"
+            "    mutationFn: (d) => save(d),\n"
+            "    onSuccess: () => { reset() },\n"
+            "  })\n"
+            "  return mutation\n"
+            "}\n\n\n"
+            "function save(d) { return d }\n"
+            "function reset() {}\n"
+            "export default AddUser\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    assert _has(rels, "AddUser.AddUser", REFERENCES, "AddUser.AddUser.mutationFn")
+    assert _has(rels, "AddUser.AddUser", REFERENCES, "AddUser.AddUser.onSuccess")
+
+
 def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # (H) A string-literal key ({'onSuccess': () => {}}) has no property name, so the
     # (H) inline arrow registers as scope.anonymous_<row>_<col>, not scope.onSuccess.

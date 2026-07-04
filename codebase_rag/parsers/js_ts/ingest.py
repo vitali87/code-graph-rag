@@ -632,7 +632,34 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return None
 
         name_node = node.child_by_field_name(cs.FIELD_NAME)
-        return safe_decode_text(name_node) if name_node and name_node.text else None
+        if name_node and name_node.text:
+            return safe_decode_text(name_node)
+        return self._js_nameless_binding_name(node)
+
+    def _js_nameless_binding_name(self, node: ASTNode) -> str | None:
+        # (H) An arrow/function-expression has no `name` field; its effective name is
+        # (H) the binding it is assigned to (const Cmp = () => {}), the object key it is
+        # (H) a value of, or the lhs of an assignment. Recovering it keeps a callback
+        # (H) nested in an arrow-const component nested under that component
+        # (H) (module.Cmp.onSuccess), consistent with the component's own qn and the
+        # (H) call pass, instead of collapsing to module.onSuccess and dangling.
+        parent = node.parent
+        if parent is None:
+            return None
+        if parent.type == cs.TS_VARIABLE_DECLARATOR:
+            binding = parent.child_by_field_name(cs.FIELD_NAME)
+        elif parent.type == cs.TS_PAIR:
+            binding = parent.child_by_field_name(cs.FIELD_KEY)
+        elif parent.type == cs.TS_ASSIGNMENT_EXPRESSION:
+            binding = parent.child_by_field_name(cs.FIELD_LEFT)
+        else:
+            return None
+        if binding is None or binding.type not in (
+            cs.TS_IDENTIFIER,
+            cs.TS_PROPERTY_IDENTIFIER,
+        ):
+            return None
+        return safe_decode_text(binding) if binding.text else None
 
     def _js_format_qualified_name(
         self, module_qn: str, path_parts: list[str], final_name: str
