@@ -135,9 +135,7 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # (H) JS/TS definition pass registers these as their own nodes named by the key
 # (H) (scope.onSuccess), so a passed object of callbacks (useMutation/useQuery) must
 # (H) reference each or every TanStack-style callback reports as dead.
-_INLINE_FUNC_VALUE_TYPES = frozenset(
-    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION}
-)
+_INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
 
 
 class CallProcessor:
@@ -1853,7 +1851,7 @@ class CallProcessor:
                     ):
                         if value.type in _INLINE_FUNC_VALUE_TYPES:
                             self._emit_inline_value_function_ref(
-                                pair, caller_spec, ensure_rel
+                                pair, value, caller_spec, ensure_rel
                             )
                             continue
                         self._emit_value_function_ref(
@@ -1907,31 +1905,38 @@ class CallProcessor:
     def _emit_inline_value_function_ref(
         self,
         pair: Node,
+        value: Node,
         caller_spec: tuple[str, str, str],
         ensure_rel,
     ) -> None:
         # (H) An inline arrow/function-expression object value is registered by the
-        # (H) definition pass under {enclosing_scope}.{key}; that scope is caller_spec's
-        # (H) qn, so reconstruct the qn from the key and reference the registered
-        # (H) node(s) (variants cover same-key duplicates in one scope).
-        key_node = pair.child_by_field_name(cs.FIELD_KEY)
-        if key_node is None or key_node.type not in (
-            cs.TS_PROPERTY_IDENTIFIER,
-            cs.TS_IDENTIFIER,
-        ):
-            return
-        if not (key := safe_decode_text(key_node)):
-            return
+        # (H) definition pass under {enclosing_scope}.<name>. An identifier key names it
+        # (H) by the key (scope.onSuccess); a string-literal key ({'onSuccess': ...})
+        # (H) has no property name, so it registers as scope.anonymous_<row>_<col> from
+        # (H) the value's position. Reference every candidate that is actually
+        # (H) registered (variants cover same-name duplicates in one scope).
         registry = self._resolver.function_registry
-        base_qn = f"{caller_spec[2]}{cs.SEPARATOR_DOT}{key}"
-        for target_qn in registry.variants(base_qn):
-            if registry.get(target_qn) is None:
-                continue
-            ensure_rel(
-                caller_spec,
-                cs.RelationshipType.REFERENCES,
-                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+        scope_qn = caller_spec[2]
+        candidates = {
+            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+            f"{value.start_point[0]}_{value.start_point[1]}"
+        }
+        key_node = pair.child_by_field_name(cs.FIELD_KEY)
+        if (
+            key_node is not None
+            and key_node.type in (cs.TS_PROPERTY_IDENTIFIER, cs.TS_IDENTIFIER)
+            and (key := safe_decode_text(key_node))
+        ):
+            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{key}")
+        for candidate in candidates:
+            for target_qn in registry.variants(candidate):
+                if registry.get(target_qn) is None:
+                    continue
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:

@@ -83,3 +83,26 @@ def test_object_literal_inline_function_expr_is_referenced(tmp_path: Path) -> No
     }
     rels = _run_rels(tmp_path, files, "typescript")
     assert _has(rels, "config.build", REFERENCES, "config.build.handler")
+
+
+def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) -> None:
+    # (H) A string-literal key ({'onSuccess': () => {}}) has no property name, so the
+    # (H) inline arrow registers as scope.anonymous_<row>_<col>, not scope.onSuccess.
+    # (H) The reference must target the actual registered (anonymous) node by the
+    # (H) value's position, or the callback still reports as dead.
+    files = {
+        "widget.tsx": (
+            "export function Widget() {\n"
+            "  register({\n"
+            "    'onSuccess': () => { done() },\n"
+            "  })\n"
+            "}\n\n\n"
+            "function register(o) { return o }\n"
+            "function done() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("widget.Widget")}
+    assert any(".widget.Widget.anonymous_" in b for b in refs), (
+        f"no anonymous ref emitted; refs={refs}"
+    )
