@@ -125,6 +125,11 @@ _ASSIGNMENT_RHS_FIELDS = {
 _ASSIGNMENT_RHS_REF_TYPES = frozenset(
     {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_MEMBER_EXPRESSION}
 )
+# (H) JSX nodes that carry a component name (self-closing and opening; a
+# (H) closing element repeats the name, so a paired element emits once).
+_JSX_NAMED_ELEMENT_TYPES = frozenset(
+    {cs.TS_JSX_SELF_CLOSING_ELEMENT, cs.TS_JSX_OPENING_ELEMENT}
+)
 
 
 class CallProcessor:
@@ -446,6 +451,18 @@ class CallProcessor:
                 # (H) even in a file with no call expressions, so scan before the
                 # (H) no-calls early return.
                 self._ingest_assignment_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
+            if language in _JS_TS_LANGUAGES:
+                # (H) A module-scope JSX element (export default <App />) can sit
+                # (H) in a file with no call expressions; scan before the early
+                # (H) return like the assignment pass.
+                self._ingest_jsx_component_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
@@ -1059,6 +1076,16 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        if language in _JS_TS_LANGUAGES:
+            self._ingest_jsx_component_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                caller_qn,
+            )
         # (H) Dispatch-table handler references, for every flow language. Module-scope
         # (H) literals are scanned explicitly in process_calls_in_file (before the
         # (H) no-calls early return), so only nested scopes here.
@@ -1527,6 +1554,47 @@ class CallProcessor:
                     self._emit_callback_edge(
                         caller_spec,
                         right,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                        cs.RelationshipType.REFERENCES,
+                    )
+            stack.extend(node.children)
+
+    def _ingest_jsx_component_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+    ) -> None:
+        # (H) `<Card />` renders the Card component: the framework invokes it
+        # (H) through the element, never by a call the graph can see, so the JSX
+        # (H) usage references the component. Uppercase names only -- lowercase
+        # (H) tags are HTML elements and must not misbind to same-named locals.
+        # (H) The walk stops at nested scope boundaries (each nested function's
+        # (H) own pass covers its JSX), but continues THROUGH jsx elements so
+        # (H) nested markup is covered by the scope that renders it.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types:
+                continue
+            if node.type in _JSX_NAMED_ELEMENT_TYPES:
+                name_node = node.child_by_field_name(cs.FIELD_NAME)
+                name_text = safe_decode_text(name_node) if name_node else None
+                if name_text and name_text[0].isupper():
+                    self._emit_callback_edge(
+                        caller_spec,
+                        name_node,
                         module_qn,
                         local_var_types,
                         class_context,
