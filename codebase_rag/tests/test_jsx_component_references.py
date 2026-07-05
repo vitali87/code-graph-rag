@@ -143,6 +143,48 @@ def test_html_tags_are_not_referenced(tmp_path: Path) -> None:
     assert not any(r == REFERENCES for _, r, _ in rels)
 
 
+def test_jsx_attribute_bare_handler_is_referenced(tmp_path: Path) -> None:
+    # (H) `<button onClick={handleLogout}>` hands a local function to the element
+    # (H) as a prop; the framework invokes it on the event, never by a call the
+    # (H) graph can see, so the rendering scope must reference it or every event
+    # (H) handler passed by name reports as dead (Sidebar/User handlers on the
+    # (H) FastAPI template).
+    files = {
+        "panel.tsx": (
+            "export function Panel() {\n"
+            "  const handleLogout = () => { logout() }\n"
+            "  return <button onClick={handleLogout}>x</button>\n"
+            "}\n\n\n"
+            "function logout() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    assert _has(rels, "panel.Panel", REFERENCES, "panel.Panel.handleLogout")
+
+
+def test_jsx_attribute_inline_arrow_is_referenced(tmp_path: Path) -> None:
+    # (H) An inline arrow in a JSX attribute (`onClick={() => toggle()}`) registers
+    # (H) as an anonymous node in the rendering scope with no incoming edge; the
+    # (H) element consumes it, so the scope must reference it by position or every
+    # (H) inline JSX handler reports as dead (the routes/* form callbacks on the
+    # (H) template).
+    files = {
+        "input.tsx": (
+            "export function PasswordInput() {\n"
+            "  return <button onClick={() => toggle()}>x</button>\n"
+            "}\n\n\n"
+            "function toggle() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    refs = {
+        b for a, r, b in rels if r == REFERENCES and a.endswith("input.PasswordInput")
+    }
+    assert any(".input.PasswordInput.anonymous_" in b for b in refs), (
+        f"inline JSX-attribute arrow not referenced; refs={refs}"
+    )
+
+
 def test_member_expression_component_is_referenced(tmp_path: Path) -> None:
     # (H) A namespaced component (<Menu.Item />) names its member through a
     # (H) member expression; resolve it like any dotted callable reference.

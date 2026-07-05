@@ -2297,6 +2297,10 @@ JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # (H) double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
 TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
+# (H) The `{...}` wrapper around an expression in a JSX attribute value or child
+# (H) (`onClick={handleLogout}`, `onClick={() => x()}`); its inner expression can
+# (H) hand a function to the element as a prop.
+TS_JSX_EXPRESSION = "jsx_expression"
 
 # (H) Import processor function names
 IMPORT_REQUIRE = "require"

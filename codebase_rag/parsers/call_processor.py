@@ -1817,6 +1817,24 @@ class CallProcessor:
                                 cs.RelationshipType.REFERENCES,
                                 (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
                             )
+            elif node.type == cs.TS_JSX_EXPRESSION:
+                # (H) A `{...}` attribute value hands its inner expression to the
+                # (H) element as a prop. A bare identifier (onClick={handleLogout})
+                # (H) or inline arrow (onClick={() => x()}) is a function the
+                # (H) framework invokes on the event, so reference it; other
+                # (H) expressions resolve to nothing and are skipped by the helper.
+                for value in node.named_children:
+                    self._emit_callback_edge(
+                        caller_spec,
+                        value,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn=caller_qn,
+                        rel_type=cs.RelationshipType.REFERENCES,
+                    )
             stack.extend(node.children)
 
     def _ingest_collection_function_references(
