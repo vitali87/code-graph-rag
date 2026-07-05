@@ -15,6 +15,7 @@ from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
+from .rs import RustTypeInferenceEngine
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -38,6 +39,7 @@ class TypeInferenceEngine:
         "_js_type_inference",
         "_python_type_inference",
         "_go_type_inference",
+        "_rust_type_inference",
         "_cpp_type_inference",
     )
 
@@ -83,6 +85,7 @@ class TypeInferenceEngine:
         self._js_type_inference: JsTypeInferenceEngine | None = None
         self._python_type_inference: PythonTypeInferenceEngine | None = None
         self._go_type_inference: GoTypeInferenceEngine | None = None
+        self._rust_type_inference: RustTypeInferenceEngine | None = None
         self._cpp_type_inference: CppTypeInferenceEngine | None = None
 
     @property
@@ -90,6 +93,12 @@ class TypeInferenceEngine:
         if self._go_type_inference is None:
             self._go_type_inference = GoTypeInferenceEngine()
         return self._go_type_inference
+
+    @property
+    def rust_type_inference(self) -> RustTypeInferenceEngine:
+        if self._rust_type_inference is None:
+            self._rust_type_inference = RustTypeInferenceEngine()
+        return self._rust_type_inference
 
     @property
     def cpp_type_inference(self) -> CppTypeInferenceEngine:
@@ -163,10 +172,23 @@ class TypeInferenceEngine:
         # (H) When the caller is a method, overlay its class's member-field types as a
         # (H) base so a bare `field_.method()` receiver resolves; parameters and locals
         # (H) with the same name shadow a field, so the local map wins on conflict.
-        if class_context and (fields := self._collect_field_types(class_context)):
+        fields = self._collect_field_types(class_context) if class_context else {}
+        if fields:
             local = {**fields, **local}
         if language == cs.SupportedLanguage.GO:
             self._enrich_go_call_locals(caller_node, module_qn, local)
+        elif language == cs.SupportedLanguage.RUST:
+            if class_context:
+                # (H) Rust member calls carry the explicit `self` receiver: type `self`
+                # (H) to the impl target (so `self.accept()` dispatches) and each
+                # (H) `self.<field>` to the field's type (so `self.shutdown.is_shutdown()`
+                # (H) hops through the field). setdefault: a same-named local wins.
+                local.setdefault(cs.KEYWORD_SELF, class_context)
+                for field, ftype in fields.items():
+                    local.setdefault(
+                        f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", ftype
+                    )
+            self._enrich_rust_call_locals(caller_node, module_qn, local)
         return local
 
     def _enrich_go_call_locals(
@@ -208,6 +230,41 @@ class TypeInferenceEngine:
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
         return self.method_return_types.get(method_qn)
+
+    def _enrich_rust_call_locals(
+        self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # (H) Type a Rust local bound from an associated-function call
+        # (H) (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
+        # (H) later `cmd.apply()` resolves to the real type instead of the ambiguous
+        # (H) name-only trie fallback. Only fills names not already typed.
+        for name, segments in self.rust_type_inference.collect_call_var_bindings(
+            caller_node
+        ):
+            if name in var_types:
+                continue
+            if return_type := self._infer_rust_call_return_type(segments, module_qn):
+                var_types[name] = return_type
+
+    def _infer_rust_call_return_type(
+        self, segments: list[str], module_qn: str
+    ) -> str | None:
+        # (H) `['Command', 'from_frame']`: base type `Command` -> its `from_frame`'s
+        # (H) recorded return type. Wrapper-passthrough hops (`.unwrap()`) keep the
+        # (H) current type. Any unknown hop drops the whole binding (never guessed).
+        if len(segments) < 2:
+            return None
+        current_type: str | None = segments[0]
+        for method in segments[1:]:
+            if current_type is None:
+                return None
+            class_qn = self._resolve_class_name(current_type, module_qn) or current_type
+            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method}"
+            if next_type := self.method_return_types.get(method_qn):
+                current_type = next_type
+            elif method not in cs.RS_IDENTITY_METHODS:
+                return None
+        return current_type
 
     def _collect_field_types(self, class_qn: str) -> dict[str, str]:
         # (H) Collect member-field types along the inheritance chain so a derived class
@@ -255,6 +312,10 @@ class TypeInferenceEngine:
                 )
             case cs.SupportedLanguage.GO:
                 return self.go_type_inference.build_local_variable_type_map(
+                    caller_node, module_qn
+                )
+            case cs.SupportedLanguage.RUST:
+                return self.rust_type_inference.build_local_variable_type_map(
                     caller_node, module_qn
                 )
             case cs.SupportedLanguage.CPP:

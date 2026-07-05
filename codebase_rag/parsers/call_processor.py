@@ -69,6 +69,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.LUA,
         cs.SupportedLanguage.GO,
         cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.RUST,
     }
 )
 
@@ -1133,6 +1134,15 @@ class CallProcessor:
                     inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
                     if inner and inner.text:
                         return inner.text.decode(cs.ENCODING_UTF8)
+                case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
+                    # (H) Rust member call `a.b.method()`: use the full dotted receiver
+                    # (H) chain as the call name so the resolver can map the receiver to
+                    # (H) its inferred type (`self.shutdown.is_shutdown`,
+                    # (H) `cmd.apply`). A chain containing a call (`x.f().g`) is left to
+                    # (H) the chained-call path; a paren-free chain still ends at the
+                    # (H) bare-method trie fallback when the receiver type is unknown.
+                    if (text := func_child.text) is not None:
+                        return text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:

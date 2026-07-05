@@ -18,6 +18,7 @@ from ..cpp import CppTypeInferenceEngine
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..py import resolve_class_name
+from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import ingest_method, safe_decode_text, sorted_captures
 from . import cpp_modules
@@ -105,6 +106,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
+    method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
 
@@ -389,6 +391,13 @@ class ClassIngestMixin:
             # (H) (`root := engine.trees.get(m)`) picks up the return type.
             if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
+        elif language == cs.SupportedLanguage.RUST:
+            # (H) Record Rust struct field types so a field-hop receiver
+            # (H) (`self.shutdown.is_shutdown()`) resolves through the field's type.
+            if field_types := RustTypeInferenceEngine().build_field_type_map(
+                class_node
+            ):
+                self.class_field_types[class_qn] = field_types
         self._ingest_class_methods(
             class_node,
             class_qn,
@@ -482,6 +491,19 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
+            # (H) Record the method's return type (Self -> impl target) so a chained
+            # (H) call (`Ping::new(msg).into_frame()`) and a call-bound local
+            # (H) (`let cmd = Command::from_frame(f)`) can resolve the next hop.
+            name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+            method_name = safe_decode_text(name_node) if name_node else None
+            if method_name and (
+                return_type := rs_utils.extract_return_type_name(
+                    method_node, impl_target
+                )
+            ):
+                self.method_return_types[
+                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+                ] = return_type
 
     def _ingest_class_methods(
         self,

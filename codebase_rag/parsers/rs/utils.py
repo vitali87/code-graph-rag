@@ -159,6 +159,46 @@ def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
     return None
 
 
+def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | None:
+    # (H) Bare name of a Rust fn's return type, for chained-call and `let x =
+    # (H) Type::assoc()` resolution: `Self` -> the impl target, `Result<T>`/
+    # (H) `Option<T>` -> their inner `T` (the value a `?`/`.unwrap()` yields), a
+    # (H) scoped type -> its last segment. Returns None when no return type.
+    return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+    if return_type is None:
+        return None
+    return _rust_return_type_name(return_type, impl_target)
+
+
+def _rust_return_type_name(node: Node, impl_target: str | None) -> str | None:
+    match node.type:
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
+            name = safe_decode_text(node)
+            return impl_target if name == cs.RS_SELF_TYPE else name
+        case cs.TS_GENERIC_TYPE:
+            return _rust_generic_type_name(node, impl_target)
+        case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            return safe_decode_text(name_node) if name_node else None
+        case _:
+            return None
+
+
+def _rust_generic_type_name(node: Node, impl_target: str | None) -> str | None:
+    outer = node.child_by_field_name(cs.FIELD_TYPE)
+    outer_name = _rust_return_type_name(outer, impl_target) if outer else None
+    if outer_name not in cs.RS_RETURN_STRIP_WRAPPERS:
+        return outer_name
+    # (H) Result<T>/Option<T>/Arc<T>: the useful type is the inner argument.
+    args = node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+    if args is None:
+        return outer_name
+    inner = next(
+        (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES), None
+    )
+    return _rust_return_type_name(inner, impl_target) if inner else outer_name
+
+
 def extract_impl_target(impl_node: Node) -> str | None:
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
