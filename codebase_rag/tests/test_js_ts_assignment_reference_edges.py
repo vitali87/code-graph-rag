@@ -168,3 +168,21 @@ def test_ts_non_null_cast_assignment_references_target(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files, "typescript")
     assert _has(rels, "m", REFERENCES, "m.handleEvent")
+
+
+def test_ts_cast_object_value_is_referenced(tmp_path: Path) -> None:
+    # (H) A cast function in a collection value (`{ onEvent: handler as any }`) must
+    # (H) still be referenced -- the cast wrapper is unwrapped in the value-ref path.
+    files = {
+        "m.ts": (
+            "function handler() { return 1 }\n"
+            "export function reg() { register({ onEvent: handler as any }) }\n"
+            "function register(o: unknown) { return o }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) Collection-value handoffs record as CALLS; the point is the cast is unwrapped
+    # (H) so `handler` is reached at all.
+    assert any(a.endswith("m.reg") and b.endswith("m.handler") for a, _r, b in rels), (
+        "cast object value not referenced"
+    )
