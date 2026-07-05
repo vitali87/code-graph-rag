@@ -1,4 +1,10 @@
-from .constants import CYPHER_DEFAULT_LIMIT, PROTOCOL_BASE_QNS
+from .constants import (
+    CYPHER_DEFAULT_LIMIT,
+    GO_ROOT_FUNCTION_NAMES,
+    PROTOCOL_BASE_QNS,
+    RUST_ROOT_FUNCTION_NAMES,
+    RUST_TRAIT_METHOD_NAMES,
+)
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
@@ -166,6 +172,12 @@ WHERE n.qualified_name STARTS WITH $project_prefix
     OR ('Method' IN labels(n)
         AND n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4
         AND n.path ENDS WITH '.py')
+    OR ('Function' IN labels(n)
+        AND n.name IN {go_root_names} AND n.path ENDS WITH '.go')
+    OR ('Function' IN labels(n)
+        AND n.name IN {rust_root_names} AND n.path ENDS WITH '.rs')
+    OR ('Method' IN labels(n)
+        AND n.name IN {rust_trait_methods} AND n.path ENDS WITH '.rs')
     OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
     OR {module_clause}{test_clause}
   )
@@ -211,16 +223,28 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
         test_clause = ""
         candidate_clause = _DEAD_CODE_CANDIDATE_NON_TEST
     protocol_bases = ", ".join(f"'{qn}'" for qn in PROTOCOL_BASE_QNS)
+    go_root_names = _cypher_str_list(GO_ROOT_FUNCTION_NAMES)
+    rust_root_names = _cypher_str_list(RUST_ROOT_FUNCTION_NAMES)
+    rust_trait_methods = _cypher_str_list(RUST_TRAIT_METHOD_NAMES)
     return _DEAD_CODE_QUERY_TEMPLATE.format(
         labels=labels,
         traversal=traversal,
         module_clause=module_clause,
         test_clause=test_clause,
         candidate_clause=candidate_clause,
+        go_root_names=go_root_names,
+        rust_root_names=rust_root_names,
+        rust_trait_methods=rust_trait_methods,
         protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
             protocol_bases=protocol_bases
         ),
     )
+
+
+def _cypher_str_list(values: frozenset[str]) -> str:
+    # (H) Render a set of names as a Cypher list literal (`['a', 'b']`); sorted for
+    # (H) deterministic query text.
+    return "[" + ", ".join(f"'{v}'" for v in sorted(values)) + "]"
 
 
 def wrap_with_unwind(query: str) -> str:

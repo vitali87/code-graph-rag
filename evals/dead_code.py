@@ -84,6 +84,19 @@ def _is_dunder(name: str) -> bool:
     )
 
 
+def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
+    # (H) A Rust `.rs` symbol the language/runtime invokes with no call site: `fn
+    # (H) main()` (entry) or a trait-impl method (Display::fmt, Iterator::next, ...).
+    # (H) Name-scoped like Python dunders; trait methods must be methods.
+    if not path.endswith(cs.EXT_RS):
+        return False
+    # (H) `main` is only the entry point as a receiverless `fn main()`; a method
+    # (H) named main is not, so gate it to non-methods. Trait methods are the reverse.
+    if name in cs.RUST_ROOT_FUNCTION_NAMES:
+        return not is_method
+    return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
+
+
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
@@ -177,6 +190,18 @@ def dead_code_from_graph(
             qn in method_qns
             and _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
+        ):
+            roots.add(qn)
+        elif (
+            qn not in method_qns
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.GO_ROOT_FUNCTION_NAMES
+            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
+        ):
+            roots.add(qn)
+        elif _is_rust_runtime_root(
+            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            qn in method_qns,
+            str(props.get(cs.KEY_PATH, "")),
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
