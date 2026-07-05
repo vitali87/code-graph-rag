@@ -358,8 +358,9 @@ class TestBuildDeadCodeQueryUnit:
         # (H) enumerating every path (which times out on real graphs). REFERENCES
         # (H) (a function passed/stored as a value) keeps callbacks reachable.
         assert "CALLS|REFERENCES*BFS" in query
-        # (H) test functions are roots when tests are included
-        assert "n.path CONTAINS" in query
+        # (H) test functions are roots when tests are included; the path is
+        # (H) leading-slash-normalized so a root tests/ dir matches too.
+        assert "coalesce(n.path, '')) CONTAINS" in query
 
     def test_exclude_tests_omits_test_function_roots(self) -> None:
         query = build_dead_code_query(include_tests=False)
@@ -369,15 +370,15 @@ class TestBuildDeadCodeQueryUnit:
         # (H) ... but test_patterns still filters test modules out of the
         # (H) module-load root clause so test-only code is not kept alive.
         assert "$test_patterns" in query
-        assert "m.path CONTAINS" in query
+        assert "coalesce(m.path, '')) CONTAINS" in query
         assert "$project_prefix" in query
         # (H) ... and test-file symbols are excluded from the REPORT: their only
         # (H) callers are excluded as roots, so reporting them is unconditional
         # (H) noise (test helpers/mocks are infrastructure, not dead production
-        # (H) code).
+        # (H) code). Path is leading-slash-normalized so a root tests/ dir matches.
         assert (
-            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
-            in query
+            "AND NOT ANY(p IN $test_patterns"
+            " WHERE ('/' + coalesce(n.path, '')) CONTAINS p)" in query
         )
 
     def test_include_tests_reports_test_file_candidates(self) -> None:

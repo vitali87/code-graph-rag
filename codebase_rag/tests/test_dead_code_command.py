@@ -234,9 +234,10 @@ class TestDeadCodeCommand:
         # (H) test functions themselves are not roots.
         assert "test_patterns" in params
         assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
+        # (H) Path is leading-slash-normalized so a root tests/ dir is excluded too.
         assert (
-            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
-            in query
+            "AND NOT ANY(p IN $test_patterns"
+            " WHERE ('/' + coalesce(n.path, '')) CONTAINS p)" in query
         )
 
     def test_classes_flag_includes_class_candidates(
