@@ -3089,12 +3089,18 @@ RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
 RS_RESULT_WRAPPERS = frozenset({"Result", "Option"})
 # (H) Full strip set for return types (deref pointers + Result/Option unwrap).
 RS_RETURN_STRIP_WRAPPERS = RS_DEREF_WRAPPERS | RS_RESULT_WRAPPERS
-# (H) Node types that can stand for a Rust return/field type.
+TS_RS_REFERENCE_TYPE = "reference_type"
+TS_RS_POINTER_TYPE = "pointer_type"
+# (H) Node types that can stand for a Rust return/field type. Reference/pointer
+# (H) wrappers (`&Frame`, `*const T`) are included so a generic inner argument
+# (H) (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent.
 RS_RETURN_TYPE_NODE_TYPES = (
     TS_TYPE_IDENTIFIER,
     TS_RS_PRIMITIVE_TYPE,
     TS_GENERIC_TYPE,
     TS_RS_SCOPED_TYPE_IDENTIFIER,
+    TS_RS_REFERENCE_TYPE,
+    TS_RS_POINTER_TYPE,
 )
 # (H) Wrapper-passthrough methods: they return the receiver's own (inner) type, so
 # (H) a call-bound local keeps its type across them (`Type::mk().unwrap().m()`).

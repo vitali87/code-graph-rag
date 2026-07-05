@@ -181,6 +181,11 @@ def _rust_return_type_name(node: Node, impl_target: str | None) -> str | None:
             name_node = node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name_node) if name_node else None
         case _:
+            # (H) reference_type (`&Frame`) / pointer_type: descend to the referent
+            # (H) type so a reference-returning method still yields its element type.
+            for child in node.children:
+                if child.type in cs.RS_RETURN_TYPE_NODE_TYPES:
+                    return _rust_return_type_name(child, impl_target)
             return None
 
 

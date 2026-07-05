@@ -221,3 +221,28 @@ def test_imported_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     calls = _calls(tmp_path)
     assert ("crate.app.go", "crate.cmd.Command.apply") in calls
     assert ("crate.app.go", "crate.cmd.Aaa.apply") not in calls
+
+
+def test_reference_return_type_chained_dispatch(tmp_path: Path) -> None:
+    # (H) A method returning a reference (`fn frame(&self) -> &Frame`) must still
+    # (H) yield the referent type so a chained call (`self.frame().push_int()`)
+    # (H) resolves to Frame.push_int, not the ambiguous trie pick.
+    _make_crate(
+        tmp_path,
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n"
+        "    fn push_int(&self) -> i32 { 2 }\n"
+        "}\n"
+        "pub struct Frame {}\n"
+        "impl Frame {\n"
+        "    fn push_int(&self) -> i32 { 1 }\n"
+        "}\n"
+        "pub struct Holder {}\n"
+        "impl Holder {\n"
+        "    fn frame(&self) -> &Frame { &Frame {} }\n"
+        "    fn go(&self) -> i32 { self.frame().push_int() }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Holder.go", "crate.lib.Frame.push_int") in calls
+    assert ("crate.lib.Holder.go", "crate.lib.Aaa.push_int") not in calls

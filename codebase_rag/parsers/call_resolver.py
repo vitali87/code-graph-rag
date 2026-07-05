@@ -1279,7 +1279,10 @@ class CallResolver:
         segments = callee.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(segments) < 2:
             return None
-        type_name, method = segments[-2], segments[-1]
+        # (H) Keep the full path prefix (`crate::parse::Parse`) so a qualified
+        # (H) associated call resolves; only the trailing segment is the method.
+        type_name = cs.SEPARATOR_DOUBLE_COLON.join(segments[:-1])
+        method = segments[-1]
         class_qn = self._chain_class_qn(type_name, module_qn)
         return self.type_inference.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
