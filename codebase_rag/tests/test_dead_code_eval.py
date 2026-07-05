@@ -59,6 +59,28 @@ def test_dead_code_flags_uncalled_function() -> None:
     assert dead == {"proj.m.orphan"}
 
 
+def test_go_init_and_main_are_roots() -> None:
+    # (H) Go `func init()` is auto-run by the runtime at package load and `func
+    # (H) main()` is the program entry; neither is ever called explicitly, so both
+    # (H) are reachability roots (like Python dunders). A same-file helper with no
+    # (H) caller is still dead -- the exemption is name-scoped to init/main.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.mode"),
+                {cs.KEY_QUALIFIED_NAME: "proj.mode", cs.KEY_PATH: "mode.go"},
+            ),
+            _fn("proj.mode.init", path="mode.go"),
+            _fn("proj.main.main", path="main.go"),
+            _fn("proj.util.helper", path="util.go"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.mode.init" not in dead
+    assert "proj.main.main" not in dead
+    assert "proj.util.helper" in dead
+
+
 def test_dead_code_excludes_generated_paths() -> None:
     # (H) A generated file (openapi-ts client/core, routeTree.gen.ts) has no
     # (H) in-repo caller, so every symbol in it reports as dead -- pure noise the
