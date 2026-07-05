@@ -297,3 +297,52 @@ def test_imported_type_disambiguated_by_path(tmp_path: Path) -> None:
     calls = _calls(tmp_path)
     assert ("crate.app.go", "crate.types.Real.run") in calls
     assert ("crate.app.go", "crate.types.Fake.run") not in calls
+
+
+def test_fully_qualified_inline_assoc_call_dispatch(tmp_path: Path) -> None:
+    # (H) A fully-qualified inline associated call with NO `use` import
+    # (H) (`let x = crate::cmd::Command::mk()`) must keep the qualified path so the
+    # (H) return-type base resolves to crate.cmd.Command (mk -> Real), not the
+    # (H) alphabetically-first crate.aaa.Command (mk -> Fake).
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lib.rs").write_text(
+        "pub mod aaa;\npub mod cmd;\npub mod types;\npub mod app;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "types.rs").write_text(
+        "pub struct Real {}\n"
+        "impl Real {\n"
+        "    pub fn run(&self) -> i32 { 1 }\n"
+        "}\n"
+        "pub struct Fake {}\n"
+        "impl Fake {\n"
+        "    pub fn run(&self) -> i32 { 2 }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "aaa.rs").write_text(
+        "use crate::types::Fake;\n"
+        "pub struct Command {}\n"
+        "impl Command {\n"
+        "    pub fn mk() -> Fake { Fake {} }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cmd.rs").write_text(
+        "use crate::types::Real;\n"
+        "pub struct Command {}\n"
+        "impl Command {\n"
+        "    pub fn mk() -> Real { Real {} }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.rs").write_text(
+        "pub fn go() -> i32 {\n"
+        "    let x = crate::cmd::Command::mk();\n"
+        "    x.run()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.app.go", "crate.types.Real.run") in calls
+    assert ("crate.app.go", "crate.types.Fake.run") not in calls

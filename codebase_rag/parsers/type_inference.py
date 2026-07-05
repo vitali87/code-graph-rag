@@ -272,6 +272,9 @@ class TypeInferenceEngine:
         # (H) target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
         # (H) find the registered class node whose simple name matches. Falls back to
         # (H) same-module resolution for a locally-defined type.
+        # (H) A fully-qualified inline base (`crate::cmd::Command`) carries its own path.
+        if cs.SEPARATOR_DOUBLE_COLON in type_name:
+            return self._resolve_rust_import_path(type_name)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if (target := import_map.get(type_name)) and (
             cs.SEPARATOR_DOUBLE_COLON in target

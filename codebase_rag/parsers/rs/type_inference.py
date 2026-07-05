@@ -157,7 +157,10 @@ class RustTypeInferenceEngine:
         if func.type == cs.TS_SCOPED_IDENTIFIER:
             path = func.child_by_field_name(cs.TS_RS_FIELD_PATH)
             method = func.child_by_field_name(cs.FIELD_NAME)
-            base = self._path_leaf_name(path) if path else None
+            # (H) Keep the FULL base path (`crate::cmd::Command`), not just the leaf, so
+            # (H) a fully-qualified inline call (`crate::cmd::Command::from_frame()`)
+            # (H) with no `use` import disambiguates by path in the return-type lookup.
+            base = safe_decode_text(path) if path else None
             method_name = safe_decode_text(method) if method else None
             if base and method_name:
                 return [base, method_name]
