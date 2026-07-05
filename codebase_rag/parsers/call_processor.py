@@ -1904,6 +1904,12 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
     ) -> None:
+        # (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` in value position
+        # (H) (onError: handleError.bind(toast)) hands off `fn`; the call resolves to
+        # (H) the Function.prototype builtin, so unwrap to the bound function and
+        # (H) reference it instead, or it reports as dead.
+        if (bound := self._unwrap_bound_function(node)) is not None:
+            node = bound
         # (H) Only a bare name / attribute / member-expression in value position names
         # (H) a function; a call, comprehension or literal is not a reference to a
         # (H) callable itself. Reuses the flow-arg ref types (identifier, Python
@@ -1919,6 +1925,24 @@ class CallProcessor:
             resolve_func,
             ensure_rel,
         )
+
+    def _unwrap_bound_function(self, node: Node) -> Node | None:
+        # (H) For `fn.bind(ctx)` (a call_expression whose function is `fn.bind`),
+        # (H) return the bound function `fn` (the member object) so the value is
+        # (H) referenced as `fn`, not the Function.prototype builtin. call/apply use
+        # (H) the function the same way. Returns None when the node is not such a call.
+        if node.type != cs.TS_CALL_EXPRESSION:
+            return None
+        fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn is None or fn.type != cs.TS_MEMBER_EXPRESSION:
+            return None
+        prop = fn.child_by_field_name(cs.FIELD_PROPERTY)
+        if (
+            prop is None
+            or safe_decode_text(prop) not in cs.JS_FUNCTION_PROTOTYPE_METHODS
+        ):
+            return None
+        return fn.child_by_field_name(cs.FIELD_OBJECT)
 
     def _emit_inline_value_function_ref(
         self,

@@ -415,6 +415,12 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.base.json",
     "jsconfig.json",
 )
+# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
+# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
+# (H) unrelated aliases and there can be thousands of them under node_modules.
+TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
+    {"node_modules", "dist", "build", "out", ".git"}
+)
 JS_INDEX_STEM = "index"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
@@ -1667,6 +1673,13 @@ JS_FUNCTION_PROTOTYPE_SUFFIXES: dict[str, str] = {
     JS_SUFFIX_CALL: JS_METHOD_CALL,
     JS_SUFFIX_APPLY: JS_METHOD_APPLY,
 }
+# (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; when such a
+# (H) call sits in a value position (`onError: handleError.bind(toast)`) the `.bind`
+# (H) resolves to the Function.prototype builtin, so `fn` itself must be referenced
+# (H) separately or it reports as dead.
+JS_FUNCTION_PROTOTYPE_METHODS = frozenset(
+    {JS_METHOD_BIND, JS_METHOD_CALL, JS_METHOD_APPLY}
+)
 
 # (H) C++ operator mappings
 CPP_OPERATORS: dict[str, str] = {

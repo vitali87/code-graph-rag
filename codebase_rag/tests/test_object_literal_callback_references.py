@@ -145,6 +145,35 @@ def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
     )
 
 
+def test_object_value_bound_function_is_referenced(tmp_path: Path) -> None:
+    # (H) `onError: handleError.bind(showToast)` hands the bound function
+    # (H) `handleError` to the mutation config; the `.bind(...)` call resolves to the
+    # (H) Function.prototype builtin, so without unwrapping it the real `handleError`
+    # (H) gets no incoming edge and reports as dead (and drags down the private
+    # (H) helper it calls). The enclosing scope must reference the bound function.
+    files = {
+        "utils.ts": (
+            "function extractErrorMessage(e) { return e.message }\n"
+            "export const handleError = function (e) {\n"
+            "  return extractErrorMessage(e)\n"
+            "}\n"
+        ),
+        "comp.tsx": (
+            "import { handleError } from './utils'\n\n"
+            "export function AddItem() {\n"
+            "  return doMutation({ onError: handleError.bind(showToast) })\n"
+            "}\n\n\n"
+            "function doMutation(o) { return o }\n"
+            "function showToast(m) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    edges = {(r, b) for a, r, b in rels if a.endswith("comp.AddItem")}
+    assert any(b.endswith("utils.handleError") for _r, b in edges), (
+        f"bound function handleError not referenced; edges={edges}"
+    )
+
+
 def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # (H) useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
     # (H) inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the
