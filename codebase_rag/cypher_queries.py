@@ -170,7 +170,8 @@ WHERE n.qualified_name STARTS WITH $project_prefix
     OR ('Method' IN labels(n)
         AND n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4
         AND n.path ENDS WITH '.py')
-    OR (n.name IN {go_root_names} AND n.path ENDS WITH '.go')
+    OR ('Function' IN labels(n)
+        AND n.name IN {go_root_names} AND n.path ENDS WITH '.go')
     OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
     OR {module_clause}{test_clause}
   )
