@@ -1800,7 +1800,12 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types:
+            # (H) Stop at a nested scope that gets its OWN caller pass (a named
+            # (H) function/arrow, a class), but continue THROUGH an anonymous arrow
+            # (H) (a `.map()`/`cell`/forwardRef callback): those are skipped as
+            # (H) callers, so their JSX -- rendered on behalf of this scope -- would
+            # (H) otherwise be scanned by nobody and report as dead.
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if node.type in _JSX_NAMED_ELEMENT_TYPES:
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -2800,6 +2805,15 @@ class CallProcessor:
             for n in func_nodes
             if self._get_node_name(n) or self._js_ts_arrow_binding_name(n)
         ]
+
+    def _is_unowned_js_scope(self, node: Node) -> bool:
+        # (H) An anonymous arrow/function-expression that gets no caller node of its
+        # (H) own (no name, no binding name) -- a `.map()`/`cell`/forwardRef callback.
+        # (H) Its calls bubble up to the enclosing named scope (_js_ts_attributable_nodes),
+        # (H) and so must its JSX references: the enclosing JSX walk continues through it.
+        if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+            return False
+        return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
