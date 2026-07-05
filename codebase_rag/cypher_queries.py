@@ -103,8 +103,11 @@ ORDER BY count DESC
 """
 
 
+# (H) Match against a leading-slash-normalized path so a `/tests/` pattern also
+# (H) matches a ROOT `tests/` dir (Rust integration tests, a top-level tests/
+# (H) folder), not just a nested `src/tests/`; `/contests/` still won't match.
 _DEAD_CODE_TEST_ROOT_CLAUSE = (
-    "\n    OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)"
+    "\n    OR ANY(p IN $test_patterns WHERE ('/' + coalesce(n.path, '')) CONTAINS p)"
 )
 
 # (H) When tests are excluded, a test-file symbol's only callers (test functions)
@@ -115,7 +118,7 @@ _DEAD_CODE_TEST_ROOT_CLAUSE = (
 # (H) coalesce: a null path must not null out the NOT and silently drop the
 # (H) node from the report (NOT null = null in Cypher).
 _DEAD_CODE_CANDIDATE_NON_TEST = (
-    "\n  AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
+    "\n  AND NOT ANY(p IN $test_patterns WHERE ('/' + coalesce(n.path, '')) CONTAINS p)"
 )
 
 # (H) A node reached by a Module node runs at import (top-level statement,
@@ -129,7 +132,8 @@ _DEAD_CODE_CANDIDATE_NON_TEST = (
 _DEAD_CODE_MODULE_ROOT_ANY = "size([(n)<-[:{module_rels}]-(:Module) | 1]) > 0"
 _DEAD_CODE_MODULE_ROOT_NON_TEST = (
     "size([(n)<-[:{module_rels}]-(m:Module)"
-    " WHERE NOT ANY(p IN $test_patterns WHERE m.path CONTAINS p) | 1]) > 0"
+    " WHERE NOT ANY(p IN $test_patterns"
+    " WHERE ('/' + coalesce(m.path, '')) CONTAINS p) | 1]) > 0"
 )
 
 # (H) A method whose class INHERITS typing.Protocol is an interface stub; callers

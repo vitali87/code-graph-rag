@@ -128,6 +128,32 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
     assert "proj.frame.Frame.main" in dead
 
 
+def test_root_level_tests_dir_is_excluded() -> None:
+    # (H) A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
+    # (H) `tests/` folder) is test infrastructure. The `/tests/` pattern needs a
+    # (H) leading slash, so a root tests/ dir was missed and every test fn leaked as
+    # (H) a candidate. Path matching must normalize a leading slash so root tests/ is
+    # (H) recognized; a `contests/` dir must NOT be mistaken for a tests dir.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.tests.client"),
+                {
+                    cs.KEY_QUALIFIED_NAME: "proj.tests.client",
+                    cs.KEY_PATH: "tests/client.rs",
+                },
+            ),
+            _fn("proj.tests.client.smoke", path="tests/client.rs"),
+            _fn("proj.contests.entry", path="contests/entry.rs"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.tests.client.smoke" not in dead
+    # (H) `contests/` is not a tests dir, so a genuinely-uncalled symbol there is
+    # (H) still reported (no false leading-slash match).
+    assert "proj.contests.entry" in dead
+
+
 def test_dead_code_excludes_generated_paths() -> None:
     # (H) A generated file (openapi-ts client/core, routeTree.gen.ts) has no
     # (H) in-repo caller, so every symbol in it reports as dead -- pure noise the

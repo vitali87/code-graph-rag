@@ -97,6 +97,17 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
+    # (H) Match test-path patterns against a leading-slash-normalized path so a dir
+    # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
+    # (H) tests, a top-level tests/ folder) -- not just a nested `src/tests/`. The
+    # (H) leading slash keeps `contests/` from matching `/tests/` (no false segment).
+    normalized = (
+        path if path.startswith(cs.SEPARATOR_SLASH) else cs.SEPARATOR_SLASH + path
+    )
+    return any(pattern in normalized for pattern in patterns)
+
+
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
@@ -140,9 +151,8 @@ def dead_code_from_graph(
             # (H) excluded, a test-file symbol's only callers are excluded as
             # (H) roots, so reporting it is unconditional noise (test helpers
             # (H) and mocks are infrastructure, not dead production code).
-            if not config.include_tests and any(
-                pattern in str(props.get(cs.KEY_PATH) or "")
-                for pattern in config.test_patterns
+            if not config.include_tests and _matches_test_path(
+                str(props.get(cs.KEY_PATH) or ""), config.test_patterns
             ):
                 continue
             candidates.add(str(uid))
@@ -171,7 +181,7 @@ def dead_code_from_graph(
         if target_qn not in candidates:
             continue
         path = module_path.get(str(from_val), "")
-        is_test = any(pattern in path for pattern in config.test_patterns)
+        is_test = _matches_test_path(path, config.test_patterns)
         if config.include_tests or not is_test:
             roots.add(target_qn)
     protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
@@ -206,9 +216,8 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and any(
-            pattern in str(props.get(cs.KEY_PATH, ""))
-            for pattern in config.test_patterns
+        elif config.include_tests and _matches_test_path(
+            str(props.get(cs.KEY_PATH, "")), config.test_patterns
         ):
             roots.add(qn)
 
