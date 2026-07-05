@@ -201,13 +201,11 @@ def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    refs = {
-        b
-        for a, r, b in rels
-        if r == REFERENCES and a.endswith("hook.useCopyToClipboard")
-    }
-    assert any(".hook.useCopyToClipboard.anonymous_" in b for b in refs), (
-        f"inline call-argument arrow not referenced; refs={refs}"
+    # (H) An external callee (useCallback) gets the historical CALLS edge, a
+    # (H) first-party one REFERENCES; either keeps the callback reachable.
+    edges = {b for a, _r, b in rels if a.endswith("hook.useCopyToClipboard")}
+    assert any(".hook.useCopyToClipboard.anonymous_" in b for b in edges), (
+        f"inline call-argument arrow not referenced; edges={edges}"
     )
 
 
@@ -226,6 +224,7 @@ def test_inline_arrow_call_argument_function_expr_is_referenced(
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
+    # (H) schedule is first-party, so the handoff records as REFERENCES.
     refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("timer.start")}
     assert any(".timer.start.anonymous_" in b for b in refs), (
         f"inline call-argument function expression not referenced; refs={refs}"
