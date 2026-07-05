@@ -74,3 +74,44 @@ def test_chained_call_with_dotted_argument_resolves(tmp_path: Path) -> None:
         "func (c *Command) Use() int { return c.Find(1.5).Run() }\n",
     )
     assert ("proj.m.Command.Use", "proj.m.Command.Run") in calls
+
+
+def test_local_from_method_return_resolves_later_call(tmp_path: Path) -> None:
+    # (H) `root := c.Root()` stores the return of a method in a local across
+    # (H) statements; a later `root.Run()` must resolve on the return type
+    # (H) (Command), not stay unresolved. The stored-local form of the inline chain.
+    calls = _calls(
+        tmp_path,
+        "package p\n"
+        "type Command struct{}\n"
+        "func (c *Command) Root() *Command { return c }\n"
+        "func (c *Command) Run() int { return 1 }\n"
+        "func (c *Command) Use() int { root := c.Root(); return root.Run() }\n",
+    )
+    assert ("proj.m.Command.Use", "proj.m.Command.Root") in calls
+    assert ("proj.m.Command.Use", "proj.m.Command.Run") in calls
+
+
+def test_local_from_field_method_chain_resolves(tmp_path: Path) -> None:
+    # (H) The gin router shape: `root := engine.trees.get(method)` then
+    # (H) `root.addRoute(...)`. `engine.trees` is a struct-field hop (needs Go field
+    # (H) types), `.get()` returns *node, so root.addRoute must resolve to
+    # (H) node.addRoute -- NOT mis-resolve to the enclosing Engine.addRoute.
+    calls = _calls(
+        tmp_path,
+        "package p\n"
+        "type node struct{}\n"
+        "func (n *node) addChild(c *node) {}\n"
+        "func (n *node) addRoute(path string) { n.addChild(&node{}) }\n"
+        "type trees struct{}\n"
+        "func (ts trees) get(m string) *node { return &node{} }\n"
+        "type Engine struct { trees trees }\n"
+        "func (e *Engine) addRoute(m string, p string) {\n"
+        "  root := e.trees.get(m)\n"
+        "  root.addRoute(p)\n"
+        "}\n",
+    )
+    assert ("proj.m.Engine.addRoute", "proj.m.node.addRoute") in calls
+    # (H) the false self-edge from mis-resolving root.addRoute to the enclosing
+    # (H) type's same-named method must not appear.
+    assert ("proj.m.Engine.addRoute", "proj.m.Engine.addRoute") not in calls

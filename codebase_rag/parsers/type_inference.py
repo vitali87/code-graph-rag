@@ -164,8 +164,50 @@ class TypeInferenceEngine:
         # (H) base so a bare `field_.method()` receiver resolves; parameters and locals
         # (H) with the same name shadow a field, so the local map wins on conflict.
         if class_context and (fields := self._collect_field_types(class_context)):
-            return {**fields, **local}
+            local = {**fields, **local}
+        if language == cs.SupportedLanguage.GO:
+            self._enrich_go_call_locals(caller_node, module_qn, local)
         return local
+
+    def _enrich_go_call_locals(
+        self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # (H) Type a Go local bound from a method call (`root := engine.trees.get(m)`)
+        # (H) with the call's return type, so a later `root.addRoute()` resolves to the
+        # (H) real type (node) instead of mis-resolving to the enclosing class's
+        # (H) same-named method. Resolves the callee selector hop by hop: base local
+        # (H) type, struct-field types for middle hops, then the final method's
+        # (H) recorded return type. Only fills names not already typed.
+        for name, segments in self.go_type_inference.collect_call_var_bindings(
+            caller_node
+        ):
+            if name in var_types:
+                continue
+            if return_type := self._infer_go_call_return_type(
+                segments, module_qn, var_types
+            ):
+                var_types[name] = return_type
+
+    def _infer_go_call_return_type(
+        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+    ) -> str | None:
+        # (H) `['e','trees','get']`: base `e` -> Engine (a typed local), field `trees`
+        # (H) -> its struct-field type, then method `get` -> its recorded return type.
+        # (H) A plain function (`['f']`) has no receiver, so its return type is not in
+        # (H) the method map and stays unresolved (rare in the receiver-dispatch gap).
+        if len(segments) < 2:
+            return None
+        base_type = var_types.get(segments[0])
+        if not base_type:
+            return None
+        class_qn = self._resolve_class_name(base_type, module_qn) or base_type
+        for field in segments[1:-1]:
+            field_type = self.class_field_types.get(class_qn, {}).get(field)
+            if not field_type:
+                return None
+            class_qn = self._resolve_class_name(field_type, module_qn) or field_type
+        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
+        return self.method_return_types.get(method_qn)
 
     def _collect_field_types(self, class_qn: str) -> dict[str, str]:
         # (H) Collect member-field types along the inheritance chain so a derived class
