@@ -185,6 +185,49 @@ def test_jsx_attribute_inline_arrow_is_referenced(tmp_path: Path) -> None:
     )
 
 
+def test_jsx_handler_in_nested_callback_is_referenced(tmp_path: Path) -> None:
+    # (H) A JSX handler inside a nested anonymous callback (`items.map(item => <a
+    # (H) onClick={handleMenuClick}/>)`) must still be referenced by the enclosing
+    # (H) component. The map arrow is anonymous, so it never gets its own caller pass;
+    # (H) the component's JSX walk must therefore continue THROUGH it instead of
+    # (H) stopping at the arrow boundary, or the handler reports as dead.
+    files = {
+        "main.tsx": (
+            "export function Main() {\n"
+            "  const handleMenuClick = () => { go() }\n"
+            "  return (\n"
+            "    <ul>{items.map((item) => <a onClick={handleMenuClick}>{item}</a>)}</ul>\n"
+            "  )\n"
+            "}\n\n\n"
+            "function go() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    assert _has(rels, "main.Main", REFERENCES, "main.Main.handleMenuClick")
+
+
+def test_jsx_component_in_config_callback_is_referenced(tmp_path: Path) -> None:
+    # (H) TanStack Table columns render via `cell: ({ row }) => <CopyId />`; the cell
+    # (H) arrow is an anonymous value in a module-level array, so the module JSX walk
+    # (H) must descend through it to reference the rendered component (else CopyId,
+    # (H) used only in config callbacks, reports as dead).
+    files = {
+        "cols.tsx": (
+            "import { CopyId } from './copy'\n\n"
+            "export const columns = [\n"
+            "  { cell: ({ row }) => <CopyId id={row.id} /> },\n"
+            "]\n"
+        ),
+        "copy.tsx": (
+            "export function CopyId({ id }: { id: string }) {\n"
+            "  return <span>{id}</span>\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    assert _has(rels, "cols", REFERENCES, "copy.CopyId")
+
+
 def test_member_expression_component_is_referenced(tmp_path: Path) -> None:
     # (H) A namespaced component (<Menu.Item />) names its member through a
     # (H) member expression; resolve it like any dotted callable reference.

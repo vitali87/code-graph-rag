@@ -61,45 +61,95 @@ def _load_jsonc(path: Path) -> dict | None:
     return None
 
 
+def _child_dirs(path: Path) -> list[Path]:
+    # (H) Immediate subdirectories worth searching, pruning dependency/build/VCS
+    # (H) trees at traversal time so we never stat into node_modules (thousands of
+    # (H) package tsconfigs) or hidden dirs.
+    try:
+        return sorted(
+            child
+            for child in path.iterdir()
+            if child.is_dir()
+            and child.name not in cs.TS_ALIAS_SKIP_DIRS
+            and not child.name.startswith(cs.PATH_CURRENT_DIR)
+        )
+    except OSError:
+        return []
+
+
+def _find_tsconfig_files(repo_path: Path) -> list[Path]:
+    # (H) tsconfig can live at the repo root OR in a subdirectory (a monorepo's
+    # (H) `frontend/`, `packages/*`), so search the root and up to two levels down.
+    # (H) Root first so its aliases win prefix-length ties.
+    level_one = _child_dirs(repo_path)
+    search_dirs = [repo_path, *level_one]
+    for child in level_one:
+        search_dirs.extend(_child_dirs(child))
+    found: list[Path] = []
+    for directory in search_dirs:
+        for name in cs.TSCONFIG_FILENAMES:
+            candidate = directory / name
+            if candidate.is_file():
+                found.append(candidate)
+    return found
+
+
+def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str, bool]]:
+    # (H) Parse one tsconfig's `compilerOptions.paths` into (match_prefix,
+    # (H) target_prefix, is_wildcard) tuples, folding baseUrl and the tsconfig's own
+    # (H) directory into the target so targets are repo-root-relative. A `@/*`->`src/*`
+    # (H) entry in `frontend/tsconfig.json` yields ("@/", "frontend/src/", True); an
+    # (H) exact `~lib`->`src/lib/index.ts` yields ("~lib", ".../src/lib/index.ts",
+    # (H) False). `extends` chains are not followed.
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if not isinstance(options, dict):
+        return []
+    paths = options.get(cs.TS_PATHS_KEY)
+    if not isinstance(paths, dict):
+        return []
+    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
+    base = str(base).strip(cs.SEPARATOR_SLASH)
+    base_prefix = "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+    aliases: list[tuple[str, str, bool]] = []
+    for pattern, targets in paths.items():
+        if not isinstance(targets, list) or not targets:
+            continue
+        target = targets[0]
+        if not isinstance(pattern, str) or not isinstance(target, str):
+            continue
+        if pattern.endswith(cs.GLOB_ALL) and cs.GLOB_ALL in target:
+            aliases.append(
+                (
+                    pattern[: -len(cs.GLOB_ALL)],
+                    dir_prefix + base_prefix + target[: target.index(cs.GLOB_ALL)],
+                    True,
+                )
+            )
+        elif cs.GLOB_ALL not in pattern:
+            aliases.append((pattern, dir_prefix + base_prefix + target, False))
+    return aliases
+
+
 def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
-    # (H) Parse tsconfig `compilerOptions.paths` into (match_prefix, target_prefix,
-    # (H) is_wildcard) tuples, folding baseUrl into the target. A `@/*`->`src/*` entry
-    # (H) yields ("@/", "src/", True); an exact `~lib`->`src/lib/index.ts` yields
-    # (H) ("~lib", "src/lib/index.ts", False). `extends` chains are not followed.
-    for name in cs.TSCONFIG_FILENAMES:
-        data = _load_jsonc(repo_path / name)
+    # (H) Aggregate `paths` aliases from every tsconfig at or below the repo root,
+    # (H) each target prefixed by the tsconfig's own directory so `@/util` resolves
+    # (H) against the config that defines it (a subdir `frontend/tsconfig.json` maps
+    # (H) `@/` to `frontend/src/`). _ts_alias_module_qn keeps only aliases whose
+    # (H) target exists on disk, so same-prefix aliases from sibling packages do not
+    # (H) collide.
+    aliases: list[tuple[str, str, bool]] = []
+    for cfg in _find_tsconfig_files(repo_path):
+        data = _load_jsonc(cfg)
         if not data:
             continue
-        options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
-        if not isinstance(options, dict):
-            continue
-        paths = options.get(cs.TS_PATHS_KEY)
-        if not isinstance(paths, dict):
-            continue
-        base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
-        base = str(base).strip(cs.SEPARATOR_SLASH)
-        base_prefix = (
-            "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+        parent = cfg.parent
+        dir_prefix = (
+            ""
+            if parent == repo_path
+            else parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
         )
-        aliases: list[tuple[str, str, bool]] = []
-        for pattern, targets in paths.items():
-            if not isinstance(targets, list) or not targets:
-                continue
-            target = targets[0]
-            if not isinstance(pattern, str) or not isinstance(target, str):
-                continue
-            if pattern.endswith(cs.GLOB_ALL) and cs.GLOB_ALL in target:
-                aliases.append(
-                    (
-                        pattern[: -len(cs.GLOB_ALL)],
-                        base_prefix + target[: target.index(cs.GLOB_ALL)],
-                        True,
-                    )
-                )
-            elif cs.GLOB_ALL not in pattern:
-                aliases.append((pattern, base_prefix + target, False))
-        return aliases
-    return []
+        aliases.extend(_parse_tsconfig_aliases(data, dir_prefix))
+    return aliases
 
 
 def _has_aliased_scheme(specifier: str) -> bool:
@@ -653,49 +703,51 @@ class ImportProcessor:
         # (H) first-party module qn, so the call binds to the real file instead of
         # (H) being dropped as external. Precise (maps to the actual path), so no
         # (H) trie-fallback collision risk. Longest matching prefix wins.
-        best: tuple[int, str] | None = None
+        # (H) Collect every matching alias (a monorepo may define `@/` in several
+        # (H) tsconfigs pointing at different package dirs), then accept the first,
+        # (H) longest-prefix one whose target is a real first-party file on disk. The
+        # (H) disk check both disambiguates siblings and blocks a catch-all alias
+        # (H) (`"*": ["src/*"]`) from capturing bare package imports (`lodash` ->
+        # (H) `proj.src.lodash`) and rebinding them to same-named locals (#580).
+        candidates: list[tuple[int, str]] = []
         for prefix, target_prefix, is_wildcard in self.js_path_aliases:
             if is_wildcard:
-                if import_path.startswith(prefix) and len(prefix) > (
-                    best[0] if best else -1
-                ):
-                    best = (len(prefix), target_prefix + import_path[len(prefix) :])
-            elif import_path == prefix and len(prefix) > (best[0] if best else -1):
-                best = (len(prefix), target_prefix)
-        if best is None:
-            return None
-        path = best[1]
-        for ext in cs.JS_TS_MODULE_EXTENSIONS:
-            if path.endswith(ext):
-                path = path[: -len(ext)]
-                break
-        # (H) normpath collapses `.`/`..` so the qn is clean and an escaping alias
-        # (H) (`../x`) is rejected below.
-        normalized = posixpath.normpath(path)
-        if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
-            cs.PATH_PARENT_DIR
-        ):
-            return None
-        # (H) Only accept the alias when it maps to a real first-party file on disk.
-        # (H) A broad/catch-all alias (`"*": ["src/*"]`) would otherwise capture bare
-        # (H) package imports (`lodash` -> `proj.src.lodash`) and let their calls
-        # (H) rebind to same-named first-party symbols (the #580 collision). A missing
-        # (H) target falls through to the normal external handling.
-        module_rel: str | None = None
-        if any(
-            (self.repo_path / f"{normalized}{ext}").is_file()
-            for ext in cs.JS_TS_MODULE_EXTENSIONS
-        ):
-            module_rel = normalized
-        elif (self.repo_path / normalized).is_dir() and any(
-            (self.repo_path / normalized / f"{cs.JS_INDEX_STEM}{ext}").is_file()
-            for ext in cs.JS_TS_MODULE_EXTENSIONS
-        ):
-            module_rel = f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
-        if module_rel is None:
-            return None
-        dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
+                if import_path.startswith(prefix):
+                    candidates.append(
+                        (len(prefix), target_prefix + import_path[len(prefix) :])
+                    )
+            elif import_path == prefix:
+                candidates.append((len(prefix), target_prefix))
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        for _prefix_len, raw_path in candidates:
+            path = raw_path
+            for ext in cs.JS_TS_MODULE_EXTENSIONS:
+                if path.endswith(ext):
+                    path = path[: -len(ext)]
+                    break
+            # (H) normpath collapses `.`/`..` so the qn is clean and an escaping alias
+            # (H) (`../x`) is rejected below.
+            normalized = posixpath.normpath(path)
+            if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
+                cs.PATH_PARENT_DIR
+            ):
+                continue
+            module_rel: str | None = None
+            if any(
+                (self.repo_path / f"{normalized}{ext}").is_file()
+                for ext in cs.JS_TS_MODULE_EXTENSIONS
+            ):
+                module_rel = normalized
+            elif (self.repo_path / normalized).is_dir() and any(
+                (self.repo_path / normalized / f"{cs.JS_INDEX_STEM}{ext}").is_file()
+                for ext in cs.JS_TS_MODULE_EXTENSIONS
+            ):
+                module_rel = f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
+            if module_rel is None:
+                continue
+            dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
+        return None
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):

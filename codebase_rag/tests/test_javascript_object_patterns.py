@@ -345,20 +345,18 @@ console.log(secureObject[Symbol.for('public')]); // shared
             f"Missing object literal function: {expected}"
         )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
-
-    object_like_nodes = [
-        call
-        for call in all_nodes
+    # (H) Object-literal methods are captured as functions in the module (mathUtils'
+    # (H) square/cube/power). This previously counted phantom nodes an inner arrow
+    # (H) left by climbing to its object const's name; those are gone now, so assert
+    # (H) the real method functions are present.
+    object_method_names = {
+        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in mock_ingestor.ensure_node_batch.call_args_list
         if "object_literals" in call[0][1].get("qualified_name", "")
-        and any(
-            pattern in call[0][1].get("qualified_name", "")
-            for pattern in ["calculator", "user", "playlist", "mathUtils"]
-        )
-    ]
+    }
 
-    assert len(object_like_nodes) >= 2, (
-        f"Expected at least 2 object-like nodes, found {len(object_like_nodes)}"
+    assert {"square", "cube", "power"} <= object_method_names, (
+        f"Missing object-literal methods; found {sorted(object_method_names)}"
     )
 
 
@@ -778,17 +776,18 @@ console.log(users.map(u => u.getProfile()));
         f"Expected at least 6 factory functions, found {len(found_factories)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
-
-    factory_object_nodes = [
-        call
-        for call in all_nodes
+    # (H) userFactory's methods are captured as module functions (createAdmin,
+    # (H) createFromData, createBatch). This previously matched a phantom node an
+    # (H) inner `.map()` arrow left by inheriting the userFactory const name; assert
+    # (H) the real methods instead.
+    factory_method_names = {
+        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in mock_ingestor.ensure_node_batch.call_args_list
         if "factory_functions" in call[0][1].get("qualified_name", "")
-        and "userFactory" in call[0][1].get("qualified_name", "")
-    ]
+    }
 
-    assert len(factory_object_nodes) >= 1, (
-        f"Expected userFactory object methods, found {len(factory_object_nodes)}"
+    assert {"createAdmin", "createFromData", "createBatch"} <= factory_method_names, (
+        f"Missing userFactory methods; found {sorted(factory_method_names)}"
     )
 
 
@@ -1581,20 +1580,17 @@ console.log('Cloned:', cloned.toJSON());
         f"Expected at least 5 composition functions, found {len(found_composition_functions)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
-
-    mixin_nodes = [
-        call
-        for call in all_nodes
+    # (H) Mixin object methods are captured as module functions (canWalk's walk,
+    # (H) canRun's run, etc.). This previously counted phantom nodes an inner arrow
+    # (H) left by inheriting a mixin const's name; assert the real methods instead.
+    composition_method_names = {
+        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in mock_ingestor.ensure_node_batch.call_args_list
         if "object_composition" in call[0][1].get("qualified_name", "")
-        and any(
-            pattern in call[0][1].get("qualified_name", "")
-            for pattern in ["Mixin", "canWalk", "canRun", "canSwim", "canFly"]
-        )
-    ]
+    }
 
-    assert len(mixin_nodes) >= 2, (
-        f"Expected at least 2 mixin-related nodes, found {len(mixin_nodes)}"
+    assert {"walk", "run", "swim", "fly"} <= composition_method_names, (
+        f"Missing mixin methods; found {sorted(composition_method_names)}"
     )
 
 

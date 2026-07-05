@@ -90,6 +90,142 @@ def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> Non
     )
 
 
+def test_inline_arrow_in_component_not_named_after_component(tmp_path: Path) -> None:
+    # (H) An inline arrow inside an arrow-const component's JSX (an onClick handler)
+    # (H) has no declarator of its own, so climbing ancestors for a name must STOP at
+    # (H) the component's function-body boundary -- otherwise it reaches the
+    # (H) `const Appearance = () =>` declarator and registers as
+    # (H) `module.Appearance.Appearance` (a double-segment phantom with no incoming
+    # (H) edge = dead code, and it orphans the real inline handlers from #616).
+    files = {
+        "widget.tsx": (
+            "export const Panel = () => {\n"
+            "  return (\n"
+            "    <Menu>\n"
+            "      <Item onClick={() => setTheme('light')}>L</Item>\n"
+            "      <Item onClick={() => setTheme('dark')}>D</Item>\n"
+            "    </Menu>\n"
+            "  )\n"
+            "}\n\n\n"
+            "function setTheme(x) {}\n"
+        ),
+    }
+    fns = _function_qns(tmp_path, files, "tsx")
+    assert not any(qn.endswith(".Panel.Panel") for qn in fns), (
+        f"component arrow double-registered under itself; fns={fns}"
+    )
+
+
+def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
+    # (H) An exported arrow-const whose body contains an inner arrow (`.map(w => ...)`)
+    # (H) must register as `utils.getInitials` (single segment) so a cross-module
+    # (H) call resolves. The inner arrow must not climb to the getInitials declarator
+    # (H) and push the real function to `utils.getInitials.getInitials`, which no call
+    # (H) site matches (the util then reports as dead despite being called).
+    files = {
+        "utils.ts": (
+            "export const getInitials = (name) => {\n"
+            "  return name.split(' ').map((w) => w[0]).join('')\n"
+            "}\n"
+        ),
+        "user.tsx": (
+            "import { getInitials } from './utils'\n\n"
+            "export function User() {\n"
+            "  return <div>{getInitials('x')}</div>\n"
+            "}\n"
+        ),
+    }
+    fns = _function_qns(tmp_path, files, "tsx")
+    assert not any(qn.endswith(".getInitials.getInitials") for qn in fns), (
+        f"inner arrow mis-named after the getInitials const; fns={fns}"
+    )
+    # (H) The real function keeps the single-segment name a call site resolves to.
+    assert any(qn.endswith(".utils.getInitials") for qn in fns), (
+        f"getInitials not registered at the expected single-segment qn; fns={fns}"
+    )
+
+
+def test_function_expression_assigned_to_property_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # (H) `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
+    # (H) for a library to invoke later (the openapi-ts token provider); the arrow is
+    # (H) anonymous with no incoming edge. The assigning scope must reference it or it
+    # (H) reports as dead (the last frontend false positive on the template).
+    files = {
+        "main.tsx": (
+            "import { OpenAPI } from './client'\n\n"
+            "OpenAPI.TOKEN = async () => {\n"
+            "  return getToken()\n"
+            "}\n\n\n"
+            "function getToken() {\n"
+            "  return ''\n"
+            "}\n"
+        ),
+        "client.ts": "export const OpenAPI = { TOKEN: '' }\n",
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith(".main")}
+    assert any(".main.anonymous_" in b for b in refs), (
+        f"function-expression assigned to a property not referenced; refs={refs}"
+    )
+
+
+def test_returned_cleanup_closure_is_referenced(tmp_path: Path) -> None:
+    # (H) A useEffect cleanup (`return () => unsubscribe()`) is a function the hook
+    # (H) hands back for React to invoke; it registers as an anonymous node under the
+    # (H) enclosing hook (the effect arrow is anonymous, so it nests one level up) but
+    # (H) has no incoming edge. The scope that returns it must reference it or every
+    # (H) effect cleanup reports as dead.
+    files = {
+        "hook.tsx": (
+            "export function useThing() {\n"
+            "  useEffect(() => {\n"
+            "    subscribe(handler)\n"
+            "    return () => unsubscribe(handler)\n"
+            "  }, [])\n"
+            "}\n\n\n"
+            "function subscribe(f) {}\n"
+            "function unsubscribe(f) {}\n"
+            "function handler() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("hook.useThing")}
+    assert any(".hook.useThing.anonymous_" in b for b in refs), (
+        f"returned cleanup closure not referenced; refs={refs}"
+    )
+
+
+def test_object_value_bound_function_is_referenced(tmp_path: Path) -> None:
+    # (H) `onError: handleError.bind(showToast)` hands the bound function
+    # (H) `handleError` to the mutation config; the `.bind(...)` call resolves to the
+    # (H) Function.prototype builtin, so without unwrapping it the real `handleError`
+    # (H) gets no incoming edge and reports as dead (and drags down the private
+    # (H) helper it calls). The enclosing scope must reference the bound function.
+    files = {
+        "utils.ts": (
+            "function extractErrorMessage(e) { return e.message }\n"
+            "export const handleError = function (e) {\n"
+            "  return extractErrorMessage(e)\n"
+            "}\n"
+        ),
+        "comp.tsx": (
+            "import { handleError } from './utils'\n\n"
+            "export function AddItem() {\n"
+            "  return doMutation({ onError: handleError.bind(showToast) })\n"
+            "}\n\n\n"
+            "function doMutation(o) { return o }\n"
+            "function showToast(m) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    edges = {(r, b) for a, r, b in rels if a.endswith("comp.AddItem")}
+    assert any(b.endswith("utils.handleError") for _r, b in edges), (
+        f"bound function handleError not referenced; edges={edges}"
+    )
+
+
 def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # (H) useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
     # (H) inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the

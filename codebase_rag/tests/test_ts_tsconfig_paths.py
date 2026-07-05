@@ -59,6 +59,39 @@ def _make(root: Path) -> None:
 
 
 @needs_ts_grammar
+def test_tsconfig_paths_alias_in_subdirectory_resolves(tmp_path: Path) -> None:
+    # (H) The tsconfig lives in a subdirectory (a monorepo `frontend/`), not the
+    # (H) indexed repo root. Its `@/* -> ./src/*` alias is relative to that
+    # (H) subdirectory, so an `@/util` import must resolve to `frontend/src/util`
+    # (H) (the full-stack-fastapi-template layout). Reading only the root tsconfig
+    # (H) leaves every `@/` import unresolved and its callees reported as dead.
+    fe = tmp_path / "frontend"
+    (fe / "src").mkdir(parents=True)
+    (fe / "tsconfig.json").write_text(
+        '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["./src/*"]}}}',
+        encoding="utf-8",
+    )
+    (fe / "src" / "util.ts").write_text(
+        "export function aliasedHelper(): number { return 1; }\n", encoding="utf-8"
+    )
+    (fe / "src" / "app.ts").write_text(
+        'import { aliasedHelper } from "@/util";\n'
+        "export function useIt(): number { return aliasedHelper(); }\n",
+        encoding="utf-8",
+    )
+    ingestor = _capture(tmp_path, "proj")
+    calls = {
+        (str(from_val), str(to_val))
+        for _fl, from_val, rel, _tl, to_val in ingestor.rels
+        if rel == "CALLS"
+    }
+    assert (
+        "proj.frontend.src.app.useIt",
+        "proj.frontend.src.util.aliasedHelper",
+    ) in calls
+
+
+@needs_ts_grammar
 def test_tsconfig_paths_alias_calls_resolve_to_first_party_files(
     tmp_path: Path,
 ) -> None:
