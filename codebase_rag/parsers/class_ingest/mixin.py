@@ -15,6 +15,7 @@ from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
+from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
@@ -381,6 +382,12 @@ class ClassIngestMixin:
             # (H) usually a header) so out-of-line method bodies in other files can
             # (H) resolve `field_.method()` via the field's type at call resolution.
             if field_types := CppTypeInferenceEngine().build_field_type_map(class_node):
+                self.class_field_types[class_qn] = field_types
+        elif language == cs.SupportedLanguage.GO:
+            # (H) Record Go struct field types so a field-hop receiver
+            # (H) (`engine.trees.get()`) resolves, and a local bound from such a call
+            # (H) (`root := engine.trees.get(m)`) picks up the return type.
+            if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
         self._ingest_class_methods(
             class_node,
