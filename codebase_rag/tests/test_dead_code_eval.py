@@ -11,7 +11,6 @@ from evals.dead_code import (
 
 _MODULE = cs.NodeLabel.MODULE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
-_METHOD = cs.NodeLabel.METHOD.value
 _CLASS = cs.NodeLabel.CLASS.value
 _CALLS = cs.RelationshipType.CALLS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
@@ -39,9 +38,9 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
-def _mth(uid: str, path: str) -> tuple:
+def _method(uid: str, path: str) -> tuple:
     return (
-        (_METHOD, uid),
+        (cs.NodeLabel.METHOD.value, uid),
         {
             cs.KEY_QUALIFIED_NAME: uid,
             cs.KEY_PATH: path,
@@ -72,6 +71,32 @@ def test_dead_code_flags_uncalled_function() -> None:
     assert dead == {"proj.m.orphan"}
 
 
+def test_go_init_and_main_are_roots() -> None:
+    # (H) Go `func init()` is auto-run by the runtime at package load and `func
+    # (H) main()` is the program entry; neither is ever called explicitly, so both
+    # (H) are reachability roots (like Python dunders). A same-file helper with no
+    # (H) caller is still dead -- the exemption is name-scoped to init/main.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.mode"),
+                {cs.KEY_QUALIFIED_NAME: "proj.mode", cs.KEY_PATH: "mode.go"},
+            ),
+            _fn("proj.mode.init", path="mode.go"),
+            _fn("proj.main.main", path="main.go"),
+            _fn("proj.util.helper", path="util.go"),
+            _method("proj.mode.Type.init", path="mode.go"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.mode.init" not in dead
+    assert "proj.main.main" not in dead
+    assert "proj.util.helper" in dead
+    # (H) A receiver method named init/main is NOT the package init/entry, so the
+    # (H) exemption is Function-scoped and this stays dead.
+    assert "proj.mode.Type.init" in dead
+
+
 def test_rust_trait_methods_and_main_are_roots() -> None:
     # (H) Rust trait-impl methods (Display::fmt, PartialEq::eq, Iterator::next) are
     # (H) dispatched by the language (format!, ==, for), never called explicitly, and
@@ -84,12 +109,12 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
                 (_MODULE, "proj.frame"),
                 {cs.KEY_QUALIFIED_NAME: "proj.frame", cs.KEY_PATH: "frame.rs"},
             ),
-            _mth("proj.frame.Frame.fmt", "frame.rs"),
-            _mth("proj.frame.Frame.eq", "frame.rs"),
-            _mth("proj.iter.It.next", "iter.rs"),
-            _mth("proj.frame.Frame.push_int", "frame.rs"),
+            _method("proj.frame.Frame.fmt", "frame.rs"),
+            _method("proj.frame.Frame.eq", "frame.rs"),
+            _method("proj.iter.It.next", "iter.rs"),
+            _method("proj.frame.Frame.push_int", "frame.rs"),
             _fn("proj.main.main", path="main.rs"),
-            _mth("proj.frame.Frame.main", "frame.rs"),
+            _method("proj.frame.Frame.main", "frame.rs"),
         ]
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)

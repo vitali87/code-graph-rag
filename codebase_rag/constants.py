@@ -484,6 +484,12 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
     }
 )
 
+# (H) Go functions the runtime invokes with no explicit call site: `func init()`
+# (H) runs at package load (any number per package), `func main()` is the program
+# (H) entry. Both are reachability roots (like Python dunders), gated by the .go
+# (H) extension so same-named symbols in other languages are unaffected.
+GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
+
 # (H) Rust `fn main()` is the binary entry point, invoked by the runtime with no
 # (H) call site -- a reachability root (gated by .rs).
 RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})

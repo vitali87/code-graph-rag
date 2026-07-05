@@ -192,6 +192,12 @@ def dead_code_from_graph(
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
         ):
             roots.add(qn)
+        elif (
+            qn not in method_qns
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.GO_ROOT_FUNCTION_NAMES
+            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
+        ):
+            roots.add(qn)
         elif _is_rust_runtime_root(
             qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
             qn in method_qns,
