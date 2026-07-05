@@ -39,11 +39,7 @@ class GoTypeInferenceEngine:
         if struct is None:
             return fields
         field_list = next(
-            (
-                c
-                for c in struct.children
-                if c.type == cs.TS_GO_FIELD_DECLARATION_LIST
-            ),
+            (c for c in struct.children if c.type == cs.TS_GO_FIELD_DECLARATION_LIST),
             None,
         )
         if field_list is None:
