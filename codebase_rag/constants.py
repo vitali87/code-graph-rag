@@ -2536,6 +2536,16 @@ TS_SPREAD_PARAMETER = "spread_parameter"
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
 TS_FIELD_DECLARATION = "field_declaration"
 TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
+# (H) TS "cast" wrappers that are transparent for reference resolution: `x as T`,
+# (H) `x satisfies T`, and the non-null assertion `x!`. Their first named child is
+# (H) the wrapped value, so unwrapping reaches the real referenced expression
+# (H) (`export const persist = persistImpl as unknown as Persist`).
+TS_AS_EXPRESSION = "as_expression"
+TS_SATISFIES_EXPRESSION = "satisfies_expression"
+TS_NON_NULL_EXPRESSION = "non_null_expression"
+TS_CAST_WRAPPER_TYPES = frozenset(
+    {TS_AS_EXPRESSION, TS_SATISFIES_EXPRESSION, TS_NON_NULL_EXPRESSION}
+)
 TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 TS_METHOD_INVOCATION = "method_invocation"
 TS_FIELD_ACCESS = "field_access"

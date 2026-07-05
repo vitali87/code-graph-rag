@@ -1767,6 +1767,11 @@ class CallProcessor:
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
+                # (H) `export const persist = persistImpl as unknown as Persist`
+                # (H) wraps the aliased impl in TS casts; unwrap them so the bare
+                # (H) name/arrow underneath is what we reference.
+                if right is not None:
+                    right = self._unwrap_ts_cast(right)
                 # (H) A bare-name RHS names a callable; an inline arrow/function-expr
                 # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
                 # (H) function on the target for later invocation -- _emit_callback_edge
@@ -1964,6 +1969,9 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
     ) -> None:
+        # (H) A value cast for typing (`persistImpl as unknown as Persist`) is
+        # (H) transparent for reference resolution; unwrap it first.
+        node = self._unwrap_ts_cast(node)
         # (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` in value position
         # (H) (onError: handleError.bind(toast)) hands off `fn`; the call resolves to
         # (H) the Function.prototype builtin, so unwrap to the bound function and
@@ -1985,6 +1993,18 @@ class CallProcessor:
             resolve_func,
             ensure_rel,
         )
+
+    def _unwrap_ts_cast(self, node: Node) -> Node:
+        # (H) Peel TS cast wrappers (`x as T`, `x satisfies T`, `x!`) to the wrapped
+        # (H) value; they are transparent for reference resolution. The wrapped value
+        # (H) is the first named child; casts nest (`x as unknown as T`), so loop.
+        current = node
+        while current.type in cs.TS_CAST_WRAPPER_TYPES:
+            inner = current.named_child(0)
+            if inner is None:
+                break
+            current = inner
+        return current
 
     def _unwrap_bound_function(self, node: Node) -> Node | None:
         # (H) For `fn.bind(ctx)` (a call_expression whose function is `fn.bind`),
@@ -2101,7 +2121,8 @@ class CallProcessor:
             if node.type in boundary_types:
                 continue
             if node.type == cs.TS_PY_RETURN_STATEMENT:
-                for child in node.named_children:
+                for returned in node.named_children:
+                    child = self._unwrap_ts_cast(returned)
                     if child.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
                         continue
                     if not (name := safe_decode_text(child)):
@@ -2176,6 +2197,10 @@ class CallProcessor:
     ) -> list[tuple[str, str]]:
         left = node.child_by_field_name(name_field)
         right = node.child_by_field_name(value_field)
+        # (H) `const x = factory(...) as T` wraps the call in a cast; unwrap so the
+        # (H) factory binding is still recognised.
+        if right is not None:
+            right = self._unwrap_ts_cast(right)
         if (
             left is not None
             and left.type == cs.TS_PY_IDENTIFIER
@@ -2291,6 +2316,9 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
+        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent for
+        # (H) reference resolution; unwrap it so the callable underneath resolves.
+        arg_node = self._unwrap_ts_cast(arg_node)
         # (H) An arrow/function-expression passed DIRECTLY as a call argument
         # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
         # (H) registered anonymously in the enclosing scope but named after no
@@ -2380,7 +2408,10 @@ class CallProcessor:
             cs.NodeLabel.METHOD,
             cs.NodeLabel.CLASS,
         )
-        for position, keyword_name, arg_node in items:
+        for position, keyword_name, raw_arg in items:
+            # (H) `f(callback as any)` casts the argument; unwrap so a cast callable
+            # (H) argument still flows.
+            arg_node = self._unwrap_ts_cast(raw_arg)
             if arg_node.type not in _FLOW_ARG_REF_TYPES:
                 continue
             arg_text = safe_decode_text(arg_node)
@@ -2633,6 +2664,8 @@ class CallProcessor:
         # (H) (resolve_builtin_call if is_js_ts else None), or getattr(recv, name)
         # (H) dynamic dispatch. Take the name/attribute branch (consequence or
         # (H) alternative, never the condition) or build recv.<name> for getattr.
+        # (H) A TS cast (`y as T`) is transparent; unwrap so `x = y as T` still aliases.
+        right = self._unwrap_ts_cast(right)
         if right.type in (identifier, attribute):
             return right.text.decode(cs.ENCODING_UTF8) if right.text else None
         if right.type == cs.TS_PY_CONDITIONAL_EXPRESSION and right.named_children:
