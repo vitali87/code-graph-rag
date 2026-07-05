@@ -90,8 +90,10 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     # (H) Name-scoped like Python dunders; trait methods must be methods.
     if not path.endswith(cs.EXT_RS):
         return False
+    # (H) `main` is only the entry point as a receiverless `fn main()`; a method
+    # (H) named main is not, so gate it to non-methods. Trait methods are the reverse.
     if name in cs.RUST_ROOT_FUNCTION_NAMES:
-        return True
+        return not is_method
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 

@@ -89,6 +89,7 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
             _mth("proj.iter.It.next", "iter.rs"),
             _mth("proj.frame.Frame.push_int", "frame.rs"),
             _fn("proj.main.main", path="main.rs"),
+            _mth("proj.frame.Frame.main", "frame.rs"),
         ]
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
@@ -97,6 +98,9 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
     assert "proj.iter.It.next" not in dead
     assert "proj.main.main" not in dead
     assert "proj.frame.Frame.push_int" in dead
+    # (H) A method named main is not the binary entry, so it stays dead (main is
+    # (H) Function-scoped; trait-method rooting is the reverse, Method-scoped).
+    assert "proj.frame.Frame.main" in dead
 
 
 def test_dead_code_excludes_generated_paths() -> None:
