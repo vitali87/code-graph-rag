@@ -191,6 +191,11 @@ HELP_DEADCODE_DECORATOR_ROOT = (
     "Treat functions/methods carrying this decorator as reachable roots. "
     "Extends the built-in set (route, task, fixture, command, ...). Repeatable."
 )
+HELP_DEADCODE_EXCLUDE = (
+    "Glob matched against a symbol's file path to exclude from the report "
+    "(e.g. '*client/core*', '*.gen.*' for generated code). '*' spans '/'. "
+    "Repeatable."
+)
 HELP_DEADCODE_INCLUDE_TESTS = (
     "Treat test code as reachable roots so production code it exercises is "
     "not reported. On by default."

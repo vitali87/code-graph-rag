@@ -8,6 +8,7 @@
 # (H) missing edge flagging a live function as dead), not the scorer.
 import json
 from collections import defaultdict
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Annotated, NamedTuple
 
@@ -47,10 +48,13 @@ class DeadCodeConfig(NamedTuple):
     root_decorators: frozenset[str]
     entry_points: tuple[str, ...]
     test_patterns: tuple[str, ...]
+    exclude_patterns: tuple[str, ...] = ()
 
 
 def default_dead_code_config(
-    include_tests: bool, include_classes: bool
+    include_tests: bool,
+    include_classes: bool,
+    exclude_patterns: tuple[str, ...] = (),
 ) -> DeadCodeConfig:
     return DeadCodeConfig(
         include_tests=include_tests,
@@ -58,6 +62,7 @@ def default_dead_code_config(
         root_decorators=frozenset(d.lower() for d in cs.DEFAULT_ROOT_DECORATORS),
         entry_points=(),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),
+        exclude_patterns=exclude_patterns,
     )
 
 
@@ -206,7 +211,21 @@ def dead_code_from_graph(
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
 
-    return candidates - live
+    dead = candidates - live
+    # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
+    # (H) the REPORT only, after reachability: they stay full participants as roots
+    # (H) and callers, so a real function invoked only from generated glue is not
+    # (H) newly flagged -- excluding earlier would drop those live edges.
+    if config.exclude_patterns:
+        dead = {
+            qn
+            for qn in dead
+            if not any(
+                fnmatch(str(props_by_qn[qn].get(cs.KEY_PATH) or ""), pattern)
+                for pattern in config.exclude_patterns
+            )
+        }
+    return dead
 
 
 def cgr_dead_code(target: Path, project: str, config: DeadCodeConfig) -> set[str]:
@@ -241,6 +260,10 @@ def main(
     include_classes: Annotated[
         bool, typer.Option(help="Also report unreachable classes.")
     ] = False,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option(help="Glob(s) matched against a symbol's file path to exclude."),
+    ] = None,
     out_dir: Annotated[
         Path, typer.Option(help="Directory for the dead-code report json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
@@ -252,7 +275,9 @@ def main(
     project = project_name or target.name
     logger.info(ls.DEAD_CODE_TARGET.format(target=target, project=project))
 
-    config = default_dead_code_config(include_tests, include_classes)
+    config = default_dead_code_config(
+        include_tests, include_classes, tuple(exclude or ())
+    )
     dead = cgr_dead_code(target, project, config)
     logger.success(ls.DEAD_CODE_DONE.format(count=len(dead)))
 

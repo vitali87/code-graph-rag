@@ -59,6 +59,38 @@ def test_dead_code_flags_uncalled_function() -> None:
     assert dead == {"proj.m.orphan"}
 
 
+def test_dead_code_excludes_generated_paths() -> None:
+    # (H) A generated file (openapi-ts client/core, routeTree.gen.ts) has no
+    # (H) in-repo caller, so every symbol in it reports as dead -- pure noise the
+    # (H) user cannot act on. An exclude glob suppresses those from the report while
+    # (H) a real orphan elsewhere is still flagged. Crucially, the excluded file
+    # (H) stays a live participant: `used_by_gen` is called only from the generated
+    # (H) module and must NOT be flagged dead (excluding before reachability would
+    # (H) drop that edge and wrongly report it).
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.gen"),
+                {cs.KEY_QUALIFIED_NAME: "proj.gen", cs.KEY_PATH: "client/core/req.ts"},
+            ),
+            _fn("proj.gen.helper", path="client/core/req.ts"),
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.ts"},
+            ),
+            _fn("proj.m.orphan", path="m.ts"),
+            _fn("proj.m.used_by_gen", path="m.ts"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.gen", _CALLS, _FUNCTION, "proj.gen.helper"),
+        (_FUNCTION, "proj.gen.helper", _CALLS, _FUNCTION, "proj.m.used_by_gen"),
+    ]
+    cfg = _CONFIG._replace(exclude_patterns=("*client/core*",))
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, cfg)
+    assert dead == {"proj.m.orphan"}
+
+
 def test_dead_code_flags_orphan_chain() -> None:
     # (H) orphan() calls buried(), but orphan() itself is never reached, so both
     # (H) are dead (a callee kept alive only by dead code is dead too).

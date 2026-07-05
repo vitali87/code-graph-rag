@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
+from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
@@ -941,6 +942,22 @@ def _dead_code_params(
     }
 
 
+def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
+    # (H) Drop candidates whose file path matches an exclude glob (generated dirs
+    # (H) like client/core or *.gen.* have no in-repo caller, so every symbol
+    # (H) reports as dead). fnmatch treats '*' as spanning '/', so '*client/core*'
+    # (H) matches at any depth.
+    if not exclude:
+        return rows
+    return [
+        row
+        for row in rows
+        if not any(
+            fnmatch(str(row.get(cs.KEY_PATH) or ""), pattern) for pattern in exclude
+        )
+    ]
+
+
 def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
     start = row.get(cs.KEY_START_LINE, 0)
     end = row.get(cs.KEY_END_LINE, 0)
@@ -1028,6 +1045,7 @@ def dead_code(
     decorator_root: list[str] = typer.Option(
         [], "--decorator-root", help=ch.HELP_DEADCODE_DECORATOR_ROOT
     ),
+    exclude: list[str] = typer.Option([], "--exclude", help=ch.HELP_DEADCODE_EXCLUDE),
     include_tests: bool = typer.Option(
         True,
         "--include-tests/--no-include-tests",
@@ -1083,7 +1101,9 @@ def dead_code(
         app_context.console.print(style(message, cs.Color.RED))
         raise typer.Exit(1)
 
-    candidates = [_to_dead_code_row(row) for row in rows]
+    candidates = [
+        _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
+    ]
     _emit_dead_code(candidates, output_format, output, resolved)
 
     if fail_on_found and candidates:

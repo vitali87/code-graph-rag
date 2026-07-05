@@ -188,7 +188,7 @@ MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set{candidate_clause}
 RETURN labels(n)[0] AS label, n.name AS name,
-       n.qualified_name AS qualified_name,
+       n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line
 ORDER BY qualified_name"""
 

@@ -74,6 +74,37 @@ class TestDeadCodeCommand:
             "myproj.mod.Thing.orphan_two",
         }
 
+    def test_exclude_glob_drops_matching_paths(self, runner: CliRunner) -> None:
+        # (H) --exclude drops candidates whose file path matches the glob (generated
+        # (H) code) while keeping real orphans elsewhere.
+        rows: list[ResultRow] = [
+            {
+                "label": "Function",
+                "name": "gen_helper",
+                "qualified_name": "myproj.client.core.gen_helper",
+                "path": "client/core/request.ts",
+                "start_line": 1,
+                "end_line": 3,
+            },
+            {
+                "label": "Function",
+                "name": "orphan_one",
+                "qualified_name": "myproj.mod.orphan_one",
+                "path": "mod.ts",
+                "start_line": 5,
+                "end_line": 9,
+            },
+        ]
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=rows)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(
+                app, ["dead-code", "--format", "json", "--exclude", "*client/core*"]
+            )
+
+        assert result.exit_code == 0
+        names = {row["qualified_name"] for row in json.loads(result.output)}
+        assert names == {"myproj.mod.orphan_one"}
+
     def test_fail_on_found_exits_one_when_dead_code(
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
