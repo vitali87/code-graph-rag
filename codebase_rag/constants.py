@@ -490,6 +490,74 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
 # (H) extension so same-named symbols in other languages are unaffected.
 GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
 
+# (H) Rust `fn main()` is the binary entry point, invoked by the runtime with no
+# (H) call site -- a reachability root (gated by .rs).
+RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
+
+# (H) Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
+# (H) via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,
+# (H) Drop::drop, serde, ...), never through an explicit call the graph can see.
+# (H) Rooting them by name (gated by .rs) mirrors the Python-dunder exemption: these
+# (H) names are conventionally reserved for trait impls, so a same-named user method
+# (H) that is genuinely dead is under-reported rather than mis-reported.
+RUST_TRAIT_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "fmt",
+        "eq",
+        "ne",
+        "cmp",
+        "partial_cmp",
+        "hash",
+        "next",
+        "next_back",
+        "into_iter",
+        "size_hint",
+        "drop",
+        "clone",
+        "clone_from",
+        "default",
+        "from",
+        "from_str",
+        "try_from",
+        "into",
+        "try_into",
+        "deref",
+        "deref_mut",
+        "as_ref",
+        "as_mut",
+        "borrow",
+        "borrow_mut",
+        "poll",
+        "serialize",
+        "deserialize",
+        "source",
+        "add",
+        "add_assign",
+        "sub",
+        "sub_assign",
+        "mul",
+        "mul_assign",
+        "div",
+        "div_assign",
+        "rem",
+        "rem_assign",
+        "neg",
+        "not",
+        "bitand",
+        "bitand_assign",
+        "bitor",
+        "bitor_assign",
+        "bitxor",
+        "bitxor_assign",
+        "shl",
+        "shl_assign",
+        "shr",
+        "shr_assign",
+        "index",
+        "index_mut",
+    }
+)
+
 # (H) Base classes that mark a class as a structural interface: its method stubs
 # (H) are never call targets themselves (callers resolve to the implementations),
 # (H) so dead-code analysis roots every method the class defines.
