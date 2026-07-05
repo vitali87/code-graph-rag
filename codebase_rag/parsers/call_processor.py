@@ -1938,6 +1938,30 @@ class CallProcessor:
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    def _emit_inline_arg_function_ref(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        ensure_rel,
+    ) -> None:
+        # (H) An inline arrow/function-expression call argument is registered by the
+        # (H) definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
+        # (H) start position. Reference that node from the scope holding the call so
+        # (H) the callback stays reachable (registry guard skips unregistered names).
+        registry = self._resolver.function_registry
+        candidate = (
+            f"{source_spec[2]}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+            f"{arg_node.start_point[0]}_{arg_node.start_point[1]}"
+        )
+        for target_qn in registry.variants(candidate):
+            if registry.get(target_qn) is None:
+                continue
+            ensure_rel(
+                source_spec,
+                cs.RelationshipType.REFERENCES,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
         # (H) A nested function/class scope; a scan of a function body must not descend
@@ -2161,6 +2185,14 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
+        # (H) An arrow/function-expression passed DIRECTLY as a call argument
+        # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
+        # (H) registered anonymously in the enclosing scope but named after no
+        # (H) identifier, so resolve_func cannot find it. The call consumes it, so
+        # (H) reference it by position the same way inline object-literal values are.
+        if arg_node.type in _INLINE_FUNC_VALUE_TYPES:
+            self._emit_inline_arg_function_ref(arg_node, source_spec, ensure_rel)
+            return
         if not (arg_text := safe_decode_text(arg_node)):
             return
         if not (
