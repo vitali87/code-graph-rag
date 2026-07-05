@@ -246,3 +246,54 @@ def test_reference_return_type_chained_dispatch(tmp_path: Path) -> None:
     calls = _calls(tmp_path)
     assert ("crate.lib.Holder.go", "crate.lib.Frame.push_int") in calls
     assert ("crate.lib.Holder.go", "crate.lib.Aaa.push_int") not in calls
+
+
+def test_imported_type_disambiguated_by_path(tmp_path: Path) -> None:
+    # (H) Two `Command` types in different modules whose `mk()` returns DIFFERENT
+    # (H) types (cmd.Command -> Real, other.Command -> Fake). `use crate::cmd::Command`
+    # (H) must resolve the call-return base to crate.cmd.Command so `x.run()` lands on
+    # (H) Real.run. A simple-name-only match would pick the alphabetically-first
+    # (H) crate.aaa.Command, type x as Fake, and mis-resolve to Fake.run.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lib.rs").write_text(
+        "pub mod aaa;\npub mod cmd;\npub mod types;\npub mod app;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "types.rs").write_text(
+        "pub struct Real {}\n"
+        "impl Real {\n"
+        "    pub fn run(&self) -> i32 { 1 }\n"
+        "}\n"
+        "pub struct Fake {}\n"
+        "impl Fake {\n"
+        "    pub fn run(&self) -> i32 { 2 }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "aaa.rs").write_text(
+        "use crate::types::Fake;\n"
+        "pub struct Command {}\n"
+        "impl Command {\n"
+        "    pub fn mk() -> Fake { Fake {} }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cmd.rs").write_text(
+        "use crate::types::Real;\n"
+        "pub struct Command {}\n"
+        "impl Command {\n"
+        "    pub fn mk() -> Real { Real {} }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.rs").write_text(
+        "use crate::cmd::Command;\n"
+        "pub fn go() -> i32 {\n"
+        "    let x = Command::mk();\n"
+        "    x.run()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.app.go", "crate.types.Real.run") in calls
+    assert ("crate.app.go", "crate.types.Fake.run") not in calls

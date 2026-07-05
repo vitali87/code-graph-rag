@@ -276,15 +276,34 @@ class TypeInferenceEngine:
         if (target := import_map.get(type_name)) and (
             cs.SEPARATOR_DOUBLE_COLON in target
         ):
-            simple = target.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-            for qn in self.function_registry.find_ending_with(simple):
-                if self.function_registry.get(qn) in (
-                    NodeType.CLASS,
-                    NodeType.ENUM,
-                    NodeType.TYPE,
-                ):
-                    return qn
+            return self._resolve_rust_import_path(target)
         return self._resolve_class_name(type_name, module_qn) or type_name
+
+    def _resolve_rust_import_path(self, target: str) -> str:
+        # (H) Map a `use` target (`crate::cmd::Command`) to its registry qn. Prefer the
+        # (H) candidate whose qn ends with the import's module path (`.cmd.Command`),
+        # (H) so two same-named types in different modules disambiguate by path; fall
+        # (H) back to the deterministic-min simple-name match when the path (e.g. a
+        # (H) crate-root re-export `crate::Command`) can't pinpoint one.
+        parts = [
+            p
+            for p in target.split(cs.SEPARATOR_DOUBLE_COLON)
+            if p not in cs.RS_PATH_KEYWORDS
+        ]
+        if not parts:
+            return target
+        simple = parts[-1]
+        candidates = [
+            qn
+            for qn in self.function_registry.find_ending_with(simple)
+            if self.function_registry.get(qn)
+            in (NodeType.CLASS, NodeType.ENUM, NodeType.TYPE)
+        ]
+        if not candidates:
+            return target
+        path_suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+        matching = [qn for qn in candidates if qn.endswith(path_suffix)]
+        return min(matching) if matching else min(candidates)
 
     def _collect_field_types(self, class_qn: str) -> dict[str, str]:
         # (H) Collect member-field types along the inheritance chain so a derived class
