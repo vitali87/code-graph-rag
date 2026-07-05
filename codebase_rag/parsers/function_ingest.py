@@ -565,6 +565,13 @@ class FunctionIngestMixin:
                     for child in current.children:
                         if child.type == cs.TS_IDENTIFIER and child.text:
                             return safe_decode_text(child)
+                    return None
+                # (H) Crossing another function's body means this arrow is nested
+                # (H) inside it (a JSX handler, a `.map()` callback), not bound to the
+                # (H) outer const -- stop so it stays anonymous instead of inheriting
+                # (H) the component's name as a `Component.Component` phantom.
+                if current.type in cs.JS_ARROW_NAME_CLIMB_BOUNDARY:
+                    return None
                 current = current.parent
 
         return None

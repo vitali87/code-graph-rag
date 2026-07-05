@@ -90,6 +90,61 @@ def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> Non
     )
 
 
+def test_inline_arrow_in_component_not_named_after_component(tmp_path: Path) -> None:
+    # (H) An inline arrow inside an arrow-const component's JSX (an onClick handler)
+    # (H) has no declarator of its own, so climbing ancestors for a name must STOP at
+    # (H) the component's function-body boundary -- otherwise it reaches the
+    # (H) `const Appearance = () =>` declarator and registers as
+    # (H) `module.Appearance.Appearance` (a double-segment phantom with no incoming
+    # (H) edge = dead code, and it orphans the real inline handlers from #616).
+    files = {
+        "widget.tsx": (
+            "export const Panel = () => {\n"
+            "  return (\n"
+            "    <Menu>\n"
+            "      <Item onClick={() => setTheme('light')}>L</Item>\n"
+            "      <Item onClick={() => setTheme('dark')}>D</Item>\n"
+            "    </Menu>\n"
+            "  )\n"
+            "}\n\n\n"
+            "function setTheme(x) {}\n"
+        ),
+    }
+    fns = _function_qns(tmp_path, files, "tsx")
+    assert not any(qn.endswith(".Panel.Panel") for qn in fns), (
+        f"component arrow double-registered under itself; fns={fns}"
+    )
+
+
+def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
+    # (H) An exported arrow-const whose body contains an inner arrow (`.map(w => ...)`)
+    # (H) must register as `utils.getInitials` (single segment) so a cross-module
+    # (H) call resolves. The inner arrow must not climb to the getInitials declarator
+    # (H) and push the real function to `utils.getInitials.getInitials`, which no call
+    # (H) site matches (the util then reports as dead despite being called).
+    files = {
+        "utils.ts": (
+            "export const getInitials = (name) => {\n"
+            "  return name.split(' ').map((w) => w[0]).join('')\n"
+            "}\n"
+        ),
+        "user.tsx": (
+            "import { getInitials } from './utils'\n\n"
+            "export function User() {\n"
+            "  return <div>{getInitials('x')}</div>\n"
+            "}\n"
+        ),
+    }
+    fns = _function_qns(tmp_path, files, "tsx")
+    assert not any(qn.endswith(".getInitials.getInitials") for qn in fns), (
+        f"inner arrow mis-named after the getInitials const; fns={fns}"
+    )
+    # (H) The real function keeps the single-segment name a call site resolves to.
+    assert any(qn.endswith(".utils.getInitials") for qn in fns), (
+        f"getInitials not registered at the expected single-segment qn; fns={fns}"
+    )
+
+
 def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # (H) useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
     # (H) inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the

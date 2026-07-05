@@ -3129,6 +3129,25 @@ FQN_TS_FUNCTION_TYPES = (
     TS_FUNCTION_SIGNATURE,
 )
 
+# (H) When climbing a nameless arrow's ancestors to find its binding declarator,
+# (H) crossing one of these means the arrow lives INSIDE another function's body
+# (H) (a JSX event handler, a `.map()` callback), not directly bound to the outer
+# (H) const -- so it must not inherit that const's name. Without this stop the inner
+# (H) arrow becomes `Component.Component`/`utils.getInitials.getInitials`, a
+# (H) double-segment phantom with no incoming edge (dead-code false positive) that
+# (H) also steals the enclosing scope from the real inline handler nodes.
+JS_ARROW_NAME_CLIMB_BOUNDARY = frozenset(
+    {
+        TS_STATEMENT_BLOCK,
+        TS_ARROW_FUNCTION,
+        TS_FUNCTION_DECLARATION,
+        TS_FUNCTION_EXPRESSION,
+        TS_METHOD_DEFINITION,
+        TS_GENERATOR_FUNCTION_DECLARATION,
+        TS_CLASS_BODY,
+    }
+)
+
 # (H) FQN node type tuples for Rust
 FQN_RS_SCOPE_TYPES = (
     TS_RS_STRUCT_ITEM,
