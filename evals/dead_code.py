@@ -179,6 +179,12 @@ def dead_code_from_graph(
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
         ):
             roots.add(qn)
+        elif (
+            qn not in method_qns
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.GO_ROOT_FUNCTION_NAMES
+            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
+        ):
+            roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
         elif config.include_tests and any(
