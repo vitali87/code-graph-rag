@@ -1767,6 +1767,11 @@ class CallProcessor:
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
+                # (H) `export const persist = persistImpl as unknown as Persist`
+                # (H) wraps the aliased impl in TS casts; unwrap them so the bare
+                # (H) name/arrow underneath is what we reference.
+                if right is not None:
+                    right = self._unwrap_ts_cast(right)
                 # (H) A bare-name RHS names a callable; an inline arrow/function-expr
                 # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
                 # (H) function on the target for later invocation -- _emit_callback_edge
@@ -1985,6 +1990,18 @@ class CallProcessor:
             resolve_func,
             ensure_rel,
         )
+
+    def _unwrap_ts_cast(self, node: Node) -> Node:
+        # (H) Peel TS cast wrappers (`x as T`, `x satisfies T`, `x!`) to the wrapped
+        # (H) value; they are transparent for reference resolution. The wrapped value
+        # (H) is the first named child; casts nest (`x as unknown as T`), so loop.
+        current = node
+        while current.type in cs.TS_CAST_WRAPPER_TYPES:
+            inner = current.named_child(0)
+            if inner is None:
+                break
+            current = inner
+        return current
 
     def _unwrap_bound_function(self, node: Node) -> Node | None:
         # (H) For `fn.bind(ctx)` (a call_expression whose function is `fn.bind`),
@@ -2291,6 +2308,9 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
+        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent for
+        # (H) reference resolution; unwrap it so the callable underneath resolves.
+        arg_node = self._unwrap_ts_cast(arg_node)
         # (H) An arrow/function-expression passed DIRECTLY as a call argument
         # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
         # (H) registered anonymously in the enclosing scope but named after no

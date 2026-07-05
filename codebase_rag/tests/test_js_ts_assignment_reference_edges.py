@@ -138,3 +138,33 @@ def test_js_plain_value_assignments_are_not_referenced(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files, "javascript")
     assert not any(r == REFERENCES for _, r, _ in rels)
+
+
+def test_ts_as_cast_assignment_references_target(tmp_path: Path) -> None:
+    # (H) `export const persist = persistImpl as unknown as Persist` aliases the real
+    # (H) implementation through TS `as` casts. The cast expression is transparent for
+    # (H) reference resolution, so the module must reference persistImpl or it (and
+    # (H) everything only it reaches) reports as dead -- the zustand middleware
+    # (H) pattern where the public export is a cast of the internal impl.
+    files = {
+        "mw.ts": (
+            "const persistImpl = (config) => build(config)\n"
+            "export const persist = persistImpl as unknown as Persist\n"
+            "function build(c) { return c }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    assert _has(rels, "mw", REFERENCES, "mw.persistImpl")
+
+
+def test_ts_non_null_cast_assignment_references_target(tmp_path: Path) -> None:
+    # (H) A non-null assertion (`handler!`) is also a transparent wrapper.
+    files = {
+        "m.ts": (
+            "function handleEvent() { return 1 }\n"
+            "const cb = handleEvent!\n"
+            "export function use() { return cb }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    assert _has(rels, "m", REFERENCES, "m.handleEvent")
