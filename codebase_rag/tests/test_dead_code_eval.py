@@ -178,6 +178,24 @@ def test_test_file_symbols_are_not_candidates_when_tests_excluded() -> None:
     assert dead == {"proj.m.only_tested"}
 
 
+def test_pydantic_computed_field_is_a_root() -> None:
+    # (H) Pydantic calls @computed_field methods during serialization through
+    # (H) library code outside the first-party graph, so no CALLS edge reaches
+    # (H) them; the default decorator set must seed them as roots too.
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.C.full_name", decorators=["@computed_field", "@property"]),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, config)
+    assert dead == set()
+
+
 def test_non_test_module_does_not_keep_code_alive_when_tests_excluded() -> None:
     # (H) With tests excluded, a call from a test module must not root project code.
     nodes = dict(
