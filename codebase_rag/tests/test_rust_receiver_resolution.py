@@ -188,3 +188,36 @@ def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
     assert ("crate.lib.go", "crate.lib.Ping.new") in calls
     assert ("crate.lib.go", "crate.lib.Ping.into_frame") in calls
     assert ("crate.lib.go", "crate.lib.Aaa.into_frame") not in calls
+
+
+def test_imported_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
+    # (H) `use crate::cmd::Command; let cmd = Command::from_frame(f); cmd.apply()`:
+    # (H) the type is IMPORTED, so its import target is a raw `::`-path, not a registry
+    # (H) qn. The call-return binding must resolve it to the real class node
+    # (H) (crate.cmd.Command) to look up from_frame's recorded return type -- else it
+    # (H) falls back to the ambiguous trie path.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lib.rs").write_text("pub mod cmd;\npub mod app;\n", encoding="utf-8")
+    (tmp_path / "cmd.rs").write_text(
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n"
+        "    pub fn apply(&self) -> i32 { 2 }\n"
+        "}\n"
+        "pub struct Command {}\n"
+        "impl Command {\n"
+        "    pub fn from_frame(f: i32) -> Command { Command {} }\n"
+        "    pub fn apply(&self) -> i32 { 1 }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.rs").write_text(
+        "use crate::cmd::Command;\n"
+        "pub fn go() -> i32 {\n"
+        "    let cmd = Command::from_frame(0);\n"
+        "    cmd.apply()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.app.go", "crate.cmd.Command.apply") in calls
+    assert ("crate.app.go", "crate.cmd.Aaa.apply") not in calls

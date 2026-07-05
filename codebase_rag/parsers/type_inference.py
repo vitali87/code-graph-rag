@@ -6,6 +6,7 @@ from ..types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
+    NodeType,
     SimpleNameLookup,
 )
 from .cpp import CppTypeInferenceEngine
@@ -258,13 +259,32 @@ class TypeInferenceEngine:
         for method in segments[1:]:
             if current_type is None:
                 return None
-            class_qn = self._resolve_class_name(current_type, module_qn) or current_type
+            class_qn = self._resolve_rust_type_qn(current_type, module_qn)
             method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             if next_type := self.method_return_types.get(method_qn):
                 current_type = next_type
             elif method not in cs.RS_IDENTITY_METHODS:
                 return None
         return current_type
+
+    def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
+        # (H) Resolve a Rust type name to its class-node qn, honoring imports: a `use`
+        # (H) target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
+        # (H) find the registered class node whose simple name matches. Falls back to
+        # (H) same-module resolution for a locally-defined type.
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (target := import_map.get(type_name)) and (
+            cs.SEPARATOR_DOUBLE_COLON in target
+        ):
+            simple = target.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+            for qn in self.function_registry.find_ending_with(simple):
+                if self.function_registry.get(qn) in (
+                    NodeType.CLASS,
+                    NodeType.ENUM,
+                    NodeType.TYPE,
+                ):
+                    return qn
+        return self._resolve_class_name(type_name, module_qn) or type_name
 
     def _collect_field_types(self, class_qn: str) -> dict[str, str]:
         # (H) Collect member-field types along the inheritance chain so a derived class

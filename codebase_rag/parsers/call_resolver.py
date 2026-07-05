@@ -19,6 +19,9 @@ _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
+# (H) Node labels a Rust receiver type name may resolve to: a struct (Class), an
+# (H) enum, or a type alias -- all can carry impl methods.
+_RS_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.ENUM, NodeType.TYPE})
 
 
 def _split_receiver_chain(expr: str) -> list[str]:
@@ -445,14 +448,11 @@ class CallResolver:
             return self._resolve_super_call(call_name, class_context)
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
-            if chained := self._resolve_chained_call(
-                call_name, module_qn, local_var_types
-            ):
-                return chained
-            # (H) A chain whose base type is unknown falls through to the shared
-            # (H) resolution below, ending at the final-method trie fallback -- the
-            # (H) same last resort every other call shape uses -- so a unique method
-            # (H) name still resolves instead of the edge being dropped.
+            # (H) A chained call resolves via return-type inference only; it does NOT
+            # (H) fall through to the trie fallback, because a hop returning a container
+            # (H) (`Kids() []Command`) or an unknown type must drop the edge rather than
+            # (H) rebind the final method by bare name (a false `Command.Run`).
+            return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types
@@ -1003,12 +1003,16 @@ class CallResolver:
         rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
         class_name = rust_parts[-1]
 
+        # (H) A Rust receiver type may be a struct (Class), an enum (`Frame`), or a
+        # (H) type alias, all of which carry impl methods -- match any of them, else an
+        # (H) enum-typed receiver fails to resolve and its type reads as external,
+        # (H) wrongly suppressing the trie fallback.
         matching_qns = self.function_registry.find_ending_with(class_name)
         return next(
             (
                 qn
                 for qn in matching_qns
-                if self.function_registry.get(qn) == NodeType.CLASS
+                if self.function_registry.get(qn) in _RS_TYPE_NODE_TYPES
             ),
             class_qn,
         )
