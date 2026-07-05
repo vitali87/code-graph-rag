@@ -145,6 +145,58 @@ def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
     )
 
 
+def test_function_expression_assigned_to_property_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # (H) `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
+    # (H) for a library to invoke later (the openapi-ts token provider); the arrow is
+    # (H) anonymous with no incoming edge. The assigning scope must reference it or it
+    # (H) reports as dead (the last frontend false positive on the template).
+    files = {
+        "main.tsx": (
+            "import { OpenAPI } from './client'\n\n"
+            "OpenAPI.TOKEN = async () => {\n"
+            "  return getToken()\n"
+            "}\n\n\n"
+            "function getToken() {\n"
+            "  return ''\n"
+            "}\n"
+        ),
+        "client.ts": "export const OpenAPI = { TOKEN: '' }\n",
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith(".main")}
+    assert any(".main.anonymous_" in b for b in refs), (
+        f"function-expression assigned to a property not referenced; refs={refs}"
+    )
+
+
+def test_returned_cleanup_closure_is_referenced(tmp_path: Path) -> None:
+    # (H) A useEffect cleanup (`return () => unsubscribe()`) is a function the hook
+    # (H) hands back for React to invoke; it registers as an anonymous node under the
+    # (H) enclosing hook (the effect arrow is anonymous, so it nests one level up) but
+    # (H) has no incoming edge. The scope that returns it must reference it or every
+    # (H) effect cleanup reports as dead.
+    files = {
+        "hook.tsx": (
+            "export function useThing() {\n"
+            "  useEffect(() => {\n"
+            "    subscribe(handler)\n"
+            "    return () => unsubscribe(handler)\n"
+            "  }, [])\n"
+            "}\n\n\n"
+            "function subscribe(f) {}\n"
+            "function unsubscribe(f) {}\n"
+            "function handler() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "tsx")
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("hook.useThing")}
+    assert any(".hook.useThing.anonymous_" in b for b in refs), (
+        f"returned cleanup closure not referenced; refs={refs}"
+    )
+
+
 def test_object_value_bound_function_is_referenced(tmp_path: Path) -> None:
     # (H) `onError: handleError.bind(showToast)` hands the bound function
     # (H) `handleError` to the mutation config; the `.bind(...)` call resolves to the

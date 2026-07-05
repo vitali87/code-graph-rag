@@ -1294,6 +1294,15 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+            self._ingest_returned_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                caller_qn,
+            )
         # (H) Dispatch-table handler references, for every flow language. Module-scope
         # (H) literals are scanned explicitly in process_calls_in_file (before the
         # (H) no-calls early return), so only nested scopes here.
@@ -1758,7 +1767,15 @@ class CallProcessor:
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
-                if right is not None and right.type in _ASSIGNMENT_RHS_REF_TYPES:
+                # (H) A bare-name RHS names a callable; an inline arrow/function-expr
+                # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
+                # (H) function on the target for later invocation -- _emit_callback_edge
+                # (H) references it by position. A named arrow-const RHS is registered
+                # (H) by its name, so the by-position lookup simply finds nothing.
+                if right is not None and (
+                    right.type in _ASSIGNMENT_RHS_REF_TYPES
+                    or right.type in _INLINE_FUNC_VALUE_TYPES
+                ):
                     self._emit_callback_edge(
                         caller_spec,
                         right,
@@ -1828,6 +1845,44 @@ class CallProcessor:
                 # (H) or inline arrow (onClick={() => x()}) is a function the
                 # (H) framework invokes on the event, so reference it; other
                 # (H) expressions resolve to nothing and are skipped by the helper.
+                for value in node.named_children:
+                    self._emit_callback_edge(
+                        caller_spec,
+                        value,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn=caller_qn,
+                        rel_type=cs.RelationshipType.REFERENCES,
+                    )
+            stack.extend(node.children)
+
+    def _ingest_returned_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+    ) -> None:
+        # (H) A function handed back via `return` (a useEffect cleanup
+        # (H) `return () => unsubscribe()`, a factory `return handler`) is invoked by
+        # (H) whoever receives it, never by a call the graph can see. Reference it from
+        # (H) the returning scope. Walk continues through anonymous arrows (the effect
+        # (H) callback is anonymous, so its `return` bubbles here) but stops at named
+        # (H) nested functions, which own their returns.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+                continue
+            if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
                     self._emit_callback_edge(
                         caller_spec,
