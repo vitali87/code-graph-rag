@@ -181,3 +181,51 @@ def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) ->
     assert any(".widget.Widget.anonymous_" in b for b in refs), (
         f"no anonymous ref emitted; refs={refs}"
     )
+
+
+def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) An arrow passed DIRECTLY as a call argument (useCallback(() => {}),
+    # (H) setTimeout(() => {}), arr.map(x => ...)) registers as an anonymous node in
+    # (H) the enclosing scope but has no incoming edge -- the call consumes it, so
+    # (H) the scope must REFERENCE it or every inline callback reports as dead (the
+    # (H) dominant remaining false-positive class on the FastAPI template).
+    files = {
+        "hook.tsx": (
+            "export function useCopyToClipboard() {\n"
+            "  const copy = useCallback(async (text) => {\n"
+            "    return write(text)\n"
+            "  }, [])\n"
+            "  return copy\n"
+            "}\n\n\n"
+            "function write(t) { return t }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) An external callee (useCallback) gets the historical CALLS edge, a
+    # (H) first-party one REFERENCES; either keeps the callback reachable.
+    edges = {b for a, _r, b in rels if a.endswith("hook.useCopyToClipboard")}
+    assert any(".hook.useCopyToClipboard.anonymous_" in b for b in edges), (
+        f"inline call-argument arrow not referenced; edges={edges}"
+    )
+
+
+def test_inline_arrow_call_argument_function_expr_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # (H) A classic function expression passed directly as a call argument is the
+    # (H) same first-class handoff and must also be referenced.
+    files = {
+        "timer.ts": (
+            "export function start() {\n"
+            "  schedule(function () { tick() })\n"
+            "}\n\n\n"
+            "function schedule(cb) { return cb }\n"
+            "function tick() {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) schedule is first-party, so the handoff records as REFERENCES.
+    refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("timer.start")}
+    assert any(".timer.start.anonymous_" in b for b in refs), (
+        f"inline call-argument function expression not referenced; refs={refs}"
+    )
