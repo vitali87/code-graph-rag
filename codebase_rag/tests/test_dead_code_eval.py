@@ -11,6 +11,7 @@ from evals.dead_code import (
 
 _MODULE = cs.NodeLabel.MODULE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
+_METHOD = cs.NodeLabel.METHOD.value
 _CLASS = cs.NodeLabel.CLASS.value
 _CALLS = cs.RelationshipType.CALLS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
@@ -38,6 +39,18 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
+def _mth(uid: str, path: str) -> tuple:
+    return (
+        (_METHOD, uid),
+        {
+            cs.KEY_QUALIFIED_NAME: uid,
+            cs.KEY_PATH: path,
+            cs.KEY_DECORATORS: [],
+            cs.KEY_IS_EXPORTED: False,
+        },
+    )
+
+
 def test_dead_code_flags_uncalled_function() -> None:
     # (H) Module calls main(); main() calls helper(); orphan() is never called.
     nodes = dict(
@@ -57,6 +70,33 @@ def test_dead_code_flags_uncalled_function() -> None:
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
     assert dead == {"proj.m.orphan"}
+
+
+def test_rust_trait_methods_and_main_are_roots() -> None:
+    # (H) Rust trait-impl methods (Display::fmt, PartialEq::eq, Iterator::next) are
+    # (H) dispatched by the language (format!, ==, for), never called explicitly, and
+    # (H) `fn main()` is the program entry -- all reachability roots (like Python
+    # (H) dunders), gated by the .rs extension. A custom method (push_int) is not a
+    # (H) trait name, so it stays dead.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.frame"),
+                {cs.KEY_QUALIFIED_NAME: "proj.frame", cs.KEY_PATH: "frame.rs"},
+            ),
+            _mth("proj.frame.Frame.fmt", "frame.rs"),
+            _mth("proj.frame.Frame.eq", "frame.rs"),
+            _mth("proj.iter.It.next", "iter.rs"),
+            _mth("proj.frame.Frame.push_int", "frame.rs"),
+            _fn("proj.main.main", path="main.rs"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.frame.Frame.fmt" not in dead
+    assert "proj.frame.Frame.eq" not in dead
+    assert "proj.iter.It.next" not in dead
+    assert "proj.main.main" not in dead
+    assert "proj.frame.Frame.push_int" in dead
 
 
 def test_dead_code_excludes_generated_paths() -> None:
