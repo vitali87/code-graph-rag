@@ -109,20 +109,43 @@ class RustTypeInferenceEngine:
         # (H) `Variant(x) => ...`: bind x to the variant's payload type. Rust's newtype
         # (H) idiom (`Command::Get(Get)`) names the variant after the wrapped type, so
         # (H) the variant name IS the payload type. Only single-field patterns bind (a
-        # (H) multi-field variant has no single payload type).
+        # (H) multi-field variant has no single payload type). Flat map: the last arm
+        # (H) wins on a shared binding name -- collect_match_arm_bindings supplies the
+        # (H) per-arm scoping the resolver overlays to pick the RIGHT arm's type.
         for pattern in self._descendants_of_type(node, cs.TS_RS_TUPLE_STRUCT_PATTERN):
-            variant = pattern.child_by_field_name(cs.FIELD_TYPE)
-            if variant is None:
-                continue
-            variant_name = self._path_leaf_name(variant)
-            bound = [
-                c
-                for c in pattern.children
-                if c.type == cs.TS_IDENTIFIER and c != variant
-            ]
-            if variant_name and len(bound) == 1:
-                if name := safe_decode_text(bound[0]):
-                    var_types[name] = variant_name
+            if binding := self._tuple_struct_binding(pattern):
+                var_types[binding[0]] = binding[1]
+
+    def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
+        variant = pattern.child_by_field_name(cs.FIELD_TYPE)
+        if variant is None:
+            return None
+        variant_name = self._path_leaf_name(variant)
+        bound = [
+            c for c in pattern.children if c.type == cs.TS_IDENTIFIER and c != variant
+        ]
+        if variant_name and len(bound) == 1 and (name := safe_decode_text(bound[0])):
+            return (name, variant_name)
+        return None
+
+    def collect_match_arm_bindings(
+        self, caller_node: Node
+    ) -> list[tuple[int, int, str, str]]:
+        # (H) Per-arm scoped match-variant bindings: (arm_start_byte, arm_end_byte,
+        # (H) binding_name, variant_type). Lets the resolver overlay the binding whose
+        # (H) arm range contains a call, so each `cmd.apply()` in a distinct arm
+        # (H) resolves to its OWN variant type instead of the flat map's last-arm one.
+        bindings: list[tuple[int, int, str, str]] = []
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return bindings
+        for arm in self._descendants_of_type(body, cs.TS_RS_MATCH_ARM):
+            for pattern in self._descendants_of_type(
+                arm, cs.TS_RS_TUPLE_STRUCT_PATTERN
+            ):
+                if binding := self._tuple_struct_binding(pattern):
+                    bindings.append((arm.start_byte, arm.end_byte, *binding))
+        return bindings
 
     def _collect_call_bindings(
         self, node: Node, bindings: list[tuple[str, list[str]]]

@@ -163,6 +163,37 @@ def test_enum_match_binding_dispatch(tmp_path: Path) -> None:
     assert ("crate.lib.Command.apply", "crate.lib.Command.apply") not in calls
 
 
+def test_enum_match_multiarm_binding_shadowing(tmp_path: Path) -> None:
+    # (H) Every arm reuses the binding name `cmd` for a DIFFERENT variant type. A flat
+    # (H) var_types map keeps only the last arm's type, so all `cmd.apply()` collapse
+    # (H) to the last variant. Each arm's `cmd.apply()` must dispatch to ITS OWN
+    # (H) variant's method (mini-redis Command.apply dispatch).
+    _make_crate(
+        tmp_path,
+        "pub struct Get {}\n"
+        "impl Get {\n    fn apply(&self) -> i32 { 1 }\n}\n"
+        "pub struct Set {}\n"
+        "impl Set {\n    fn apply(&self) -> i32 { 2 }\n}\n"
+        "pub struct Ping {}\n"
+        "impl Ping {\n    fn apply(&self) -> i32 { 3 }\n}\n"
+        "pub enum Command { Get(Get), Set(Set), Ping(Ping) }\n"
+        "impl Command {\n"
+        "    fn apply(&self) -> i32 {\n"
+        "        use Command::*;\n"
+        "        match self {\n"
+        "            Get(cmd) => cmd.apply(),\n"
+        "            Set(cmd) => cmd.apply(),\n"
+        "            Ping(cmd) => cmd.apply(),\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Command.apply", "crate.lib.Get.apply") in calls
+    assert ("crate.lib.Command.apply", "crate.lib.Set.apply") in calls
+    assert ("crate.lib.Command.apply", "crate.lib.Ping.apply") in calls
+
+
 def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
     # (H) `Ping::new(msg).into_frame()` resolves into_frame on the type Ping::new
     # (H) returns (Ping).

@@ -1109,6 +1109,31 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
+    def _overlay_match_arm_binding(
+        self,
+        call_name: str,
+        call_node: Node,
+        local_var_types: dict[str, str] | None,
+        match_arm_bindings: list[tuple[int, int, str, str]],
+    ) -> dict[str, str] | None:
+        # (H) If the call's receiver base is a match-arm binding whose arm range
+        # (H) contains this call, overlay that arm's variant type (shadowing the flat
+        # (H) map's last-arm value) so `cmd.apply()` dispatches to the arm's variant.
+        # (H) The innermost (smallest) containing arm wins for nested matches.
+        if local_var_types is None or cs.SEPARATOR_DOT not in call_name:
+            return local_var_types
+        base = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        pos = call_node.start_byte
+        best: tuple[int, str] | None = None
+        for start, end, name, variant_type in match_arm_bindings:
+            if name == base and start <= pos < end:
+                span = end - start
+                if best is None or span < best[0]:
+                    best = (span, variant_type)
+        if best is None or local_var_types.get(base) == best[1]:
+            return local_var_types
+        return {**local_var_types, base: best[1]}
+
     def _macro_call_name(self, ident: Node) -> str | None:
         # (H) Reconstruct a `<recv>.method` chain from a macro token stream by walking
         # (H) the method identifier's preceding siblings over `("." <ident|self>)*`.
@@ -1260,6 +1285,15 @@ class CallProcessor:
         else:
             local_var_types = None
 
+        # (H) Rust match arms often reuse one binding name (`cmd`) for different variant
+        # (H) types; the flat map keeps only the last arm's type. These per-arm scoped
+        # (H) bindings let each call inside an arm resolve against ITS arm's type.
+        match_arm_bindings: list[tuple[int, int, str, str]] = []
+        if language == cs.SupportedLanguage.RUST and local_var_types is not None:
+            match_arm_bindings = self._resolver.type_inference.rust_type_inference.collect_match_arm_bindings(
+                caller_node
+            )
+
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
         caller_params: frozenset[str] = frozenset()
@@ -1403,13 +1437,19 @@ class CallProcessor:
             if not call_name:
                 continue
 
+            call_var_types = local_var_types
+            if match_arm_bindings:
+                call_var_types = self._overlay_match_arm_binding(
+                    call_name, call_node, local_var_types, match_arm_bindings
+                )
+
             if is_java and call_node.type == method_invocation_type:
                 callee_info = resolver.resolve_java_method_call(
                     call_node, module_qn, local_var_types
                 )
             else:
                 callee_info = resolve_func(
-                    call_name, module_qn, local_var_types, class_context, caller_qn
+                    call_name, module_qn, call_var_types, class_context, caller_qn
                 )
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
