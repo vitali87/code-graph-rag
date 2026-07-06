@@ -532,6 +532,25 @@ class FunctionIngestMixin:
             (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, resolution.qualified_name),
         )
 
+        # (H) A Rust closure is a value constructed at its definition site (a `.map`
+        # (H) arg, spawn body, `let` binding), so it is used wherever it is written.
+        # (H) Dead-code reachability walks CALLS/REFERENCES (not DEFINES), so mirror the
+        # (H) DEFINES with a REFERENCES from the enclosing scope -- else every closure is
+        # (H) an orphan and reports dead. (JS/TS emit the analogous inline-callback ref.)
+        if (
+            language == cs.SupportedLanguage.RUST
+            and func_node.type == cs.TS_RS_CLOSURE_EXPRESSION
+        ):
+            self.ingestor.ensure_relationship_batch(
+                (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
+                cs.RelationshipType.REFERENCES,
+                (
+                    cs.NodeLabel.FUNCTION,
+                    cs.KEY_QUALIFIED_NAME,
+                    resolution.qualified_name,
+                ),
+            )
+
         if resolution.is_exported and language == cs.SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
