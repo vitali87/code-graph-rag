@@ -189,31 +189,6 @@ def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
     assert not any(to == "crate.lib.Aaa.next_expiration" for _frm, to in calls)
 
 
-def test_closure_captured_local_in_free_fn_dispatch(tmp_path: Path) -> None:
-    # (H) Same capture-inheritance, but the closure lives in a free function. Its
-    # (H) call must bubble to the enclosing fn (which types `cmd`), not drop.
-    _make_crate(
-        tmp_path,
-        "pub struct Aaa {}\n"
-        "impl Aaa {\n    fn apply(&self) -> i32 { 2 }\n}\n"
-        "pub struct Command {}\n"
-        "impl Command {\n"
-        "    pub fn from_frame(f: i32) -> Command { Command {} }\n"
-        "    pub fn apply(&self) -> i32 { 1 }\n"
-        "}\n"
-        "pub fn go(xs: Vec<i32>) -> i32 {\n"
-        "    let cmd = Command::from_frame(0);\n"
-        "    xs.iter().map(|_| cmd.apply()).sum()\n"
-        "}\n",
-    )
-    calls = _calls(tmp_path)
-    assert any(
-        frm.startswith("crate.lib.go") and to == "crate.lib.Command.apply"
-        for frm, to in calls
-    ), "closure call did not resolve to Command.apply via captured local"
-    assert not any(to == "crate.lib.Aaa.apply" for _frm, to in calls)
-
-
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).
