@@ -194,6 +194,39 @@ def test_enum_match_multiarm_binding_shadowing(tmp_path: Path) -> None:
     assert ("crate.lib.Command.apply", "crate.lib.Ping.apply") in calls
 
 
+def test_nested_match_binding_not_leaked_to_outer_arm(tmp_path: Path) -> None:
+    # (H) A nested `match inner { Foo(x) => ... }` rebinds `x` only within its own arm.
+    # (H) The outer arm's `x.tag()` (x = the Bar param) must stay Bar.tag -- the nested
+    # (H) Foo binding must NOT be scoped to the whole outer arm (which would mis-overlay
+    # (H) the outer call to Foo.tag).
+    _make_crate(
+        tmp_path,
+        "pub struct Bar {}\n"
+        "impl Bar {\n    fn tag(&self) -> i32 { 1 }\n}\n"
+        "pub struct Foo {}\n"
+        "impl Foo {\n    fn tag(&self) -> i32 { 2 }\n}\n"
+        "pub enum Inner { Foo(Foo) }\n"
+        "pub enum E { A(Bar) }\n"
+        "impl E {\n"
+        "    fn run(&self, x: Bar, inner: Inner) -> i32 {\n"
+        "        use Inner::*;\n"
+        "        match self {\n"
+        "            E::A(_) => {\n"
+        "                match inner {\n"
+        "                    Foo(x) => x.tag(),\n"
+        "                }\n"
+        "                x.tag()\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    # (H) nested arm's x:Foo resolves to Foo.tag; outer arm's x (param Bar) to Bar.tag
+    assert ("crate.lib.E.run", "crate.lib.Foo.tag") in calls
+    assert ("crate.lib.E.run", "crate.lib.Bar.tag") in calls
+
+
 def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
     # (H) `Ping::new(msg).into_frame()` resolves into_frame on the type Ping::new
     # (H) returns (Ping).
