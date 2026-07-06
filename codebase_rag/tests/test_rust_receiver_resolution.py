@@ -182,8 +182,7 @@ def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
     )
     calls = _calls(tmp_path)
     assert any(
-        frm.startswith("crate.lib.Db.set")
-        and to == "crate.lib.State.next_expiration"
+        frm.startswith("crate.lib.Db.set") and to == "crate.lib.State.next_expiration"
         for frm, to in calls
     ), "closure call did not resolve to State.next_expiration via captured local"
     assert not any(to == "crate.lib.Aaa.next_expiration" for _frm, to in calls)
