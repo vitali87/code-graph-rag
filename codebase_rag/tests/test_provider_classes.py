@@ -12,6 +12,7 @@ from codebase_rag.providers.base import (
     AnthropicProvider,
     AzureOpenAIProvider,
     GoogleProvider,
+    MiniMaxProvider,
     ModelProvider,
     OllamaProvider,
     OpenAIProvider,
@@ -51,6 +52,10 @@ class TestProviderRegistry:
         assert isinstance(azure_provider, AzureOpenAIProvider)
         assert azure_provider.provider_name == Provider.AZURE
 
+        minimax_provider = get_provider(Provider.MINIMAX, api_key="test-key")
+        assert isinstance(minimax_provider, MiniMaxProvider)
+        assert minimax_provider.provider_name == Provider.MINIMAX
+
     def test_get_invalid_provider(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
@@ -74,7 +79,8 @@ class TestProviderRegistry:
         assert Provider.ANTHROPIC in providers
         assert Provider.AZURE in providers
         assert Provider.LITELLM_PROXY in providers
-        assert len(providers) >= 6
+        assert Provider.MINIMAX in providers
+        assert len(providers) >= 7
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -317,6 +323,56 @@ class TestAzureOpenAIProvider:
             provider = AzureOpenAIProvider()
             assert provider.api_key == "env-key"
             assert provider.endpoint == "https://env.openai.azure.com"
+
+
+class TestMiniMaxProvider:
+    def test_minimax_configuration(self) -> None:
+        provider = MiniMaxProvider(
+            api_key="mm-test-key",
+            endpoint="https://api.minimax.io/v1",
+        )
+        assert provider.provider_name == Provider.MINIMAX
+        assert provider.api_key == "mm-test-key"
+        assert provider.endpoint == "https://api.minimax.io/v1"
+        provider.validate_config()
+
+    def test_minimax_default_endpoint(self) -> None:
+        provider = MiniMaxProvider(api_key="test-key")
+        assert provider.endpoint == "https://api.minimax.io/v1"
+
+    def test_minimax_validation_error(self) -> None:
+        provider = MiniMaxProvider()
+        with pytest.raises(ValueError, match="MiniMax provider requires api_key"):
+            provider.validate_config()
+
+    def test_minimax_api_key_from_env(self) -> None:
+        with patch.dict("os.environ", {"MINIMAX_API_KEY": "env-mm-key"}):
+            provider = MiniMaxProvider()
+            assert provider.api_key == "env-mm-key"
+
+    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
+    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    def test_minimax_model_creation(
+        self, mock_chat_model: Any, mock_openai_provider: Any
+    ) -> None:
+        provider = MiniMaxProvider(api_key="mm-test-key")
+        mock_model = MagicMock()
+        mock_chat_model.return_value = mock_model
+
+        result = provider.create_model("MiniMax-M3")
+
+        mock_openai_provider.assert_called_once_with(
+            api_key="mm-test-key", base_url="https://api.minimax.io/v1"
+        )
+        mock_chat_model.assert_called_once_with(
+            "MiniMax-M3", provider=mock_openai_provider.return_value
+        )
+        assert result == mock_model
+
+    def test_get_minimax_provider(self) -> None:
+        provider = get_provider(Provider.MINIMAX, api_key="test-key")
+        assert isinstance(provider, MiniMaxProvider)
+        assert provider.provider_name == Provider.MINIMAX
 
 
 class TestModelCreation:

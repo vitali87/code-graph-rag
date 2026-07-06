@@ -58,6 +58,20 @@ CYPHER_MODEL=codellama
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
 
+### MiniMax (OpenAI-Compatible)
+
+```bash
+ORCHESTRATOR_PROVIDER=minimax
+ORCHESTRATOR_MODEL=MiniMax-M3
+ORCHESTRATOR_API_KEY=your-minimax-api-key
+
+CYPHER_PROVIDER=minimax
+CYPHER_MODEL=MiniMax-M3
+CYPHER_API_KEY=your-minimax-api-key
+```
+
+Get your MiniMax API key from [MiniMax Platform](https://platform.minimax.chat/).
+
 ## Orchestrator Model Settings
 
 | Variable | Description |

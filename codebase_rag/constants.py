@@ -21,6 +21,7 @@ class Provider(StrEnum):
     GOOGLE = "google"
     AZURE = "azure"
     LITELLM_PROXY = "litellm_proxy"
+    MINIMAX = "minimax"
 
 
 class Color(StrEnum):
@@ -141,6 +142,7 @@ ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
 ENV_AZURE_API_KEY = "AZURE_API_KEY"
 ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
 ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
+ENV_MINIMAX_API_KEY = "MINIMAX_API_KEY"
 
 HELP_ARG = "help"
 
@@ -157,6 +159,7 @@ class CppFrontend(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
