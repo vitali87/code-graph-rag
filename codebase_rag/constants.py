@@ -123,6 +123,13 @@ CPP_EXTENSIONS = (
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
 
+# (H) A C++ operator overload / user-defined literal is defined with the reserved
+# (H) `operator` keyword heading the name (`operator==`, `operator[]`, `operator""_json`).
+# (H) It is invoked by operator/literal syntax, not a named call, so it is a dead-code
+# (H) reachability root; the keyword can only head such definitions, so this prefix on a
+# (H) C++ file uniquely identifies them (member or free function).
+CPP_OPERATOR_PREFIX = "operator"
+
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
 PKG_CARGO_TOML = "Cargo.toml"

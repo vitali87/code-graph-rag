@@ -128,6 +128,39 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
     assert "proj.frame.Frame.main" in dead
 
 
+def test_cpp_operator_overloads_are_roots() -> None:
+    # (H) A C++ operator overload / user-defined literal (member `operator==`, free
+    # (H) `operator<<`, UDL `operator""_json`) is invoked by operator/literal SYNTAX
+    # (H) (`a == b`, `os << x`, `1_json`), never by a named call the graph can see, so
+    # (H) it is a reachability root (like Python dunders / Rust trait methods), gated
+    # (H) by a C++ file extension. A regular uncalled method stays dead, and a non-C++
+    # (H) symbol whose name merely starts with `operator` is NOT rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.json"),
+                {cs.KEY_QUALIFIED_NAME: "proj.json", cs.KEY_PATH: "json.hpp"},
+            ),
+            _method("proj.json.Json.operator_equal", "json.hpp"),
+            _method("proj.json.Json.operator_subscript", "json.hpp"),
+            _fn("proj.json.operator_left_shift", path="json.hpp"),
+            _fn('proj.json.operator_""_json', path="json.hpp"),
+            _method("proj.json.Json.push_back", "json.hpp"),
+            _fn("proj.mod.operator_equal", path="mod.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.json.Json.operator_equal" not in dead
+    assert "proj.json.Json.operator_subscript" not in dead
+    assert "proj.json.operator_left_shift" not in dead
+    assert 'proj.json.operator_""_json' not in dead
+    # (H) A regular method with no caller is still dead -- rooting is prefix-scoped
+    # (H) to `operator`, not a blanket C++ exemption.
+    assert "proj.json.Json.push_back" in dead
+    # (H) The `operator` prefix only roots on a C++ file; a .py symbol stays dead.
+    assert "proj.mod.operator_equal" in dead
+
+
 def test_root_level_tests_dir_is_excluded() -> None:
     # (H) A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
     # (H) `tests/` folder) is test infrastructure. The `/tests/` pattern needs a

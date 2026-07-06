@@ -97,6 +97,15 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _is_cpp_operator_root(name: str, path: str) -> bool:
+    # (H) A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
+    # (H) `operator""_json`) is invoked by operator/literal SYNTAX, not a named call the
+    # (H) graph can see, so it is a reachability root (like Python dunders / Rust trait
+    # (H) methods). `operator` heads every such definition (member or free), so the name
+    # (H) prefix on a C++ file identifies them uniquely.
+    return name.startswith(cs.CPP_OPERATOR_PREFIX) and path.endswith(cs.CPP_EXTENSIONS)
+
+
 def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
     # (H) Match test-path patterns against a leading-slash-normalized path so a dir
     # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
@@ -212,6 +221,10 @@ def dead_code_from_graph(
             qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
             qn in method_qns,
             str(props.get(cs.KEY_PATH, "")),
+        ):
+            roots.add(qn)
+        elif _is_cpp_operator_root(
+            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], str(props.get(cs.KEY_PATH, ""))
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):

@@ -1,4 +1,6 @@
 from .constants import (
+    CPP_EXTENSIONS,
+    CPP_OPERATOR_PREFIX,
     CYPHER_DEFAULT_LIMIT,
     GO_ROOT_FUNCTION_NAMES,
     PROTOCOL_BASE_QNS,
@@ -182,6 +184,7 @@ WHERE n.qualified_name STARTS WITH $project_prefix
         AND n.name IN {rust_root_names} AND n.path ENDS WITH '.rs')
     OR ('Method' IN labels(n)
         AND n.name IN {rust_trait_methods} AND n.path ENDS WITH '.rs')
+    OR {cpp_operator_clause}
     OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
     OR {module_clause}{test_clause}
   )
@@ -239,10 +242,19 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
         go_root_names=go_root_names,
         rust_root_names=rust_root_names,
         rust_trait_methods=rust_trait_methods,
+        cpp_operator_clause=_cpp_operator_root_clause(),
         protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
             protocol_bases=protocol_bases
         ),
     )
+
+
+def _cpp_operator_root_clause() -> str:
+    # (H) A C++ operator overload / user-defined literal (name headed by the reserved
+    # (H) `operator` keyword) is invoked by operator/literal syntax the call graph does
+    # (H) not model, so it is a reachability root on any C++ file (member or free).
+    exts = " OR ".join(f"n.path ENDS WITH '{ext}'" for ext in CPP_EXTENSIONS)
+    return f"(n.name STARTS WITH '{CPP_OPERATOR_PREFIX}' AND ({exts}))"
 
 
 def _cypher_str_list(values: frozenset[str]) -> str:
