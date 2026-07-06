@@ -912,7 +912,7 @@ class CallProcessor:
         # (H) Only functions that get their own caller node exclude their calls from
         # (H) the enclosing scope; anonymous arrows (skipped below) must not, so
         # (H) their calls bubble up instead of dropping.
-        owned_func_nodes = self._js_ts_attributable_nodes(method_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(method_nodes, language)
         for method_node in method_nodes:
             # (H) The body byte-range slice also captures functions of a NESTED
             # (H) class (Outer body contains Inner.run); those belong to the
@@ -2950,7 +2950,7 @@ class CallProcessor:
             return None
         return safe_decode_text(name_node)
 
-    def _js_ts_attributable_nodes(
+    def _attributable_func_nodes(
         self, func_nodes: list[Node], language: cs.SupportedLanguage
     ) -> list[Node]:
         # (H) The func nodes that will get their own caller node: named functions
@@ -2962,6 +2962,13 @@ class CallProcessor:
         # (H) with this callback pattern). Returning only attributable nodes as the
         # (H) exclusion set lets an anonymous arrow's calls bubble up to the nearest
         # (H) named function/method, matching where the oracle attributes them.
+        if language == cs.SupportedLanguage.RUST:
+            # (H) A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,
+            # (H) so the call loop skips it (no caller node); like JS/TS anon arrows its
+            # (H) calls must bubble to the enclosing fn/method (which holds the captured
+            # (H) locals' types) instead of being excluded and dropped. Named nested
+            # (H) `fn`s stay attributable and keep their own calls.
+            return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
         return [
@@ -2973,7 +2980,7 @@ class CallProcessor:
     def _is_unowned_js_scope(self, node: Node) -> bool:
         # (H) An anonymous arrow/function-expression that gets no caller node of its
         # (H) own (no name, no binding name) -- a `.map()`/`cell`/forwardRef callback.
-        # (H) Its calls bubble up to the enclosing named scope (_js_ts_attributable_nodes),
+        # (H) Its calls bubble up to the enclosing named scope (_attributable_func_nodes),
         # (H) and so must its JSX references: the enclosing JSX walk continues through it.
         if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return False
