@@ -1413,6 +1413,16 @@ class CallProcessor:
         is_java = language == cs.SupportedLanguage.JAVA
         is_js_ts = language in _JS_TS_LANGUAGES
         is_cpp = language == cs.SupportedLanguage.CPP
+        # (H) Template type-parameter names in scope at this caller (`template<typename
+        # (H) SAX>` -> {"SAX"}): a receiver typed to one has no concrete type here, so the
+        # (H) dispatch fan-out treats it like an untyped receiver rather than an external.
+        cpp_template_params = (
+            self._resolver.type_inference.cpp_type_inference.collect_template_param_names(
+                caller_node
+            )
+            if is_cpp
+            else frozenset()
+        )
         method_invocation_type = cs.TS_METHOD_INVOCATION
         resolver = self._resolver
         resolve_func = resolver.resolve_function_call
@@ -1453,6 +1463,26 @@ class CallProcessor:
                 call_var_types = self._overlay_match_arm_binding(
                     call_name, call_node, local_var_types, match_arm_bindings
                 )
+
+            if is_cpp:
+                # (H) A C++ member call through a template-parameter receiver has no
+                # (H) concrete type, so precise resolution fails and the external-receiver
+                # (H) guard drops the edge entirely, orphaning every structural interface
+                # (H) implementer (json_sax_* visitors dispatched via `sax->start_object()`).
+                # (H) Fan such a call out to the method on every class defining it. Runs
+                # (H) before the primary resolution/continue below so it fires even when
+                # (H) that edge is dropped; a concretely-typed receiver is skipped inside
+                # (H) the resolver. sorted(): the target label is a StrEnum whose set
+                # (H) iteration order is hash-randomized, so sort for deterministic output.
+                for target_type, target_qn in sorted(
+                    resolver.cpp_dispatch_targets(
+                        call_name, call_var_types, cpp_template_params
+                    )
+                ):
+                    for variant in resolver.function_registry.variants(target_qn):
+                        ensure_rel(
+                            caller_spec, calls_rel, (target_type, qn_key, variant)
+                        )
 
             if is_java and call_node.type == method_invocation_type:
                 callee_info = resolver.resolve_java_method_call(

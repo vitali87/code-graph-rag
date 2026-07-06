@@ -2330,6 +2330,18 @@ TS_CPP_FUNCTION_DEFINITION = "function_definition"
 TS_CPP_DECLARATION = "declaration"
 TS_CPP_FIELD_DECLARATION = "field_declaration"
 TS_CPP_TEMPLATE_DECLARATION = "template_declaration"
+TS_CPP_TEMPLATE_PARAMETER_LIST = "template_parameter_list"
+# (H) The template TYPE-parameter declaration node types. A value/non-type param
+# (H) (`parameter_declaration`, e.g. `int N` / `MyEnum E`) and a template-template param
+# (H) are deliberately excluded: their type name is a concrete type, not a stand-in that
+# (H) a call receiver could be instantiated as, so it must not enter the template-param set.
+CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
+    {
+        "type_parameter_declaration",
+        "optional_type_parameter_declaration",
+        "variadic_type_parameter_declaration",
+    }
+)
 TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
