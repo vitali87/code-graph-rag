@@ -170,33 +170,35 @@ class RustTypeInferenceEngine:
             bindings.append((name, segments))
 
     def _callee_chain_segments(self, node: Node) -> list[str] | None:
-        # (H) A `Type::assoc(..).m1().m2()` call, flattened to type-then-methods:
-        # (H) `['Type', 'assoc', 'm1', 'm2']`. Returns None unless the chain roots in a
-        # (H) `Type::assoc` associated-function call (the only shape we can type).
-        if node.type != cs.TS_RS_CALL_EXPRESSION:
-            return None
-        func = node.child_by_field_name(cs.FIELD_FUNCTION)
-        if func is None:
-            return None
-        if func.type == cs.TS_SCOPED_IDENTIFIER:
-            path = func.child_by_field_name(cs.TS_RS_FIELD_PATH)
-            method = func.child_by_field_name(cs.FIELD_NAME)
-            # (H) Keep the FULL base path (`crate::cmd::Command`), not just the leaf, so
-            # (H) a fully-qualified inline call (`crate::cmd::Command::from_frame()`)
-            # (H) with no `use` import disambiguates by path in the return-type lookup.
-            base = safe_decode_text(path) if path else None
-            method_name = safe_decode_text(method) if method else None
-            if base and method_name:
-                return [base, method_name]
-            return None
-        if func.type == cs.TS_RS_FIELD_EXPRESSION:
-            receiver = func.child_by_field_name(cs.FIELD_VALUE)
-            method = func.child_by_field_name(cs.FIELD_FIELD)
-            method_name = safe_decode_text(method) if method else None
-            if receiver is None or not method_name:
+        # (H) Flatten a Rust value expression into ordered chain segments, base first:
+        # (H) `Type::assoc().m()` -> ['Type','assoc','m']; `self.shared.state.lock()
+        # (H) .unwrap()` -> ['self','shared','state','lock','unwrap']. Method calls and
+        # (H) field accesses are both segments (the resolver disambiguates each hop as
+        # (H) field/method/identity). Base must be an identifier, `self`, or a scoped
+        # (H) `Type::assoc` path; anything else (index, literal) yields None.
+        node = self._unwrap_try(node)
+        if node.type == cs.TS_RS_CALL_EXPRESSION:
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            return self._callee_chain_segments(func) if func is not None else None
+        if node.type == cs.TS_RS_FIELD_EXPRESSION:
+            receiver = node.child_by_field_name(cs.FIELD_VALUE)
+            field = node.child_by_field_name(cs.FIELD_FIELD)
+            field_name = safe_decode_text(field) if field else None
+            if receiver is None or not field_name:
                 return None
-            if base_segments := self._callee_chain_segments(self._unwrap_try(receiver)):
-                return [*base_segments, method_name]
+            if base := self._callee_chain_segments(receiver):
+                return [*base, field_name]
+            return None
+        if node.type == cs.TS_SCOPED_IDENTIFIER:
+            path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
+            name = node.child_by_field_name(cs.FIELD_NAME)
+            # (H) Keep the FULL base path (`crate::cmd::Command`) so a fully-qualified
+            # (H) inline call disambiguates by path in the return-type lookup.
+            base = safe_decode_text(path) if path else None
+            leaf = safe_decode_text(name) if name else None
+            return [base, leaf] if base and leaf else None
+        if node.type in cs.RS_IDENT_OR_SELF:
+            return [text] if (text := safe_decode_text(node)) else None
         return None
 
     def _unwrap_try(self, node: Node) -> Node:

@@ -87,6 +87,33 @@ def test_field_type_receiver_dispatch(tmp_path: Path) -> None:
     assert ("crate.lib.Handler.run", "crate.lib.Aaa.is_shutdown") not in calls
 
 
+def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
+    # (H) `let state = self.shared.state.lock().unwrap()` inside impl Db: type `state`
+    # (H) by hopping self -> Db, field shared: Arc<Shared> -> Shared, field
+    # (H) state: Mutex<State> -> State (deref through Arc/Mutex), then lock()/unwrap()
+    # (H) as guard-accessor identities -> State. `state.next_expiration()` must then
+    # (H) dispatch to State.next_expiration (mini-redis Db.set).
+    _make_crate(
+        tmp_path,
+        "use std::sync::{Arc, Mutex};\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn next_expiration(&self) -> i32 { 2 }\n}\n"
+        "pub struct State {}\n"
+        "impl State {\n    fn next_expiration(&self) -> i32 { 1 }\n}\n"
+        "pub struct Shared { state: Mutex<State> }\n"
+        "pub struct Db { shared: Arc<Shared> }\n"
+        "impl Db {\n"
+        "    fn set(&self) -> i32 {\n"
+        "        let state = self.shared.state.lock().unwrap();\n"
+        "        state.next_expiration()\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Db.set", "crate.lib.State.next_expiration") in calls
+    assert ("crate.lib.Db.set", "crate.lib.Aaa.next_expiration") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).

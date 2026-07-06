@@ -3081,13 +3081,20 @@ TS_RS_FIELD_PATH = "path"
 TS_RS_TOKEN_DOT = "."
 # (H) Nodes that can be a receiver token preceding `.method` in a macro token
 # (H) stream: a plain identifier or the `self` keyword.
-RS_MACRO_RECEIVER_TYPES = (TS_IDENTIFIER, KEYWORD_SELF)
+# (H) A receiver/chain base that is a plain identifier or the `self` keyword (used
+# (H) both for macro-token receiver reconstruction and value-chain base flattening).
+RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
+RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # (H) Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
-# (H) Transparent smart pointers that auto-deref to their inner type: a method
-# (H) call on the pointer dispatches to the inner type's method, so strip them
-# (H) from any type name (receiver OR return) to reach the real type.
-RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
+# (H) Transparent smart pointers/guards that auto-deref to their inner type: a
+# (H) method call on the wrapper (or on its lock/borrow guard) dispatches to the
+# (H) inner type's method, so strip them from any type name (receiver OR return) to
+# (H) reach the real type. Mutex/RwLock/RefCell/Cell hold their inner type behind a
+# (H) guard obtained via a guard-accessor identity method (see RS_IDENTITY_METHODS).
+RS_DEREF_WRAPPERS = frozenset(
+    {"Arc", "Rc", "Box", "Pin", "Mutex", "RwLock", "RefCell", "Cell"}
+)
 # (H) Result<T>/Option<T>: stripped to their inner T only for a RETURN type (the
 # (H) value a `?`/`.unwrap()` yields). NOT stripped for a receiver type, where a
 # (H) method call `opt.map(..)` dispatches to Option itself.
@@ -3118,6 +3125,12 @@ RS_IDENTITY_METHODS = frozenset(
         "to_owned",
         "borrow",
         "borrow_mut",
+        # (H) Guard accessors: Mutex/RwLock yield a guard that derefs to the inner
+        # (H) type, which the deref-wrapper strip already reduced the receiver to.
+        "lock",
+        "read",
+        "write",
+        "try_lock",
     }
 )
 
