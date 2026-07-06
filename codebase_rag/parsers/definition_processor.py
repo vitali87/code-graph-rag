@@ -62,6 +62,11 @@ class DefinitionProcessor(
         # (H) method resolves via the field's declared type. Populated at class
         # (H) ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
+        # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
+        # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a
+        # (H) lock/read/borrow guard accessor (guards do not deref-coerce).
+        self.class_field_guard_inner: dict[str, dict[str, str]] = {}
         # (H) {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
         # (H) receiver declared with an alias resolves to the aliased class. Collected
         # (H) across all files (an alias in a header is used in a .cc), read by the

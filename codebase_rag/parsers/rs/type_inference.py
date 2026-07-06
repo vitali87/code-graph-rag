@@ -45,6 +45,54 @@ class RustTypeInferenceEngine:
                 fields[name] = type_name
         return fields
 
+    def build_field_guard_inner_map(self, class_node: Node) -> dict[str, str]:
+        # (H) For struct fields whose type is a guard container (`state: Mutex<State>`),
+        # (H) record field -> inner type (`state` -> State). The field map itself keeps
+        # (H) the WRAPPER (`Mutex`), so a direct `self.state.is_poisoned()` resolves
+        # (H) against the wrapper (correct); the inner is applied ONLY when a chain
+        # (H) reaches a lock/read/borrow guard accessor. Guard containers do not
+        # (H) deref-coerce, so this is the only sound place to unwrap.
+        inners: dict[str, str] = {}
+        field_list = class_node.child_by_field_name(cs.FIELD_BODY)
+        if field_list is None or field_list.type != cs.TS_RS_FIELD_DECLARATION_LIST:
+            return inners
+        for decl in field_list.children:
+            if decl.type != cs.TS_RS_FIELD_DECLARATION:
+                continue
+            name_node = decl.child_by_field_name(cs.FIELD_NAME)
+            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+            if name_node is None or type_node is None:
+                continue
+            name = safe_decode_text(name_node)
+            if name and (inner := self._guard_inner_type(type_node)):
+                inners[name] = inner
+        return inners
+
+    def _guard_inner_type(self, type_node: Node) -> str | None:
+        # (H) `Mutex<State>` / `Arc<Mutex<State>>` -> State; None for a non-guard type.
+        # (H) A guard wrapped in a deref pointer (`Arc<Mutex<T>>`) still unwraps to the
+        # (H) guard's inner, so peel deref pointers first.
+        if type_node.type != cs.TS_GENERIC_TYPE:
+            return None
+        outer = type_node.child_by_field_name(cs.FIELD_TYPE)
+        outer_name = safe_decode_text(outer) if outer else None
+        args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+        inner = (
+            next(
+                (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES),
+                None,
+            )
+            if args is not None
+            else None
+        )
+        if inner is None:
+            return None
+        if outer_name in cs.RS_GUARD_WRAPPERS:
+            return self._bare_type_name(inner)
+        if outer_name in cs.RS_DEREF_WRAPPERS:
+            return self._guard_inner_type(inner)
+        return None
+
     def collect_call_var_bindings(
         self, caller_node: Node
     ) -> list[tuple[str, list[str]]]:
@@ -170,33 +218,36 @@ class RustTypeInferenceEngine:
             bindings.append((name, segments))
 
     def _callee_chain_segments(self, node: Node) -> list[str] | None:
-        # (H) A `Type::assoc(..).m1().m2()` call, flattened to type-then-methods:
-        # (H) `['Type', 'assoc', 'm1', 'm2']`. Returns None unless the chain roots in a
-        # (H) `Type::assoc` associated-function call (the only shape we can type).
-        if node.type != cs.TS_RS_CALL_EXPRESSION:
-            return None
-        func = node.child_by_field_name(cs.FIELD_FUNCTION)
-        if func is None:
-            return None
-        if func.type == cs.TS_SCOPED_IDENTIFIER:
-            path = func.child_by_field_name(cs.TS_RS_FIELD_PATH)
-            method = func.child_by_field_name(cs.FIELD_NAME)
-            # (H) Keep the FULL base path (`crate::cmd::Command`), not just the leaf, so
-            # (H) a fully-qualified inline call (`crate::cmd::Command::from_frame()`)
-            # (H) with no `use` import disambiguates by path in the return-type lookup.
-            base = safe_decode_text(path) if path else None
-            method_name = safe_decode_text(method) if method else None
-            if base and method_name:
-                return [base, method_name]
-            return None
-        if func.type == cs.TS_RS_FIELD_EXPRESSION:
-            receiver = func.child_by_field_name(cs.FIELD_VALUE)
-            method = func.child_by_field_name(cs.FIELD_FIELD)
-            method_name = safe_decode_text(method) if method else None
-            if receiver is None or not method_name:
+        # (H) Flatten a Rust value expression into ordered chain segments, base first:
+        # (H) `Type::assoc().m()` -> ['Type','assoc','m']; `self.shared.state.lock()
+        # (H) .unwrap()` -> ['self','shared','state','lock','unwrap']. Method calls and
+        # (H) field accesses are both segments (the resolver disambiguates each hop as
+        # (H) field/method/identity). Base must be an identifier, `self`, or a scoped
+        # (H) `Type::assoc` path; anything else (index, literal) yields None.
+        node = self._unwrap_try(node)
+        if node.type in cs.RS_CALL_OR_GENERIC_FN:
+            # (H) generic_function is turbofish (`f::<T>()`); descend to its callee.
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            return self._callee_chain_segments(func) if func is not None else None
+        if node.type == cs.TS_RS_FIELD_EXPRESSION:
+            receiver = node.child_by_field_name(cs.FIELD_VALUE)
+            field = node.child_by_field_name(cs.FIELD_FIELD)
+            field_name = safe_decode_text(field) if field else None
+            if receiver is None or not field_name:
                 return None
-            if base_segments := self._callee_chain_segments(self._unwrap_try(receiver)):
-                return [*base_segments, method_name]
+            if base := self._callee_chain_segments(receiver):
+                return [*base, field_name]
+            return None
+        if node.type == cs.TS_SCOPED_IDENTIFIER:
+            path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
+            name = node.child_by_field_name(cs.FIELD_NAME)
+            # (H) Keep the FULL base path (`crate::cmd::Command`) so a fully-qualified
+            # (H) inline call disambiguates by path in the return-type lookup.
+            base = safe_decode_text(path) if path else None
+            leaf = safe_decode_text(name) if name else None
+            return [base, leaf] if base and leaf else None
+        if node.type in cs.RS_IDENT_OR_SELF:
+            return [text] if (text := safe_decode_text(node)) else None
         return None
 
     def _unwrap_try(self, node: Node) -> Node:

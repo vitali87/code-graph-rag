@@ -106,6 +106,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
+    class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
@@ -393,11 +394,14 @@ class ClassIngestMixin:
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.RUST:
             # (H) Record Rust struct field types so a field-hop receiver
-            # (H) (`self.shutdown.is_shutdown()`) resolves through the field's type.
-            if field_types := RustTypeInferenceEngine().build_field_type_map(
-                class_node
-            ):
+            # (H) (`self.shutdown.is_shutdown()`) resolves through the field's type,
+            # (H) plus guard-container inner types (`state: Mutex<State>` -> State),
+            # (H) applied only at a lock/read/borrow hop.
+            rust_engine = RustTypeInferenceEngine()
+            if field_types := rust_engine.build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
+            if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
+                self.class_field_guard_inner[class_qn] = guard_inner
         self._ingest_class_methods(
             class_node,
             class_qn,

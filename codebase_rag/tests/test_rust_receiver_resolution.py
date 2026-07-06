@@ -87,6 +87,77 @@ def test_field_type_receiver_dispatch(tmp_path: Path) -> None:
     assert ("crate.lib.Handler.run", "crate.lib.Aaa.is_shutdown") not in calls
 
 
+def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
+    # (H) `let state = self.shared.state.lock().unwrap()` inside impl Db: type `state`
+    # (H) by hopping self -> Db, field shared: Arc<Shared> -> Shared, field
+    # (H) state: Mutex<State> -> State (deref through Arc/Mutex), then lock()/unwrap()
+    # (H) as guard-accessor identities -> State. `state.next_expiration()` must then
+    # (H) dispatch to State.next_expiration (mini-redis Db.set).
+    _make_crate(
+        tmp_path,
+        "use std::sync::{Arc, Mutex};\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn next_expiration(&self) -> i32 { 2 }\n}\n"
+        "pub struct State {}\n"
+        "impl State {\n    fn next_expiration(&self) -> i32 { 1 }\n}\n"
+        "pub struct Shared { state: Mutex<State> }\n"
+        "pub struct Db { shared: Arc<Shared> }\n"
+        "impl Db {\n"
+        "    fn set(&self) -> i32 {\n"
+        "        let state = self.shared.state.lock().unwrap();\n"
+        "        state.next_expiration()\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Db.set", "crate.lib.State.next_expiration") in calls
+    assert ("crate.lib.Db.set", "crate.lib.Aaa.next_expiration") not in calls
+
+
+def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
+    # (H) A Mutex/RwLock does NOT deref-coerce: a bare `let m: Mutex<Inner>` receiver
+    # (H) can only reach Inner via a lock/borrow hop, so `m` must stay typed as the
+    # (H) wrapper -- NOT erased to Inner (which would mis-resolve a direct `m.work()`
+    # (H) to Inner.work). `work` is defined on two types so the trie can't mask a
+    # (H) precise mis-resolution.
+    _make_crate(
+        tmp_path,
+        "use std::sync::Mutex;\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn work(&self) -> i32 { 2 }\n}\n"
+        "pub struct Inner {}\n"
+        "impl Inner {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub fn go(m: Mutex<Inner>) -> i32 {\n"
+        "    m.work()\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    # (H) m is a Mutex receiver; a direct m.work() must NOT bind to Inner.work
+    assert ("crate.lib.go", "crate.lib.Inner.work") not in calls
+
+
+def test_guard_field_direct_call_not_erased_to_inner(tmp_path: Path) -> None:
+    # (H) A guard-wrapped FIELD keeps its wrapper type in the field map: a DIRECT
+    # (H) `self.state.work()` (no lock) must NOT resolve to Inner.work. The inner is
+    # (H) applied only when a lock/borrow accessor intervenes (see the field-hop test).
+    _make_crate(
+        tmp_path,
+        "use std::sync::Mutex;\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn work(&self) -> i32 { 2 }\n}\n"
+        "pub struct Inner {}\n"
+        "impl Inner {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub struct Holder { state: Mutex<Inner> }\n"
+        "impl Holder {\n"
+        "    fn go(&self) -> i32 {\n"
+        "        self.state.work()\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Holder.go", "crate.lib.Inner.work") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).
