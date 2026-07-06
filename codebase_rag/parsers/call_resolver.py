@@ -19,6 +19,9 @@ _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
+# (H) Node labels a Rust receiver type name may resolve to: a struct (Class), an
+# (H) enum, or a type alias -- all can carry impl methods.
+_RS_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.ENUM, NodeType.TYPE})
 
 
 def _split_receiver_chain(expr: str) -> list[str]:
@@ -204,10 +207,19 @@ class CallResolver:
         self, var_type: str, import_map: dict[str, str], module_qn: str
     ) -> str:
         var_type = self._strip_optional(var_type)
+        if cs.SEPARATOR_DOUBLE_COLON in var_type:
+            return self._resolve_rust_class_qn(var_type)
         if cs.SEPARATOR_DOT in var_type:
             return self._follow_reexports(var_type)
         if var_type in import_map:
-            return self._follow_reexports(import_map[var_type])
+            # (H) A Rust import target is a raw `::`-path (`crate::parse::Parse`) that
+            # (H) is not a registry qn; resolve it to the real type node so both
+            # (H) local-type dispatch and the external-receiver guard see it as
+            # (H) first-party (else its trie fallback is wrongly suppressed).
+            target = import_map[var_type]
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                return self._resolve_rust_class_qn(target)
+            return self._follow_reexports(target)
         return self._resolve_class_name(var_type, module_qn) or ""
 
     def _strip_optional(self, var_type: str) -> str:
@@ -436,6 +448,10 @@ class CallResolver:
             return self._resolve_super_call(call_name, class_context)
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
+            # (H) A chained call resolves via return-type inference only; it does NOT
+            # (H) fall through to the trie fallback, because a hop returning a container
+            # (H) (`Kids() []Command`) or an unknown type must drop the edge rather than
+            # (H) rebind the final method by bare name (a false `Command.Run`).
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
         if result := self._try_resolve_via_imports(
@@ -632,10 +648,17 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
-        if module_qn not in self.import_processor.import_mapping:
-            return None
-
-        import_map = self.import_processor.import_mapping[module_qn]
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if import_map is None:
+            # (H) A module with no `use`/import statements can still resolve a member
+            # (H) call `obj.method()` through an inferred local/self type (a
+            # (H) self-contained Rust lib.rs is the common case). Only the
+            # (H) import-dependent lookups below (direct, qualified-by-import,
+            # (H) wildcard) are no-ops here, so proceed with an empty map when there
+            # (H) is type info to drive resolution; otherwise nothing would match.
+            if not local_var_types:
+                return None
+            import_map = {}
 
         if result := self._try_resolve_direct_import(call_name, import_map):
             return result
@@ -813,7 +836,35 @@ class CallResolver:
         ):
             return result
 
+        # (H) A same-module associated-function call `Type::assoc()` (`Ping::new()`):
+        # (H) the object is a type defined in this module, not an import. Resolve it to
+        # (H) its class node and look up the method there. Gated to `::` so a `.`-dotted
+        # (H) receiver of unknown type still falls through to the trie fallback.
+        if separator == cs.SEPARATOR_DOUBLE_COLON and (
+            result := self._try_resolve_static_type_method(
+                object_name, method_name, call_name, module_qn
+            )
+        ):
+            return result
+
         return self._try_resolve_module_method(method_name, call_name, module_qn)
+
+    def _try_resolve_static_type_method(
+        self, object_name: str, method_name: str, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        if not (class_qn := self._resolve_class_name(object_name, module_qn)):
+            return None
+        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_TYPE_INFERRED,
+                call_name=call_name,
+                method_qn=method_qn,
+                obj=object_name,
+                var_type=object_name,
+            )
+            return self.function_registry[method_qn], method_qn
+        return self._resolve_inherited_method(class_qn, method_name)
 
     def _try_resolve_via_local_type(
         self,
@@ -952,12 +1003,16 @@ class CallResolver:
         rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
         class_name = rust_parts[-1]
 
+        # (H) A Rust receiver type may be a struct (Class), an enum (`Frame`), or a
+        # (H) type alias, all of which carry impl methods -- match any of them, else an
+        # (H) enum-typed receiver fails to resolve and its type reads as external,
+        # (H) wrongly suppressing the trie fallback.
         matching_qns = self.function_registry.find_ending_with(class_name)
         return next(
             (
                 qn
                 for qn in matching_qns
-                if self.function_registry.get(qn) == NodeType.CLASS
+                if self.function_registry.get(qn) in _RS_TYPE_NODE_TYPES
             ),
             class_qn,
         )
@@ -1179,22 +1234,59 @@ class CallResolver:
         # (H) (Root() -> Command). Language-agnostic; returns the bare type name of the
         # (H) final hop, or None if any hop is untyped/unknown (then the chain stays
         # (H) unresolved, never mis-resolved).
-        if not local_var_types or not self.type_inference.method_return_types:
+        if not self.type_inference.method_return_types:
             return None
         parts = _split_receiver_chain(object_expr)
         base = parts[0]
-        if not base or cs.CHAR_PAREN_OPEN in base:
+        if not base:
             return None
-        current_type = local_var_types.get(base)
+        if cs.CHAR_PAREN_OPEN in base:
+            # (H) A Rust chain rooted in an associated-function call
+            # (H) (`Ping::new(msg).into_frame()`): type the base from the assoc fn's
+            # (H) recorded return type. Other paren bases stay unresolved.
+            current_type = self._infer_rust_assoc_base_type(base, module_qn)
+        elif local_var_types:
+            current_type = local_var_types.get(base)
+        else:
+            return None
         for part in parts[1:]:
             if not current_type or cs.CHAR_PAREN_OPEN not in part:
                 return None
             method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
-            class_qn = self._resolve_class_name(current_type, module_qn) or current_type
+            class_qn = self._chain_class_qn(current_type, module_qn)
             current_type = self.type_inference.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
         return current_type
+
+    def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
+        # (H) Resolve a bare type name from a chained-call hop to its class qn, honoring
+        # (H) imports (a Rust `use` target is a raw `::`-path, not a registry qn), so a
+        # (H) method-return-type lookup keyed by the class qn hits.
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return (
+            self._resolve_class_qn_from_type(type_name, import_map, module_qn)
+            or type_name
+        )
+
+    def _infer_rust_assoc_base_type(self, base: str, module_qn: str) -> str | None:
+        # (H) `Ping::new(msg)` -> the return type recorded for `Ping::new` (Ping).
+        # (H) The callee is the text before the first paren; only a `::`-rooted
+        # (H) associated call (`Type::assoc`) is handled.
+        callee = base.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if cs.SEPARATOR_DOUBLE_COLON not in callee:
+            return None
+        segments = callee.split(cs.SEPARATOR_DOUBLE_COLON)
+        if len(segments) < 2:
+            return None
+        # (H) Keep the full path prefix (`crate::parse::Parse`) so a qualified
+        # (H) associated call resolves; only the trailing segment is the method.
+        type_name = cs.SEPARATOR_DOUBLE_COLON.join(segments[:-1])
+        method = segments[-1]
+        class_qn = self._chain_class_qn(type_name, module_qn)
+        return self.type_inference.method_return_types.get(
+            f"{class_qn}{cs.SEPARATOR_DOT}{method}"
+        )
 
     def _is_method_chain(self, call_name: str) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
@@ -1228,7 +1320,9 @@ class CallResolver:
         if object_type:
             full_object_type = object_type
             if cs.SEPARATOR_DOT not in object_type:
-                if resolved_class := self._resolve_class_name(object_type, module_qn):
+                # (H) Honor imports (Rust `use` targets are raw `::`-paths) so an
+                # (H) imported chained type (`Get::new(k).into_frame()`) resolves.
+                if resolved_class := self._chain_class_qn(object_type, module_qn):
                     full_object_type = resolved_class
 
             method_qn = f"{full_object_type}.{final_method}"

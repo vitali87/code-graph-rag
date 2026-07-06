@@ -3063,6 +3063,59 @@ TS_RS_MACRO_INVOCATION = "macro_invocation"
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
 
+# (H) Rust node types for local-variable type inference (receiver-dispatch)
+TS_RS_LET_DECLARATION = "let_declaration"
+TS_RS_PARAMETER = "parameter"
+TS_RS_SELF_PARAMETER = "self_parameter"
+TS_RS_STRUCT_EXPRESSION = "struct_expression"
+TS_RS_FIELD_DECLARATION_LIST = "field_declaration_list"
+TS_RS_FIELD_DECLARATION = "field_declaration"
+TS_RS_FIELD_IDENTIFIER = "field_identifier"
+TS_RS_MATCH_EXPRESSION = "match_expression"
+TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
+TS_RS_TYPE_ARGUMENTS = "type_arguments"
+TS_RS_TRY_EXPRESSION = "try_expression"
+TS_RS_FIELD_EXPRESSION = "field_expression"
+TS_RS_FIELD_PATH = "path"
+# (H) Rust `Self` return type resolves to the enclosing impl target.
+RS_SELF_TYPE = "Self"
+# (H) Transparent smart pointers that auto-deref to their inner type: a method
+# (H) call on the pointer dispatches to the inner type's method, so strip them
+# (H) from any type name (receiver OR return) to reach the real type.
+RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
+# (H) Result<T>/Option<T>: stripped to their inner T only for a RETURN type (the
+# (H) value a `?`/`.unwrap()` yields). NOT stripped for a receiver type, where a
+# (H) method call `opt.map(..)` dispatches to Option itself.
+RS_RESULT_WRAPPERS = frozenset({"Result", "Option"})
+# (H) Full strip set for return types (deref pointers + Result/Option unwrap).
+RS_RETURN_STRIP_WRAPPERS = RS_DEREF_WRAPPERS | RS_RESULT_WRAPPERS
+TS_RS_REFERENCE_TYPE = "reference_type"
+TS_RS_POINTER_TYPE = "pointer_type"
+# (H) Node types that can stand for a Rust return/field type. Reference/pointer
+# (H) wrappers (`&Frame`, `*const T`) are included so a generic inner argument
+# (H) (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent.
+RS_RETURN_TYPE_NODE_TYPES = (
+    TS_TYPE_IDENTIFIER,
+    TS_RS_PRIMITIVE_TYPE,
+    TS_GENERIC_TYPE,
+    TS_RS_SCOPED_TYPE_IDENTIFIER,
+    TS_RS_REFERENCE_TYPE,
+    TS_RS_POINTER_TYPE,
+)
+# (H) Wrapper-passthrough methods: they return the receiver's own (inner) type, so
+# (H) a call-bound local keeps its type across them (`Type::mk().unwrap().m()`).
+RS_IDENTITY_METHODS = frozenset(
+    {
+        "unwrap",
+        "expect",
+        "clone",
+        "unwrap_or_default",
+        "to_owned",
+        "borrow",
+        "borrow_mut",
+    }
+)
+
 # (H) Rust identifier tuples
 RS_IDENTIFIER_TYPES = (TS_IDENTIFIER, TS_TYPE_IDENTIFIER)
 RS_SCOPED_TYPES = (TS_SCOPED_IDENTIFIER, TS_RS_SCOPED_TYPE_IDENTIFIER)
