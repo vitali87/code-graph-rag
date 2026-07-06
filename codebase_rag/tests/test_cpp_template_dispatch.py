@@ -64,3 +64,30 @@ def test_typed_receiver_does_not_fan_out(tmp_path: Path) -> None:
     calls = _calls(tmp_path)
     assert ("crate.sax.go", "crate.sax.Real.work") in calls
     assert ("crate.sax.go", "crate.sax.Other.work") not in calls
+
+
+def test_default_type_arg_is_not_collected_as_template_param() -> None:
+    # (H) A template parameter's DEFAULT type (`typename SAX = Real`) is a concrete type,
+    # (H) NOT a template parameter -- collecting it would put `Real` in the template-param
+    # (H) set and fan a real `Real r; r.work()` out to unrelated implementers. Only the
+    # (H) parameter names (SAX, T, Ts) are collected, across default / plain / variadic
+    # (H) forms; a non-type value param (`int N`) contributes no type name.
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp import CppTypeInferenceEngine
+
+    parsers, _ = load_parsers()
+    src = b"template<typename SAX = Real, class T, typename... Ts, int N, MyEnum E>\nbool f() { return true; }\n"
+    tree = parsers["cpp"].parse(src)
+
+    def find_fn(node):
+        if node.type == "function_definition":
+            return node
+        for child in node.children:
+            if (found := find_fn(child)) is not None:
+                return found
+        return None
+
+    fn = find_fn(tree.root_node)
+    assert fn is not None
+    params = CppTypeInferenceEngine().collect_template_param_names(fn)
+    assert params == frozenset({"SAX", "T", "Ts"}), params

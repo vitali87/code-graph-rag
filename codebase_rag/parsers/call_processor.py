@@ -1465,16 +1465,19 @@ class CallProcessor:
                 )
 
             if is_cpp:
-                # (H) A C++ member call through a template-parameter (or otherwise
-                # (H) unresolved) receiver has no concrete type, so precise resolution
-                # (H) fails and the external-receiver guard drops the edge entirely,
-                # (H) orphaning every structural interface implementer (json_sax_*
-                # (H) visitors dispatched via `sax->start_object()`). Fan such a call out
-                # (H) to the method on every class defining it. Runs before the primary
-                # (H) resolution/continue below so it fires even when that edge is
-                # (H) dropped; a concretely-typed receiver is skipped inside the resolver.
-                for target_type, target_qn in resolver.cpp_dispatch_targets(
-                    call_name, call_var_types, cpp_template_params
+                # (H) A C++ member call through a template-parameter receiver has no
+                # (H) concrete type, so precise resolution fails and the external-receiver
+                # (H) guard drops the edge entirely, orphaning every structural interface
+                # (H) implementer (json_sax_* visitors dispatched via `sax->start_object()`).
+                # (H) Fan such a call out to the method on every class defining it. Runs
+                # (H) before the primary resolution/continue below so it fires even when
+                # (H) that edge is dropped; a concretely-typed receiver is skipped inside
+                # (H) the resolver. sorted(): the target label is a StrEnum whose set
+                # (H) iteration order is hash-randomized, so sort for deterministic output.
+                for target_type, target_qn in sorted(
+                    resolver.cpp_dispatch_targets(
+                        call_name, call_var_types, cpp_template_params
+                    )
                 ):
                     for variant in resolver.function_registry.variants(target_qn):
                         ensure_rel(
