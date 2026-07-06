@@ -388,6 +388,48 @@ class CallResolver:
                 targets.add((self.function_registry[override_qn], override_qn))
         return targets
 
+    def cpp_dispatch_targets(
+        self,
+        call_name: str,
+        local_var_types: dict[str, str] | None,
+        template_params: frozenset[str],
+    ) -> set[tuple[str, str]]:
+        # (H) A C++ call through a template-parameter receiver (`sax->start_object()`
+        # (H) inside a `template<typename SAX>` fn) has no concrete receiver type, so
+        # (H) precise resolution fails and the trie binds one arbitrary same-named method
+        # (H) (or the external-type guard drops the edge), leaving every OTHER structural
+        # (H) interface implementer reported dead (nlohmann/json's json_sax_* visitors).
+        # (H) When the receiver does NOT resolve to a first-party class, fan the call out
+        # (H) to the method on EVERY class that defines it. A receiver typed to a concrete
+        # (H) first-party class dispatches precisely and is skipped, so this only adds
+        # (H) edges the precise path could not place. Full-fallback by design: a
+        # (H) template-parameter or otherwise-unresolved receiver is indistinguishable
+        # (H) from an external one by name, so std::-typed receivers also fan out.
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return set()
+        object_name, method_name = parts
+        # (H) Fan out only when the receiver is typed to a template PARAMETER (`SAX* sax`
+        # (H) in a `template<typename SAX>` fn), whose concrete type is the argument at
+        # (H) each instantiation -- unknowable statically, so every implementer is a
+        # (H) possible target. A concrete type is left to the precise path (a first-party
+        # (H) class dispatches exactly; an external `std::string` receiver must NOT be
+        # (H) rebound to an unrelated first-party method). An untyped receiver is left to
+        # (H) the single-best trie fallback -- fanning every untyped call out to all
+        # (H) same-named methods would flood the graph with false edges.
+        if (local_var_types or {}).get(object_name) not in template_params:
+            return set()
+        targets: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(method_name):
+            definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
+            if (
+                dot
+                and name == method_name
+                and self.function_registry[qn] == cs.NodeLabel.METHOD
+            ):
+                targets.add((self.function_registry[qn], qn))
+        return targets
+
     def _interface_impl_map(self) -> dict[str, str]:
         # (H) Map an interface to its SOLE first-party implementer. A call typed to an
         # (H) interface resolves to the interface's own method declaration; when the

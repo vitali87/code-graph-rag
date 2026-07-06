@@ -127,6 +127,34 @@ class CppTypeInferenceEngine:
             return (alias, underlying)
         return None
 
+    def collect_template_param_names(self, caller_node: Node) -> frozenset[str]:
+        # (H) Names of the template type parameters in scope at a function/method
+        # (H) (`template<typename SAX>` -> {"SAX"}), gathered from the function's own
+        # (H) template_declaration wrapper and every enclosing class/struct template. A
+        # (H) call receiver typed to one of these has NO concrete type at this site
+        # (H) (`SAX* sax`), so the resolver fans it out to all implementers instead of
+        # (H) treating it as an external type. Concrete external types (`std::string`) are
+        # (H) NOT in this set, so they still suppress the fan-out.
+        names: set[str] = set()
+        node: Node | None = caller_node
+        while node is not None:
+            if node.type == cs.TS_CPP_TEMPLATE_DECLARATION:
+                for param_list in node.children:
+                    if param_list.type == cs.TS_CPP_TEMPLATE_PARAMETER_LIST:
+                        self._collect_type_param_names(param_list, names)
+            node = node.parent
+        return frozenset(names)
+
+    def _collect_type_param_names(self, node: Node, names: set[str]) -> None:
+        # (H) The name of each type parameter is its `type_identifier` leaf, uniform
+        # (H) across typename/class/variadic/optional parameter declarations.
+        for child in node.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER:
+                if name := safe_decode_text(child):
+                    names.add(name)
+                continue
+            self._collect_type_param_names(child, names)
+
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # (H) Map each data member of a C++ class to its bare type name, so a member
         # (H) call `field_.method()` inside the class's methods can resolve via the
