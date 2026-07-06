@@ -136,6 +136,28 @@ def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
     assert ("crate.lib.go", "crate.lib.Inner.work") not in calls
 
 
+def test_guard_field_direct_call_not_erased_to_inner(tmp_path: Path) -> None:
+    # (H) A guard-wrapped FIELD keeps its wrapper type in the field map: a DIRECT
+    # (H) `self.state.work()` (no lock) must NOT resolve to Inner.work. The inner is
+    # (H) applied only when a lock/borrow accessor intervenes (see the field-hop test).
+    _make_crate(
+        tmp_path,
+        "use std::sync::Mutex;\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn work(&self) -> i32 { 2 }\n}\n"
+        "pub struct Inner {}\n"
+        "impl Inner {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub struct Holder { state: Mutex<Inner> }\n"
+        "impl Holder {\n"
+        "    fn go(&self) -> i32 {\n"
+        "        self.state.work()\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Holder.go", "crate.lib.Inner.work") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).

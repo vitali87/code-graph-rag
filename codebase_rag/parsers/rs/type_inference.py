@@ -40,36 +40,58 @@ class RustTypeInferenceEngine:
             if name_node is None or type_node is None:
                 continue
             if (name := safe_decode_text(name_node)) and (
-                type_name := self._field_type_name(type_node)
+                type_name := self._bare_type_name(type_node)
             ):
                 fields[name] = type_name
         return fields
 
-    def _field_type_name(self, type_node: Node) -> str | None:
-        # (H) Like _bare_type_name, but also unwraps a guard container (`Mutex<State>`
-        # (H) -> State): a struct field holding a Mutex/RwLock/RefCell is virtually
-        # (H) always reached via a lock/borrow chain, so the field's useful receiver
-        # (H) type is the inner one. (Locals/params/returns preserve the wrapper, since
-        # (H) those are commonly used to call wrapper methods directly.)
-        if type_node.type == cs.TS_GENERIC_TYPE:
-            outer = type_node.child_by_field_name(cs.FIELD_TYPE)
-            if outer is not None and safe_decode_text(outer) in cs.RS_GUARD_WRAPPERS:
-                args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
-                inner = (
-                    next(
-                        (
-                            c
-                            for c in args.children
-                            if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
-                        ),
-                        None,
-                    )
-                    if args is not None
-                    else None
-                )
-                if inner is not None:
-                    return self._field_type_name(inner)
-        return self._bare_type_name(type_node)
+    def build_field_guard_inner_map(self, class_node: Node) -> dict[str, str]:
+        # (H) For struct fields whose type is a guard container (`state: Mutex<State>`),
+        # (H) record field -> inner type (`state` -> State). The field map itself keeps
+        # (H) the WRAPPER (`Mutex`), so a direct `self.state.is_poisoned()` resolves
+        # (H) against the wrapper (correct); the inner is applied ONLY when a chain
+        # (H) reaches a lock/read/borrow guard accessor. Guard containers do not
+        # (H) deref-coerce, so this is the only sound place to unwrap.
+        inners: dict[str, str] = {}
+        field_list = class_node.child_by_field_name(cs.FIELD_BODY)
+        if field_list is None or field_list.type != cs.TS_RS_FIELD_DECLARATION_LIST:
+            return inners
+        for decl in field_list.children:
+            if decl.type != cs.TS_RS_FIELD_DECLARATION:
+                continue
+            name_node = decl.child_by_field_name(cs.FIELD_NAME)
+            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+            if name_node is None or type_node is None:
+                continue
+            name = safe_decode_text(name_node)
+            if name and (inner := self._guard_inner_type(type_node)):
+                inners[name] = inner
+        return inners
+
+    def _guard_inner_type(self, type_node: Node) -> str | None:
+        # (H) `Mutex<State>` / `Arc<Mutex<State>>` -> State; None for a non-guard type.
+        # (H) A guard wrapped in a deref pointer (`Arc<Mutex<T>>`) still unwraps to the
+        # (H) guard's inner, so peel deref pointers first.
+        if type_node.type != cs.TS_GENERIC_TYPE:
+            return None
+        outer = type_node.child_by_field_name(cs.FIELD_TYPE)
+        outer_name = safe_decode_text(outer) if outer else None
+        args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+        inner = (
+            next(
+                (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES),
+                None,
+            )
+            if args is not None
+            else None
+        )
+        if inner is None:
+            return None
+        if outer_name in cs.RS_GUARD_WRAPPERS:
+            return self._bare_type_name(inner)
+        if outer_name in cs.RS_DEREF_WRAPPERS:
+            return self._guard_inner_type(inner)
+        return None
 
     def collect_call_var_bindings(
         self, caller_node: Node

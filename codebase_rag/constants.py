@@ -3135,13 +3135,15 @@ RS_IDENTITY_METHODS = frozenset(
         "as_mut",
         "as_deref",
         "as_deref_mut",
-        # (H) Guard accessors: Mutex/RwLock yield a guard that derefs to the inner
-        # (H) type, which the field-extraction guard strip already reduced to.
-        "lock",
-        "read",
-        "write",
-        "try_lock",
     }
+)
+# (H) Guard accessors: called on a guard container (Mutex/RwLock/RefCell) to obtain a
+# (H) guard that derefs to the inner type. In a receiver chain, one of these
+# (H) immediately after a guard-wrapped field unwraps the wrapper to its inner type
+# (H) (recorded in class_field_guard_inner) -- the only sound unwrap point, since
+# (H) guard containers do not deref-coerce.
+RS_GUARD_ACCESSORS = frozenset(
+    {"lock", "read", "write", "try_lock", "borrow", "borrow_mut"}
 )
 
 # (H) Rust identifier tuples

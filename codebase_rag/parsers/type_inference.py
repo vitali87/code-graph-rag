@@ -34,6 +34,7 @@ class TypeInferenceEngine:
         "class_inheritance",
         "simple_name_lookup",
         "class_field_types",
+        "class_field_guard_inner",
         "method_return_types",
         "_java_type_inference",
         "_lua_type_inference",
@@ -56,6 +57,7 @@ class TypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]] | None = None,
+        class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
     ):
         self.import_processor = import_processor
@@ -73,6 +75,12 @@ class TypeInferenceEngine:
         # (H) silently lose every field type written afterward.
         self.class_field_types = (
             class_field_types if class_field_types is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): Rust guard-field inner types
+        # (H) (`Shared.state` -> State for a `Mutex<State>` field), applied only at a
+        # (H) guard-accessor hop so a direct wrapper call isn't mis-resolved to the inner.
+        self.class_field_guard_inner = (
+            class_field_guard_inner if class_field_guard_inner is not None else {}
         )
         # (H) Shared reference (as with class_field_types): DefinitionProcessor's
         # (H) func_qn -> return-type map, populated during ingestion and read by the
@@ -255,28 +263,34 @@ class TypeInferenceEngine:
         # (H) Walk a flattened chain to the type it yields:
         # (H)   ['Command','from_frame']  -> base type Command, method from_frame
         # (H)   ['self','shared','state','lock','unwrap'] -> base local self (Db),
-        # (H)     field shared (Arc<Shared>->Shared), field state (Mutex<State>->State),
-        # (H)     lock/unwrap guard-identities -> State.
+        # (H)     field shared (Arc<Shared>->Shared), field state (Mutex<State>, guard
+        # (H)     inner State), lock unwraps the guard -> State, unwrap identity -> State.
         # (H) The base is a typed local (self/var) when present in var_types, else a
-        # (H) type name. Each hop tries field-type, then method-return, then a
-        # (H) passthrough identity method; an unknown hop drops the binding.
+        # (H) type name. Each hop tries: guard-unwrap (a guard accessor right after a
+        # (H) guard-wrapped field) -> field-type -> method-return -> identity.
         if len(segments) < 2:
             return None
         current_type: str | None = var_types.get(segments[0]) or segments[0]
+        # (H) Inner type of the guard-wrapped field just hopped through, pending a guard
+        # (H) accessor to unwrap it (None otherwise).
+        guard_inner: str | None = None
         for hop in segments[1:]:
             if current_type is None:
                 return None
-            # (H) A bare guard-wrapper type (`Mutex`/`RwLock`/...) can't continue the
-            # (H) chain: its inner type is only reachable at runtime via lock/borrow and
-            # (H) is unrecoverable from the bare name. Bail so the caller stays untyped
-            # (H) and the name-only trie fallback resolves the downstream call (a
-            # (H) guard-typed field is already stripped to its inner in field extraction,
-            # (H) so only a local/param/return guard reaches here).
+            if guard_inner is not None and hop in cs.RS_GUARD_ACCESSORS:
+                current_type, guard_inner = guard_inner, None
+                continue
+            guard_inner = None
+            # (H) A bare guard-wrapper type not immediately guard-accessed can't
+            # (H) continue: its inner is only reachable at runtime and is unrecoverable
+            # (H) from the bare name. Bail so the trie fallback resolves the downstream
+            # (H) call (matching a direct wrapper-method call's behavior).
             if current_type in cs.RS_GUARD_WRAPPERS:
                 return None
             class_qn = self._resolve_rust_type_qn(current_type, module_qn)
             if field_type := self.class_field_types.get(class_qn, {}).get(hop):
                 current_type = field_type
+                guard_inner = self.class_field_guard_inner.get(class_qn, {}).get(hop)
             elif next_type := self.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{hop}"
             ):

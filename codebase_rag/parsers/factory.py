@@ -119,6 +119,7 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
                 class_field_types=self.definition_processor.class_field_types,
+                class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 method_return_types=self.definition_processor.method_return_types,
             )
         return self._type_inference
