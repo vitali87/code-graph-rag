@@ -709,6 +709,12 @@ class CallProcessor:
             lang_config, captures = result
             func_nodes = captures.get(cs.CAPTURE_FUNCTION, [])
             has_classes = bool(captures.get(cs.CAPTURE_CLASS))
+        # (H) Rust only: calls inside a NAMED nested `fn` (which gets its own caller
+        # (H) node) must be owned by that nested fn, not double-counted onto the
+        # (H) enclosing free function. Anonymous closures (not attributable) stay
+        # (H) excluded from this set so their calls still bubble up. Other languages
+        # (H) keep the flat _filter_calls_in_node behavior their flow-tracing relies on.
+        owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
         for func_node in func_nodes:
             if has_classes and self._is_method(func_node, lang_config):
                 continue
@@ -803,11 +809,16 @@ class CallProcessor:
                 )
             )
             if func_qn:
-                filtered = (
-                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
-                    if all_call_nodes is not None and call_starts is not None
-                    else None
-                )
+                if all_call_nodes is None or call_starts is None:
+                    filtered = None
+                elif language == cs.SupportedLanguage.RUST:
+                    filtered = self._calls_owned_by(
+                        func_node, owned_func_nodes, all_call_nodes, call_starts
+                    )
+                else:
+                    filtered = self._filter_calls_in_node(
+                        all_call_nodes, call_starts, func_node
+                    )
                 self._ingest_function_calls(
                     func_node,
                     func_qn,

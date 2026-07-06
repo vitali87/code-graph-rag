@@ -188,6 +188,25 @@ def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
     assert not any(to == "crate.lib.Aaa.next_expiration" for _frm, to in calls)
 
 
+def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
+    # (H) A NAMED nested `fn inner()` gets its own caller node and must OWN its body's
+    # (H) calls: `inner`'s `w.work()` belongs to crate.lib.outer.inner only, NOT also
+    # (H) to the enclosing `outer` (a spurious duplicate edge). Anonymous closures still
+    # (H) bubble; named nested fns do not.
+    _make_crate(
+        tmp_path,
+        "pub struct Worker {}\n"
+        "impl Worker {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub fn outer(w: Worker) -> i32 {\n"
+        "    fn inner(w: &Worker) -> i32 { w.work() }\n"
+        "    inner(&w)\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.outer.inner", "crate.lib.Worker.work") in calls
+    assert ("crate.lib.outer", "crate.lib.Worker.work") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).
