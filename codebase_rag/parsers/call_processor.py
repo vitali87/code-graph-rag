@@ -1109,13 +1109,39 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
+    def _macro_call_name(self, ident: Node) -> str | None:
+        # (H) Reconstruct a `<recv>.method` chain from a macro token stream by walking
+        # (H) the method identifier's preceding siblings over `("." <ident|self>)*`.
+        # (H) `server . run` -> "server.run"; `self . shutdown . recv` ->
+        # (H) "self.shutdown.recv". A method with no preceding `.` stays bare.
+        method = ident.text.decode(cs.ENCODING_UTF8) if ident.text else None
+        if not method:
+            return None
+        parts = [method]
+        cur = ident.prev_sibling
+        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
+            recv = cur.prev_sibling
+            if recv is None or recv.type not in cs.RS_MACRO_RECEIVER_TYPES:
+                break
+            if not recv.text:
+                break
+            parts.append(recv.text.decode(cs.ENCODING_UTF8))
+            cur = recv.prev_sibling
+        parts.reverse()
+        return cs.SEPARATOR_DOT.join(parts)
+
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
         # (H) A macro-internal call (Rust `name(args)` inside a token_tree) is
-        # (H) captured as the bare identifier node; its text is the callee name.
+        # (H) captured as the bare identifier node; its text is the callee name. A
+        # (H) macro tokenizes `server.run()` into loose tokens (`server . run ( )`),
+        # (H) dropping the field_expression, so reconstruct any `<recv>.method`
+        # (H) receiver chain from the preceding sibling tokens -- else the bare method
+        # (H) mis-resolves (`server.run()` in tokio::select! -> the same-module free
+        # (H) fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            return call_node.text.decode(cs.ENCODING_UTF8)
+            return self._macro_call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
