@@ -346,3 +346,57 @@ def test_fully_qualified_inline_assoc_call_dispatch(tmp_path: Path) -> None:
     calls = _calls(tmp_path)
     assert ("crate.app.go", "crate.types.Real.run") in calls
     assert ("crate.app.go", "crate.types.Fake.run") not in calls
+
+
+def test_macro_buried_receiver_call_dispatch(tmp_path: Path) -> None:
+    # (H) A `receiver.method()` call buried inside a macro token stream
+    # (H) (`sel! { res = server.run() => {} }`, like tokio::select!) loses its
+    # (H) field_expression structure -- the receiver `server` becomes a loose token.
+    # (H) The reconstructed call must be `server.run` so it dispatches to the local's
+    # (H) type (Listener.run), NOT the same-module free fn `run` (a false self-edge
+    # (H) that severed the whole server/command cluster in mini-redis).
+    _make_crate(
+        tmp_path,
+        "pub struct Listener {}\n"
+        "impl Listener {\n"
+        "    fn run(&self) -> i32 { 1 }\n"
+        "}\n"
+        "pub fn run(server: Listener) -> i32 {\n"
+        "    sel! {\n"
+        "        res = server.run() => {}\n"
+        "    }\n"
+        "    0\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.run", "crate.lib.Listener.run") in calls
+    # (H) must not mis-resolve to the same-module free function (self-edge)
+    assert ("crate.lib.run", "crate.lib.run") not in calls
+
+
+def test_macro_buried_field_hop_call_dispatch(tmp_path: Path) -> None:
+    # (H) A field-hop receiver buried in a macro (`self.shutdown.recv()`) must
+    # (H) reconstruct the full chain so it hops self -> field type -> method.
+    _make_crate(
+        tmp_path,
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n"
+        "    fn recv(&self) -> i32 { 2 }\n"
+        "}\n"
+        "pub struct Shutdown {}\n"
+        "impl Shutdown {\n"
+        "    fn recv(&self) -> i32 { 1 }\n"
+        "}\n"
+        "pub struct Handler { shutdown: Shutdown }\n"
+        "impl Handler {\n"
+        "    fn run(&self) -> i32 {\n"
+        "        sel! {\n"
+        "            x = self.shutdown.recv() => {}\n"
+        "        }\n"
+        "        0\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.Handler.run", "crate.lib.Shutdown.recv") in calls
+    assert ("crate.lib.Handler.run", "crate.lib.Aaa.recv") not in calls

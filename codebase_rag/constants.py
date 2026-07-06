@@ -3077,6 +3077,10 @@ TS_RS_TYPE_ARGUMENTS = "type_arguments"
 TS_RS_TRY_EXPRESSION = "try_expression"
 TS_RS_FIELD_EXPRESSION = "field_expression"
 TS_RS_FIELD_PATH = "path"
+TS_RS_TOKEN_DOT = "."
+# (H) Nodes that can be a receiver token preceding `.method` in a macro token
+# (H) stream: a plain identifier or the `self` keyword.
+RS_MACRO_RECEIVER_TYPES = (TS_IDENTIFIER, KEYWORD_SELF)
 # (H) Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
 # (H) Transparent smart pointers that auto-deref to their inner type: a method
