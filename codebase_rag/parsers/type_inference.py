@@ -266,6 +266,14 @@ class TypeInferenceEngine:
         for hop in segments[1:]:
             if current_type is None:
                 return None
+            # (H) A bare guard-wrapper type (`Mutex`/`RwLock`/...) can't continue the
+            # (H) chain: its inner type is only reachable at runtime via lock/borrow and
+            # (H) is unrecoverable from the bare name. Bail so the caller stays untyped
+            # (H) and the name-only trie fallback resolves the downstream call (a
+            # (H) guard-typed field is already stripped to its inner in field extraction,
+            # (H) so only a local/param/return guard reaches here).
+            if current_type in cs.RS_GUARD_WRAPPERS:
+                return None
             class_qn = self._resolve_rust_type_qn(current_type, module_qn)
             if field_type := self.class_field_types.get(class_qn, {}).get(hop):
                 current_type = field_type

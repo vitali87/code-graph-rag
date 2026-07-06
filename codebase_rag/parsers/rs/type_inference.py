@@ -40,10 +40,36 @@ class RustTypeInferenceEngine:
             if name_node is None or type_node is None:
                 continue
             if (name := safe_decode_text(name_node)) and (
-                type_name := self._bare_type_name(type_node)
+                type_name := self._field_type_name(type_node)
             ):
                 fields[name] = type_name
         return fields
+
+    def _field_type_name(self, type_node: Node) -> str | None:
+        # (H) Like _bare_type_name, but also unwraps a guard container (`Mutex<State>`
+        # (H) -> State): a struct field holding a Mutex/RwLock/RefCell is virtually
+        # (H) always reached via a lock/borrow chain, so the field's useful receiver
+        # (H) type is the inner one. (Locals/params/returns preserve the wrapper, since
+        # (H) those are commonly used to call wrapper methods directly.)
+        if type_node.type == cs.TS_GENERIC_TYPE:
+            outer = type_node.child_by_field_name(cs.FIELD_TYPE)
+            if outer is not None and safe_decode_text(outer) in cs.RS_GUARD_WRAPPERS:
+                args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+                inner = (
+                    next(
+                        (
+                            c
+                            for c in args.children
+                            if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
+                        ),
+                        None,
+                    )
+                    if args is not None
+                    else None
+                )
+                if inner is not None:
+                    return self._field_type_name(inner)
+        return self._bare_type_name(type_node)
 
     def collect_call_var_bindings(
         self, caller_node: Node
@@ -177,7 +203,8 @@ class RustTypeInferenceEngine:
         # (H) field/method/identity). Base must be an identifier, `self`, or a scoped
         # (H) `Type::assoc` path; anything else (index, literal) yields None.
         node = self._unwrap_try(node)
-        if node.type == cs.TS_RS_CALL_EXPRESSION:
+        if node.type in cs.RS_CALL_OR_GENERIC_FN:
+            # (H) generic_function is turbofish (`f::<T>()`); descend to its callee.
             func = node.child_by_field_name(cs.FIELD_FUNCTION)
             return self._callee_chain_segments(func) if func is not None else None
         if node.type == cs.TS_RS_FIELD_EXPRESSION:

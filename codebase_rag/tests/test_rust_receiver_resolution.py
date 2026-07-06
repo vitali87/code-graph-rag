@@ -114,6 +114,28 @@ def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
     assert ("crate.lib.Db.set", "crate.lib.Aaa.next_expiration") not in calls
 
 
+def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
+    # (H) A Mutex/RwLock does NOT deref-coerce: a bare `let m: Mutex<Inner>` receiver
+    # (H) can only reach Inner via a lock/borrow hop, so `m` must stay typed as the
+    # (H) wrapper -- NOT erased to Inner (which would mis-resolve a direct `m.work()`
+    # (H) to Inner.work). `work` is defined on two types so the trie can't mask a
+    # (H) precise mis-resolution.
+    _make_crate(
+        tmp_path,
+        "use std::sync::Mutex;\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn work(&self) -> i32 { 2 }\n}\n"
+        "pub struct Inner {}\n"
+        "impl Inner {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub fn go(m: Mutex<Inner>) -> i32 {\n"
+        "    m.work()\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    # (H) m is a Mutex receiver; a direct m.work() must NOT bind to Inner.work
+    assert ("crate.lib.go", "crate.lib.Inner.work") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).

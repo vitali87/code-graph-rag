@@ -3073,6 +3073,9 @@ TS_RS_FIELD_DECLARATION = "field_declaration"
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
 TS_RS_MATCH_EXPRESSION = "match_expression"
 TS_RS_MATCH_ARM = "match_arm"
+# (H) A Rust call node whose callee is descended for chain flattening: a plain call
+# (H) or a turbofish generic_function (`f::<T>()`).
+RS_CALL_OR_GENERIC_FN = (TS_RS_CALL_EXPRESSION, TS_GENERIC_FUNCTION)
 TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
 TS_RS_TYPE_ARGUMENTS = "type_arguments"
 TS_RS_TRY_EXPRESSION = "try_expression"
@@ -3087,14 +3090,17 @@ RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # (H) Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
-# (H) Transparent smart pointers/guards that auto-deref to their inner type: a
-# (H) method call on the wrapper (or on its lock/borrow guard) dispatches to the
-# (H) inner type's method, so strip them from any type name (receiver OR return) to
-# (H) reach the real type. Mutex/RwLock/RefCell/Cell hold their inner type behind a
-# (H) guard obtained via a guard-accessor identity method (see RS_IDENTITY_METHODS).
-RS_DEREF_WRAPPERS = frozenset(
-    {"Arc", "Rc", "Box", "Pin", "Mutex", "RwLock", "RefCell", "Cell"}
-)
+# (H) Transparent smart pointers that auto-deref (Rust deref coercion) to their
+# (H) inner type: a method call on the pointer dispatches to the inner type's method,
+# (H) so strip them from any type name (receiver OR return) to reach the real type.
+RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
+# (H) Guard containers that do NOT deref-coerce: the inner value is only reachable
+# (H) through a lock/borrow guard accessor. Stripped to the inner type ONLY in field
+# (H) extraction (where the field is virtually always accessed via a lock chain, e.g.
+# (H) `self.shared.state.lock().unwrap()`); a bare local/param/return of a guard type
+# (H) is preserved so a direct wrapper-method call (`m.is_poisoned()`) is not
+# (H) mis-resolved to an inner-type method.
+RS_GUARD_WRAPPERS = frozenset({"Mutex", "RwLock", "RefCell", "Cell"})
 # (H) Result<T>/Option<T>: stripped to their inner T only for a RETURN type (the
 # (H) value a `?`/`.unwrap()` yields). NOT stripped for a receiver type, where a
 # (H) method call `opt.map(..)` dispatches to Option itself.
@@ -3125,8 +3131,12 @@ RS_IDENTITY_METHODS = frozenset(
         "to_owned",
         "borrow",
         "borrow_mut",
+        "as_ref",
+        "as_mut",
+        "as_deref",
+        "as_deref_mut",
         # (H) Guard accessors: Mutex/RwLock yield a guard that derefs to the inner
-        # (H) type, which the deref-wrapper strip already reduced the receiver to.
+        # (H) type, which the field-extraction guard strip already reduced to.
         "lock",
         "read",
         "write",
