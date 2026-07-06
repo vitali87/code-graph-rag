@@ -158,6 +158,55 @@ def test_guard_field_direct_call_not_erased_to_inner(tmp_path: Path) -> None:
     assert ("crate.lib.Holder.go", "crate.lib.Inner.work") not in calls
 
 
+def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
+    # (H) A closure captures a local of its enclosing scope: `state` is typed in
+    # (H) Db.set (guard-deref field hop) but `state.next_expiration()` lives inside
+    # (H) `expire.map(|_| state.next_expiration())`. The closure's own var map only
+    # (H) sees the closure body, so the captured `state` is untyped unless the closure
+    # (H) inherits the enclosing scope's locals. Mirrors mini-redis Db.set.
+    _make_crate(
+        tmp_path,
+        "use std::sync::{Arc, Mutex};\n"
+        "pub struct Aaa {}\n"
+        "impl Aaa {\n    fn next_expiration(&self) -> i32 { 2 }\n}\n"
+        "pub struct State {}\n"
+        "impl State {\n    fn next_expiration(&self) -> i32 { 1 }\n}\n"
+        "pub struct Shared { state: Mutex<State> }\n"
+        "pub struct Db { shared: Arc<Shared> }\n"
+        "impl Db {\n"
+        "    fn set(&self, expire: Option<u64>) -> i32 {\n"
+        "        let state = self.shared.state.lock().unwrap();\n"
+        "        expire.map(|_when| state.next_expiration()).unwrap_or(0)\n"
+        "    }\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert any(
+        frm.startswith("crate.lib.Db.set") and to == "crate.lib.State.next_expiration"
+        for frm, to in calls
+    ), "closure call did not resolve to State.next_expiration via captured local"
+    assert not any(to == "crate.lib.Aaa.next_expiration" for _frm, to in calls)
+
+
+def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
+    # (H) A NAMED nested `fn inner()` gets its own caller node and must OWN its body's
+    # (H) calls: `inner`'s `w.work()` belongs to crate.lib.outer.inner only, NOT also
+    # (H) to the enclosing `outer` (a spurious duplicate edge). Anonymous closures still
+    # (H) bubble; named nested fns do not.
+    _make_crate(
+        tmp_path,
+        "pub struct Worker {}\n"
+        "impl Worker {\n    fn work(&self) -> i32 { 1 }\n}\n"
+        "pub fn outer(w: Worker) -> i32 {\n"
+        "    fn inner(w: &Worker) -> i32 { w.work() }\n"
+        "    inner(&w)\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.lib.outer.inner", "crate.lib.Worker.work") in calls
+    assert ("crate.lib.outer", "crate.lib.Worker.work") not in calls
+
+
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
     # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
     # (H) associated function's return type (Command).
