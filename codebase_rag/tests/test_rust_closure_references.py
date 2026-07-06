@@ -8,8 +8,7 @@ from pathlib import Path
 from evals.cgr_graph import _capture
 
 
-def _refs(tmp_path: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(tmp_path, "crate")
+def _refs(ingestor) -> set[tuple[str, str]]:
     return {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -17,8 +16,7 @@ def _refs(tmp_path: Path) -> set[tuple[str, str]]:
     }
 
 
-def _closure_nodes(tmp_path: Path) -> set[str]:
-    ingestor = _capture(tmp_path, "crate")
+def _closure_nodes(ingestor) -> set[str]:
     return {str(uid) for _label, uid in ingestor.nodes if "anonymous_" in str(uid)}
 
 
@@ -36,8 +34,9 @@ def test_closure_arg_referenced_by_enclosing_fn(tmp_path: Path) -> None:
         "    xs.iter().map(|s| s.len()).sum()\n"
         "}\n",
     )
-    refs = _refs(tmp_path)
-    closures = _closure_nodes(tmp_path)
+    ingestor = _capture(tmp_path, "crate")
+    refs = _refs(ingestor)
+    closures = _closure_nodes(ingestor)
     assert closures, "expected a closure node to be registered"
     for closure in closures:
         assert any(to == closure and frm == "crate.lib.run" for frm, to in refs), (
@@ -56,8 +55,9 @@ def test_closure_in_method_referenced(tmp_path: Path) -> None:
         "    }\n"
         "}\n",
     )
-    refs = _refs(tmp_path)
-    closures = _closure_nodes(tmp_path)
+    ingestor = _capture(tmp_path, "crate")
+    refs = _refs(ingestor)
+    closures = _closure_nodes(ingestor)
     assert closures
     for closure in closures:
         assert any(to == closure and frm == "crate.lib.Db.purge" for frm, to in refs), (
