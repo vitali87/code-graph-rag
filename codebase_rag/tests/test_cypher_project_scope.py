@@ -32,6 +32,18 @@ class TestCypherSystemPromptProjectScope:
         prompt = build_cypher_system_prompt(active_projects=None)
         assert "qualified_name STARTS WITH 'myproject.'" in prompt
 
+    def test_apostrophe_in_project_name_is_escaped(self) -> None:
+        prompt = build_cypher_system_prompt(active_projects=["team's-app"])
+        assert "team\\'s-app" in prompt
+        assert "'team's-app" not in prompt
+
+    def test_multiple_projects_wrap_or_chain_in_parentheses(self) -> None:
+        prompt = build_cypher_system_prompt(active_projects=["a", "b"])
+        assert (
+            "(<var>.qualified_name STARTS WITH 'a.' OR "
+            "<var>.qualified_name STARTS WITH 'b.')" in prompt
+        )
+
 
 class TestCypherGeneratorProjectScope:
     @patch("codebase_rag.services.llm.settings")

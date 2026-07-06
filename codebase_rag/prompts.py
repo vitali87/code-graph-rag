@@ -204,6 +204,11 @@ def build_rag_orchestrator_prompt(
     )
 
 
+def _cypher_literal(name: str) -> str:
+    # (H) Escape for a single-quoted Cypher literal so apostrophe names stay valid.
+    return name.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _format_cypher_project_scope(active_projects: list[str] | None) -> str:
     if not active_projects:
         return (
@@ -213,21 +218,23 @@ def _format_cypher_project_scope(active_projects: list[str] | None) -> str:
         )
     if len(active_projects) == 1:
         name = active_projects[0]
+        literal = _cypher_literal(name)
         return (
             f"\n**Project Scoping (REQUIRED)**: All queries are scoped to the "
             f"project `{name}`. Unless the user explicitly asks about other "
             f"projects, ALWAYS constrain matched code nodes with "
-            f"`WHERE <var>.qualified_name STARTS WITH '{name}.'`. For `Project` "
-            f"nodes match `(p:Project {{name: '{name}'}})`.\n"
+            f"`WHERE <var>.qualified_name STARTS WITH '{literal}.'`. For `Project` "
+            f"nodes match `(p:Project {{name: '{literal}'}})`.\n"
         )
     scoped = " OR ".join(
-        f"<var>.qualified_name STARTS WITH '{p}.'" for p in active_projects
+        f"<var>.qualified_name STARTS WITH '{_cypher_literal(p)}.'"
+        for p in active_projects
     )
     return (
         f"\n**Project Scoping**: The active projects are "
         f"{', '.join(f'`{p}`' for p in active_projects)}. To restrict to one "
         f"project, filter `<var>.qualified_name STARTS WITH '<projectName>.'`. "
-        f"To restrict to the active set, filter `{scoped}`.\n"
+        f"To restrict to the active set, filter `({scoped})`.\n"
     )
 
 
