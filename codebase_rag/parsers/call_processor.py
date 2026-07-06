@@ -1114,14 +1114,14 @@ class CallProcessor:
         # (H) the method identifier's preceding siblings over `("." <ident|self>)*`.
         # (H) `server . run` -> "server.run"; `self . shutdown . recv` ->
         # (H) "self.shutdown.recv". A method with no preceding `.` stays bare.
-        method = ident.text.decode(cs.ENCODING_UTF8) if ident.text else None
-        if not method:
+        if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
             return None
         parts = [method]
         cur = ident.prev_sibling
         while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
-            recv = cur.prev_sibling
-            if recv is None or recv.type not in cs.RS_MACRO_RECEIVER_TYPES:
+            if (recv := cur.prev_sibling) is None or (
+                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
+            ):
                 break
             if not recv.text:
                 break
