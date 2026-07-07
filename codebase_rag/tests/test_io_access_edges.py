@@ -119,6 +119,21 @@ def test_with_handle_binding_tracked(tmp_path: Path) -> None:
     assert _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::db.sqlite")
 
 
+def test_handle_use_before_assignment_emits_nothing(tmp_path: Path) -> None:
+    # (H) A handle method that appears before its binding must not resolve to a
+    # (H) later assignment (no false forward-reference edge).
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def f():\n"
+            "    conn.execute('INSERT INTO t VALUES (1)')\n"
+            "    conn = sqlite3.connect('db.sqlite')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.f", WRITES_TO, "resource::DATABASE::db.sqlite")
+
+
 def test_handle_reassignment_uses_last_binding(tmp_path: Path) -> None:
     # (H) A rebind must resolve to the last assignment in source order. Uses
     # (H) sqlite3.connect (a handle constructor that is NOT itself a sink) so the

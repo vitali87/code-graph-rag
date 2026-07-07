@@ -63,22 +63,13 @@ class IOAccessProcessor:
         sink_by_name = {s.callee: s for s in sinks}
         ctor_by_name = {c.callee: c for c in constructors}
 
-        handles = self._collect_handle_bindings(caller_node, import_map, ctor_by_name)
-        self._emit_access_edges(
-            caller_node, caller_spec, import_map, sink_by_name, handles
-        )
-
-    def _collect_handle_bindings(
-        self,
-        caller_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-    ) -> dict[str, HandleBinding]:
+        # (H) Single forward pre-order DFS: bindings and accesses interleave in
+        # (H) source order, so a handle method resolves only against bindings seen
+        # (H) before it (no forward-reference edge) and a rebind resolves to the
+        # (H) last prior assignment. `reversed` keeps children left-to-right.
+        # (H) ponytail: source-order, not path-sensitive; add a CFG pass if
+        # (H) branch-precise handle resolution ever matters.
         handles: dict[str, HandleBinding] = {}
-        # (H) Forward pre-order DFS so a rebind resolves to the last binding in
-        # (H) source order; `reversed` on the pushed children keeps left-to-right.
-        # (H) ponytail: source-order-last wins; control-flow branches are not
-        # (H) path-sensitive, add a CFG pass if branch-precise handles ever matter.
         stack = [caller_node]
         while stack:
             node = stack.pop()
@@ -87,7 +78,8 @@ class IOAccessProcessor:
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
-        return handles
+            elif node.type == cs.TS_PY_CALL:
+                self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
 
     def _binding_from_node(
         self,
@@ -126,38 +118,32 @@ class IOAccessProcessor:
             kind=ctor.kind, identity=identity
         )
 
-    def _emit_access_edges(
+    def _emit_call(
         self,
-        caller_node: Node,
+        node: Node,
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         handles: dict[str, HandleBinding],
     ) -> None:
-        stack = list(caller_node.children)
-        while stack:
-            node = stack.pop()
-            stack.extend(node.children)
-            if node.type != cs.TS_PY_CALL:
-                continue
-            raw = self._call_name(node)
-            if raw is None:
-                continue
-            if self._emit_handle_method(node, caller_spec, raw, handles):
-                continue
-            normalised = self._normalise(raw, import_map)
-            sink = sink_by_name.get(normalised) if normalised else None
-            if sink is None:
-                continue
-            mode = (
-                self._literal_target(node, sink.mode_arg, sink.mode_kw)
-                if sink.mode_arg is not None or sink.mode_kw is not None
-                else None
-            )
-            mode_literal = None if mode == DYNAMIC_TARGET else mode
-            direction = sink.effective_direction(mode_literal)
-            identity = self._literal_target(node, sink.target_arg, sink.target_kw)
-            self._emit(caller_spec, direction, sink.kind, identity)
+        raw = self._call_name(node)
+        if raw is None:
+            return
+        if self._emit_handle_method(node, caller_spec, raw, handles):
+            return
+        normalised = self._normalise(raw, import_map)
+        sink = sink_by_name.get(normalised) if normalised else None
+        if sink is None:
+            return
+        mode = (
+            self._literal_target(node, sink.mode_arg, sink.mode_kw)
+            if sink.mode_arg is not None or sink.mode_kw is not None
+            else None
+        )
+        mode_literal = None if mode == DYNAMIC_TARGET else mode
+        direction = sink.effective_direction(mode_literal)
+        identity = self._literal_target(node, sink.target_arg, sink.target_kw)
+        self._emit(caller_spec, direction, sink.kind, identity)
 
     def _emit_handle_method(
         self,
