@@ -1289,6 +1289,7 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         class_context: str | None = None,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         # (H) Type of a chained receiver expression like `c.Root()` using the shared
         # (H) method_return_types map: the base is a typed local (`c` -> Command), and
@@ -1311,7 +1312,7 @@ class CallResolver:
             current_type = self._infer_rust_assoc_base_type(
                 base, module_qn
             ) or self._infer_call_base_type(
-                base, module_qn, local_var_types, class_context, caller_qn
+                base, module_qn, local_var_types, class_context, caller_qn, language
             )
         elif local_var_types:
             current_type = local_var_types.get(base)
@@ -1344,6 +1345,7 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         caller_qn: str | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         # (H) `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # (H) Resolve the callee to its function/method qn (a sibling static method
@@ -1354,7 +1356,7 @@ class CallResolver:
         if not callee or cs.SEPARATOR_DOUBLE_COLON in callee:
             return None
         resolved = self.resolve_function_call(
-            callee, module_qn, local_var_types, class_context, caller_qn
+            callee, module_qn, local_var_types, class_context, caller_qn, language
         )
         if resolved is None:
             return None
@@ -1440,7 +1442,12 @@ class CallResolver:
                 object_expr, module_qn, local_var_types
             )
             or self._infer_chained_object_type(
-                object_expr, module_qn, local_var_types, class_context, caller_qn
+                object_expr,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
         )
         if object_type:
@@ -1475,16 +1482,25 @@ class CallResolver:
                 )
                 return inherited_method
 
-        # (H) C/C++ only: the receiver's return type is unrecordable (`auto`/trailing/
-        # (H) decltype, e.g. fmt's get_container(out).append) or resolved to no method.
-        # (H) Before chained typing existed the bare method name resolved via the trie,
-        # (H) so fall back to it here rather than dropping an edge that used to land.
-        # (H) C shares the field_expression call shape but has no method dispatch, so it
-        # (H) always lands here = its exact prior behaviour. Go/Rust deliberately drop
-        # (H) (a container/unknown hop must not rebind).
-        if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
+        # (H) C/C++ only, and ONLY when the receiver type was never inferred: its return
+        # (H) type is unrecordable (`auto`/trailing/decltype, e.g. fmt's
+        # (H) get_container(out).append). Before chained typing existed the bare method
+        # (H) name resolved via the trie, so fall back to it here rather than dropping an
+        # (H) edge that used to land. When the type WAS inferred but lacks the method, we
+        # (H) must NOT rebind to an unrelated same-named method -- drop instead. C shares
+        # (H) the field_expression call shape but has no method dispatch, so it always
+        # (H) lands here = its exact prior behaviour. Go/Rust deliberately drop.
+        if not object_type and language in (
+            cs.SupportedLanguage.CPP,
+            cs.SupportedLanguage.C,
+        ):
             return self._resolve_function_call(
-                final_method, module_qn, local_var_types, class_context, caller_qn
+                final_method,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
 
         return None

@@ -74,6 +74,30 @@ def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
     assert ("crate.f.Owner.parse_impl", "crate.f.Aaa.parse") not in calls
 
 
+def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> None:
+    # (H) `make()` returns Widget (recorded), but Widget has NO `run`. The bare-method
+    # (H) C/C++ fallback must NOT fire once the receiver type is known -- binding
+    # (H) `make().run()` to an unrelated alphabetical `Aaa.run` is a false edge. When the
+    # (H) type is inferred and lacks the method, the chain drops (returns nothing).
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void run() {}\n"
+        "};\n"
+        "struct Widget {\n"
+        "    void other() {}\n"
+        "};\n"
+        "Widget make() { return Widget(); }\n"
+        "void driver() {\n"
+        "    make().run();\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Aaa.run") not in calls, sorted(
+        c for c in calls if "run" in c[1]
+    )
+
+
 def test_return_type_path_normalizes_template_qualified_scope() -> None:
     # (H) A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
     # (H) reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
