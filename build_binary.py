@@ -62,6 +62,8 @@ def build_binary() -> bool:
         cs.PYINSTALLER_ARG_ONEFILE,
         cs.PYINSTALLER_ARG_NOCONFIRM,
         cs.PYINSTALLER_ARG_CLEAN,
+        cs.PYINSTALLER_ARG_COPY_METADATA,
+        cs.PACKAGE_NAME,
     ]
 
     for ts_pkg in _get_treesitter_packages():
