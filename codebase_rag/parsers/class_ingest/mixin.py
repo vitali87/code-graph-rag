@@ -290,7 +290,8 @@ class ClassIngestMixin:
         # (H) `@line`, splitting members (which attach to the bodied specifier) away
         # (H) from the natural qn that callers reference, orphaning the whole class.
         if (
-            class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            language == cs.SupportedLanguage.CPP
+            and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
             and class_node.parent is not None
             and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
         ):
