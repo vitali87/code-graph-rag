@@ -27,7 +27,7 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: amd64
-          - os: macos-latest
+          - os: macos-15-intel
             platform: darwin
             arch: amd64
           - os: macos-14
@@ -64,9 +64,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then
-            ./dist/code-graph-rag-*.exe --version
+            ./dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}.exe --version
           else
-            ./dist/code-graph-rag-* --version
+            ./dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }} --version
           fi
 
       - name: Upload binary artifact
