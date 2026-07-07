@@ -628,6 +628,18 @@ class CallProcessor:
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
+            if language == cs.SupportedLanguage.GO:
+                # (H) A module-scope Go func map/slice (var funcMap = map[...]{...})
+                # (H) keeps its function entries reachable; scan before the no-calls
+                # (H) early return so a file that only defines funcs and a table counts.
+                self._ingest_go_composite_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
             if language in _JS_TS_LANGUAGES:
                 # (H) A module-scope JSX element (export default <App />) can sit
                 # (H) in a file with no call expressions; scan before the early
@@ -1375,6 +1387,12 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        # (H) A function handed back bare (`return defaultUsageFunc`) is a first-class
+        # (H) value invoked by whoever receives it, never by a visible call -- Go leans
+        # (H) on this for factories/getters (cobra's getUsageFunc). Reference it so the
+        # (H) returned function is reachable. Go shares the `return_statement` node type
+        # (H) and the emit path already resolves bare Go identifiers.
+        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.GO:
             self._ingest_returned_function_references(
                 caller_node,
                 caller_spec,
@@ -1391,6 +1409,15 @@ class CallProcessor:
             language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES
         ) and caller_type != cs.NodeLabel.MODULE:
             self._ingest_collection_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
+        if language == cs.SupportedLanguage.GO and caller_type != cs.NodeLabel.MODULE:
+            self._ingest_go_composite_function_references(
                 caller_node,
                 caller_spec,
                 module_qn,
@@ -2067,6 +2094,52 @@ class CallProcessor:
                 for element in node.named_children:
                     self._emit_value_function_ref(
                         element,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                    )
+            stack.extend(node.children)
+
+    def _ingest_go_composite_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # (H) A Go function placed as a value in a composite literal -- a func map
+        # (H) (`map[string]any{"rpad": rpad}`) or a func slice (`[]Handler{a, b}`) -- is
+        # (H) a dispatch table invoked later by key, never by a visible call, so its
+        # (H) entries look dead. Reference each from the enclosing scope. Go's literal
+        # (H) shape differs from the JS/Py pair form: composite_literal > literal_value >
+        # (H) {keyed_element(value=literal_element) | literal_element}, and the element
+        # (H) wraps the bare identifier one level down, so unwrap before resolving.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types:
+                continue
+            if node.type == cs.TS_GO_LITERAL_VALUE:
+                for element in node.named_children:
+                    value = (
+                        element.child_by_field_name(cs.FIELD_VALUE)
+                        if element.type == cs.TS_GO_KEYED_ELEMENT
+                        else element
+                    )
+                    if value is None or value.type != cs.TS_GO_LITERAL_ELEMENT:
+                        continue
+                    inner = value.named_children[0] if value.named_children else None
+                    if inner is None:
+                        continue
+                    self._emit_value_function_ref(
+                        inner,
                         caller_spec,
                         module_qn,
                         local_var_types,
