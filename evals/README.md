@@ -682,8 +682,10 @@ unresolved. cgr silently drops real definitions that land inside a tree-sitter
 parse-error region on machine-generated code. The trigger was reduced to a
 `tree-sitter-c` grammar bug (a block comment inside a `#define` body breaks the
 parse and drops the following declaration, present through the latest 0.24.2);
-tracked in issue #555 for an upstream report. It is rooted in the grammar, not in
-cgr's resolution logic, so it is reported here, not hidden.
+tracked in issue #555 and upstream as
+[tree-sitter-c #319](https://github.com/tree-sitter/tree-sitter-c/issues/319).
+It is rooted in the grammar, not in cgr's resolution logic, so it is reported
+here, not hidden.
 
 ## Multi-language retrieval (C++) — C++ CALLS vs `libclang`
 
