@@ -1,35 +1,14 @@
 from enum import StrEnum
 from typing import NamedTuple
 
+from .languages import SupportedLanguage
+
 
 class PyInstallerPackage(NamedTuple):
     name: str
     collect_all: bool = False
     collect_data: bool = False
     hidden_import: str | None = None
-
-
-class ModelRole(StrEnum):
-    ORCHESTRATOR = "orchestrator"
-    CYPHER = "cypher"
-
-
-class Provider(StrEnum):
-    OLLAMA = "ollama"
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    GOOGLE = "google"
-    AZURE = "azure"
-    LITELLM_PROXY = "litellm_proxy"
-
-
-class Color(StrEnum):
-    GREEN = "green"
-    YELLOW = "yellow"
-    CYAN = "cyan"
-    RED = "red"
-    MAGENTA = "magenta"
-    BLUE = "blue"
 
 
 class KeyBinding(StrEnum):
@@ -40,96 +19,6 @@ class KeyBinding(StrEnum):
     SHIFT_TAB = "s-tab"
 
 
-class PermissionMode(StrEnum):
-    NORMAL = "normal"
-    YOLO = "yolo"
-
-
-class StyleModifier(StrEnum):
-    BOLD = "bold"
-    DIM = "dim"
-    NONE = ""
-
-
-class FileAction(StrEnum):
-    READ = "read"
-    EDIT = "edit"
-
-
-DEFAULT_MODEL_ROLE = "model"
-
-BINARY_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".pdf",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".bmp",
-        ".ico",
-        ".tiff",
-        ".webp",
-    }
-)
-
-# (H) Source file extensions by language
-EXT_PY = ".py"
-EXT_JS = ".js"
-EXT_JSX = ".jsx"
-EXT_TS = ".ts"
-EXT_TSX = ".tsx"
-EXT_RS = ".rs"
-EXT_GO = ".go"
-EXT_SCALA = ".scala"
-EXT_SC = ".sc"
-EXT_JAVA = ".java"
-EXT_CLASS = ".class"
-EXT_CPP = ".cpp"
-EXT_H = ".h"
-EXT_HPP = ".hpp"
-EXT_CC = ".cc"
-EXT_CXX = ".cxx"
-EXT_HXX = ".hxx"
-EXT_HH = ".hh"
-EXT_IXX = ".ixx"
-EXT_CPPM = ".cppm"
-EXT_CCM = ".ccm"
-EXT_C = ".c"
-EXT_PHP = ".php"
-EXT_LUA = ".lua"
-
-# (H) File extension tuples by language
-PY_EXTENSIONS = (EXT_PY,)
-JS_EXTENSIONS = (EXT_JS, EXT_JSX)
-TS_EXTENSIONS = (EXT_TS,)
-TSX_EXTENSIONS = (EXT_TSX,)
-RS_EXTENSIONS = (EXT_RS,)
-GO_EXTENSIONS = (EXT_GO,)
-SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
-JAVA_EXTENSIONS = (EXT_JAVA,)
-C_EXTENSIONS = (EXT_C,)
-CPP_EXTENSIONS = (
-    EXT_CPP,
-    EXT_H,
-    EXT_HPP,
-    EXT_CC,
-    EXT_CXX,
-    EXT_HXX,
-    EXT_HH,
-    EXT_IXX,
-    EXT_CPPM,
-    EXT_CCM,
-)
-PHP_EXTENSIONS = (EXT_PHP,)
-LUA_EXTENSIONS = (EXT_LUA,)
-
-# (H) A C++ operator overload / user-defined literal is defined with the reserved
-# (H) `operator` keyword heading the name (`operator==`, `operator[]`, `operator""_json`).
-# (H) It is invoked by operator/literal syntax, not a named call, so it is a dead-code
-# (H) reachability root; the keyword can only head such definitions, so this prefix on a
-# (H) C++ file uniquely identifies them (member or free function).
-CPP_OPERATOR_PREFIX = "operator"
-
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
 PKG_CARGO_TOML = "Cargo.toml"
@@ -137,24 +26,6 @@ PKG_CMAKE_LISTS = "CMakeLists.txt"
 PKG_MAKEFILE = "Makefile"
 PKG_VCXPROJ_GLOB = "*.vcxproj"
 PKG_CONANFILE = "conanfile.txt"
-
-DEFAULT_REGION = "us-central1"
-DEFAULT_MODEL = "llama3.2"
-DEFAULT_API_KEY = "ollama"
-
-ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
-ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
-ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
-ENV_AZURE_API_KEY = "AZURE_API_KEY"
-ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
-ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
-
-HELP_ARG = "help"
-
-
-class GoogleProviderType(StrEnum):
-    GLA = "gla"
-    VERTEX = "vertex"
 
 
 class CppFrontend(StrEnum):
@@ -175,42 +46,6 @@ UNIXCODER_MODEL = "microsoft/unixcoder-base"
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
-KEY_NODES = "nodes"
-KEY_RELATIONSHIPS = "relationships"
-KEY_NODE_ID = "node_id"
-KEY_LABELS = "labels"
-KEY_LABEL = "label"
-KEY_PROPERTIES = "properties"
-KEY_FROM_ID = "from_id"
-KEY_TO_ID = "to_id"
-KEY_TYPE = "type"
-KEY_METADATA = "metadata"
-KEY_TOTAL_NODES = "total_nodes"
-KEY_TOTAL_RELATIONSHIPS = "total_relationships"
-KEY_NODE_LABELS = "node_labels"
-KEY_RELATIONSHIP_TYPES = "relationship_types"
-KEY_EXPORTED_AT = "exported_at"
-KEY_PARSER = "parser"
-KEY_NAME = "name"
-KEY_QUALIFIED_NAME = "qualified_name"
-KEY_IS_PROPERTY = "is_property"
-KEY_QUERY = "query"
-KEY_RESPONSE = "response"
-KEY_START_LINE = "start_line"
-KEY_END_LINE = "end_line"
-KEY_PATH = "path"
-KEY_ABSOLUTE_PATH = "absolute_path"
-KEY_EXTENSION = "extension"
-KEY_MODULE_TYPE = "module_type"
-KEY_IMPLEMENTS_MODULE = "implements_module"
-KEY_PROPS = "props"
-KEY_CREATED = "created"
-KEY_FROM_VAL = "from_val"
-KEY_TO_VAL = "to_val"
-KEY_VERSION_SPEC = "version_spec"
-KEY_PREFIX = "prefix"
-KEY_PROJECT_NAME = "project_name"
-
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
@@ -224,161 +59,7 @@ ENCODING_UTF8 = "utf-8"
 PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
-
-# (H) Protobuf oneof field names
-ONEOF_PROJECT = "project"
-ONEOF_PACKAGE = "package"
-ONEOF_FOLDER = "folder"
-ONEOF_MODULE = "module"
-ONEOF_CLASS = "class_node"
-ONEOF_FUNCTION = "function"
-ONEOF_METHOD = "method"
-ONEOF_FILE = "file"
-ONEOF_EXTERNAL_PACKAGE = "external_package"
-ONEOF_EXTERNAL_MODULE = "external_module"
-ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
-ONEOF_MODULE_INTERFACE = "module_interface"
-ONEOF_INTERFACE = "interface_node"
-ONEOF_ENUM = "enum_node"
-ONEOF_TYPE = "type_node"
-ONEOF_UNION = "union_node"
-
-# (H) CLI error and info messages
-CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
-    "Error: --output/-o option requires --update-graph to be specified."
-)
-CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
-CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
-    "Error: --output-format json requires --ask-agent/-a; "
-    "it only applies to single-query output."
-)
-CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
-CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
-CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
-CLI_ERR_STARTUP = "Startup Error: {error}"
-CLI_ERR_CONFIG = "Configuration Error: {error}"
-CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
-CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
-CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
-CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
-
-CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
-CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
-CLI_MSG_WORKSPACE_SYNCING = "Syncing workspace '{name}' ({count} repos)..."
-CLI_MSG_WORKSPACE_SYNC_REPO = (
-    "[{idx}/{total}] Syncing {path} as project '{project_name}'"
-)
-CLI_MSG_WORKSPACE_EMPTY = (
-    "Workspace '{name}' has no repos (use cgr workspace add-repo)."
-)
-MSG_SYNCING_KNOWLEDGE_GRAPH = (
-    "[bold cyan]Syncing knowledge graph[/bold cyan] (incremental, --no-sync to skip)"
-)
-MSG_SYNCING_WORKSPACE = (
-    "[bold cyan]Syncing workspace '{name}'[/bold cyan] ({count} repos)"
-)
-CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
-CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
-CLI_MSG_CLEANING_DB = "Cleaning database..."
-CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
-CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
-CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
-CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
-CLI_ERR_PROJECT_NOT_FOUND = (
-    "Project '{project_name}' not found. Available projects: {projects}"
-)
-CLI_ERR_PROJECT_NAME_REQUIRED = (
-    "Error: --name is required and must be a non-empty project name."
-)
-CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
-CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
-CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
-CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
-CLI_MSG_INDEXING_AT = "Indexing codebase at: {path}"
-CLI_MSG_OUTPUT_TO = "Output will be written to: {path}"
-CLI_MSG_INDEXING_DONE = "Indexing process completed successfully!"
-CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
-CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
-CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
-CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
 PACKAGE_NAME = "code-graph-rag"
-CLI_MSG_VERSION = "{package} version {version}"
-CLI_MSG_HINT_TARGET_REPO = (
-    "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
-)
-CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
-CLI_MSG_CONNECTING_STATS = "Fetching graph statistics..."
-CLI_STATS_NODE_TITLE = "Node Statistics"
-CLI_STATS_REL_TITLE = "Relationship Statistics"
-CLI_STATS_COL_NODE_TYPE = "Node Type"
-CLI_STATS_COL_REL_TYPE = "Relationship Type"
-CLI_STATS_COL_COUNT = "Count"
-CLI_STATS_TOTAL_NODES = "Total Nodes"
-CLI_STATS_TOTAL_RELS = "Total Relationships"
-CLI_STATS_UNKNOWN = "Unknown"
-CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
-
-CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
-CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
-CLI_DEADCODE_COL_KIND = "Kind"
-CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
-CLI_DEADCODE_COL_LINES = "Lines"
-CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
-CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
-CLI_DEADCODE_NONE = "No unreachable functions or methods found."
-CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
-CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
-CLI_ERR_DEADCODE_NO_PROJECTS = (
-    "No projects found in the graph. Index a repository first with 'cgr start'."
-)
-CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
-    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
-)
-CLI_MSG_AUTO_EXCLUDE = (
-    "Auto-excluding common directories (venv, node_modules, .git, etc.). "
-    "Use --interactive-setup to customize."
-)
-
-UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
-UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
-UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
-UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
-UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
-UI_OPTIMIZATION_START = (
-    "[bold green]Starting {language} optimization session...[/bold green]"
-)
-UI_OPTIMIZATION_PANEL = (
-    "[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
-    " You'll be asked to approve each suggestion before implementation."
-    " Type 'exit' or 'quit' to end the session.[/bold yellow]"
-)
-UI_OPTIMIZATION_INIT = "[bold cyan]Initializing optimization session for {language} codebase: {path}[/bold cyan]"
-UI_GRAPH_EXPORT_SUCCESS = (
-    "[bold green]Graph exported successfully to: {path}[/bold green]"
-)
-UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
-UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
-UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
-UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
-UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
-UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
-UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-3.1-pro-preview)[/bold yellow]"
-UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
-  /model <provider:model> - Switch to a different model
-  /model                  - Show current model
-  /help                   - Show this help
-  exit, quit              - Exit the session"""
-UI_TOOL_ARGS_FORMAT = "    Arguments: {args}"
-UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
-UI_INPUT_PROMPT_HTML = (
-    "<ansigreen><b>{prompt}</b></ansigreen> <ansiyellow>{hint}</ansiyellow>: "
-)
-
-# (H) ModelConfig field names
-FIELD_PROVIDER = "provider"
-FIELD_MODEL_ID = "model_id"
-FIELD_API_KEY = "api_key"
-FIELD_ENDPOINT = "endpoint"
 
 # (H) Tool argument field names
 ARG_TARGET_CODE = "target_code"
@@ -398,55 +79,6 @@ DUP_QN_MARKER = "@"
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
 GLOB_ALL = "*"
-# (H) JS/TS import specifier schemes that name genuinely external code (node
-# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
-# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
-JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
-    {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
-)
-# (H) Module file extensions stripped when turning a tsconfig `paths` target into a
-# (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
-# (H) compound suffixes are handled before the bare `.ts`.
-JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
-    ".d.ts",
-    ".tsx",
-    ".ts",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    ".js",
-)
-TSCONFIG_FILENAMES: tuple[str, ...] = (
-    "tsconfig.json",
-    "tsconfig.base.json",
-    "jsconfig.json",
-)
-# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
-# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# (H) unrelated aliases and there can be thousands of them under node_modules.
-TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
-    {"node_modules", "dist", "build", "out", ".git"}
-)
-JS_INDEX_STEM = "index"
-TS_COMPILER_OPTIONS_KEY = "compilerOptions"
-TS_PATHS_KEY = "paths"
-TS_BASE_URL_KEY = "baseUrl"
-PATH_RELATIVE_PREFIX = "./"
-PATH_PARENT_PREFIX = "../"
-CPP_IMPORT_PARTITION_PREFIX = "import :"
-CPP_PARTITION_PREFIX = "partition_"
-
-# (H) Trie internal keys
-TRIE_TYPE_KEY = "__type__"
-TRIE_QN_KEY = "__qn__"
-TRIE_INTERNAL_PREFIX = "__"
-
-
-class UniqueKeyType(StrEnum):
-    NAME = KEY_NAME
-    PATH = KEY_PATH
-    QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
 class DeadCodeFormat(StrEnum):
@@ -459,213 +91,10 @@ class QueryFormat(StrEnum):
     JSON = "json"
 
 
-# (H) Decorators whose presence marks a function/method as an implicit entry point
-# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
-# (H) Pydantic validators/serializers the framework invokes by registration).
-DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
-    {
-        "route",
-        "get",
-        "post",
-        "callback",
-        "put",
-        "delete",
-        "patch",
-        "websocket",
-        "task",
-        "flow",
-        "fixture",
-        "command",
-        "cli",
-        "app",
-        "on_event",
-        "listener",
-        "validator",
-        "field_validator",
-        "model_validator",
-        "root_validator",
-        "field_serializer",
-        "model_serializer",
-        "computed_field",
-        "abstractmethod",
-    }
-)
-
-# (H) Go functions the runtime invokes with no explicit call site: `func init()`
-# (H) runs at package load (any number per package), `func main()` is the program
-# (H) entry. Both are reachability roots (like Python dunders), gated by the .go
-# (H) extension so same-named symbols in other languages are unaffected.
-GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
-
-# (H) Rust `fn main()` is the binary entry point, invoked by the runtime with no
-# (H) call site -- a reachability root (gated by .rs).
-RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
-
-# (H) Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
-# (H) via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,
-# (H) Drop::drop, serde, ...), never through an explicit call the graph can see.
-# (H) Rooting them by name (gated by .rs) mirrors the Python-dunder exemption: these
-# (H) names are conventionally reserved for trait impls, so a same-named user method
-# (H) that is genuinely dead is under-reported rather than mis-reported.
-RUST_TRAIT_METHOD_NAMES: frozenset[str] = frozenset(
-    {
-        "fmt",
-        "eq",
-        "ne",
-        "cmp",
-        "partial_cmp",
-        "hash",
-        "next",
-        "next_back",
-        "into_iter",
-        "size_hint",
-        "drop",
-        "clone",
-        "clone_from",
-        "default",
-        "from",
-        "from_str",
-        "try_from",
-        "into",
-        "try_into",
-        "deref",
-        "deref_mut",
-        "as_ref",
-        "as_mut",
-        "borrow",
-        "borrow_mut",
-        "poll",
-        "serialize",
-        "deserialize",
-        "source",
-        "add",
-        "add_assign",
-        "sub",
-        "sub_assign",
-        "mul",
-        "mul_assign",
-        "div",
-        "div_assign",
-        "rem",
-        "rem_assign",
-        "neg",
-        "not",
-        "bitand",
-        "bitand_assign",
-        "bitor",
-        "bitor_assign",
-        "bitxor",
-        "bitxor_assign",
-        "shl",
-        "shl_assign",
-        "shr",
-        "shr_assign",
-        "index",
-        "index_mut",
-    }
-)
-
-# (H) Base classes that mark a class as a structural interface: its method stubs
-# (H) are never call targets themselves (callers resolve to the implementations),
-# (H) so dead-code analysis roots every method the class defines.
-# (H) ponytail: direct bases only; transitive Protocol subclassing is not chased.
-PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
-
-# (H) Substrings in a node's file path that mark it as test code. Covers Python
-# (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (H) (foo.test.ts, foo.spec.tsx), and the Jest __tests__/ directory so those
-# (H) files are not reported as dead. Singular /test/ and /spec/ directories are
-# (H) intentionally excluded: they collide with product code (a domain "spec"
-# (H) module), which would misclassify live code as test.
-TEST_PATH_PATTERNS: tuple[str, ...] = (
-    "test_",
-    "_test",
-    "conftest",
-    "/tests/",
-    ".test.",
-    ".spec.",
-    "__tests__",
-)
-
-
-class NodeLabel(StrEnum):
-    PROJECT = "Project"
-    PACKAGE = "Package"
-    FOLDER = "Folder"
-    FILE = "File"
-    MODULE = "Module"
-    CLASS = "Class"
-    FUNCTION = "Function"
-    METHOD = "Method"
-    INTERFACE = "Interface"
-    ENUM = "Enum"
-    TYPE = "Type"
-    UNION = "Union"
-    MODULE_INTERFACE = "ModuleInterface"
-    MODULE_IMPLEMENTATION = "ModuleImplementation"
-    EXTERNAL_PACKAGE = "ExternalPackage"
-    EXTERNAL_MODULE = "ExternalModule"
-
-
-_NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
-    NodeLabel.PROJECT: UniqueKeyType.NAME,
-    NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FOLDER: UniqueKeyType.PATH,
-    NodeLabel.FILE: UniqueKeyType.PATH,
-    NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.METHOD: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.INTERFACE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.ENUM: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.TYPE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.UNION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
-    NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
-}
-
-_missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
-if _missing_keys:
-    raise RuntimeError(
-        f"NodeLabel(s) missing from _NODE_LABEL_UNIQUE_KEYS: {_missing_keys}. "
-        "Every NodeLabel MUST have a unique key defined."
-    )
-
-
-class RelationshipType(StrEnum):
-    CONTAINS_PACKAGE = "CONTAINS_PACKAGE"
-    CONTAINS_FOLDER = "CONTAINS_FOLDER"
-    CONTAINS_FILE = "CONTAINS_FILE"
-    CONTAINS_MODULE = "CONTAINS_MODULE"
-    DEFINES = "DEFINES"
-    DEFINES_METHOD = "DEFINES_METHOD"
-    IMPORTS = "IMPORTS"
-    EXPORTS = "EXPORTS"
-    EXPORTS_MODULE = "EXPORTS_MODULE"
-    IMPLEMENTS_MODULE = "IMPLEMENTS_MODULE"
-    INHERITS = "INHERITS"
-    IMPLEMENTS = "IMPLEMENTS"
-    OVERRIDES = "OVERRIDES"
-    CALLS = "CALLS"
-    REFERENCES = "REFERENCES"
-    INSTANTIATES = "INSTANTIATES"
-    DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
-
-
-NODE_PROJECT = NodeLabel.PROJECT
-
 EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
 
 # (H) Byte size constants
 BYTES_PER_MB = 1024 * 1024
-
-# (H) Property keys
-KEY_PARAMETERS = "parameters"
-KEY_DECORATORS = "decorators"
-KEY_DOCSTRING = "docstring"
-KEY_IS_EXPORTED = "is_exported"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
@@ -688,114 +117,11 @@ DEPENDENCY_FILES = frozenset(
 )
 CSPROJ_SUFFIX = ".csproj"
 
-# (H) Cypher queries
-CYPHER_DEFAULT_LIMIT = 50
-
 _CYPHER_EMBEDDING_BASE = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
   AND m.qualified_name STARTS WITH ($project_name + '.')
 """
-
-CYPHER_QUERY_EMBEDDINGS = (
-    _CYPHER_EMBEDDING_BASE
-    + """RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-       n.start_line AS start_line, n.end_line AS end_line,
-       m.path AS path
-"""
-)
-
-CYPHER_QUERY_PROJECT_NODE_IDS = _CYPHER_EMBEDDING_BASE + "RETURN id(n) AS node_id\n"
-
-
-class SupportedLanguage(StrEnum):
-    PYTHON = "python"
-    JS = "javascript"
-    TS = "typescript"
-    TSX = "tsx"
-    RUST = "rust"
-    GO = "go"
-    SCALA = "scala"
-    JAVA = "java"
-    C = "c"
-    CPP = "cpp"
-    PHP = "php"
-    LUA = "lua"
-
-
-class LanguageStatus(StrEnum):
-    FULL = "Fully Supported"
-    DEV = "In Development"
-
-
-class LanguageMetadata(NamedTuple):
-    status: LanguageStatus
-    additional_features: str
-    display_name: str
-
-
-LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
-    SupportedLanguage.PYTHON: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Type inference, decorators, nested functions",
-        "Python",
-    ),
-    SupportedLanguage.JS: LanguageMetadata(
-        LanguageStatus.FULL,
-        "ES6 modules, CommonJS, prototype methods, object methods, arrow functions",
-        "JavaScript",
-    ),
-    SupportedLanguage.TS: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
-        "TypeScript",
-    ),
-    SupportedLanguage.TSX: LanguageMetadata(
-        LanguageStatus.FULL,
-        "All TypeScript features plus JSX elements and components",
-        "TypeScript (TSX)",
-    ),
-    SupportedLanguage.C: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Functions, structs, unions, enums, preprocessor includes",
-        "C",
-    ),
-    SupportedLanguage.CPP: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces",
-        "C++",
-    ),
-    SupportedLanguage.LUA: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Local/global functions, metatables, closures, coroutines",
-        "Lua",
-    ),
-    SupportedLanguage.RUST: LanguageMetadata(
-        LanguageStatus.FULL,
-        "impl blocks, associated functions",
-        "Rust",
-    ),
-    SupportedLanguage.JAVA: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Generics, annotations, modern features (records/sealed classes), concurrency, reflection",
-        "Java",
-    ),
-    SupportedLanguage.GO: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Methods, type declarations",
-        "Go",
-    ),
-    SupportedLanguage.SCALA: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Case classes, objects",
-        "Scala",
-    ),
-    SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
-        "PHP",
-    ),
-}
 
 
 # (H) Tree-sitter AST node type constants
@@ -838,211 +164,12 @@ IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
 IMPORT_NODES_FROM = ("import_from_statement",)
 IMPORT_NODES_MODULE = ("lexical_declaration", "export_statement")
 IMPORT_NODES_INCLUDE = ("preproc_include",)
-
-# (H) JS/TS specific node types
-JS_TS_FUNCTION_NODES = (
-    "function_declaration",
-    "generator_function_declaration",
-    "function_expression",
-    "arrow_function",
-    "method_definition",
-)
-JS_TS_CLASS_NODES = ("class_declaration", "class")
-JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
-
-# (H) C++ import node types
-CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
-
-# (H) Index file names
-INDEX_INIT = "__init__"
-INDEX_INDEX = "index"
-INDEX_MOD = "mod"
-
-# (H) AST field names for name extraction
-NAME_FIELDS = ("identifier", "name", "id")
-
-# (H) Tree-sitter field name constants for child_by_field_name
-FIELD_OBJECT = "object"
-FIELD_PROPERTY = "property"
-FIELD_NAME = "name"
-FIELD_ALIAS = "alias"
-FIELD_MODULE_NAME = "module_name"
-FIELD_ARGUMENTS = "arguments"
-FIELD_BODY = "body"
-FIELD_RETURN_TYPE = "return_type"
-FIELD_CONSTRUCTOR = "constructor"
-FIELD_DECLARATOR = "declarator"
-FIELD_PARAMETERS = "parameters"
-FIELD_RECEIVER = "receiver"
-FIELD_TYPE = "type"
-# (H) The wrapped function/class inside a Python decorated_definition node.
-FIELD_DEFINITION = "definition"
-FIELD_RESULT = "result"
-# (H) Rust impl `trait`/`type` fields and a trait's supertrait `bounds`.
-FIELD_TRAIT = "trait"
-FIELD_BOUNDS = "bounds"
-TS_RS_TRAIT_BOUNDS = "trait_bounds"
-FIELD_VALUE = "value"
-FIELD_LEFT = "left"
-FIELD_RIGHT = "right"
-FIELD_FIELD = "field"
-FIELD_SCOPE = "scope"
-FIELD_SUPERCLASS = "superclass"
-FIELD_SUPERCLASSES = "superclasses"
-FIELD_INTERFACES = "interfaces"
-
-# (H) Method name constants for getattr/hasattr
-METHOD_FIND_WITH_PREFIX = "find_with_prefix"
-METHOD_ITEMS = "items"
-
-# (H) Image file extensions for chat image handling
-MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
-MIME_TYPE_PDF = "application/pdf"
-MIME_TYPE_FALLBACK = "application/octet-stream"
-YES_ANSWER = "y"
-YES_ANSWERS = frozenset({"y", "yes", ""})
-NO_ANSWERS = frozenset({"n", "no"})
 SHIFT_TAB_ESCAPE = b"\x1b[Z"
-DIFF_GIT_HEADER = "diff --git "
 MARKDOWN_FENCE = "```"
 MARKDOWN_FENCE_DIFF = "```diff"
-DIFF_CONTINUATION_PREFIXES = (
-    "diff --git ",
-    "index ",
-    "--- ",
-    "+++ ",
-    "@@ ",
-    "+",
-    "-",
-    " ",
-    "\\ ",
-    "new file mode",
-    "deleted file mode",
-    "old mode",
-    "new mode",
-    "rename from ",
-    "rename to ",
-    "similarity index ",
-    "Binary files ",
-)
-
-# (H) CLI exit commands
-EXIT_COMMANDS = frozenset({"exit", "quit"})
-
-# (H) CLI commands
-MODEL_COMMAND_PREFIX = "/model"
-HELP_COMMAND = "/help"
-
-# (H) UI separators and formatting
-HORIZONTAL_SEPARATOR = "─" * 60
-
-# (H) Session log header
-SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
-
-# (H) Logger format
-LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
-
-# (H) Temporary directory
-TMP_DIR = ".tmp"
-SESSION_LOG_PREFIX = "session_"
-SESSION_LOG_EXT = ".log"
-
-# (H) Session log prefixes
-SESSION_PREFIX_USER = "USER: "
-SESSION_PREFIX_ASSISTANT = "ASSISTANT: "
-
-# (H) Session context format
-SESSION_CONTEXT_START = (
-    "\n\n[SESSION CONTEXT - Previous conversation in this session]:\n"
-)
-SESSION_CONTEXT_END = "\n[END SESSION CONTEXT]\n\n"
-
-# (H) Confirmation status display
-CONFIRM_ENABLED = "Enabled"
-CONFIRM_DISABLED = "Disabled (YOLO Mode)"
-
-# (H) Diff labels
-DIFF_LABEL_BEFORE = "before"
-DIFF_LABEL_AFTER = "after"
-DIFF_FALLBACK_PATH = "file"
-
-
-class DiffMarker:
-    ADD = "+"
-    DEL = "-"
-    HUNK = "@"
-    HEADER_ADD = "+++"
-    HEADER_DEL = "---"
-
-
-# (H) Table column headers
-TABLE_COL_CONFIGURATION = "Configuration"
-TABLE_COL_VALUE = "Value"
-
-# (H) Table row labels
-TABLE_ROW_TARGET_LANGUAGE = "Target Language"
-TABLE_ROW_ORCHESTRATOR_MODEL = "Orchestrator Model"
-TABLE_ROW_CYPHER_MODEL = "Cypher Model"
-TABLE_ROW_OLLAMA_ENDPOINT = "Ollama Endpoint"
-TABLE_ROW_OLLAMA_ORCHESTRATOR = "Ollama Endpoint (Orchestrator)"
-TABLE_ROW_OLLAMA_CYPHER = "Ollama Endpoint (Cypher)"
-TABLE_ROW_EDIT_CONFIRMATION = "Edit Confirmation"
-TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
-
-# (H) UI status messages
-MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
-MSG_THINKING_CANCELLED = "Thinking cancelled."
-MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
-MSG_TOOL_CALL_CANCELLED = "Tool call cancelled by user."
-MSG_CHAT_INSTRUCTIONS = (
-    "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
-)
-
-# (H) Default titles and prompts
-DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
-OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
-PROMPT_ASK_QUESTION = "Ask a question"
-PROMPT_YOUR_RESPONSE = "Your response"
-MULTILINE_INPUT_HINT = (
-    "(Press Ctrl+J or Ctrl+E to submit, Enter for new line, Shift+Tab to toggle mode)"
-)
-PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
-PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
-PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
-STATUS_BAR_BRANCH_CLEAN_HTML = (
-    '<style bg="ansigreen" fg="ansiblack"> ⎇ {branch} </style>'
-)
-STATUS_BAR_BRANCH_DIRTY_HTML = (
-    '<style bg="ansiyellow" fg="ansiblack"> ⎇ {branch} ± </style>'
-)
-STATUS_BAR_BRANCH_CLEAN_PLAIN = " ⎇ {branch} "
-STATUS_BAR_BRANCH_DIRTY_PLAIN = " ⎇ {branch} ± "
-STATUS_BAR_BRANCH_RICH_TEXT = " ⎇ {branch}{marker} "
-STATUS_BAR_CLEAN_STYLE = "black on green"
-STATUS_BAR_DIRTY_STYLE = "black on yellow"
-STATUS_BAR_DIRTY_MARKER = " ±"
-STATUS_BAR_SPINNER = "dots"
-STATUS_BAR_SEPARATOR_CHAR = "─"
-STATUS_BAR_SEPARATOR_COLOR = "#666666"
-STATUS_BAR_TOKEN_HTML = '  <style fg="{color}">{used} / {max_ctx} ({pct})</style>'
-STATUS_BAR_CONFIG_COLOR = "#888888"
-STATUS_BAR_CONFIG_LABEL_COLOR = "#5fafd7"
-STATUS_BAR_CONFIG_SEPARATOR = "  │  "
-STATUS_BAR_CONFIG_LABEL_O = "O"
-STATUS_BAR_CONFIG_LABEL_C = "C"
-STATUS_BAR_CONFIG_LABEL_EDIT = "edit"
-STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS = "instructions"
-STATUS_BAR_CONFIG_LABEL_REPO = "repo"
-STATUS_BAR_EDIT_ON = "on"
-STATUS_BAR_EDIT_OFF = "off"
-TOKEN_THRESHOLD_WARNING = 50
-TOKEN_THRESHOLD_CRITICAL = 80
-TOKEN_COLOR_OK = "green"
-TOKEN_COLOR_WARNING = "yellow"
-TOKEN_COLOR_CRITICAL = "red"
 
 ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
 ANTHROPIC_API_VERSION = "2023-06-01"
@@ -1066,108 +193,8 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-haiku-4-0": 200_000,
 }
 
-# (H) Interactive setup prompt - grouped view
-INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"
-INTERACTIVE_TITLE_NESTED = "Nested paths in '{pattern}'"
-INTERACTIVE_COL_NUM = "#"
-INTERACTIVE_COL_PATTERN = "Pattern"
-INTERACTIVE_COL_NESTED = "Nested"
-INTERACTIVE_COL_PATH = "Path"
-INTERACTIVE_STYLE_DIM = "dim"
-INTERACTIVE_STATUS_DETECTED = "auto-detected"
-INTERACTIVE_STATUS_CLI = "--exclude"
-INTERACTIVE_STATUS_CGRIGNORE = ".cgrignore"
-INTERACTIVE_NESTED_SINGULAR = "{count} dir"
-INTERACTIVE_NESTED_PLURAL = "{count} dirs"
-INTERACTIVE_INSTRUCTIONS_GROUPED = (
-    "These directories would normally be excluded. "
-    "Options: 'all' (keep all), 'none' (keep none), "
-    "numbers like '1,3' (keep groups), or '1e' to expand group 1"
-)
-INTERACTIVE_INSTRUCTIONS_NESTED = (
-    "Select paths to keep from '{pattern}'. "
-    "Options: 'all', 'none', or numbers like '1,3'"
-)
-INTERACTIVE_PROMPT_KEEP = "Keep"
-INTERACTIVE_KEEP_ALL = "all"
-INTERACTIVE_KEEP_NONE = "none"
-INTERACTIVE_EXPAND_SUFFIX = "e"
-INTERACTIVE_BFS_MAX_DEPTH = 10
-INTERACTIVE_DEFAULT_GROUP = "."
-
 # (H) JSON formatting
 JSON_INDENT = 2
-
-# (H) Parser loader paths and args
-GRAMMARS_DIR = "grammars"
-TREE_SITTER_PREFIX = "tree-sitter-"
-TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
-BINDINGS_DIR = "bindings"
-SETUP_PY = "setup.py"
-BUILD_EXT_CMD = "build_ext"
-INPLACE_FLAG = "--inplace"
-LANG_ATTR_PREFIX = "language_"
-LANG_ATTR_TYPESCRIPT = "language_typescript"
-LANG_ATTR_TSX = "language_tsx"
-LANG_ATTR_PHP = "language_php"
-
-
-class TreeSitterModule(StrEnum):
-    PYTHON = "tree_sitter_python"
-    JS = "tree_sitter_javascript"
-    TS = "tree_sitter_typescript"
-    RUST = "tree_sitter_rust"
-    GO = "tree_sitter_go"
-    SCALA = "tree_sitter_scala"
-    JAVA = "tree_sitter_java"
-    C = "tree_sitter_c"
-    CPP = "tree_sitter_cpp"
-    LUA = "tree_sitter_lua"
-    PHP = "tree_sitter_php"
-
-
-# (H) Query dict keys
-QUERY_FUNCTIONS = "functions"
-QUERY_CLASSES = "classes"
-QUERY_CALLS = "calls"
-QUERY_IMPORTS = "imports"
-QUERY_LOCALS = "locals"
-QUERY_CONFIG = "config"
-QUERY_LANGUAGE = "language"
-
-# (H) Query capture names
-CAPTURE_FUNCTION = "function"
-CAPTURE_CLASS = "class"
-CAPTURE_CALL = "call"
-CAPTURE_IMPORT = "import"
-CAPTURE_IMPORT_FROM = "import_from"
-
-# (H) Locals query patterns for JS/TS
-JS_LOCALS_PATTERN = """
-; Variable definitions
-(variable_declarator name: (identifier) @local.definition)
-(function_declaration name: (identifier) @local.definition)
-(class_declaration name: (identifier) @local.definition)
-
-; Variable references
-(identifier) @local.reference
-"""
-
-TS_LOCALS_PATTERN = """
-; Variable definitions (TypeScript has multiple declaration types)
-(variable_declarator name: (identifier) @local.definition)
-(lexical_declaration (variable_declarator name: (identifier) @local.definition))
-(variable_declaration (variable_declarator name: (identifier) @local.definition))
-
-; Function definitions
-(function_declaration name: (identifier) @local.definition)
-
-; Class definitions (uses type_identifier for class names)
-(class_declaration name: (type_identifier) @local.definition)
-
-; Variable references
-(identifier) @local.reference
-"""
 
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(
@@ -1224,105 +251,11 @@ IGNORE_SUFFIXES = frozenset(
 # (H) pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
 
-PAYLOAD_NODE_ID = "node_id"
-PAYLOAD_QUALIFIED_NAME = "qualified_name"
-
 
 class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
     DELETED = "deleted"
-
-
-CYPHER_DELETE_MODULE = (
-    "MATCH (m:Module {path: $path}) "
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
-    "DETACH DELETE m, c"
-)
-CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
-# (H) Removes external import-target Module nodes that no module imports anymore
-# (H) (e.g. an imported name that was renamed/removed on an incremental rebuild).
-CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
-    "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
-)
-
-# (H) Queries for orphan pruning — returns all paths stored in the graph
-CYPHER_ALL_FILE_PATHS = (
-    "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
-)
-CYPHER_ALL_MODULE_PATHS_INTERNAL = (
-    "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
-)
-CYPHER_ALL_FOLDER_PATHS = (
-    "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
-)
-
-# (H) Rehydrate the in-memory function registry on an incremental run: returns
-# (H) every definition node's qualified name and label so call/instantiation
-# (H) resolution can see symbols defined in files that were not re-parsed.
-CYPHER_ALL_DEFINITION_QNS = (
-    "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
-    "OR n:Enum OR n:Type OR n:Union "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property"
-)
-
-# (H) Inbound reference edges (from unchanged files) into symbols defined in one
-# (H) of $paths. Captured BEFORE a changed file's subtree is deleted so the exact
-# (H) edges can be restored verbatim afterwards (issue #532, inbound half).
-# (H) Re-resolving the callers instead would diverge from a clean index, because
-# (H) cgr's call resolution is context-sensitive (protocol vs concrete receiver,
-# (H) import granularity); the original edges already match a clean re-index.
-CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
-    "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
-    "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
-    "RETURN head(labels(caller)) AS caller_label, "
-    "caller.qualified_name AS caller_qn, type(r) AS rel, "
-    "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
-)
-# (H) Rehydrate class_inheritance on an incremental run: every INHERITS edge
-# (H) (child -> base) with resolved qns, so protocol dispatch and inherited-method
-# (H) resolution still see the hierarchy of classes defined in files that were not
-# (H) re-parsed. Without it, editing a caller drops the protocol/inheritance
-# (H) redirect (issue #532 residual): a call resolves to the Protocol stub instead
-# (H) of the concrete implementer because _protocol_classes() is empty. Ordered by
-# (H) base_index so multiple-inheritance base order matches the original source,
-# (H) which method resolution and override attribution depend on.
-CYPHER_ALL_INHERITS = (
-    "MATCH (child)-[r:INHERITS]->(base) "
-    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
-    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
-    "r.base_index AS base_index "
-    "ORDER BY child_qn, base_index"
-)
-KEY_CHILD_QN = "child_qn"
-KEY_BASE_QN = "base_qn"
-KEY_BASE_INDEX = "base_index"
-
-CYPHER_PARAM_PATHS = "paths"
-KEY_CALLER_LABEL = "caller_label"
-KEY_CALLER_QN = "caller_qn"
-KEY_REL = "rel"
-KEY_TARGET_LABEL = "target_label"
-KEY_TARGET_QN = "target_qn"
-
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
-WATCHER_SLEEP_INTERVAL = 1
-LOG_LEVEL_INFO = "INFO"
-LOG_LEVEL_ERROR = "ERROR"
-
-# (H) Debounce settings for realtime watcher
-DEFAULT_DEBOUNCE_SECONDS = 5
-DEFAULT_MAX_WAIT_SECONDS = 30
 
 
 class Architecture(StrEnum):
@@ -1427,242 +360,13 @@ UNIXCODER_MASK_TOKEN = "<mask0>"
 UNIXCODER_BUFFER_BIAS = "bias"
 UNIXCODER_MAX_CONTEXT = 1024
 
-REL_TYPE_CALLS = "CALLS"
-
-NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
-    label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
-}
-
-# (H) Cypher response cleaning
-CYPHER_PREFIX = "cypher"
-CYPHER_SEMICOLON = ";"
-CYPHER_BACKTICK = "`"
-CYPHER_MATCH_KEYWORD = "MATCH"
-CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
-    {
-        "DELETE",
-        "DETACH",
-        "DROP",
-        "CREATE INDEX",
-        "CREATE CONSTRAINT",
-        "REMOVE",
-        "SET",
-        "MERGE",
-        "CREATE",
-        "LOAD CSV",
-        "FOREACH",
-    }
-)
-
-CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
-    {
-        "algo.",
-        "betweenness_centrality.",
-        "biconnected_components.",
-        "bridges.",
-        "community_detection.",
-        "cycles.",
-        "degree_centrality.",
-        "graph_analyzer.",
-        "graph_util.",
-        "igraphalg.",
-        "katz_centrality.",
-        "leiden_community_detection.",
-        "neighbors.",
-        "node_similarity.",
-        "nxalg.",
-        "pagerank.",
-        "path.",
-        "schema.",
-        "weakly_connected_components.",
-        "wcc.",
-    }
-)
-
-# (H) Tool success messages
-MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
-MSG_SURGICAL_FAILED = (
-    "Failed to apply surgical replacement in {path}. "
-    "Target code not found or patches failed."
-)
-
-# (H) Grep suggestion
-GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
-
-# (H) Shell command constants
-SHELL_CMD_GREP = "grep"
-SHELL_CMD_GIT = "git"
-SHELL_CMD_RM = "rm"
-SHELL_RM_RF_FLAG = "-rf"
-SHELL_RETURN_CODE_ERROR = -1
-SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
-SHELL_SUBSHELL_PATTERNS = ("$(", "`")
-SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
-
-# (H) Dangerous commands - absolutely blocked
-SHELL_DANGEROUS_COMMANDS = frozenset(
-    {
-        "dd",
-        "mkfs",
-        "mkfs.ext4",
-        "mkfs.ext3",
-        "mkfs.xfs",
-        "mkfs.btrfs",
-        "mkfs.vfat",
-        "fdisk",
-        "parted",
-        "shred",
-        "wipefs",
-        "mkswap",
-        "swapon",
-        "swapoff",
-        "mount",
-        "umount",
-        "insmod",
-        "rmmod",
-        "modprobe",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
-        "init",
-        "telinit",
-        "systemctl",
-        "service",
-        "chroot",
-        "nohup",
-        "disown",
-        "crontab",
-        "at",
-        "batch",
-    }
-)
-
-# (H) Dangerous rm flags
-SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
-SHELL_RM_FORCE_FLAG = "-f"
-
-# (H) System directories to protect from rm -rf
-SHELL_SYSTEM_DIRECTORIES = frozenset(
-    {
-        "bin",
-        "boot",
-        "dev",
-        "etc",
-        "home",
-        "lib",
-        "lib64",
-        "media",
-        "mnt",
-        "opt",
-        "proc",
-        "root",
-        "run",
-        "sbin",
-        "srv",
-        "sys",
-        "tmp",
-        "usr",
-        "var",
-    }
-)
-
-# (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
-SHELL_DANGEROUS_PATTERNS_PIPELINE = (
-    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
-    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
-    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
-)
-
-# (H) Build system directory regex pattern dynamically
-_SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
-
-# (H) Dangerous patterns for individual segments (per-command patterns)
-SHELL_DANGEROUS_PATTERNS_SEGMENT = (
-    (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
-    (rf"rm\s+.*-[rf]+\s+/({_SYSTEM_DIRS_PATTERN})($|/|\s)", "rm with system directory"),
-    (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
-    (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
-    (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),
-    (r"dd\s+.*of=/dev/", "dd writing to device"),
-    (r">\s*/dev/sd[a-z]", "redirect to disk device"),
-    (r">\s*/dev/nvme", "redirect to nvme device"),
-    (r">\s*/dev/null.*<", "null device manipulation"),
-    (r"chmod\s+.*-R\s+777\s+/", "recursive 777 on root"),
-    (r"chmod\s+.*777\s+/($|\s)", "777 on root"),
-    (r"chown\s+.*-R\s+.*\s+/($|\s)", "recursive chown on root"),
-    (r":\(\)\s*\{.*:\s*\|", "fork bomb pattern"),
-    (r"mv\s+.*\s+/dev/null", "move to /dev/null"),
-    (r"ln\s+-[sf]+\s+/dev/null", "symlink to /dev/null"),
-    (r"cat\s+.*/dev/zero", "cat /dev/zero"),
-    (r"cat\s+.*/dev/random", "cat /dev/random"),
-    (r">\s*/etc/passwd", "overwrite passwd"),
-    (r">\s*/etc/shadow", "overwrite shadow"),
-    (r">\s*/etc/sudoers", "overwrite sudoers"),
-    (r"echo\s+.*>\s*/etc/", "write to /etc"),
-    (
-        r"python.*-c.*(import\s+os|__import__\s*\(\s*['\"]os['\"]\s*\))",
-        "python os import in command",
-    ),
-    (r"perl\s+-e", "perl one-liner"),
-    (r"ruby\s+-e", "ruby one-liner"),
-    (r"nc\s+-[el]", "netcat listener"),
-    (r"ncat\s+-[el]", "ncat listener"),
-    (r"/dev/tcp/", "bash tcp device"),
-    (r"eval\s+", "eval command"),
-    (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
-    (r"awk\s+.*system\s*\(", "awk system() call"),
-    (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
-    (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
-    (r"xargs\s+-I.*sh", "xargs shell execution"),
-    (r"xargs\s+.*bash", "xargs bash execution"),
-)
-
-# (H) Query tool messages
-QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 TIKTOKEN_ENCODING = "cl100k_base"
-QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
-QUERY_SUMMARY_TRUNCATED = (
-    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
-    "Refine your query for more specific results."
-)
-QUERY_SUMMARY_TRANSLATION_FAILED = (
-    "I couldn't translate your request into a database query. Error: {error}"
-)
-QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
-QUERY_SUMMARY_TIMEOUT = (
-    "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
-    "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
-)
-QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
-CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
-CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"
 
 # (H) File editor constants
 TMP_EXTENSION = ".tmp"
-
-# (H) Semantic search constants
-MSG_SEMANTIC_NO_RESULTS = (
-    "No semantic matches found for query: '{query}'. This could mean:\n"
-    "1. No functions match this description\n"
-    "2. Semantic search dependencies are not installed\n"
-    "3. No embeddings have been generated yet"
-)
-MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
-    "Could not retrieve source code for node ID {id}. "
-    "The node may not exist or source file may be unavailable."
-)
-MSG_SEMANTIC_SOURCE_FORMAT = "Source code for node ID {id}:\n\n```\n{code}\n```"
-MSG_SEMANTIC_RESULT_HEADER = "Found {count} semantic matches for '{query}':\n\n"
-MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools to get more details or source code."
 SEMANTIC_BATCH_SIZE = 100
 SEMANTIC_TYPE_UNKNOWN = "Unknown"
-
-# (H) Document analyzer constants
-MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
-MSG_DOC_NO_CONTENT = "No text content received from the API."
 MIME_TYPE_DEFAULT = "application/octet-stream"
 DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
@@ -1807,12 +511,6 @@ LANG_SRC_DIR = "src"
 LANG_GIT_MODULES_PATH = ".git/modules/{path}"
 LANG_DEFAULT_GRAMMAR_URL = "https://github.com/tree-sitter/tree-sitter-{name}"
 LANG_TREE_SITTER_URL_MARKER = "github.com/tree-sitter/tree-sitter"
-
-# (H) Language CLI default node types
-LANG_DEFAULT_FUNCTION_NODES = ("function_definition", "method_definition")
-LANG_DEFAULT_CLASS_NODES = ("class_declaration",)
-LANG_DEFAULT_MODULE_NODES = ("compilation_unit",)
-LANG_DEFAULT_CALL_NODES = ("invocation_expression",)
 LANG_FALLBACK_METHOD_NODE = "method_declaration"
 
 # (H) Language CLI node type detection keywords
@@ -1929,9 +627,6 @@ LANG_ERR_REMOVE_SUBMODULE = "Failed to remove submodule: {error}"
 # (H) Language CLI prompts
 LANG_PROMPT_LANGUAGE_NAME = "Language name (e.g., 'c-sharp', 'python')"
 LANG_PROMPT_COMMON_NAME = "What is the common name for this language?"
-LANG_PROMPT_EXTENSIONS = (
-    "What file extensions should be associated with this language? (comma-separated)"
-)
 LANG_PROMPT_FUNCTIONS = "Select nodes representing FUNCTIONS (comma-separated)"
 LANG_PROMPT_CLASSES = "Select nodes representing CLASSES (comma-separated)"
 LANG_PROMPT_MODULES = "Select nodes representing MODULES (comma-separated)"
@@ -1948,13 +643,10 @@ LANG_FALLBACK_MANUAL_ADD = (
 # (H) Language CLI table configuration
 LANG_TABLE_TITLE = "Configured Languages"
 LANG_TABLE_COL_LANGUAGE = "Language"
-LANG_TABLE_COL_EXTENSIONS = "Extensions"
 LANG_TABLE_COL_FUNCTION_TYPES = "Function Types"
 LANG_TABLE_COL_CLASS_TYPES = "Class Types"
 LANG_TABLE_COL_CALL_TYPES = "Call Types"
 LANG_TABLE_PLACEHOLDER = "—"
-
-LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
 LANG_ELLIPSIS = "..."
 LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
@@ -2002,7 +694,6 @@ class CppNodeType(StrEnum):
     TYPE_DESCRIPTOR = "type_descriptor"
 
 
-CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
 
 # (H) C++ module declaration prefixes
@@ -2269,7 +960,6 @@ TS_GO_POINTER_TYPE = "pointer_type"
 TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
-FIELD_OPERAND = "operand"
 
 # (H) Tree-sitter Scala node types
 TS_SCALA_CLASS_DEFINITION = "class_definition"
@@ -2391,8 +1081,6 @@ TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_ATTRIBUTE = "attribute"
-
-FIELD_OPERATOR = "operator"
 
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
@@ -2601,11 +1289,6 @@ TS_FIELD_FUNCTION = "function"
 TS_FIELD_BODY = "body"
 TS_FIELD_LEFT = "left"
 TS_FIELD_RIGHT = "right"
-
-QUERY_CAPTURE_CLASS = "class"
-QUERY_CAPTURE_FUNCTION = "function"
-QUERY_KEY_CLASSES = "classes"
-QUERY_KEY_FUNCTIONS = "functions"
 
 # (H) Java type inference keywords
 JAVA_KEYWORD_THIS = "this"
@@ -2908,17 +1591,6 @@ JS_PROTOTYPE_KEYWORD = "prototype"
 JS_OBJECT_NAME = "Object"
 JS_CREATE_METHOD = "create"
 
-# (H) JS/TS ingest query capture names
-CAPTURE_CHILD_CLASS = "child_class"
-CAPTURE_PARENT_CLASS = "parent_class"
-CAPTURE_CONSTRUCTOR_NAME = "constructor_name"
-CAPTURE_PROTOTYPE_KEYWORD = "prototype_keyword"
-CAPTURE_METHOD_NAME = "method_name"
-CAPTURE_METHOD_FUNCTION = "method_function"
-CAPTURE_MEMBER_EXPR = "member_expr"
-CAPTURE_FUNCTION_EXPR = "function_expr"
-CAPTURE_ARROW_FUNCTION = "arrow_function"
-
 # (H) JS prototype inheritance query
 JS_PROTOTYPE_INHERITANCE_QUERY = """
 (assignment_expression
@@ -2989,10 +1661,6 @@ TS_PAIR_PATTERN = "pair_pattern"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 
-# (H) Tree-sitter field names for module system
-FIELD_FUNCTION = "function"
-FIELD_KEY = "key"
-
 # (H) JS/TS module system keywords
 JS_REQUIRE_KEYWORD = "require"
 JS_EXPORTS_KEYWORD = "exports"
@@ -3050,15 +1718,6 @@ JS_ES6_EXPORT_FUNCTION_QUERY = """
 (export_statement
   [(function_declaration) (generator_function_declaration)] @export_function)
 """
-
-# (H) Query capture names for module system
-CAPTURE_FUNC = "func"
-CAPTURE_VARIABLE_DECLARATOR = "variable_declarator"
-CAPTURE_EXPORTS_OBJ = "exports_obj"
-CAPTURE_MODULE_OBJ = "module_obj"
-CAPTURE_EXPORTS_PROP = "exports_prop"
-CAPTURE_EXPORT_NAME = "export_name"
-CAPTURE_EXPORT_FUNCTION = "export_function"
 
 # (H) Tree-sitter Rust node types
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
@@ -3690,6 +2349,3 @@ HEALTH_CHECK_EXTERNAL_TOOLS = [
     ("ripgrep", "rg"),
     ("cmake", "cmake"),
 ]
-
-SHELL_CMD_WHERE = "where"
-SHELL_CMD_WHICH = "which"
