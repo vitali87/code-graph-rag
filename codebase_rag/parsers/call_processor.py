@@ -1235,6 +1235,24 @@ class CallProcessor:
                         ):
                             receiver = arg.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
+                        # (H) A factory-call receiver (`parser(ia, cb).parse(...)`,
+                        # (H) nlohmann's basic_json::parse) is a call_expression on a
+                        # (H) bare identifier: emit the chain form so the resolver can
+                        # (H) type the factory's return and bind the method on it. Only
+                        # (H) a simple-identifier callee qualifies -- deeper receiver
+                        # (H) chains keep the bare method-name trie fallback.
+                        if (
+                            arg is not None
+                            and arg.type == cs.TS_CPP_CALL_EXPRESSION
+                            and (
+                                callee := arg.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                            )
+                            is not None
+                            and callee.type == cs.TS_IDENTIFIER
+                            and arg.text
+                        ):
+                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
@@ -1517,7 +1535,12 @@ class CallProcessor:
                 )
             else:
                 callee_info = resolve_func(
-                    call_name, module_qn, call_var_types, class_context, caller_qn
+                    call_name,
+                    module_qn,
+                    call_var_types,
+                    class_context,
+                    caller_qn,
+                    language,
                 )
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)

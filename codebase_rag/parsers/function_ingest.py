@@ -129,6 +129,15 @@ class FunctionIngestMixin:
                 func_node, resolution, module_qn, language, lang_config
             )
 
+            # (H) Record a free C++ function's return type so a chained call off a
+            # (H) factory (`make().run()`) can type the receiver and resolve the next
+            # (H) hop. Runs here (not in the CPP resolver) because the unified-FQN path
+            # (H) wins for C++ and would otherwise bypass the recording.
+            if language == cs.SupportedLanguage.CPP and (
+                return_type := cpp_utils.extract_return_type_name(func_node)
+            ):
+                self.method_return_types[resolution.qualified_name] = return_type
+
     def _resolve_function_identity(
         self,
         func_node: Node,

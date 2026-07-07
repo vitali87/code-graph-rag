@@ -15,6 +15,7 @@ from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
+from ..cpp import utils as cpp_utils
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..py import resolve_class_name
@@ -585,6 +586,17 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
+            # (H) Record a C++ method's return type so a chained call off a static
+            # (H) factory method (`parser(...).parse(...)`, nlohmann's basic_json)
+            # (H) can type the receiver and resolve the next hop.
+            if language == cs.SupportedLanguage.CPP:
+                method_name = cpp_utils.extract_function_name(method_node)
+                if method_name and (
+                    return_type := cpp_utils.extract_return_type_name(method_node)
+                ):
+                    self.method_return_types[
+                        f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+                    ] = return_type
 
     def _process_inline_modules(
         self,
