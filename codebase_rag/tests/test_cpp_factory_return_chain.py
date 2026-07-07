@@ -98,6 +98,36 @@ def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> 
     )
 
 
+def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
+    # (H) The header/impl split shape: the factory method is DECLARED in the class body
+    # (H) but DEFINED out-of-class (`Parser Owner::parser(...) { ... }`). Its return type
+    # (H) must still be recorded (the out-of-class path returns before the free-function
+    # (H) recording runs) so `parser(1).parse(true)` types the receiver as Parser rather
+    # (H) than drop or mis-bind to the alphabetical decoy Aaa.parse.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Parser {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Owner {\n"
+        "    static Parser parser(int x);\n"
+        "    void parse_impl();\n"
+        "};\n"
+        "Parser Owner::parser(int x) { return Parser(); }\n"
+        "void Owner::parse_impl() {\n"
+        "    parser(1).parse(true);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.Owner.parse_impl", "crate.f.Parser.parse") in calls, sorted(
+        c for c in calls if "parse" in c[1]
+    )
+    assert ("crate.f.Owner.parse_impl", "crate.f.Aaa.parse") not in calls
+
+
 def test_return_type_path_normalizes_template_qualified_scope() -> None:
     # (H) A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
     # (H) reduce to the dotted registry path "Outer.Inner" -- the scope's raw text

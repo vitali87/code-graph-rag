@@ -50,6 +50,7 @@ class _DeferredMethod(NamedTuple):
     class_name: str
     fallback_class_qn: str
     method_props: PropertyDict
+    return_type: str | None
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -251,6 +252,12 @@ class FunctionIngestMixin:
 
         class_qn, resolved = self._resolve_cpp_class_qn(class_name, module_qn)
         file_path = self.module_qn_to_file_path.get(module_qn)
+        # (H) The out-of-class DEFINITION carries the return type; record it here (keyed
+        # (H) by the method qn) so a factory chain `parser(1).parse()` can type the
+        # (H) receiver even when the class's in-class declaration wasn't captured (a
+        # (H) header parsed separately or a forward decl). Deferred entries carry it
+        # (H) forward to resolve_deferred_cpp_methods where the final qn is known.
+        return_type = cpp_utils.extract_return_type_name(func_node)
 
         if resolved:
             ingest_method(
@@ -266,6 +273,12 @@ class FunctionIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
+            if return_type and (
+                method_name := cpp_utils.extract_function_name(func_node)
+            ):
+                self.method_return_types[
+                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+                ] = return_type
         else:
             method_name = cpp_utils.extract_function_name(func_node)
             if not method_name:
@@ -291,6 +304,7 @@ class FunctionIngestMixin:
                     class_name=class_name,
                     fallback_class_qn=class_qn,
                     method_props=props,
+                    return_type=return_type,
                 )
             )
 
@@ -320,6 +334,8 @@ class FunctionIngestMixin:
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
             self.function_registry[method_qn] = NodeType.METHOD
             self.simple_name_lookup[entry.method_name].add(method_qn)
+            if entry.return_type:
+                self.method_return_types[method_qn] = entry.return_type
 
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
