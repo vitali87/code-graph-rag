@@ -787,11 +787,12 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 4 merged namespace-related nodes, found {len(merged_namespace_nodes)}"
     )
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
+    # (H) Namespace-exported functions are methods of the namespace node
+    # (H) (Class DEFINES_METHOD Method), matching the tsc containment oracle;
+    # (H) they must not also exist as module-level Function duplicates.
     merged_functions = [
         call
-        for call in function_calls
+        for call in get_nodes(mock_ingestor, "Method")
         if "namespace_merging" in call[0][1]["qualified_name"]
         and any(
             pattern in call[0][1]["qualified_name"]
@@ -1234,11 +1235,12 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 2 classes/interfaces in modules, found {module_classes_interfaces}"
     )
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
+    # (H) Namespace-exported functions are methods of the namespace node
+    # (H) (Class DEFINES_METHOD Method), matching the tsc containment oracle;
+    # (H) they must not also exist as module-level Function duplicates.
     module_functions = [
         call
-        for call in function_calls
+        for call in get_nodes(mock_ingestor, "Method")
         if "module_patterns" in call[0][1]["qualified_name"]
         and any(
             pattern in call[0][1]["qualified_name"]

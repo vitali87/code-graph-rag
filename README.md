@@ -664,18 +664,18 @@ The knowledge graph uses the following node types and relationships:
 | Project | `{name: string}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
-| File | `{path: string, name: string, extension: string, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Type | `{qualified_name: string, name: string}` |
-| Union | `{qualified_name: string, name: string}` |
-| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
-| ExternalPackage | `{name: string, version_spec: string}` |
+| File | `{path: string, name: string, extension: string?, absolute_path: string}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
+| ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
 <!-- /SECTION:node_schemas -->
 
@@ -705,18 +705,18 @@ The knowledge graph uses the following node types and relationships:
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
-| Module | DEFINES | Class, Function |
-| Class | DEFINES_METHOD | Method |
+| Module, Function, Method | DEFINES | Class, Function, Enum, Interface, Type, Union, Module |
+| Class, Interface, Enum, Type, Union | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module, ExternalModule |
 | Module | EXPORTS | Class, Function |
 | Module | EXPORTS_MODULE | ModuleInterface |
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |
-| Class | INHERITS | Class |
-| Class | IMPLEMENTS | Interface |
+| Class, Interface, Function | INHERITS | Class, Interface, Function |
+| Class, Enum | IMPLEMENTS | Interface |
 | Method | OVERRIDES | Method |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
-| Function, Method | CALLS | Function, Method |
+| Module, Function, Method | CALLS | Function, Method, Enum, Type |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
 <!-- /SECTION:relationship_schemas -->

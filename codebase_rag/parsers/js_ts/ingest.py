@@ -13,11 +13,11 @@ from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
-    PropertyDict,
     SimpleNameLookup,
 )
 from ..utils import (
     get_cached_query,
+    module_function_props,
     safe_decode_text,
     safe_decode_with_fallback,
     sorted_captures,
@@ -173,13 +173,14 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     method_qn, func_node.start_point[0] + 1
                 )
 
-                method_props: PropertyDict = {
-                    cs.KEY_QUALIFIED_NAME: method_qn,
-                    cs.KEY_NAME: method_name,
-                    cs.KEY_START_LINE: func_node.start_point[0] + 1,
-                    cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                    cs.KEY_DOCSTRING: self._get_docstring(func_node),
-                }
+                method_props = module_function_props(
+                    method_qn,
+                    method_name,
+                    func_node,
+                    self._get_docstring(func_node),
+                    self.module_qn_to_file_path.get(module_qn),
+                    self.repo_path,
+                )
                 logger.info(
                     lg.JS_PROTOTYPE_METHOD_FOUND,
                     method_name=method_name,
@@ -316,13 +317,14 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         method_qn = self.function_registry.register_unique_qn(
             method_qn, method_func_node.start_point[0] + 1
         )
-        method_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: method_qn,
-            cs.KEY_NAME: method_name,
-            cs.KEY_START_LINE: method_func_node.start_point[0] + 1,
-            cs.KEY_END_LINE: method_func_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(method_func_node),
-        }
+        method_props = module_function_props(
+            method_qn,
+            method_name,
+            method_func_node,
+            self._get_docstring(method_func_node),
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
+        )
         logger.info(
             lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
@@ -420,7 +422,11 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             )
 
             self._register_arrow_function(
-                function_name, function_qn, arrow_function, lg.JS_OBJECT_ARROW_FOUND
+                function_name,
+                function_qn,
+                arrow_function,
+                module_qn,
+                lg.JS_OBJECT_ARROW_FOUND,
             )
 
     def _resolve_direct_arrow_qn(
@@ -480,7 +486,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             )
 
             self._register_arrow_function(
-                function_name, function_qn, function_node, log_message
+                function_name, function_qn, function_node, module_qn, log_message
             )
 
     def _resolve_member_expr_qn(
@@ -504,23 +510,30 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         function_qn: str,
         function_node: ASTNode,
+        module_qn: str,
         log_message: str,
     ) -> None:
         function_qn = self.function_registry.register_unique_qn(
             function_qn, function_node.start_point[0] + 1
         )
-        function_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: function_qn,
-            cs.KEY_NAME: function_name,
-            cs.KEY_START_LINE: function_node.start_point[0] + 1,
-            cs.KEY_END_LINE: function_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(function_node),
-        }
+        function_props = module_function_props(
+            function_qn,
+            function_name,
+            function_node,
+            self._get_docstring(function_node),
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
+        )
 
         logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
         self.function_registry[function_qn] = NodeType.FUNCTION
         self.simple_name_lookup[function_name].add(function_qn)
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            cs.RelationshipType.DEFINES,
+            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
+        )
 
     def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:
