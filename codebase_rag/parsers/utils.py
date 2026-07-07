@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Query, QueryCursor
+from tree_sitter import Language, Node, Query, QueryCursor
 
 from .. import constants as cs
 from .. import logs
@@ -25,13 +25,16 @@ if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
 
-_QUERY_CACHE: dict[tuple[int, str], Query] = {}
-_QUERY_LAST: tuple[tuple[int, str], Query] | None = None
+_QUERY_CACHE: dict[tuple[Language, str], Query] = {}
+_QUERY_LAST: tuple[tuple[Language, str], Query] | None = None
 
 
-def get_cached_query(language_obj, query_text: str) -> Query:
+def get_cached_query(language_obj: Language, query_text: str) -> Query:
+    # (H) Key by the Language itself, never id(): Language hashes by grammar
+    # (H) pointer, so wrappers dedupe, and the dict pins the key so a GC'd
+    # (H) wrapper's address can't be reused to serve a wrong-grammar Query.
     global _QUERY_LAST
-    key = (id(language_obj), query_text)
+    key = (language_obj, query_text)
     if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
         return _QUERY_LAST[1]
     if key not in _QUERY_CACHE:
