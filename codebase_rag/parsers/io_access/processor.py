@@ -75,7 +75,7 @@ class IOAccessProcessor:
         ctor_by_name: dict[str, HandleConstructor],
     ) -> dict[str, HandleBinding]:
         handles: dict[str, HandleBinding] = {}
-        # (H) Forward pre-order DFS so a rebind resolves to the last assignment in
+        # (H) Forward pre-order DFS so a rebind resolves to the last binding in
         # (H) source order; `reversed` on the pushed children keeps left-to-right.
         # (H) ponytail: source-order-last wins; control-flow branches are not
         # (H) path-sensitive, add a CFG pass if branch-precise handles ever matter.
@@ -83,29 +83,48 @@ class IOAccessProcessor:
         while stack:
             node = stack.pop()
             stack.extend(reversed(node.children))
-            if node.type != cs.TS_PY_ASSIGNMENT:
-                continue
-            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-            if (
-                left is None
-                or right is None
-                or left.type != cs.TS_PY_IDENTIFIER
-                or right.type != cs.TS_PY_CALL
-            ):
-                continue
-            name = self._normalise(self._call_name(right), import_map)
-            ctor = ctor_by_name.get(name) if name else None
-            if ctor is None:
-                continue
-            var_text = left.text
-            if var_text is None:
-                continue
-            identity = self._literal_target(right, ctor.target_arg, ctor.target_kw)
-            handles[var_text.decode(cs.ENCODING_UTF8)] = HandleBinding(
-                kind=ctor.kind, identity=identity
-            )
+            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            if bound is not None:
+                var, binding = bound
+                handles[var] = binding
         return handles
+
+    def _binding_from_node(
+        self,
+        node: Node,
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+    ) -> tuple[str, HandleBinding] | None:
+        # (H) Both `f = open(...)` (assignment) and `with open(...) as f:`
+        # (H) (as_pattern) bind a handle var to a constructor call.
+        if node.type == cs.TS_PY_ASSIGNMENT:
+            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        elif node.type == cs.TS_PY_AS_PATTERN:
+            call = next((c for c in node.children if c.type == cs.TS_PY_CALL), None)
+            alias = next(
+                (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+                None,
+            )
+            target = alias.children[0] if alias and alias.children else None
+        else:
+            return None
+        if (
+            target is None
+            or call is None
+            or target.type != cs.TS_PY_IDENTIFIER
+            or call.type != cs.TS_PY_CALL
+            or target.text is None
+        ):
+            return None
+        name = self._normalise(self._call_name(call), import_map)
+        ctor = ctor_by_name.get(name) if name else None
+        if ctor is None:
+            return None
+        identity = self._literal_target(call, ctor.target_arg, ctor.target_kw)
+        return target.text.decode(cs.ENCODING_UTF8), HandleBinding(
+            kind=ctor.kind, identity=identity
+        )
 
     def _emit_access_edges(
         self,

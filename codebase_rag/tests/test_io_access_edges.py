@@ -104,6 +104,21 @@ def test_file_handle_write(tmp_path: Path) -> None:
     assert _has(rels, "m.save", WRITES_TO, "resource::FILE::a.txt")
 
 
+def test_with_handle_binding_tracked(tmp_path: Path) -> None:
+    # (H) `with sqlite3.connect(...) as conn:` binds a handle whose constructor is
+    # (H) not itself a sink; the later conn.execute must still attribute the edge.
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def ins():\n"
+            "    with sqlite3.connect('db.sqlite') as conn:\n"
+            "        conn.execute('INSERT INTO t VALUES (1)')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::db.sqlite")
+
+
 def test_handle_reassignment_uses_last_binding(tmp_path: Path) -> None:
     # (H) A rebind must resolve to the last assignment in source order. Uses
     # (H) sqlite3.connect (a handle constructor that is NOT itself a sink) so the
