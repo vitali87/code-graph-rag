@@ -69,3 +69,36 @@ def test_func_slice_literal_value_is_referenced(
     assert any(t.endswith(".goref.m.handlerA") for _f, t in edges), sorted(
         e for e in edges if "handlerA" in e[1]
     )
+
+
+def test_module_var_assigned_function_value_is_referenced(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) cobra's `var preExecHookFn = preExecHook`: a package-level var bound to a
+    # (H) bare function value, invoked later through the var. The assignment
+    # (H) references the function even in a file with no calls of its own.
+    _project(
+        temp_repo,
+        "func preExecHook() {}\nvar preExecHookFn = preExecHook\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="go")
+    edges = _edges(mock_ingestor)
+    assert any(t.endswith(".goref.m.preExecHook") for _f, t in edges), sorted(
+        e for e in edges if "preExecHook" in e[1]
+    )
+
+
+def test_local_short_var_assigned_function_value_is_referenced(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `hook := preExecHook` inside a function binds the function to a local,
+    # (H) then hands it onward; the bind references it (mirrors the module var).
+    _project(
+        temp_repo,
+        "func preExecHook() {}\nfunc use() interface{} {\n\thook := preExecHook\n\treturn hook\n}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="go")
+    edges = _edges(mock_ingestor)
+    assert any(t.endswith(".goref.m.preExecHook") for _f, t in edges), sorted(
+        e for e in edges if "preExecHook" in e[1]
+    )

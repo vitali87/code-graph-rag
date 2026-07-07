@@ -116,16 +116,27 @@ _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 # (H) Assignment node type -> RHS field, per language family: Python `assignment`
 # (H) and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
 # (H) `right`; a JS/TS `variable_declarator` (const cb = handler) carries it in
-# (H) `value`.
+# (H) `value`. Go binds a func value the same way (`var preExecHookFn = preExecHook`,
+# (H) `hook := preExecHook`, `x = fn`); its RHS sits behind an expression_list,
+# (H) unwrapped in the walker.
 _ASSIGNMENT_RHS_FIELDS = {
     cs.TS_PY_ASSIGNMENT: cs.TS_FIELD_RIGHT,
     cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
+    cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
+    cs.TS_GO_SHORT_VAR_DECLARATION: cs.TS_FIELD_RIGHT,
+    cs.TS_GO_ASSIGNMENT_STATEMENT: cs.TS_FIELD_RIGHT,
 }
 # (H) RHS node types that name a callable value: a bare identifier, a Python
-# (H) attribute (mod.fn), or a JS/TS member expression (handlers.run).
+# (H) attribute (mod.fn), a JS/TS member expression (handlers.run), or a Go
+# (H) selector (pkg.Fn).
 _ASSIGNMENT_RHS_REF_TYPES = frozenset(
-    {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_MEMBER_EXPRESSION}
+    {
+        cs.TS_PY_IDENTIFIER,
+        cs.TS_PY_ATTRIBUTE,
+        cs.TS_MEMBER_EXPRESSION,
+        cs.TS_GO_SELECTOR_EXPRESSION,
+    }
 )
 # (H) JSX nodes that carry a component name (self-closing and opening; a
 # (H) closing element repeats the name, so a paired element emits once).
@@ -633,6 +644,17 @@ class CallProcessor:
                 # (H) keeps its function entries reachable; scan before the no-calls
                 # (H) early return so a file that only defines funcs and a table counts.
                 self._ingest_go_composite_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
+                # (H) A module-scope Go var bound to a bare function value
+                # (H) (var preExecHookFn = preExecHook) references it even in a file
+                # (H) with no calls, so scan before the no-calls early return.
+                self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
@@ -1367,7 +1389,11 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
-        if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
+        if (
+            language == cs.SupportedLanguage.PYTHON
+            or language in _JS_TS_LANGUAGES
+            or language == cs.SupportedLanguage.GO
+        ):
             self._ingest_assignment_function_references(
                 caller_node,
                 caller_spec,
@@ -1911,31 +1937,43 @@ class CallProcessor:
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
-                # (H) `export const persist = persistImpl as unknown as Persist`
-                # (H) wraps the aliased impl in TS casts; unwrap them so the bare
-                # (H) name/arrow underneath is what we reference.
-                if right is not None:
-                    right = self._unwrap_ts_cast(right)
-                # (H) A bare-name RHS names a callable; an inline arrow/function-expr
-                # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
-                # (H) function on the target for later invocation -- _emit_callback_edge
-                # (H) references it by position. A named arrow-const RHS is registered
-                # (H) by its name, so the by-position lookup simply finds nothing.
-                if right is not None and (
-                    right.type in _ASSIGNMENT_RHS_REF_TYPES
-                    or right.type in _INLINE_FUNC_VALUE_TYPES
-                ):
-                    self._emit_callback_edge(
-                        caller_spec,
-                        right,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn,
-                        cs.RelationshipType.REFERENCES,
-                    )
+                # (H) Go wraps every assignment RHS in an expression_list
+                # (H) (`var f = fn`, `a, b = g, h`); scan each value so the bare
+                # (H) func name(s) underneath are referenced. Other languages
+                # (H) carry a lone RHS node.
+                values = (
+                    list(right.named_children)
+                    if right is not None and right.type == cs.TS_GO_EXPRESSION_LIST
+                    else [right]
+                )
+                for value in values:
+                    if value is None:
+                        continue
+                    # (H) `export const persist = persistImpl as unknown as Persist`
+                    # (H) wraps the aliased impl in TS casts; unwrap them so the bare
+                    # (H) name/arrow underneath is what we reference.
+                    value = self._unwrap_ts_cast(value)
+                    # (H) A bare-name RHS names a callable; an inline arrow/function-expr
+                    # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
+                    # (H) function on the target for later invocation --
+                    # (H) _emit_callback_edge references it by position. A named
+                    # (H) arrow-const RHS is registered by its name, so the by-position
+                    # (H) lookup simply finds nothing.
+                    if (
+                        value.type in _ASSIGNMENT_RHS_REF_TYPES
+                        or value.type in _INLINE_FUNC_VALUE_TYPES
+                    ):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            value,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn,
+                            cs.RelationshipType.REFERENCES,
+                        )
             stack.extend(node.children)
 
     def _ingest_jsx_component_references(
