@@ -468,7 +468,7 @@ SHELL_DANGEROUS_PATTERNS_PIPELINE = (
 )
 
 # (H) Build system directory regex pattern dynamically
-_SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
+_SYSTEM_DIRS_PATTERN = "|".join(sorted(SHELL_SYSTEM_DIRECTORIES))
 
 # (H) Dangerous patterns for individual segments (per-command patterns)
 SHELL_DANGEROUS_PATTERNS_SEGMENT = (
