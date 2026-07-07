@@ -281,6 +281,22 @@ class ClassIngestMixin:
         # (H) solely via specializations) has no other node, so it must be kept. We
         # (H) cannot tell which until every file's definitions are in, so defer the
         # (H) forward declaration and decide in resolve_deferred_forward_declarations.
+        # (H) The class query captures a templated class twice: the inner
+        # (H) class_specifier AND its template_declaration wrapper. The wrapper is the
+        # (H) canonical node (it carries the template params and always registers with
+        # (H) its natural qn); the inner specifier is redundant. Drop the inner one
+        # (H) outright -- for bodied definitions too, not just bodyless forward decls --
+        # (H) so the class registers exactly once. Registering both suffixes the second
+        # (H) `@line`, splitting members (which attach to the bodied specifier) away
+        # (H) from the natural qn that callers reference, orphaning the whole class.
+        if (
+            language == cs.SupportedLanguage.CPP
+            and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            and class_node.parent is not None
+            and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+        ):
+            return
+
         type_spec = class_node
         if class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
             type_spec = next(
@@ -296,15 +312,6 @@ class ClassIngestMixin:
             and type_spec.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
             and type_spec.child_by_field_name(cs.FIELD_BODY) is None
         ):
-            # (H) The inner bodyless specifier of a template forward decl is redundant
-            # (H) with its template_declaration wrapper (the canonical template node),
-            # (H) which is deferred separately; drop the inner one outright.
-            if (
-                class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-                and class_node.parent is not None
-                and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
-            ):
-                return
             if allow_defer:
                 deferred_identity = id_.resolve_class_identity(
                     class_node, module_qn, language, lang_config, file_path
@@ -364,8 +371,15 @@ class ClassIngestMixin:
         parent_label, parent_qn = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
         )
+        # (H) For a templated class the canonical node is the template_declaration
+        # (H) wrapper, which has no `body` field. Its members -- base clause, fields,
+        # (H) methods -- live on the inner class_specifier (type_spec). Extract them
+        # (H) from there so they bind to the class's natural qn. For a plain class
+        # (H) type_spec is class_node, so this is a no-op for non-templates and for
+        # (H) Go/Rust (which never take the template_declaration branch).
+        member_node = type_spec if type_spec is not None else class_node
         rel.create_class_relationships(
-            class_node,
+            member_node,
             class_qn,
             module_qn,
             parent_label,
@@ -384,7 +398,9 @@ class ClassIngestMixin:
             # (H) Record this class's member-field types now (from the class body,
             # (H) usually a header) so out-of-line method bodies in other files can
             # (H) resolve `field_.method()` via the field's type at call resolution.
-            if field_types := CppTypeInferenceEngine().build_field_type_map(class_node):
+            if field_types := CppTypeInferenceEngine().build_field_type_map(
+                member_node
+            ):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.GO:
             # (H) Record Go struct field types so a field-hop receiver
@@ -403,7 +419,7 @@ class ClassIngestMixin:
             if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
                 self.class_field_guard_inner[class_qn] = guard_inner
         self._ingest_class_methods(
-            class_node,
+            member_node,
             class_qn,
             language,
             lang_queries,
