@@ -274,10 +274,16 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         return self._redirect_protocol_method(
             self._resolve_function_call(
-                call_name, module_qn, local_var_types, class_context, caller_qn
+                call_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
         )
 
@@ -470,6 +476,7 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         # (H) Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # (H) before the module-keyed cache/trie, which would otherwise return a sibling
@@ -493,8 +500,19 @@ class CallResolver:
             # (H) A chained call resolves via return-type inference only; it does NOT
             # (H) fall through to the trie fallback, because a hop returning a container
             # (H) (`Kids() []Command`) or an unknown type must drop the edge rather than
-            # (H) rebind the final method by bare name (a false `Command.Run`).
-            return self._resolve_chained_call(call_name, module_qn, local_var_types)
+            # (H) rebind the final method by bare name (a false `Command.Run`). C++ is the
+            # (H) exception: a `foo().bar()` receiver with an unrecordable return type
+            # (H) (`auto`/trailing/decltype, e.g. fmt's get_container(out).append) fell to
+            # (H) the bare-method trie before chained typing existed, so preserve that
+            # (H) fallback for C++ to avoid dropping edges the typing can't yet recover.
+            return self._resolve_chained_call(
+                call_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types
@@ -1269,6 +1287,9 @@ class CallResolver:
         object_expr: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        class_context: str | None = None,
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         # (H) Type of a chained receiver expression like `c.Root()` using the shared
         # (H) method_return_types map: the base is a typed local (`c` -> Command), and
@@ -1285,8 +1306,14 @@ class CallResolver:
         if cs.CHAR_PAREN_OPEN in base:
             # (H) A Rust chain rooted in an associated-function call
             # (H) (`Ping::new(msg).into_frame()`): type the base from the assoc fn's
-            # (H) recorded return type. Other paren bases stay unresolved.
-            current_type = self._infer_rust_assoc_base_type(base, module_qn)
+            # (H) recorded return type. A bare-identifier factory call
+            # (H) (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
+            # (H) return type. Other paren bases stay unresolved.
+            current_type = self._infer_rust_assoc_base_type(
+                base, module_qn
+            ) or self._infer_call_base_type(
+                base, module_qn, local_var_types, class_context, caller_qn, language
+            )
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -1310,6 +1337,60 @@ class CallResolver:
             self._resolve_class_qn_from_type(type_name, import_map, module_qn)
             or type_name
         )
+
+    def _infer_call_base_type(
+        self,
+        base: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str | None:
+        # (H) `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
+        # (H) Resolve the callee to its function/method qn (a sibling static method
+        # (H) `Owner.parser` or a free `make`, never the same-named class -- the
+        # (H) registry holds only callables) and return its recorded return type. A
+        # (H) `::`-qualified callee is the Rust assoc path's job, handled by the caller.
+        callee = base.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if not callee or cs.SEPARATOR_DOUBLE_COLON in callee:
+            return None
+        resolved = self.resolve_function_call(
+            callee, module_qn, local_var_types, class_context, caller_qn, language
+        )
+        if resolved is None:
+            return None
+        return_type = self.type_inference.method_return_types.get(resolved[1])
+        if not return_type:
+            return None
+        return self._resolve_type_to_class_qn(return_type, module_qn)
+
+    def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
+        # (H) Resolve a recorded return-type path to a registered CLASS qn. A factory
+        # (H) return type names a class, but the plain class-name resolver can return a
+        # (H) same-named factory METHOD (nlohmann's basic_json has both a `parser` class
+        # (H) and a `parser()` factory), so filter to class-labeled nodes. Try the
+        # (H) import-aware resolver first (same-file bare types, imports), then a
+        # (H) class-only suffix match on the qualified path, then on the bare name.
+        candidate = self._chain_class_qn(type_path, module_qn)
+        if candidate and self.function_registry.get(candidate) == cs.NodeLabel.CLASS:
+            return candidate
+        matches = [
+            qn
+            for qn in self.function_registry.find_ending_with(type_path)
+            if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+        ]
+        if not matches and cs.SEPARATOR_DOT in type_path:
+            simple = type_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            matches = [
+                qn
+                for qn in self.function_registry.find_ending_with(simple)
+                if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+            ]
+        if not matches:
+            return None
+        matches.sort(key=lambda qn: (len(qn), qn))
+        return matches[0]
 
     def _infer_rust_assoc_base_type(self, base: str, module_qn: str) -> str | None:
         # (H) `Ping::new(msg)` -> the return type recorded for `Ping::new` (Ping).
@@ -1344,6 +1425,9 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
+        class_context: str | None = None,
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
@@ -1357,7 +1441,14 @@ class CallResolver:
             self.type_inference.python_type_inference._infer_expression_return_type(
                 object_expr, module_qn, local_var_types
             )
-            or self._infer_chained_object_type(object_expr, module_qn, local_var_types)
+            or self._infer_chained_object_type(
+                object_expr,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
         )
         if object_type:
             full_object_type = object_type
@@ -1390,6 +1481,27 @@ class CallResolver:
                     obj_type=object_type,
                 )
                 return inherited_method
+
+        # (H) C/C++ only, and ONLY when the receiver type was never inferred: its return
+        # (H) type is unrecordable (`auto`/trailing/decltype, e.g. fmt's
+        # (H) get_container(out).append). Before chained typing existed the bare method
+        # (H) name resolved via the trie, so fall back to it here rather than dropping an
+        # (H) edge that used to land. When the type WAS inferred but lacks the method, we
+        # (H) must NOT rebind to an unrelated same-named method -- drop instead. C shares
+        # (H) the field_expression call shape but has no method dispatch, so it always
+        # (H) lands here = its exact prior behaviour. Go/Rust deliberately drop.
+        if not object_type and language in (
+            cs.SupportedLanguage.CPP,
+            cs.SupportedLanguage.C,
+        ):
+            return self._resolve_function_call(
+                final_method,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
 
         return None
 
