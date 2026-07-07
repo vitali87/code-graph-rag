@@ -104,6 +104,24 @@ def test_file_handle_write(tmp_path: Path) -> None:
     assert _has(rels, "m.save", WRITES_TO, "resource::FILE::a.txt")
 
 
+def test_handle_reassignment_uses_last_binding(tmp_path: Path) -> None:
+    # (H) A rebind must resolve to the last assignment in source order. Uses
+    # (H) sqlite3.connect (a handle constructor that is NOT itself a sink) so the
+    # (H) only edge comes from handle attribution, isolating traversal order.
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def ins():\n"
+            "    conn = sqlite3.connect('first.db')\n"
+            "    conn = sqlite3.connect('second.db')\n"
+            "    conn.execute('INSERT INTO t VALUES (1)')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::second.db")
+    assert not _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::first.db")
+
+
 def test_db_handle_select_is_read(tmp_path: Path) -> None:
     files = {
         "m.py": (

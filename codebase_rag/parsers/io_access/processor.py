@@ -75,10 +75,14 @@ class IOAccessProcessor:
         ctor_by_name: dict[str, HandleConstructor],
     ) -> dict[str, HandleBinding]:
         handles: dict[str, HandleBinding] = {}
-        stack = list(caller_node.children)
+        # (H) Forward pre-order DFS so a rebind resolves to the last assignment in
+        # (H) source order; `reversed` on the pushed children keeps left-to-right.
+        # (H) ponytail: source-order-last wins; control-flow branches are not
+        # (H) path-sensitive, add a CFG pass if branch-precise handles ever matter.
+        stack = [caller_node]
         while stack:
             node = stack.pop()
-            stack.extend(node.children)
+            stack.extend(reversed(node.children))
             if node.type != cs.TS_PY_ASSIGNMENT:
                 continue
             left = node.child_by_field_name(cs.TS_FIELD_LEFT)
