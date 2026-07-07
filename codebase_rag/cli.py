@@ -17,6 +17,7 @@ from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
+from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
@@ -184,6 +185,12 @@ def _maybe_start_stack() -> None:
         raise typer.Exit(1) from e
 
 
+def _capture_selection(capture: list[str] | None) -> CaptureSelection:
+    # (H) Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
+    # (H) a single run can override it (later tokens win in the resolver).
+    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -192,6 +199,7 @@ def _run_graph_sync(
     interactive_setup: bool,
     clean: bool = False,
     output: str | None = None,
+    capture: list[str] | None = None,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
@@ -221,6 +229,7 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            capture=_capture_selection(capture),
         )
         updater.run()
         cgr_state.record_sync(project_name)
@@ -351,6 +360,11 @@ def start(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -441,6 +455,7 @@ def start(
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
+            capture=capture,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
@@ -525,6 +540,11 @@ def index(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -558,6 +578,7 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
+            capture=_capture_selection(capture),
         )
 
         updater.run()

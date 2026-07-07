@@ -677,6 +677,7 @@ The knowledge graph uses the following node types and relationships:
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
+| Resource | `{qualified_name: string, name: string, kind: string}` |
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
@@ -719,6 +720,8 @@ The knowledge graph uses the following node types and relationships:
 | Function, Method | CALLS | Function, Method |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
+| Module, Function, Method | READS_FROM | Resource |
+| Module, Function, Method | WRITES_TO | Resource |
 <!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration

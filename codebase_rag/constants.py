@@ -242,6 +242,7 @@ ONEOF_INTERFACE = "interface_node"
 ONEOF_ENUM = "enum_node"
 ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
+ONEOF_RESOURCE = "resource"
 
 # (H) CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -605,6 +606,7 @@ class NodeLabel(StrEnum):
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
     EXTERNAL_MODULE = "ExternalModule"
+    RESOURCE = "Resource"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -624,6 +626,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
     NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.RESOURCE: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -652,6 +655,93 @@ class RelationshipType(StrEnum):
     REFERENCES = "REFERENCES"
     INSTANTIATES = "INSTANTIATES"
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
+    READS_FROM = "READS_FROM"
+    WRITES_TO = "WRITES_TO"
+
+
+class CaptureGroup(StrEnum):
+    STRUCTURE = "structure"
+    CALLS = "calls"
+    TYPES = "types"
+    IMPORTS = "imports"
+    IO = "io"
+
+
+# (H) Each relationship type belongs to exactly one capture group. The guard
+# (H) below enforces total coverage, so a newly added RelationshipType cannot
+# (H) silently escape the capture model.
+CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
+    CaptureGroup.STRUCTURE: frozenset(
+        {
+            RelationshipType.CONTAINS_PACKAGE,
+            RelationshipType.CONTAINS_FOLDER,
+            RelationshipType.CONTAINS_FILE,
+            RelationshipType.CONTAINS_MODULE,
+            RelationshipType.DEFINES,
+            RelationshipType.DEFINES_METHOD,
+        }
+    ),
+    CaptureGroup.CALLS: frozenset(
+        {
+            RelationshipType.CALLS,
+            RelationshipType.REFERENCES,
+            RelationshipType.INSTANTIATES,
+        }
+    ),
+    CaptureGroup.TYPES: frozenset(
+        {
+            RelationshipType.INHERITS,
+            RelationshipType.IMPLEMENTS,
+            RelationshipType.IMPLEMENTS_MODULE,
+            RelationshipType.OVERRIDES,
+        }
+    ),
+    CaptureGroup.IMPORTS: frozenset(
+        {
+            RelationshipType.IMPORTS,
+            RelationshipType.EXPORTS,
+            RelationshipType.EXPORTS_MODULE,
+            RelationshipType.DEPENDS_ON_EXTERNAL,
+        }
+    ),
+    CaptureGroup.IO: frozenset(
+        {
+            RelationshipType.READS_FROM,
+            RelationshipType.WRITES_TO,
+        }
+    ),
+}
+
+# (H) Node labels a group exclusively owns; the label is captured only while the
+# (H) owning group has at least one enabled relationship. Labels owned by no
+# (H) group are always captured.
+CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
+    CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
+}
+
+# (H) Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
+DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
+    {
+        CaptureGroup.STRUCTURE,
+        CaptureGroup.CALLS,
+        CaptureGroup.TYPES,
+        CaptureGroup.IMPORTS,
+    }
+)
+
+CAPTURE_TOKEN_ALL = "all"
+CAPTURE_TOKEN_NONE = "none"
+CAPTURE_DROP_PREFIX = "-"
+CAPTURE_ADD_PREFIX = "+"
+CAPTURE_TOKEN_SEPARATORS = ",; "
+
+_capture_covered = frozenset().union(*CAPTURE_GROUP_RELS.values())
+_capture_missing = set(RelationshipType) - _capture_covered
+if _capture_missing:
+    raise RuntimeError(
+        f"RelationshipType(s) missing from CAPTURE_GROUP_RELS: {_capture_missing}. "
+        "Every RelationshipType MUST belong to exactly one capture group."
+    )
 
 
 NODE_PROJECT = NodeLabel.PROJECT

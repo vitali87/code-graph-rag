@@ -160,6 +160,11 @@ HELP_INTERACTIVE_SETUP = (
     "Show interactive prompt to select which detected directories to keep. "
     "Without this flag, all directories matching ignore patterns are automatically excluded."
 )
+HELP_CAPTURE = (
+    "Which relationships to capture. Groups (structure, calls, types, imports, io), "
+    "'all'/'none' as a base, or +TYPE / -TYPE overrides. Repeatable. Overrides "
+    "CGR_CAPTURE for this run. Default: core groups on, io opt-in."
+)
 
 HELP_ASK_AGENT = (
     "Run a single query in non-interactive mode and exit. "
