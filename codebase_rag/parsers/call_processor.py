@@ -189,9 +189,10 @@ class CallProcessor:
         # (H) fixpoint in finalize, so factory and call site may be in any file order.
         self._returned_callables: dict[str, set[str]] = {}
         self._factory_calls: list[_FactoryCall] = []
-        io_enabled = (capture if capture is not None else ALL_ENABLED).io_enabled
         self._io_processor = IOAccessProcessor(
-            ingestor, import_processor, enabled=io_enabled
+            ingestor,
+            import_processor,
+            selection=capture if capture is not None else ALL_ENABLED,
         )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:

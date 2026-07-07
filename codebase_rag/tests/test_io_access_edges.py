@@ -178,6 +178,34 @@ def test_db_handle_insert_is_write(tmp_path: Path) -> None:
     assert _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::db.sqlite")
 
 
+def test_write_only_capture_drops_dangling_read_resource(tmp_path: Path) -> None:
+    # (H) With only WRITES_TO enabled, a read-only sink must not persist a
+    # (H) Resource node whose READS_FROM edge the filter drops (no orphan node).
+    capture = resolve_capture(
+        [cs.CAPTURE_TOKEN_NONE, f"{cs.CAPTURE_ADD_PREFIX}{WRITES_TO}"]
+    )
+    parsers, queries = load_parsers()
+    if "python" not in parsers:
+        pytest.skip("python parser not available")
+    (tmp_path / "m.py").write_text(
+        "import os\n\ndef cfg():\n    os.getenv('HOME')\n", encoding="utf-8"
+    )
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).run()
+    node_qns = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock.ensure_node_batch.call_args_list
+        if len(c.args) >= 2
+    }
+    assert "resource::ENV::HOME" not in node_qns
+
+
 def test_plain_call_emits_no_io(tmp_path: Path) -> None:
     files = {
         "m.py": "def helper():\n    return 1\n\ndef run():\n    helper()\n",

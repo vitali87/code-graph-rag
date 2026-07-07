@@ -3,6 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..import_processor import ImportProcessor
 from .constants import (
@@ -31,16 +32,15 @@ class IOAccessProcessor:
         self,
         ingestor: IngestorProtocol,
         import_processor: ImportProcessor,
-        enabled: bool = True,
+        selection: CaptureSelection,
     ) -> None:
         self.ingestor = ingestor
         # (H) import_processor owns import_mapping[module_qn][local] = full_name,
         # (H) used to expand a callee head token to its imported module path.
         self._import_processor = import_processor
-        # (H) When the io capture group is disabled, skip the body walk entirely
-        # (H) (the filtering ingestor would drop the edges anyway, but this also
-        # (H) saves the work).
-        self._enabled = enabled
+        # (H) When neither I/O edge is enabled, skip the body walk entirely.
+        self._selection = selection
+        self._enabled = selection.io_enabled
 
     def process_io_for_caller(
         self,
@@ -187,6 +187,11 @@ class IOAccessProcessor:
         kind: ResourceKind,
         identity: str,
     ) -> None:
+        # (H) Only enabled edges survive the filter; if none do, skip the Resource
+        # (H) node too so selective capture never leaves an orphaned I/O node.
+        rels = [r for r in self._rels(direction) if self._selection.rel_enabled(r)]
+        if not rels:
+            return
         resource_qn = RESOURCE_QN_FORMAT.format(kind=kind.value, identity=identity)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.RESOURCE,
@@ -196,7 +201,7 @@ class IOAccessProcessor:
                 KEY_KIND: kind.value,
             },
         )
-        for rel in self._rels(direction):
+        for rel in rels:
             self.ingestor.ensure_relationship_batch(
                 caller_spec,
                 rel,
