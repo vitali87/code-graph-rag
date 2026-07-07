@@ -192,6 +192,40 @@ jobs:
           docker rm memgraph || true
         shell: bash
 
+  binary-smoke:
+    name: Binary Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full
+          uv add --dev pyinstaller
+
+      - name: Build binary
+        run: uv run python build_binary.py
+
+      - name: Test binary
+        run: ./dist/code-graph-rag-* --version
+
   pr-title-check:
     name: PR Title Convention
     runs-on: ubuntu-latest
@@ -231,7 +265,7 @@ jobs:
     name: All Checks Pass
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, typecheck, test-unit, test-integration]
+    needs: [lint, typecheck, test-unit, test-integration, binary-smoke]
     timeout-minutes: 5
 
     steps:
@@ -241,6 +275,7 @@ jobs:
           echo "Typecheck: ${{ needs.typecheck.result }}"
           echo "Unit Tests: ${{ needs.test-unit.result }}"
           echo "Integration Tests: ${{ needs.test-integration.result }}"
+          echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "❌ Lint failed"
@@ -256,6 +291,10 @@ jobs:
           fi
           if [[ "${{ needs.test-integration.result }}" != "success" ]]; then
             echo "❌ Integration tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.binary-smoke.result }}" != "success" ]]; then
+            echo "❌ Binary smoke test failed"
             exit 1
           fi
           echo "✅ All checks passed!"
