@@ -72,3 +72,26 @@ def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
         c for c in calls if "parse" in c[1]
     )
     assert ("crate.f.Owner.parse_impl", "crate.f.Aaa.parse") not in calls
+
+
+def test_return_type_path_normalizes_template_qualified_scope() -> None:
+    # (H) A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
+    # (H) reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
+    # (H) leaks the `<T>` template arguments, which no class QN carries.
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp.utils import extract_return_type_name
+
+    parsers, _ = load_parsers()
+    tree = parsers["cpp"].parse(b"Outer<T>::Inner make() { return {}; }\n")
+
+    def find_fn(node):
+        if node.type == "function_definition":
+            return node
+        for child in node.children:
+            if (found := find_fn(child)) is not None:
+                return found
+        return None
+
+    fn = find_fn(tree.root_node)
+    assert fn is not None
+    assert extract_return_type_name(fn) == "Outer.Inner"

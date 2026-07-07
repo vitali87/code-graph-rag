@@ -275,6 +275,17 @@ def _get_inner_function_node(node: Node) -> Node:
     return node
 
 
+def _scope_segment_name(scope: Node) -> str | None:
+    # (H) The name of one scope segment of a qualified return type. A namespace or
+    # (H) plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
+    # (H) must reduce to its `type_identifier` -- the raw text carries `<T>` template
+    # (H) arguments that no registry class QN holds, so it would never suffix-match.
+    if scope.type == cs.CppNodeType.TEMPLATE_TYPE:
+        name = scope.child_by_field_name(cs.FIELD_NAME)
+        return safe_decode_text(name) if name is not None else None
+    return safe_decode_text(scope)
+
+
 def _return_type_path(type_node: Node) -> str | None:
     # (H) Reduce a return-type node to a dotted namespace-qualified class path:
     # (H) `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
@@ -296,7 +307,7 @@ def _return_type_path(type_node: Node) -> str | None:
                 current = current.child_by_field_name(cs.FIELD_NAME)
             case cs.CppNodeType.QUALIFIED_IDENTIFIER:
                 scope = current.child_by_field_name(cs.FIELD_SCOPE)
-                if scope is not None and (scope_name := safe_decode_text(scope)):
+                if scope is not None and (scope_name := _scope_segment_name(scope)):
                     parts.append(scope_name)
                 current = current.child_by_field_name(cs.FIELD_NAME)
             case _:
