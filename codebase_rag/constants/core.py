@@ -1,35 +1,15 @@
 from enum import StrEnum
 from typing import NamedTuple
 
+from .ast_nodes import INDEX_INDEX, INDEX_INIT, INDEX_MOD
+from .languages import EXT_JS, EXT_JSX, EXT_TS, EXT_TSX, SupportedLanguage
+
 
 class PyInstallerPackage(NamedTuple):
     name: str
     collect_all: bool = False
     collect_data: bool = False
     hidden_import: str | None = None
-
-
-class ModelRole(StrEnum):
-    ORCHESTRATOR = "orchestrator"
-    CYPHER = "cypher"
-
-
-class Provider(StrEnum):
-    OLLAMA = "ollama"
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    GOOGLE = "google"
-    AZURE = "azure"
-    LITELLM_PROXY = "litellm_proxy"
-
-
-class Color(StrEnum):
-    GREEN = "green"
-    YELLOW = "yellow"
-    CYAN = "cyan"
-    RED = "red"
-    MAGENTA = "magenta"
-    BLUE = "blue"
 
 
 class KeyBinding(StrEnum):
@@ -40,122 +20,20 @@ class KeyBinding(StrEnum):
     SHIFT_TAB = "s-tab"
 
 
-class PermissionMode(StrEnum):
-    NORMAL = "normal"
-    YOLO = "yolo"
-
-
-class StyleModifier(StrEnum):
-    BOLD = "bold"
-    DIM = "dim"
-    NONE = ""
-
-
-class FileAction(StrEnum):
-    READ = "read"
-    EDIT = "edit"
-
-
-DEFAULT_MODEL_ROLE = "model"
-
-BINARY_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".pdf",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".bmp",
-        ".ico",
-        ".tiff",
-        ".webp",
-    }
-)
-
-# (H) Source file extensions by language
-EXT_PY = ".py"
-EXT_JS = ".js"
-EXT_JSX = ".jsx"
-EXT_TS = ".ts"
-EXT_TSX = ".tsx"
-EXT_RS = ".rs"
-EXT_GO = ".go"
-EXT_SCALA = ".scala"
-EXT_SC = ".sc"
-EXT_JAVA = ".java"
-EXT_CLASS = ".class"
-EXT_CPP = ".cpp"
-EXT_H = ".h"
-EXT_HPP = ".hpp"
-EXT_CC = ".cc"
-EXT_CXX = ".cxx"
-EXT_HXX = ".hxx"
-EXT_HH = ".hh"
-EXT_IXX = ".ixx"
-EXT_CPPM = ".cppm"
-EXT_CCM = ".ccm"
-EXT_C = ".c"
-EXT_PHP = ".php"
-EXT_LUA = ".lua"
-
-# (H) File extension tuples by language
-PY_EXTENSIONS = (EXT_PY,)
-JS_EXTENSIONS = (EXT_JS, EXT_JSX)
-TS_EXTENSIONS = (EXT_TS,)
-TSX_EXTENSIONS = (EXT_TSX,)
 JS_TS_ALL_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_TS, EXT_TSX)
-RS_EXTENSIONS = (EXT_RS,)
-GO_EXTENSIONS = (EXT_GO,)
-SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
-JAVA_EXTENSIONS = (EXT_JAVA,)
-C_EXTENSIONS = (EXT_C,)
-CPP_EXTENSIONS = (
-    EXT_CPP,
-    EXT_H,
-    EXT_HPP,
-    EXT_CC,
-    EXT_CXX,
-    EXT_HXX,
-    EXT_HH,
-    EXT_IXX,
-    EXT_CPPM,
-    EXT_CCM,
-)
-PHP_EXTENSIONS = (EXT_PHP,)
-LUA_EXTENSIONS = (EXT_LUA,)
-
-# (H) A C++ operator overload / user-defined literal is defined with the reserved
-# (H) `operator` keyword heading the name (`operator==`, `operator[]`, `operator""_json`).
-# (H) It is invoked by operator/literal syntax, not a named call, so it is a dead-code
-# (H) reachability root; the keyword can only head such definitions, so this prefix on a
-# (H) C++ file uniquely identifies them (member or free function).
-CPP_OPERATOR_PREFIX = "operator"
 
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
+
 PKG_CARGO_TOML = "Cargo.toml"
+
 PKG_CMAKE_LISTS = "CMakeLists.txt"
+
 PKG_MAKEFILE = "Makefile"
+
 PKG_VCXPROJ_GLOB = "*.vcxproj"
+
 PKG_CONANFILE = "conanfile.txt"
-
-DEFAULT_REGION = "us-central1"
-DEFAULT_MODEL = "llama3.2"
-DEFAULT_API_KEY = "ollama"
-
-ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
-ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
-ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
-ENV_AZURE_API_KEY = "AZURE_API_KEY"
-ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
-ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
-
-HELP_ARG = "help"
-
-
-class GoogleProviderType(StrEnum):
-    GLA = "gla"
-    VERTEX = "vertex"
 
 
 class CppFrontend(StrEnum):
@@ -165,55 +43,26 @@ class CppFrontend(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+
 OLLAMA_HEALTH_PATH = "/api/tags"
+
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
 V1_PATH = "/v1"
 
 # (H) HTTP status codes
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
+
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
+
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
-KEY_NODES = "nodes"
-KEY_RELATIONSHIPS = "relationships"
-KEY_NODE_ID = "node_id"
-KEY_LABELS = "labels"
-KEY_LABEL = "label"
-KEY_PROPERTIES = "properties"
-KEY_FROM_ID = "from_id"
-KEY_TO_ID = "to_id"
-KEY_TYPE = "type"
-KEY_METADATA = "metadata"
-KEY_TOTAL_NODES = "total_nodes"
-KEY_TOTAL_RELATIONSHIPS = "total_relationships"
-KEY_NODE_LABELS = "node_labels"
-KEY_RELATIONSHIP_TYPES = "relationship_types"
-KEY_EXPORTED_AT = "exported_at"
-KEY_PARSER = "parser"
-KEY_NAME = "name"
-KEY_QUALIFIED_NAME = "qualified_name"
-KEY_IS_PROPERTY = "is_property"
 KEY_IS_MACRO = "is_macro"
-KEY_QUERY = "query"
-KEY_RESPONSE = "response"
-KEY_START_LINE = "start_line"
-KEY_END_LINE = "end_line"
-KEY_PATH = "path"
-KEY_ABSOLUTE_PATH = "absolute_path"
-KEY_EXTENSION = "extension"
-KEY_MODULE_TYPE = "module_type"
-KEY_IMPLEMENTS_MODULE = "implements_module"
-KEY_PROPS = "props"
-KEY_CREATED = "created"
-KEY_FROM_VAL = "from_val"
-KEY_TO_VAL = "to_val"
-KEY_VERSION_SPEC = "version_spec"
-KEY_PREFIX = "prefix"
-KEY_PROJECT_NAME = "project_name"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 # (H) File names
@@ -224,231 +73,39 @@ ENCODING_UTF8 = "utf-8"
 
 # (H) Protobuf file names
 PROTOBUF_INDEX_FILE = "index.bin"
+
 PROTOBUF_NODES_FILE = "nodes.bin"
+
 PROTOBUF_RELS_FILE = "relationships.bin"
 
-# (H) Protobuf oneof field names
-ONEOF_PROJECT = "project"
-ONEOF_PACKAGE = "package"
-ONEOF_FOLDER = "folder"
-ONEOF_MODULE = "module"
-ONEOF_CLASS = "class_node"
-ONEOF_FUNCTION = "function"
-ONEOF_METHOD = "method"
-ONEOF_FILE = "file"
-ONEOF_EXTERNAL_PACKAGE = "external_package"
-ONEOF_EXTERNAL_MODULE = "external_module"
-ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
-ONEOF_MODULE_INTERFACE = "module_interface"
-ONEOF_INTERFACE = "interface_node"
-ONEOF_ENUM = "enum_node"
-ONEOF_TYPE = "type_node"
-ONEOF_UNION = "union_node"
-
-# (H) CLI error and info messages
-CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
-    "Error: --output/-o option requires --update-graph to be specified."
-)
-CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
-CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
-    "Error: --output-format json requires --ask-agent/-a; "
-    "it only applies to single-query output."
-)
-CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
-CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
-CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
-CLI_ERR_STARTUP = "Startup Error: {error}"
-CLI_ERR_CONFIG = "Configuration Error: {error}"
-CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
-CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
-CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
-CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
-
-CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
-CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
-CLI_MSG_WORKSPACE_SYNCING = "Syncing workspace '{name}' ({count} repos)..."
-CLI_MSG_WORKSPACE_SYNC_REPO = (
-    "[{idx}/{total}] Syncing {path} as project '{project_name}'"
-)
-CLI_MSG_WORKSPACE_EMPTY = (
-    "Workspace '{name}' has no repos (use cgr workspace add-repo)."
-)
-MSG_SYNCING_KNOWLEDGE_GRAPH = (
-    "[bold cyan]Syncing knowledge graph[/bold cyan] (incremental, --no-sync to skip)"
-)
-MSG_SYNCING_WORKSPACE = (
-    "[bold cyan]Syncing workspace '{name}'[/bold cyan] ({count} repos)"
-)
-CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
-CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
-CLI_MSG_CLEANING_DB = "Cleaning database..."
-CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
-CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
-CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
-CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
-CLI_ERR_PROJECT_NOT_FOUND = (
-    "Project '{project_name}' not found. Available projects: {projects}"
-)
-CLI_ERR_PROJECT_NAME_REQUIRED = (
-    "Error: --name is required and must be a non-empty project name."
-)
-CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
-CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
-CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
-CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
-CLI_MSG_INDEXING_AT = "Indexing codebase at: {path}"
-CLI_MSG_OUTPUT_TO = "Output will be written to: {path}"
-CLI_MSG_INDEXING_DONE = "Indexing process completed successfully!"
-CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
-CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
-CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
-CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
 PACKAGE_NAME = "code-graph-rag"
-CLI_MSG_VERSION = "{package} version {version}"
-CLI_MSG_HINT_TARGET_REPO = (
-    "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
-)
-CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
-CLI_MSG_CONNECTING_STATS = "Fetching graph statistics..."
-CLI_STATS_NODE_TITLE = "Node Statistics"
-CLI_STATS_REL_TITLE = "Relationship Statistics"
-CLI_STATS_COL_NODE_TYPE = "Node Type"
-CLI_STATS_COL_REL_TYPE = "Relationship Type"
-CLI_STATS_COL_COUNT = "Count"
-CLI_STATS_TOTAL_NODES = "Total Nodes"
-CLI_STATS_TOTAL_RELS = "Total Relationships"
-CLI_STATS_UNKNOWN = "Unknown"
-CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
-
-CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
-CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
-CLI_DEADCODE_COL_KIND = "Kind"
-CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
-CLI_DEADCODE_COL_LINES = "Lines"
-CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
-CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
-CLI_DEADCODE_NONE = "No unreachable functions or methods found."
-CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
-CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
-CLI_ERR_DEADCODE_NO_PROJECTS = (
-    "No projects found in the graph. Index a repository first with 'cgr start'."
-)
-CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
-    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
-)
-CLI_MSG_AUTO_EXCLUDE = (
-    "Auto-excluding common directories (venv, node_modules, .git, etc.). "
-    "Use --interactive-setup to customize."
-)
-
-UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
-UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
-UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
-UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
-UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
-UI_OPTIMIZATION_START = (
-    "[bold green]Starting {language} optimization session...[/bold green]"
-)
-UI_OPTIMIZATION_PANEL = (
-    "[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
-    " You'll be asked to approve each suggestion before implementation."
-    " Type 'exit' or 'quit' to end the session.[/bold yellow]"
-)
-UI_OPTIMIZATION_INIT = "[bold cyan]Initializing optimization session for {language} codebase: {path}[/bold cyan]"
-UI_GRAPH_EXPORT_SUCCESS = (
-    "[bold green]Graph exported successfully to: {path}[/bold green]"
-)
-UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
-UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
-UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
-UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
-UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
-UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
-UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-3.1-pro-preview)[/bold yellow]"
-UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
-  /model <provider:model> - Switch to a different model
-  /model                  - Show current model
-  /help                   - Show this help
-  exit, quit              - Exit the session"""
-UI_TOOL_ARGS_FORMAT = "    Arguments: {args}"
-UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
-UI_INPUT_PROMPT_HTML = (
-    "<ansigreen><b>{prompt}</b></ansigreen> <ansiyellow>{hint}</ansiyellow>: "
-)
-
-# (H) ModelConfig field names
-FIELD_PROVIDER = "provider"
-FIELD_MODEL_ID = "model_id"
-FIELD_API_KEY = "api_key"
-FIELD_ENDPOINT = "endpoint"
 
 # (H) Tool argument field names
 ARG_TARGET_CODE = "target_code"
+
 ARG_REPLACEMENT_CODE = "replacement_code"
+
 ARG_FILE_PATH = "file_path"
+
 ARG_CONTENT = "content"
+
 ARG_COMMAND = "command"
 
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
+
 SEPARATOR_SLASH = "/"
+
 # (H) Disambiguates definitions that share one qualified name (if/else import
 # (H) fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
 
 # (H) Path navigation
 PATH_CURRENT_DIR = "."
+
 PATH_PARENT_DIR = ".."
+
 GLOB_ALL = "*"
-# (H) JS/TS import specifier schemes that name genuinely external code (node
-# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
-# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
-JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
-    {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
-)
-# (H) Module file extensions stripped when turning a tsconfig `paths` target into a
-# (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
-# (H) compound suffixes are handled before the bare `.ts`.
-JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
-    ".d.ts",
-    ".tsx",
-    ".ts",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    ".js",
-)
-TSCONFIG_FILENAMES: tuple[str, ...] = (
-    "tsconfig.json",
-    "tsconfig.base.json",
-    "jsconfig.json",
-)
-# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
-# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# (H) unrelated aliases and there can be thousands of them under node_modules.
-TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
-    {"node_modules", "dist", "build", "out", ".git"}
-)
-JS_INDEX_STEM = "index"
-TS_COMPILER_OPTIONS_KEY = "compilerOptions"
-TS_PATHS_KEY = "paths"
-TS_BASE_URL_KEY = "baseUrl"
-PATH_RELATIVE_PREFIX = "./"
-PATH_PARENT_PREFIX = "../"
-CPP_IMPORT_PARTITION_PREFIX = "import :"
-CPP_PARTITION_PREFIX = "partition_"
-
-# (H) Trie internal keys
-TRIE_TYPE_KEY = "__type__"
-TRIE_QN_KEY = "__qn__"
-TRIE_INTERNAL_PREFIX = "__"
-
-
-class UniqueKeyType(StrEnum):
-    NAME = KEY_NAME
-    PATH = KEY_PATH
-    QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
 class DeadCodeFormat(StrEnum):
@@ -460,112 +117,6 @@ class QueryFormat(StrEnum):
     TABLE = "table"
     JSON = "json"
 
-
-# (H) Decorators whose presence marks a function/method as an implicit entry point
-# (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
-# (H) Pydantic validators/serializers the framework invokes by registration).
-DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
-    {
-        "route",
-        "get",
-        "post",
-        "callback",
-        "put",
-        "delete",
-        "patch",
-        "websocket",
-        "task",
-        "flow",
-        "fixture",
-        "command",
-        "cli",
-        "app",
-        "on_event",
-        "listener",
-        "validator",
-        "field_validator",
-        "model_validator",
-        "root_validator",
-        "field_serializer",
-        "model_serializer",
-        "computed_field",
-        "abstractmethod",
-    }
-)
-
-# (H) Go functions the runtime invokes with no explicit call site: `func init()`
-# (H) runs at package load (any number per package), `func main()` is the program
-# (H) entry. Both are reachability roots (like Python dunders), gated by the .go
-# (H) extension so same-named symbols in other languages are unaffected.
-GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
-
-# (H) Rust `fn main()` is the binary entry point, invoked by the runtime with no
-# (H) call site -- a reachability root (gated by .rs).
-RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
-
-# (H) Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
-# (H) via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,
-# (H) Drop::drop, serde, ...), never through an explicit call the graph can see.
-# (H) Rooting them by name (gated by .rs) mirrors the Python-dunder exemption: these
-# (H) names are conventionally reserved for trait impls, so a same-named user method
-# (H) that is genuinely dead is under-reported rather than mis-reported.
-RUST_TRAIT_METHOD_NAMES: frozenset[str] = frozenset(
-    {
-        "fmt",
-        "eq",
-        "ne",
-        "cmp",
-        "partial_cmp",
-        "hash",
-        "next",
-        "next_back",
-        "into_iter",
-        "size_hint",
-        "drop",
-        "clone",
-        "clone_from",
-        "default",
-        "from",
-        "from_str",
-        "try_from",
-        "into",
-        "try_into",
-        "deref",
-        "deref_mut",
-        "as_ref",
-        "as_mut",
-        "borrow",
-        "borrow_mut",
-        "poll",
-        "serialize",
-        "deserialize",
-        "source",
-        "add",
-        "add_assign",
-        "sub",
-        "sub_assign",
-        "mul",
-        "mul_assign",
-        "div",
-        "div_assign",
-        "rem",
-        "rem_assign",
-        "neg",
-        "not",
-        "bitand",
-        "bitand_assign",
-        "bitor",
-        "bitor_assign",
-        "bitxor",
-        "bitxor_assign",
-        "shl",
-        "shl_assign",
-        "shr",
-        "shr_assign",
-        "index",
-        "index_mut",
-    }
-)
 
 # (H) Java serialization hooks the java.io runtime invokes reflectively during
 # (H) (de)serialization -- never through a call the graph can see -- so they are
@@ -582,97 +133,6 @@ JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# (H) Base classes that mark a class as a structural interface: its method stubs
-# (H) are never call targets themselves (callers resolve to the implementations),
-# (H) so dead-code analysis roots every method the class defines.
-# (H) ponytail: direct bases only; transitive Protocol subclassing is not chased.
-PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
-
-# (H) Substrings in a node's file path that mark it as test code. Covers Python
-# (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (H) (foo.test.ts, foo.spec.tsx), the Jest __tests__/ directory, and the
-# (H) Node.js/mocha singular /test/ dir (express: 34 of 49 dead-code reports
-# (H) were test/ helpers). Matching is segment-anchored via the leading-slash
-# (H) normalization, so contest/ and latest/ do not match. Singular /spec/
-# (H) stays excluded: it collides with product code (a domain "spec" module),
-# (H) which would misclassify live code as test.
-TEST_PATH_PATTERNS: tuple[str, ...] = (
-    "test_",
-    "_test",
-    "conftest",
-    "/tests/",
-    "/test/",
-    ".test.",
-    ".spec.",
-    "__tests__",
-)
-
-
-class NodeLabel(StrEnum):
-    PROJECT = "Project"
-    PACKAGE = "Package"
-    FOLDER = "Folder"
-    FILE = "File"
-    MODULE = "Module"
-    CLASS = "Class"
-    FUNCTION = "Function"
-    METHOD = "Method"
-    INTERFACE = "Interface"
-    ENUM = "Enum"
-    TYPE = "Type"
-    UNION = "Union"
-    MODULE_INTERFACE = "ModuleInterface"
-    MODULE_IMPLEMENTATION = "ModuleImplementation"
-    EXTERNAL_PACKAGE = "ExternalPackage"
-    EXTERNAL_MODULE = "ExternalModule"
-
-
-_NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
-    NodeLabel.PROJECT: UniqueKeyType.NAME,
-    NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FOLDER: UniqueKeyType.PATH,
-    NodeLabel.FILE: UniqueKeyType.PATH,
-    NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.METHOD: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.INTERFACE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.ENUM: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.TYPE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.UNION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
-    NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
-}
-
-_missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
-if _missing_keys:
-    raise RuntimeError(
-        f"NodeLabel(s) missing from _NODE_LABEL_UNIQUE_KEYS: {_missing_keys}. "
-        "Every NodeLabel MUST have a unique key defined."
-    )
-
-
-class RelationshipType(StrEnum):
-    CONTAINS_PACKAGE = "CONTAINS_PACKAGE"
-    CONTAINS_FOLDER = "CONTAINS_FOLDER"
-    CONTAINS_FILE = "CONTAINS_FILE"
-    CONTAINS_MODULE = "CONTAINS_MODULE"
-    DEFINES = "DEFINES"
-    DEFINES_METHOD = "DEFINES_METHOD"
-    IMPORTS = "IMPORTS"
-    EXPORTS = "EXPORTS"
-    EXPORTS_MODULE = "EXPORTS_MODULE"
-    IMPLEMENTS_MODULE = "IMPLEMENTS_MODULE"
-    INHERITS = "INHERITS"
-    IMPLEMENTS = "IMPLEMENTS"
-    OVERRIDES = "OVERRIDES"
-    CALLS = "CALLS"
-    REFERENCES = "REFERENCES"
-    INSTANTIATES = "INSTANTIATES"
-    DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
-
 
 class AuditCheck(StrEnum):
     ORPHAN_NODE = "orphan_node"
@@ -685,15 +145,20 @@ class AuditCheck(StrEnum):
 
 # (H) Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
+
 AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
+
 AUDIT_DETAIL_UNDOCUMENTED_PROPERTY = (
     "{label} '{key}' has undocumented property '{prop}'"
 )
+
 AUDIT_DETAIL_MISSING_REQUIRED = "{label} '{key}' is missing required property '{prop}'"
+
 AUDIT_DETAIL_UNDOCUMENTED_RELATIONSHIP = (
     "({from_label})-[:{rel_type}]->({to_label}) is not documented"
     " in RELATIONSHIP_SCHEMAS"
 )
+
 AUDIT_DETAIL_DANGLING = (
     "({from_label} '{from_key}')-[:{rel_type}]->({to_label} '{to_key}')"
     " references a nonexistent node and would be dropped by the database"
@@ -701,30 +166,27 @@ AUDIT_DETAIL_DANGLING = (
 
 # (H) Live-graph audit details (doctor)
 AUDIT_DETAIL_ORPHAN_COUNT = "{count} {label} node(s) have no relationships"
+
 AUDIT_DETAIL_UNDOCUMENTED_PROPERTY_LIVE = (
     "{label} nodes carry undocumented property '{prop}'"
 )
+
 AUDIT_DETAIL_MISSING_REQUIRED_LIVE = (
     "{count} {label} node(s) are missing required properties"
 )
 
 # (H) Node schema property-string tokens ("{name: string, extension: string?}")
 SCHEMA_PROPS_BRACES = "{}"
-SCHEMA_OPTIONAL_SUFFIX = "?"
-SEPARATOR_COMMA = ","
 
-NODE_PROJECT = NodeLabel.PROJECT
+SCHEMA_OPTIONAL_SUFFIX = "?"
+
+SEPARATOR_COMMA = ","
 
 EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
 
 # (H) Byte size constants
 BYTES_PER_MB = 1024 * 1024
 
-# (H) Property keys
-KEY_PARAMETERS = "parameters"
-KEY_DECORATORS = "decorators"
-KEY_DOCSTRING = "docstring"
-KEY_IS_EXPORTED = "is_exported"
 # (H) Marks a method that overrides a method of an EXTERNAL stdlib base class
 # (H) (click's textwrap.TextWrapper subclass): invoked by the base's machinery,
 # (H) never by first-party code, so dead-code reachability roots it.
@@ -732,6 +194,7 @@ KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
+
 DOCSTRING_STRIP_CHARS = "'\" \n"
 
 # (H) Inline module path prefix
@@ -749,156 +212,61 @@ DEPENDENCY_FILES = frozenset(
         "composer.json",
     }
 )
+
 CSPROJ_SUFFIX = ".csproj"
-
-# (H) Cypher queries
-CYPHER_DEFAULT_LIMIT = 50
-
-_CYPHER_EMBEDDING_BASE = """
-MATCH (m:Module)-[:DEFINES]->(n)
-WHERE (n:Function OR n:Method)
-  AND m.qualified_name STARTS WITH ($project_name + '.')
-"""
-
-CYPHER_QUERY_EMBEDDINGS = (
-    _CYPHER_EMBEDDING_BASE
-    + """RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-       n.start_line AS start_line, n.end_line AS end_line,
-       m.path AS path
-"""
-)
-
-CYPHER_QUERY_PROJECT_NODE_IDS = _CYPHER_EMBEDDING_BASE + "RETURN id(n) AS node_id\n"
-
-
-class SupportedLanguage(StrEnum):
-    PYTHON = "python"
-    JS = "javascript"
-    TS = "typescript"
-    TSX = "tsx"
-    RUST = "rust"
-    GO = "go"
-    SCALA = "scala"
-    JAVA = "java"
-    C = "c"
-    CPP = "cpp"
-    PHP = "php"
-    LUA = "lua"
-
-
-class LanguageStatus(StrEnum):
-    FULL = "Fully Supported"
-    DEV = "In Development"
-
-
-class LanguageMetadata(NamedTuple):
-    status: LanguageStatus
-    additional_features: str
-    display_name: str
-
-
-LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
-    SupportedLanguage.PYTHON: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Type inference, decorators, nested functions",
-        "Python",
-    ),
-    SupportedLanguage.JS: LanguageMetadata(
-        LanguageStatus.FULL,
-        "ES6 modules, CommonJS, prototype methods, object methods, arrow functions",
-        "JavaScript",
-    ),
-    SupportedLanguage.TS: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
-        "TypeScript",
-    ),
-    SupportedLanguage.TSX: LanguageMetadata(
-        LanguageStatus.FULL,
-        "All TypeScript features plus JSX elements and components",
-        "TypeScript (TSX)",
-    ),
-    SupportedLanguage.C: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Functions, structs, unions, enums, preprocessor includes",
-        "C",
-    ),
-    SupportedLanguage.CPP: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros",
-        "C++",
-    ),
-    SupportedLanguage.LUA: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Local/global functions, metatables, closures, coroutines",
-        "Lua",
-    ),
-    SupportedLanguage.RUST: LanguageMetadata(
-        LanguageStatus.FULL,
-        "impl blocks, associated functions, macro_rules! macros",
-        "Rust",
-    ),
-    SupportedLanguage.JAVA: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Generics, annotations, modern features (records/sealed classes), concurrency, reflection",
-        "Java",
-    ),
-    SupportedLanguage.GO: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types",
-        "Go",
-    ),
-    SupportedLanguage.SCALA: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Case classes, objects",
-        "Scala",
-    ),
-    SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.FULL,
-        "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
-        "PHP",
-    ),
-}
-
 
 # (H) Tree-sitter AST node type constants
 FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
+
 FUNCTION_NODES_LAMBDA = (
     "lambda_expression",
     "arrow_function",
     "anonymous_function",
     "closure_expression",
 )
+
 FUNCTION_NODES_METHOD = (
     "method_declaration",
     "constructor_declaration",
     "destructor_declaration",
 )
+
 FUNCTION_NODES_TEMPLATE = (
     "template_declaration",
     "function_signature_item",
     "function_signature",
 )
+
 FUNCTION_NODES_GENERATOR = ("generator_function_declaration", "function_expression")
 
 CLASS_NODES_BASIC = ("class_declaration", "class_definition")
+
 CLASS_NODES_STRUCT = ("struct_declaration", "struct_specifier", "struct_item")
+
 CLASS_NODES_INTERFACE = ("interface_declaration", "trait_declaration", "trait_item")
+
 CLASS_NODES_ENUM = ("enum_declaration", "enum_item", "enum_specifier")
+
 CLASS_NODES_TYPE_ALIAS = ("type_alias_declaration", "type_item")
+
 CLASS_NODES_UNION = ("union_specifier", "union_item")
 
 CALL_NODES_BASIC = ("call_expression", "function_call")
+
 CALL_NODES_METHOD = (
     "method_invocation",
     "member_call_expression",
     "field_expression",
 )
+
 CALL_NODES_OPERATOR = ("binary_expression", "unary_expression", "update_expression")
+
 CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
 
 IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
+
 IMPORT_NODES_FROM = ("import_from_statement",)
+
 # (H) variable_declaration: CommonJS `var X = require(...)` (express) binds
 # (H) imports exactly like const/let lexical_declarations.
 IMPORT_NODES_MODULE = (
@@ -906,34 +274,13 @@ IMPORT_NODES_MODULE = (
     "variable_declaration",
     "export_statement",
 )
+
 IMPORT_NODES_INCLUDE = ("preproc_include",)
 
-# (H) JS/TS specific node types
-JS_TS_FUNCTION_NODES = (
-    "function_declaration",
-    "generator_function_declaration",
-    "function_expression",
-    "arrow_function",
-    "method_definition",
-)
-JS_TS_CLASS_NODES = ("class_declaration", "class")
-JS_TS_IMPORT_NODES = (
-    "import_statement",
-    "lexical_declaration",
-    "variable_declaration",
-    "export_statement",
-)
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
 
-# (H) C++ import node types
-CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
-
-# (H) Index file names
-INDEX_INIT = "__init__"
-INDEX_INDEX = "index"
-INDEX_MOD = "mod"
 INDEX_LUA_INIT = "init"
 
 # (H) File stems whose module is importable through the CONTAINING directory's
@@ -942,198 +289,28 @@ MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
 
-# (H) AST field names for name extraction
-NAME_FIELDS = ("identifier", "name", "id")
-
-# (H) Tree-sitter field name constants for child_by_field_name
-FIELD_OBJECT = "object"
-FIELD_PROPERTY = "property"
-FIELD_NAME = "name"
-FIELD_ALIAS = "alias"
-FIELD_MODULE_NAME = "module_name"
-FIELD_ARGUMENTS = "arguments"
-FIELD_BODY = "body"
-FIELD_RETURN_TYPE = "return_type"
-FIELD_CONSTRUCTOR = "constructor"
-FIELD_DECLARATOR = "declarator"
-FIELD_PARAMETERS = "parameters"
-FIELD_RECEIVER = "receiver"
-FIELD_TYPE = "type"
-# (H) The wrapped function/class inside a Python decorated_definition node.
-FIELD_DEFINITION = "definition"
-FIELD_RESULT = "result"
-# (H) Rust impl `trait`/`type` fields and a trait's supertrait `bounds`.
-FIELD_TRAIT = "trait"
-FIELD_BOUNDS = "bounds"
-TS_RS_TRAIT_BOUNDS = "trait_bounds"
-FIELD_VALUE = "value"
-FIELD_LEFT = "left"
-FIELD_RIGHT = "right"
-FIELD_FIELD = "field"
-FIELD_SCOPE = "scope"
-FIELD_SUPERCLASS = "superclass"
-FIELD_SUPERCLASSES = "superclasses"
-FIELD_INTERFACES = "interfaces"
-
-# (H) Method name constants for getattr/hasattr
-METHOD_FIND_WITH_PREFIX = "find_with_prefix"
-METHOD_ITEMS = "items"
-
-# (H) Image file extensions for chat image handling
-MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
-MIME_TYPE_PDF = "application/pdf"
-MIME_TYPE_FALLBACK = "application/octet-stream"
-YES_ANSWER = "y"
-YES_ANSWERS = frozenset({"y", "yes", ""})
-NO_ANSWERS = frozenset({"n", "no"})
 SHIFT_TAB_ESCAPE = b"\x1b[Z"
-DIFF_GIT_HEADER = "diff --git "
+
 MARKDOWN_FENCE = "```"
+
 MARKDOWN_FENCE_DIFF = "```diff"
-DIFF_CONTINUATION_PREFIXES = (
-    "diff --git ",
-    "index ",
-    "--- ",
-    "+++ ",
-    "@@ ",
-    "+",
-    "-",
-    " ",
-    "\\ ",
-    "new file mode",
-    "deleted file mode",
-    "old mode",
-    "new mode",
-    "rename from ",
-    "rename to ",
-    "similarity index ",
-    "Binary files ",
-)
-
-# (H) CLI exit commands
-EXIT_COMMANDS = frozenset({"exit", "quit"})
-
-# (H) CLI commands
-MODEL_COMMAND_PREFIX = "/model"
-HELP_COMMAND = "/help"
-
-# (H) UI separators and formatting
-HORIZONTAL_SEPARATOR = "─" * 60
-
-# (H) Session log header
-SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
-
-# (H) Logger format
-LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
-
-# (H) Temporary directory
-TMP_DIR = ".tmp"
-SESSION_LOG_PREFIX = "session_"
-SESSION_LOG_EXT = ".log"
-
-# (H) Session log prefixes
-SESSION_PREFIX_USER = "USER: "
-SESSION_PREFIX_ASSISTANT = "ASSISTANT: "
-
-# (H) Session context format
-SESSION_CONTEXT_START = (
-    "\n\n[SESSION CONTEXT - Previous conversation in this session]:\n"
-)
-SESSION_CONTEXT_END = "\n[END SESSION CONTEXT]\n\n"
-
-# (H) Confirmation status display
-CONFIRM_ENABLED = "Enabled"
-CONFIRM_DISABLED = "Disabled (YOLO Mode)"
-
-# (H) Diff labels
-DIFF_LABEL_BEFORE = "before"
-DIFF_LABEL_AFTER = "after"
-DIFF_FALLBACK_PATH = "file"
-
-
-class DiffMarker:
-    ADD = "+"
-    DEL = "-"
-    HUNK = "@"
-    HEADER_ADD = "+++"
-    HEADER_DEL = "---"
-
-
-# (H) Table column headers
-TABLE_COL_CONFIGURATION = "Configuration"
-TABLE_COL_VALUE = "Value"
-
-# (H) Table row labels
-TABLE_ROW_TARGET_LANGUAGE = "Target Language"
-TABLE_ROW_ORCHESTRATOR_MODEL = "Orchestrator Model"
-TABLE_ROW_CYPHER_MODEL = "Cypher Model"
-TABLE_ROW_OLLAMA_ENDPOINT = "Ollama Endpoint"
-TABLE_ROW_OLLAMA_ORCHESTRATOR = "Ollama Endpoint (Orchestrator)"
-TABLE_ROW_OLLAMA_CYPHER = "Ollama Endpoint (Cypher)"
-TABLE_ROW_EDIT_CONFIRMATION = "Edit Confirmation"
-TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
-
-# (H) UI status messages
-MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
-MSG_THINKING_CANCELLED = "Thinking cancelled."
-MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
-MSG_TOOL_CALL_CANCELLED = "Tool call cancelled by user."
-MSG_CHAT_INSTRUCTIONS = (
-    "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
-)
-
-# (H) Default titles and prompts
-DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
-OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
-PROMPT_ASK_QUESTION = "Ask a question"
-PROMPT_YOUR_RESPONSE = "Your response"
-MULTILINE_INPUT_HINT = (
-    "(Press Ctrl+J or Ctrl+E to submit, Enter for new line, Shift+Tab to toggle mode)"
-)
-PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
-PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
-PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
-STATUS_BAR_BRANCH_CLEAN_HTML = (
-    '<style bg="ansigreen" fg="ansiblack"> ⎇ {branch} </style>'
-)
-STATUS_BAR_BRANCH_DIRTY_HTML = (
-    '<style bg="ansiyellow" fg="ansiblack"> ⎇ {branch} ± </style>'
-)
-STATUS_BAR_BRANCH_CLEAN_PLAIN = " ⎇ {branch} "
-STATUS_BAR_BRANCH_DIRTY_PLAIN = " ⎇ {branch} ± "
-STATUS_BAR_BRANCH_RICH_TEXT = " ⎇ {branch}{marker} "
-STATUS_BAR_CLEAN_STYLE = "black on green"
-STATUS_BAR_DIRTY_STYLE = "black on yellow"
-STATUS_BAR_DIRTY_MARKER = " ±"
-STATUS_BAR_SPINNER = "dots"
-STATUS_BAR_SEPARATOR_CHAR = "─"
-STATUS_BAR_SEPARATOR_COLOR = "#666666"
-STATUS_BAR_TOKEN_HTML = '  <style fg="{color}">{used} / {max_ctx} ({pct})</style>'
-STATUS_BAR_CONFIG_COLOR = "#888888"
-STATUS_BAR_CONFIG_LABEL_COLOR = "#5fafd7"
-STATUS_BAR_CONFIG_SEPARATOR = "  │  "
-STATUS_BAR_CONFIG_LABEL_O = "O"
-STATUS_BAR_CONFIG_LABEL_C = "C"
-STATUS_BAR_CONFIG_LABEL_EDIT = "edit"
-STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS = "instructions"
-STATUS_BAR_CONFIG_LABEL_REPO = "repo"
-STATUS_BAR_EDIT_ON = "on"
-STATUS_BAR_EDIT_OFF = "off"
-TOKEN_THRESHOLD_WARNING = 50
-TOKEN_THRESHOLD_CRITICAL = 80
-TOKEN_COLOR_OK = "green"
-TOKEN_COLOR_WARNING = "yellow"
-TOKEN_COLOR_CRITICAL = "red"
 
 ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
+
 ANTHROPIC_API_VERSION = "2023-06-01"
+
 ANTHROPIC_HEADER_API_KEY = "x-api-key"
+
 ANTHROPIC_HEADER_VERSION = "anthropic-version"
+
 HEADER_CONTENT_TYPE = "content-type"
+
 CONTENT_TYPE_JSON = "application/json"
+
 ANTHROPIC_COUNT_TIMEOUT_S = 10.0
 
 DEFAULT_CONTEXT_WINDOW = 200_000
+
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 200_000,
@@ -1147,108 +324,8 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-haiku-4-0": 200_000,
 }
 
-# (H) Interactive setup prompt - grouped view
-INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"
-INTERACTIVE_TITLE_NESTED = "Nested paths in '{pattern}'"
-INTERACTIVE_COL_NUM = "#"
-INTERACTIVE_COL_PATTERN = "Pattern"
-INTERACTIVE_COL_NESTED = "Nested"
-INTERACTIVE_COL_PATH = "Path"
-INTERACTIVE_STYLE_DIM = "dim"
-INTERACTIVE_STATUS_DETECTED = "auto-detected"
-INTERACTIVE_STATUS_CLI = "--exclude"
-INTERACTIVE_STATUS_CGRIGNORE = ".cgrignore"
-INTERACTIVE_NESTED_SINGULAR = "{count} dir"
-INTERACTIVE_NESTED_PLURAL = "{count} dirs"
-INTERACTIVE_INSTRUCTIONS_GROUPED = (
-    "These directories would normally be excluded. "
-    "Options: 'all' (keep all), 'none' (keep none), "
-    "numbers like '1,3' (keep groups), or '1e' to expand group 1"
-)
-INTERACTIVE_INSTRUCTIONS_NESTED = (
-    "Select paths to keep from '{pattern}'. "
-    "Options: 'all', 'none', or numbers like '1,3'"
-)
-INTERACTIVE_PROMPT_KEEP = "Keep"
-INTERACTIVE_KEEP_ALL = "all"
-INTERACTIVE_KEEP_NONE = "none"
-INTERACTIVE_EXPAND_SUFFIX = "e"
-INTERACTIVE_BFS_MAX_DEPTH = 10
-INTERACTIVE_DEFAULT_GROUP = "."
-
 # (H) JSON formatting
 JSON_INDENT = 2
-
-# (H) Parser loader paths and args
-GRAMMARS_DIR = "grammars"
-TREE_SITTER_PREFIX = "tree-sitter-"
-TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
-BINDINGS_DIR = "bindings"
-SETUP_PY = "setup.py"
-BUILD_EXT_CMD = "build_ext"
-INPLACE_FLAG = "--inplace"
-LANG_ATTR_PREFIX = "language_"
-LANG_ATTR_TYPESCRIPT = "language_typescript"
-LANG_ATTR_TSX = "language_tsx"
-LANG_ATTR_PHP = "language_php"
-
-
-class TreeSitterModule(StrEnum):
-    PYTHON = "tree_sitter_python"
-    JS = "tree_sitter_javascript"
-    TS = "tree_sitter_typescript"
-    RUST = "tree_sitter_rust"
-    GO = "tree_sitter_go"
-    SCALA = "tree_sitter_scala"
-    JAVA = "tree_sitter_java"
-    C = "tree_sitter_c"
-    CPP = "tree_sitter_cpp"
-    LUA = "tree_sitter_lua"
-    PHP = "tree_sitter_php"
-
-
-# (H) Query dict keys
-QUERY_FUNCTIONS = "functions"
-QUERY_CLASSES = "classes"
-QUERY_CALLS = "calls"
-QUERY_IMPORTS = "imports"
-QUERY_LOCALS = "locals"
-QUERY_CONFIG = "config"
-QUERY_LANGUAGE = "language"
-
-# (H) Query capture names
-CAPTURE_FUNCTION = "function"
-CAPTURE_CLASS = "class"
-CAPTURE_CALL = "call"
-CAPTURE_IMPORT = "import"
-CAPTURE_IMPORT_FROM = "import_from"
-
-# (H) Locals query patterns for JS/TS
-JS_LOCALS_PATTERN = """
-; Variable definitions
-(variable_declarator name: (identifier) @local.definition)
-(function_declaration name: (identifier) @local.definition)
-(class_declaration name: (identifier) @local.definition)
-
-; Variable references
-(identifier) @local.reference
-"""
-
-TS_LOCALS_PATTERN = """
-; Variable definitions (TypeScript has multiple declaration types)
-(variable_declarator name: (identifier) @local.definition)
-(lexical_declaration (variable_declarator name: (identifier) @local.definition))
-(variable_declaration (variable_declarator name: (identifier) @local.definition))
-
-; Function definitions
-(function_declaration name: (identifier) @local.definition)
-
-; Class definitions (uses type_identifier for class names)
-(class_declaration name: (type_identifier) @local.definition)
-
-; Variable references
-(identifier) @local.reference
-"""
 
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(
@@ -1298,15 +375,13 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
+
 IGNORE_SUFFIXES = frozenset(
     {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
 )
 
 # (H) pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
-
-PAYLOAD_NODE_ID = "node_id"
-PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
 
 class EventType(StrEnum):
@@ -1315,41 +390,6 @@ class EventType(StrEnum):
     DELETED = "deleted"
 
 
-CYPHER_DELETE_MODULE = (
-    "MATCH (m:Module {path: $path}) "
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
-    "DETACH DELETE m, c"
-)
-CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
-# (H) Removes external import-target Module nodes that no module imports anymore
-# (H) (e.g. an imported name that was renamed/removed on an incremental rebuild).
-CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
-    "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
-)
-
-# (H) Queries for orphan pruning — returns all paths stored in the graph
-CYPHER_ALL_FILE_PATHS = (
-    "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
-)
-CYPHER_ALL_MODULE_PATHS_INTERNAL = (
-    "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
-)
-CYPHER_ALL_FOLDER_PATHS = (
-    "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
-)
-
-# (H) Rehydrate the in-memory function registry on an incremental run: returns
-# (H) every definition node's qualified name and label so call/instantiation
-# (H) resolution can see symbols defined in files that were not re-parsed.
-CYPHER_ALL_DEFINITION_QNS = (
-    "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
-    "OR n:Enum OR n:Type OR n:Union "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path"
-)
-
 # (H) Module-level qns (plus C++20 module interfaces) for incremental runs:
 # (H) deferred import verification must count modules in UNCHANGED files as
 # (H) real targets, or editing one file would drop cross-file IMPORTS edges.
@@ -1357,61 +397,6 @@ CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE n:Module OR n:ModuleInterface "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
 )
-
-# (H) Inbound reference edges (from unchanged files) into symbols defined in one
-# (H) of $paths. Captured BEFORE a changed file's subtree is deleted so the exact
-# (H) edges can be restored verbatim afterwards (issue #532, inbound half).
-# (H) Re-resolving the callers instead would diverge from a clean index, because
-# (H) cgr's call resolution is context-sensitive (protocol vs concrete receiver,
-# (H) import granularity); the original edges already match a clean re-index.
-CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
-    "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
-    "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
-    "RETURN head(labels(caller)) AS caller_label, "
-    "caller.qualified_name AS caller_qn, type(r) AS rel, "
-    "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
-)
-# (H) Rehydrate class_inheritance on an incremental run: every INHERITS edge
-# (H) (child -> base) with resolved qns, so protocol dispatch and inherited-method
-# (H) resolution still see the hierarchy of classes defined in files that were not
-# (H) re-parsed. Without it, editing a caller drops the protocol/inheritance
-# (H) redirect (issue #532 residual): a call resolves to the Protocol stub instead
-# (H) of the concrete implementer because _protocol_classes() is empty. Ordered by
-# (H) base_index so multiple-inheritance base order matches the original source,
-# (H) which method resolution and override attribution depend on.
-CYPHER_ALL_INHERITS = (
-    "MATCH (child)-[r:INHERITS]->(base) "
-    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
-    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
-    "r.base_index AS base_index "
-    "ORDER BY child_qn, base_index"
-)
-KEY_CHILD_QN = "child_qn"
-KEY_BASE_QN = "base_qn"
-KEY_BASE_INDEX = "base_index"
-
-CYPHER_PARAM_PATHS = "paths"
-KEY_CALLER_LABEL = "caller_label"
-KEY_CALLER_QN = "caller_qn"
-KEY_REL = "rel"
-KEY_TARGET_LABEL = "target_label"
-KEY_TARGET_QN = "target_qn"
-
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
-WATCHER_SLEEP_INTERVAL = 1
-LOG_LEVEL_INFO = "INFO"
-LOG_LEVEL_ERROR = "ERROR"
-
-# (H) Debounce settings for realtime watcher
-DEFAULT_DEBOUNCE_SECONDS = 5
-DEFAULT_MAX_WAIT_SECONDS = 30
 
 
 class Architecture(StrEnum):
@@ -1422,41 +407,64 @@ class Architecture(StrEnum):
 
 
 BINARY_NAME_TEMPLATE = "code-graph-rag-{system}-{machine}"
+
 BINARY_FILE_PERMISSION = 0o755
+
 DIST_DIR = "dist"
+
 BYTES_PER_MB_FLOAT = 1024 * 1024
 
 PYPROJECT_PATH = "pyproject.toml"
+
 PYPROJECT_KEY_TOOL = "tool"
+
 PYPROJECT_KEY_SETUPTOOLS = "setuptools"
+
 PYPROJECT_KEY_PACKAGE_DIR = "package-dir"
+
 TREESITTER_EXTRA_KEY = "treesitter-full"
+
 TREESITTER_PKG_PREFIX = "tree-sitter-"
 
 # (H) PyInstaller CLI constants
 PYINSTALLER_CMD = "pyinstaller"
+
 PYINSTALLER_ARG_NAME = "--name"
+
 PYINSTALLER_ARG_ONEFILE = "--onefile"
+
 PYINSTALLER_ARG_NOCONFIRM = "--noconfirm"
+
 PYINSTALLER_ARG_CLEAN = "--clean"
+
 PYINSTALLER_ARG_COLLECT_ALL = "--collect-all"
+
 PYINSTALLER_ARG_COLLECT_DATA = "--collect-data"
+
 PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
+
 PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
+
 PYINSTALLER_ARG_COPY_METADATA = "--copy-metadata"
+
 PYINSTALLER_ENTRY_POINT = "main.py"
 
 PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
 
 # (H) TOML parsing constants
 TOML_KEY_PROJECT = "project"
+
 TOML_KEY_OPTIONAL_DEPS = "optional-dependencies"
 
 # (H) Version string parsing
 VERSION_SPLIT_GTE = ">="
+
 VERSION_SPLIT_EQ = "=="
+
 VERSION_SPLIT_LT = "<"
+
 CHAR_HYPHEN = "-"
+
 CHAR_UNDERSCORE = "_"
 
 PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
@@ -1477,33 +485,51 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
 ALLOWED_COMMENT_MARKERS = frozenset(
     {"(H)", "type:", "noqa", "pyright", "ty:", "@@protoc", "nosec"}
 )
+
 QUOTE_CHARS = frozenset({'"', "'"})
+
 TRIPLE_QUOTES = ('"""', "'''")
+
 COMMENT_CHAR = "#"
+
 ESCAPE_CHAR = "\\"
+
 CHAR_SEMICOLON = ";"
+
 CHAR_COMMA = ","
+
 CHAR_COLON = ":"
+
 CHAR_ANGLE_OPEN = "<"
+
 CHAR_ANGLE_CLOSE = ">"
+
 CHAR_PAREN_OPEN = "("
+
 CHAR_PAREN_CLOSE = ")"
-CHAR_UNDERSCORE = "_"
+
 CHAR_SPACE = " "
+
 SEPARATOR_COMMA_SPACE = ", "
+
 PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"
+
 TEXT_UNKNOWN = "unknown"
 
 MODULE_TORCH = "torch"
+
 MODULE_TRANSFORMERS = "transformers"
+
 MODULE_QDRANT_CLIENT = "qdrant_client"
 
 SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
+
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 
 
@@ -1514,262 +540,51 @@ class UniXcoderMode(StrEnum):
 
 
 UNIXCODER_MASK_TOKEN = "<mask0>"
+
 UNIXCODER_BUFFER_BIAS = "bias"
+
 UNIXCODER_MAX_CONTEXT = 1024
 
-REL_TYPE_CALLS = "CALLS"
-
-NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
-    label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
-}
-
-# (H) Cypher response cleaning
-CYPHER_PREFIX = "cypher"
-CYPHER_SEMICOLON = ";"
-CYPHER_BACKTICK = "`"
-CYPHER_MATCH_KEYWORD = "MATCH"
-CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
-    {
-        "DELETE",
-        "DETACH",
-        "DROP",
-        "CREATE INDEX",
-        "CREATE CONSTRAINT",
-        "REMOVE",
-        "SET",
-        "MERGE",
-        "CREATE",
-        "LOAD CSV",
-        "FOREACH",
-    }
-)
-
-CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
-    {
-        "algo.",
-        "betweenness_centrality.",
-        "biconnected_components.",
-        "bridges.",
-        "community_detection.",
-        "cycles.",
-        "degree_centrality.",
-        "graph_analyzer.",
-        "graph_util.",
-        "igraphalg.",
-        "katz_centrality.",
-        "leiden_community_detection.",
-        "neighbors.",
-        "node_similarity.",
-        "nxalg.",
-        "pagerank.",
-        "path.",
-        "schema.",
-        "weakly_connected_components.",
-        "wcc.",
-    }
-)
-
-# (H) Tool success messages
-MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
-MSG_SURGICAL_FAILED = (
-    "Failed to apply surgical replacement in {path}. "
-    "Target code not found or patches failed."
-)
-
-# (H) Grep suggestion
-GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
-
-# (H) Shell command constants
-SHELL_CMD_GREP = "grep"
-SHELL_CMD_GIT = "git"
-SHELL_CMD_RM = "rm"
-SHELL_RM_RF_FLAG = "-rf"
-SHELL_RETURN_CODE_ERROR = -1
-SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
-SHELL_SUBSHELL_PATTERNS = ("$(", "`")
-SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
-
-# (H) Dangerous commands - absolutely blocked
-SHELL_DANGEROUS_COMMANDS = frozenset(
-    {
-        "dd",
-        "mkfs",
-        "mkfs.ext4",
-        "mkfs.ext3",
-        "mkfs.xfs",
-        "mkfs.btrfs",
-        "mkfs.vfat",
-        "fdisk",
-        "parted",
-        "shred",
-        "wipefs",
-        "mkswap",
-        "swapon",
-        "swapoff",
-        "mount",
-        "umount",
-        "insmod",
-        "rmmod",
-        "modprobe",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
-        "init",
-        "telinit",
-        "systemctl",
-        "service",
-        "chroot",
-        "nohup",
-        "disown",
-        "crontab",
-        "at",
-        "batch",
-    }
-)
-
-# (H) Dangerous rm flags
-SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
-SHELL_RM_FORCE_FLAG = "-f"
-
-# (H) System directories to protect from rm -rf
-SHELL_SYSTEM_DIRECTORIES = frozenset(
-    {
-        "bin",
-        "boot",
-        "dev",
-        "etc",
-        "home",
-        "lib",
-        "lib64",
-        "media",
-        "mnt",
-        "opt",
-        "proc",
-        "root",
-        "run",
-        "sbin",
-        "srv",
-        "sys",
-        "tmp",
-        "usr",
-        "var",
-    }
-)
-
-# (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
-SHELL_DANGEROUS_PATTERNS_PIPELINE = (
-    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
-    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
-    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
-)
-
-# (H) Build system directory regex pattern dynamically
-_SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
-
-# (H) Dangerous patterns for individual segments (per-command patterns)
-SHELL_DANGEROUS_PATTERNS_SEGMENT = (
-    (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
-    (rf"rm\s+.*-[rf]+\s+/({_SYSTEM_DIRS_PATTERN})($|/|\s)", "rm with system directory"),
-    (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
-    (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
-    (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),
-    (r"dd\s+.*of=/dev/", "dd writing to device"),
-    (r">\s*/dev/sd[a-z]", "redirect to disk device"),
-    (r">\s*/dev/nvme", "redirect to nvme device"),
-    (r">\s*/dev/null.*<", "null device manipulation"),
-    (r"chmod\s+.*-R\s+777\s+/", "recursive 777 on root"),
-    (r"chmod\s+.*777\s+/($|\s)", "777 on root"),
-    (r"chown\s+.*-R\s+.*\s+/($|\s)", "recursive chown on root"),
-    (r":\(\)\s*\{.*:\s*\|", "fork bomb pattern"),
-    (r"mv\s+.*\s+/dev/null", "move to /dev/null"),
-    (r"ln\s+-[sf]+\s+/dev/null", "symlink to /dev/null"),
-    (r"cat\s+.*/dev/zero", "cat /dev/zero"),
-    (r"cat\s+.*/dev/random", "cat /dev/random"),
-    (r">\s*/etc/passwd", "overwrite passwd"),
-    (r">\s*/etc/shadow", "overwrite shadow"),
-    (r">\s*/etc/sudoers", "overwrite sudoers"),
-    (r"echo\s+.*>\s*/etc/", "write to /etc"),
-    (
-        r"python.*-c.*(import\s+os|__import__\s*\(\s*['\"]os['\"]\s*\))",
-        "python os import in command",
-    ),
-    (r"perl\s+-e", "perl one-liner"),
-    (r"ruby\s+-e", "ruby one-liner"),
-    (r"nc\s+-[el]", "netcat listener"),
-    (r"ncat\s+-[el]", "ncat listener"),
-    (r"/dev/tcp/", "bash tcp device"),
-    (r"eval\s+", "eval command"),
-    (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
-    (r"awk\s+.*system\s*\(", "awk system() call"),
-    (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
-    (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
-    (r"xargs\s+-I.*sh", "xargs shell execution"),
-    (r"xargs\s+.*bash", "xargs bash execution"),
-)
-
-# (H) Query tool messages
-QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+
 TIKTOKEN_ENCODING = "cl100k_base"
-QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
-QUERY_SUMMARY_TRUNCATED = (
-    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
-    "Refine your query for more specific results."
-)
-QUERY_SUMMARY_TRANSLATION_FAILED = (
-    "I couldn't translate your request into a database query. Error: {error}"
-)
-QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
-QUERY_SUMMARY_TIMEOUT = (
-    "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
-    "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
-)
-QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
-CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
-CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"
 
 # (H) File editor constants
 TMP_EXTENSION = ".tmp"
 
-# (H) Semantic search constants
-MSG_SEMANTIC_NO_RESULTS = (
-    "No semantic matches found for query: '{query}'. This could mean:\n"
-    "1. No functions match this description\n"
-    "2. Semantic search dependencies are not installed\n"
-    "3. No embeddings have been generated yet"
-)
-MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
-    "Could not retrieve source code for node ID {id}. "
-    "The node may not exist or source file may be unavailable."
-)
-MSG_SEMANTIC_SOURCE_FORMAT = "Source code for node ID {id}:\n\n```\n{code}\n```"
-MSG_SEMANTIC_RESULT_HEADER = "Found {count} semantic matches for '{query}':\n\n"
-MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools to get more details or source code."
 SEMANTIC_BATCH_SIZE = 100
+
 SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
-# (H) Document analyzer constants
-MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
-MSG_DOC_NO_CONTENT = "No text content received from the API."
 MIME_TYPE_DEFAULT = "application/octet-stream"
+
 DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
 )
 
 # (H) Call processor constants
 MOD_RS = "mod.rs"
+
 SEPARATOR_DOUBLE_COLON = "::"
+
 SEPARATOR_COLON = ":"
+
 SEPARATOR_PROTOTYPE = ".prototype."
+
 RUST_CRATE_PREFIX = "crate::"
+
 BUILTIN_PREFIX = "builtin"
+
 IIFE_FUNC_PREFIX = "iife_func_"
+
 IIFE_ARROW_PREFIX = "iife_arrow_"
+
 OPERATOR_PREFIX = "operator"
+
 KEYWORD_SUPER = "super"
+
 KEYWORD_SELF = "self"
+
 KEYWORD_CONSTRUCTOR = "constructor"
 
 # (H) JavaScript built-in types
@@ -1868,16 +683,23 @@ JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
 )
 
 JS_METHOD_BIND = "bind"
+
 JS_METHOD_CALL = "call"
+
 JS_METHOD_APPLY = "apply"
+
 JS_SUFFIX_BIND = ".bind"
+
 JS_SUFFIX_CALL = ".call"
+
 JS_SUFFIX_APPLY = ".apply"
+
 JS_FUNCTION_PROTOTYPE_SUFFIXES: dict[str, str] = {
     JS_SUFFIX_BIND: JS_METHOD_BIND,
     JS_SUFFIX_CALL: JS_METHOD_CALL,
     JS_SUFFIX_APPLY: JS_METHOD_APPLY,
 }
+
 # (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; when such a
 # (H) call sits in a value position (`onError: handleError.bind(toast)`) the `.bind`
 # (H) resolves to the Function.prototype builtin, so `fn` itself must be referenced
@@ -1888,19 +710,21 @@ JS_FUNCTION_PROTOTYPE_METHODS = frozenset(
 
 # (H) Language CLI paths and patterns
 LANG_GRAMMARS_DIR = "grammars"
+
 LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
+
 LANG_TREE_SITTER_JSON = "tree-sitter.json"
+
 LANG_NODE_TYPES_JSON = "node-types.json"
+
 LANG_SRC_DIR = "src"
+
 LANG_GIT_MODULES_PATH = ".git/modules/{path}"
+
 LANG_DEFAULT_GRAMMAR_URL = "https://github.com/tree-sitter/tree-sitter-{name}"
+
 LANG_TREE_SITTER_URL_MARKER = "github.com/tree-sitter/tree-sitter"
 
-# (H) Language CLI default node types
-LANG_DEFAULT_FUNCTION_NODES = ("function_definition", "method_definition")
-LANG_DEFAULT_CLASS_NODES = ("class_declaration",)
-LANG_DEFAULT_MODULE_NODES = ("compilation_unit",)
-LANG_DEFAULT_CALL_NODES = ("invocation_expression",)
 LANG_FALLBACK_METHOD_NODE = "method_declaration"
 
 # (H) Language CLI node type detection keywords
@@ -1916,6 +740,7 @@ LANG_FUNCTION_KEYWORDS = frozenset(
         "closure",
     }
 )
+
 LANG_CLASS_KEYWORDS = frozenset(
     {
         "class",
@@ -1929,102 +754,167 @@ LANG_CLASS_KEYWORDS = frozenset(
         "union",
     }
 )
+
 LANG_CALL_KEYWORDS = frozenset({"call", "invoke", "invocation"})
+
 LANG_MODULE_KEYWORDS = frozenset(
     {"program", "source_file", "compilation_unit", "module", "chunk"}
 )
+
 LANG_EXCLUSION_KEYWORDS = frozenset({"access", "call"})
 
 # (H) Language CLI messages
 LANG_MSG_USING_DEFAULT_URL = "Using default tree-sitter URL: {url}"
+
 LANG_MSG_CUSTOM_URL_WARNING = (
     "WARNING: You are adding a grammar from a custom URL. "
     "This may execute code from the repository. Only proceed if you trust the source."
 )
+
 LANG_MSG_ADDING_SUBMODULE = "Adding submodule from {url}..."
+
 LANG_MSG_SUBMODULE_SUCCESS = "Successfully added submodule at {path}"
+
 LANG_MSG_SUBMODULE_EXISTS = (
     "Submodule already exists at {path}. Forcing re-installation..."
 )
+
 LANG_MSG_REMOVING_ENTRY = "   -> Removing existing submodule entry..."
+
 LANG_MSG_READDING_SUBMODULE = "   -> Re-adding submodule..."
+
 LANG_MSG_REINSTALL_SUCCESS = "Successfully re-installed submodule at {path}"
+
 LANG_MSG_AUTO_DETECTED_LANG = "Auto-detected language: {name}"
+
 LANG_MSG_USING_LANG_NAME = "Using language name: {name}"
+
 LANG_MSG_AUTO_DETECTED_EXT = "Auto-detected file extensions: {extensions}"
+
 LANG_MSG_FOUND_NODE_TYPES = "Found {count} total node types in grammar"
+
 LANG_MSG_SEMANTIC_CATEGORIES = "Tree-sitter semantic categories:"
+
 LANG_MSG_CATEGORY_FORMAT = "  {category}: {subtypes} ({count} total)"
+
 LANG_MSG_MAPPED_CATEGORIES = "\nMapped to our categories:"
+
 LANG_MSG_FUNCTIONS = "Functions: {nodes}"
+
 LANG_MSG_CLASSES = "Classes: {nodes}"
+
 LANG_MSG_MODULES = "Modules: {nodes}"
+
 LANG_MSG_CALLS = "Calls: {nodes}"
+
 LANG_MSG_LANG_ADDED = "\nLanguage '{name}' has been added to the configuration!"
+
 LANG_MSG_UPDATED_CONFIG = "Updated {path}"
+
 LANG_MSG_REVIEW_PROMPT = "Please review the detected node types:"
+
 LANG_MSG_REVIEW_HINT = "   The auto-detection is good but may need manual adjustments."
+
 LANG_MSG_EDIT_HINT = "   Edit the configuration in: {path}"
+
 LANG_MSG_COMMON_ISSUES = "Look for these common issues:"
+
 LANG_MSG_ISSUE_MISCLASSIFIED = (
     "   - Remove misclassified types (e.g., table_constructor in functions)"
 )
+
 LANG_MSG_ISSUE_MISSING = "   - Add missing types that should be included"
+
 LANG_MSG_ISSUE_CLASS_TYPES = (
     "   - Verify class_node_types includes all relevant class-like constructs"
 )
+
 LANG_MSG_ISSUE_CALL_TYPES = (
     "   - Check call_node_types covers all function call patterns"
 )
+
 LANG_MSG_LIST_HINT = (
     "You can run 'cgr language list-languages' to see the current config."
 )
+
 LANG_MSG_LANG_NOT_FOUND = "Language '{name}' not found."
+
 LANG_MSG_AVAILABLE_LANGS = "Available languages: {langs}"
+
 LANG_MSG_REMOVED_FROM_CONFIG = "Removed language '{name}' from configuration file."
+
 LANG_MSG_REMOVING_SUBMODULE = "Removing git submodule '{path}'..."
+
 LANG_MSG_CLEANED_MODULES = "Cleaned up git modules directory: {path}"
+
 LANG_MSG_SUBMODULE_REMOVED = "Successfully removed submodule '{path}'"
+
 LANG_MSG_NO_SUBMODULE = "No submodule found at '{path}'"
+
 LANG_MSG_KEEPING_SUBMODULE = "Keeping submodule (--keep-submodule flag used)"
+
 LANG_MSG_LANG_REMOVED = "Language '{name}' has been removed successfully!"
+
 LANG_MSG_NO_MODULES_DIR = "No grammars modules directory found."
+
 LANG_MSG_NO_GITMODULES = "No .gitmodules file found."
+
 LANG_MSG_NO_ORPHANS = "No orphaned modules found!"
+
 LANG_MSG_FOUND_ORPHANS = "Found {count} orphaned module(s): {modules}"
+
 LANG_MSG_REMOVED_ORPHAN = "Removed orphaned module: {module}"
+
 LANG_MSG_CLEANUP_COMPLETE = "Cleanup complete!"
+
 LANG_MSG_CLEANUP_CANCELLED = "Cleanup cancelled."
 
 # (H) Language CLI error messages
 LANG_ERR_MISSING_ARGS = "Error: Either language_name or --grammar-url must be provided"
+
 LANG_ERR_REINSTALL_FAILED = "Failed to reinstall submodule: {error}"
+
 LANG_ERR_MANUAL_REMOVE_HINT = "You may need to remove it manually and try again:"
+
 LANG_ERR_REPO_NOT_FOUND = "Error: Repository not found at {url}"
+
 LANG_ERR_CUSTOM_URL_HINT = "Try using a custom URL with: --grammar-url <your-repo-url>"
+
 LANG_ERR_GIT = "Git error: {error}"
+
 LANG_ERR_NODE_TYPES_WARNING = (
     "Warning: node-types.json not found in any expected location for {name}"
 )
+
 LANG_ERR_TREE_SITTER_JSON_WARNING = "Warning: tree-sitter.json not found in {path}"
+
 LANG_ERR_NO_GRAMMARS_WARNING = "Warning: No grammars found in tree-sitter.json"
+
 LANG_ERR_PARSE_NODE_TYPES = "Error parsing node-types.json: {error}"
+
 LANG_ERR_UPDATE_CONFIG = "Error updating config file: {error}"
+
 LANG_ERR_CONFIG_NOT_FOUND = "Could not find LANGUAGE_SPECS dictionary end"
+
 LANG_ERR_REMOVE_CONFIG = "Failed to update config file: {error}"
+
 LANG_ERR_REMOVE_SUBMODULE = "Failed to remove submodule: {error}"
 
 # (H) Language CLI prompts
 LANG_PROMPT_LANGUAGE_NAME = "Language name (e.g., 'c-sharp', 'python')"
+
 LANG_PROMPT_COMMON_NAME = "What is the common name for this language?"
-LANG_PROMPT_EXTENSIONS = (
-    "What file extensions should be associated with this language? (comma-separated)"
-)
+
 LANG_PROMPT_FUNCTIONS = "Select nodes representing FUNCTIONS (comma-separated)"
+
 LANG_PROMPT_CLASSES = "Select nodes representing CLASSES (comma-separated)"
+
 LANG_PROMPT_MODULES = "Select nodes representing MODULES (comma-separated)"
+
 LANG_PROMPT_CALLS = "Select nodes representing FUNCTION CALLS (comma-separated)"
+
 LANG_PROMPT_CONTINUE = "Do you want to continue?"
+
 LANG_PROMPT_REMOVE_ORPHANS = "Do you want to remove these orphaned modules?"
 
 # (H) Language CLI fallback manual add message
@@ -2035,17 +925,23 @@ LANG_FALLBACK_MANUAL_ADD = (
 
 # (H) Language CLI table configuration
 LANG_TABLE_TITLE = "Configured Languages"
+
 LANG_TABLE_COL_LANGUAGE = "Language"
-LANG_TABLE_COL_EXTENSIONS = "Extensions"
+
 LANG_TABLE_COL_FUNCTION_TYPES = "Function Types"
+
 LANG_TABLE_COL_CLASS_TYPES = "Class Types"
+
 LANG_TABLE_COL_CALL_TYPES = "Call Types"
+
 LANG_TABLE_PLACEHOLDER = "—"
 
-LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
 LANG_ELLIPSIS = "..."
+
 LANG_GIT_SUFFIX = ".git"
+
 LANG_GITMODULES_FILE = ".gitmodules"
+
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
 # (H) Git submodule regex
@@ -2090,24 +986,31 @@ class CppNodeType(StrEnum):
     TYPE_DESCRIPTOR = "type_descriptor"
 
 
-CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
 
 # (H) C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "
+
 CPP_MODULE_PREFIX = "module "
+
 CPP_MODULE_PRIVATE_PREFIX = "module ;"
+
 CPP_IMPL_SUFFIX = "_impl"
 
 # (H) C++ module type values
 CPP_MODULE_TYPE_INTERFACE = "interface"
+
 CPP_MODULE_TYPE_IMPLEMENTATION = "implementation"
 
 # (H) C++ export prefixes for class detection
 CPP_EXPORT_CLASS_PREFIX = "export class "
+
 CPP_EXPORT_STRUCT_PREFIX = "export struct "
+
 CPP_EXPORT_UNION_PREFIX = "export union "
+
 CPP_EXPORT_TEMPLATE_PREFIX = "export template"
+
 CPP_EXPORT_PREFIXES = (
     CPP_EXPORT_CLASS_PREFIX,
     CPP_EXPORT_STRUCT_PREFIX,
@@ -2117,7 +1020,9 @@ CPP_EXPORT_PREFIXES = (
 
 # (H) C++ keywords for class detection
 CPP_KEYWORD_CLASS = "class"
+
 CPP_KEYWORD_STRUCT = "struct"
+
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 # (H) A C/C++ class/struct/union tag with no body is a forward declaration
@@ -2128,8 +1033,11 @@ CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
 )
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
+
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
+
 CPP_OPERATOR_TEXT_PREFIX = "operator"
+
 CPP_DESTRUCTOR_PREFIX = "~"
 
 CPP_OPERATOR_SYMBOL_MAP: dict[str, str] = {
@@ -2172,45 +1080,70 @@ CPP_OPERATOR_SYMBOL_MAP: dict[str, str] = {
 
 # (H) Dependency parser TOML/JSON keys
 DEP_KEY_TOOL = "tool"
+
 DEP_KEY_POETRY = "poetry"
+
 DEP_KEY_DEPENDENCIES = "dependencies"
+
 DEP_KEY_DEV_DEPENDENCIES = "dev-dependencies"
+
 DEP_KEY_PROJECT = "project"
+
 DEP_KEY_OPTIONAL_DEPS = "optional-dependencies"
+
 DEP_KEY_DEV_DEPS_JSON = "devDependencies"
+
 DEP_KEY_PEER_DEPS = "peerDependencies"
+
 DEP_KEY_REQUIRE = "require"
+
 DEP_KEY_REQUIRE_DEV = "require-dev"
+
 DEP_KEY_VERSION = "version"
+
 DEP_KEY_GROUP = "group"
 
 # (H) Dependency parser XML attributes
 DEP_ATTR_INCLUDE = "Include"
+
 DEP_ATTR_VERSION = "Version"
+
 DEP_XML_PACKAGE_REF = "PackageReference"
 
 # (H) Dependency parser language exclusions
 DEP_EXCLUDE_PYTHON = "python"
+
 DEP_EXCLUDE_PHP = "php"
 
 # (H) Dependency file names (lowercase)
 DEP_FILE_PYPROJECT = "pyproject.toml"
+
 DEP_FILE_REQUIREMENTS = "requirements.txt"
+
 DEP_FILE_PACKAGE_JSON = "package.json"
+
 DEP_FILE_CARGO = "cargo.toml"
+
 DEP_FILE_GOMOD = "go.mod"
+
 # (H) The go.mod directive naming the module path that prefixes every import of
 # (H) the module's packages; a same-line comment (incl. the official
 # (H) `// Deprecated:` form) may trail it.
 GO_KEYWORD_MODULE = "module"
+
 GO_MOD_COMMENT_PREFIX = "//"
+
 DEP_FILE_GEMFILE = "gemfile"
+
 DEP_FILE_COMPOSER = "composer.json"
 
 # (H) Go.mod parsing patterns
 GOMOD_REQUIRE_BLOCK_START = "require ("
+
 GOMOD_BLOCK_END = ")"
+
 GOMOD_REQUIRE_LINE_PREFIX = "require "
+
 GOMOD_COMMENT_PREFIX = "//"
 
 # (H) Gemfile parsing patterns
@@ -2218,50 +1151,83 @@ GEMFILE_GEM_PREFIX = "gem "
 
 # (H) Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+
 GIT_DIR_NAME = ".git"
+
 ROOT_DIR_KEY = "."
+
 JSON_EMPTY_OBJECT = "{}"
 
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600
+
 IMPORT_CACHE_DIR = ".cache/codebase_rag"
+
 IMPORT_CACHE_FILE = "stdlib_cache.json"
+
 IMPORT_CACHE_KEY = "cache"
+
 IMPORT_TIMESTAMPS_KEY = "timestamps"
 
 # (H) Tree-sitter Python import node types
 TS_IMPORT_STATEMENT = "import_statement"
+
 TS_IMPORT_FROM_STATEMENT = "import_from_statement"
+
 TS_DOTTED_NAME = "dotted_name"
+
 TS_ALIASED_IMPORT = "aliased_import"
+
 TS_RELATIVE_IMPORT = "relative_import"
+
 TS_IMPORT_PREFIX = "import_prefix"
+
 TS_WILDCARD_IMPORT = "wildcard_import"
 
 # (H) Tree-sitter JS/TS import node types
 TS_STRING = "string"
+
 TS_IMPORT_CLAUSE = "import_clause"
+
 TS_LEXICAL_DECLARATION = "lexical_declaration"
+
 TS_VARIABLE_DECLARATION = "variable_declaration"
+
 TS_EXPORT_STATEMENT = "export_statement"
+
 TS_NAMED_IMPORTS = "named_imports"
+
 TS_IMPORT_SPECIFIER = "import_specifier"
+
 TS_NAMESPACE_IMPORT = "namespace_import"
+
 TS_IDENTIFIER = "identifier"
+
 TS_VARIABLE_DECLARATOR = "variable_declarator"
+
 TS_CALL_EXPRESSION = "call_expression"
+
 TS_EXPORT_CLAUSE = "export_clause"
+
 TS_EXPORT_SPECIFIER = "export_specifier"
+
 TS_EXPORT_DEFAULT = "default"
+
 TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
+
 TS_PRIVATE = "private"
+
 TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
 # (H) Tree-sitter Java import node types
 TS_IMPORT_DECLARATION = "import_declaration"
+
 TS_STATIC = "static"
+
 TS_SCOPED_IDENTIFIER = "scoped_identifier"
+
 TS_ASTERISK = "asterisk"
 
 # (H) Tree-sitter Rust import node types
@@ -2269,32 +1235,53 @@ TS_USE_DECLARATION = "use_declaration"
 
 # (H) Tree-sitter Go import node types
 TS_IMPORT_SPEC = "import_spec"
+
 TS_IMPORT_SPEC_LIST = "import_spec_list"
+
 TS_PACKAGE_IDENTIFIER = "package_identifier"
+
 TS_INTERPRETED_STRING_LITERAL = "interpreted_string_literal"
 
 # (H) Tree-sitter C++ import node types
 TS_PREPROC_INCLUDE = "preproc_include"
+
 TS_TEMPLATE_FUNCTION = "template_function"
+
 TS_DECLARATION = "declaration"
+
 TS_STRING_LITERAL = "string_literal"
+
 TS_SYSTEM_LIB_STRING = "system_lib_string"
+
 TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
+
 TS_TYPE_DESCRIPTOR = "type_descriptor"
+
 TS_TYPE_IDENTIFIER = "type_identifier"
+
 LUA_STRING_TYPES = (TS_STRING, TS_STRING_LITERAL)
 
 # (H) Tree-sitter Lua node types
 TS_DOT_INDEX_EXPRESSION = "dot_index_expression"
+
 TS_LUA_VARIABLE_DECLARATION = "variable_declaration"
+
 TS_LUA_ASSIGNMENT_STATEMENT = "assignment_statement"
+
 TS_LUA_VARIABLE_LIST = "variable_list"
+
 TS_LUA_EXPRESSION_LIST = "expression_list"
+
 TS_LUA_FUNCTION_CALL = "function_call"
+
 TS_LUA_METHOD_INDEX_EXPRESSION = "method_index_expression"
+
 TS_LUA_IDENTIFIER = "identifier"
+
 TS_LUA_LOCAL_STATEMENT = "local_statement"
+
 LUA_STATEMENT_SUFFIX = "statement"
+
 LUA_DEFAULT_VAR_TYPES = (TS_LUA_IDENTIFIER,)
 
 # (H) Lua method separator
@@ -2305,132 +1292,218 @@ STR_NONE = "None"
 
 # (H) Tree-sitter JS/TS utility node types
 TS_RETURN_STATEMENT = "return_statement"
+
 TS_RETURN = "return"
+
 TS_NEW_EXPRESSION = "new_expression"
 
 # (H) Tree-sitter class/module node types for class_ingest
 TS_MODULE_DECLARATION = "module_declaration"
+
 TS_IMPL_ITEM = "impl_item"
+
 TS_INTERFACE_DECLARATION = "interface_declaration"
+
 TS_ENUM_DECLARATION = "enum_declaration"
+
 TS_ENUM_SPECIFIER = "enum_specifier"
+
 TS_ENUM_CLASS_SPECIFIER = "enum_class_specifier"
+
 TS_TYPE_ALIAS_DECLARATION = "type_alias_declaration"
+
 TS_STRUCT_SPECIFIER = "struct_specifier"
+
 TS_UNION_SPECIFIER = "union_specifier"
+
 TS_CLASS_DECLARATION = "class_declaration"
+
 TS_NAMESPACE_DEFINITION = "namespace_definition"
+
 TS_ABSTRACT_CLASS_DECLARATION = "abstract_class_declaration"
+
 TS_INTERNAL_MODULE = "internal_module"
 
 # (H) Tree-sitter Go node types
 TS_GO_TYPE_DECLARATION = "type_declaration"
+
 TS_GO_TYPE_SPEC = "type_spec"
+
 TS_GO_TYPE_ALIAS = "type_alias"
+
 TS_GO_STRUCT_TYPE = "struct_type"
+
 TS_GO_SELECTOR_EXPRESSION = "selector_expression"
+
 TS_GO_TYPE_ASSERTION_EXPRESSION = "type_assertion_expression"
+
 # (H) A Go source file whose name ends in `_test.go` is compiled only under `go test`;
 # (H) its file segment in a module qn ends with this suffix. Such a file may declare an
 # (H) EXTERNAL test package (`package p_test`) that shares a directory with `package p`
 # (H) but is a distinct package, so it must be excluded from same-directory fan-out.
 GO_TEST_FILE_SUFFIX = "_test"
+
 TS_GO_FIELD_DECLARATION_LIST = "field_declaration_list"
+
 TS_GO_FIELD_DECLARATION = "field_declaration"
+
 TS_GO_FIELD_IDENTIFIER = "field_identifier"
+
 TS_GO_INTERFACE_TYPE = "interface_type"
+
 TS_GO_PARAMETER_DECLARATION = "parameter_declaration"
+
 TS_GO_FUNC_LITERAL = "func_literal"
+
 TS_GO_SOURCE_FILE = "source_file"
+
 TS_GO_FUNCTION_DECLARATION = "function_declaration"
+
 TS_GO_METHOD_DECLARATION = "method_declaration"
+
 TS_GO_CALL_EXPRESSION = "call_expression"
+
 TS_GO_IMPORT_DECLARATION = "import_declaration"
+
 TS_GO_PARAMETER_LIST = "parameter_list"
+
 TS_GO_VAR_DECLARATION = "var_declaration"
+
 TS_GO_VAR_SPEC = "var_spec"
+
 TS_GO_SHORT_VAR_DECLARATION = "short_var_declaration"
+
 TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
+
 TS_GO_EXPRESSION_LIST = "expression_list"
+
 TS_GO_COMPOSITE_LITERAL = "composite_literal"
+
 TS_GO_LITERAL_VALUE = "literal_value"
+
 TS_GO_KEYED_ELEMENT = "keyed_element"
+
 TS_GO_LITERAL_ELEMENT = "literal_element"
+
 TS_GO_UNARY_EXPRESSION = "unary_expression"
+
 TS_GO_POINTER_TYPE = "pointer_type"
+
 # (H) Go composite types a method may return; a chained call lands on the CONTAINER,
 # (H) not its element, so return-type inference must not unwrap these to an element
 # (H) name (a `[]Command` return must not resolve `.Run()` to `Command.Run`).
 TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
-FIELD_OPERAND = "operand"
 
 # (H) Tree-sitter Scala node types
 TS_SCALA_CLASS_DEFINITION = "class_definition"
+
 TS_SCALA_OBJECT_DEFINITION = "object_definition"
+
 TS_SCALA_TRAIT_DEFINITION = "trait_definition"
+
 TS_SCALA_COMPILATION_UNIT = "compilation_unit"
+
 TS_SCALA_FUNCTION_DEFINITION = "function_definition"
+
 TS_SCALA_FUNCTION_DECLARATION = "function_declaration"
+
 TS_SCALA_CALL_EXPRESSION = "call_expression"
+
 # (H) Shared tree-sitter node type: a call with explicit type args, e.g. Rust
 # (H) turbofish `f::<T>()` and Scala `f[T]()`. Its `function` field holds the
 # (H) actual callee (identifier or scoped_identifier).
 TS_GENERIC_FUNCTION = "generic_function"
+
 TS_SCALA_GENERIC_FUNCTION = TS_GENERIC_FUNCTION
+
 TS_SCALA_FIELD_EXPRESSION = "field_expression"
+
 TS_SCALA_INFIX_EXPRESSION = "infix_expression"
+
 TS_SCALA_IMPORT_DECLARATION = "import_declaration"
 
 # (H) Tree-sitter PHP node types
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
+
 TS_PHP_METHOD_DECLARATION = "method_declaration"
+
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
+
 # (H) PHP inheritance clauses: `extends ...` (base_clause, for class AND
 # (H) interface) and `implements ...` (class_interface_clause); each lists `name`
 # (H) nodes naming the base types.
 TS_PHP_BASE_CLAUSE = "base_clause"
+
 TS_PHP_CLASS_INTERFACE_CLAUSE = "class_interface_clause"
+
 TS_PHP_NAME = "name"
+
 # (H) PHP fully-qualified base (`\Exception`, `\App\Base`); its trailing `name`
 # (H) child is the simple name cgr resolves against.
 TS_PHP_QUALIFIED_NAME = "qualified_name"
+
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
+
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
+
 TS_PHP_ARROW_FUNCTION = "arrow_function"
+
 TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
+
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
+
 TS_PHP_FUNCTION_CALL_EXPRESSION = "function_call_expression"
+
 TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION = "nullsafe_member_call_expression"
+
 TS_PHP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+
 TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
+
 TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
+
 TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
+
 TS_PHP_FUNCTION = "function"
+
 TS_PHP_INCLUDE_EXPRESSION = "include_expression"
+
 TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
+
 TS_PHP_REQUIRE_EXPRESSION = "require_expression"
+
 TS_PHP_REQUIRE_ONCE_EXPRESSION = "require_once_expression"
+
 TS_PHP_ATTRIBUTE_LIST = "attribute_list"
+
 TS_PHP_ATTRIBUTE = "attribute"
+
 TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
+
 TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+
 TS_PHP_USE_DECLARATION = "use_declaration"
-TS_PHP_QUALIFIED_NAME = "qualified_name"
 
 # (H) Tree-sitter Lua node types for language_spec
 TS_LUA_CHUNK = "chunk"
+
 TS_LUA_FUNCTION_DECLARATION = "function_declaration"
+
 TS_LUA_FUNCTION_DEFINITION = "function_definition"
-TS_LUA_FUNCTION_CALL = "function_call"
 
 # (H) Tree-sitter C++ node types for language_spec
 TS_CPP_FUNCTION_DEFINITION = "function_definition"
+
 TS_CPP_DECLARATION = "declaration"
+
 TS_CPP_FIELD_DECLARATION = "field_declaration"
+
 TS_CPP_TEMPLATE_DECLARATION = "template_declaration"
+
 TS_CPP_TEMPLATE_PARAMETER_LIST = "template_parameter_list"
+
 # (H) The template TYPE-parameter declaration node types. A value/non-type param
 # (H) (`parameter_declaration`, e.g. `int N` / `MyEnum E`) and a template-template param
 # (H) are deliberately excluded: their type name is a concrete type, not a stand-in that
@@ -2442,18 +1515,31 @@ CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
         "variadic_type_parameter_declaration",
     }
 )
+
 TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
+
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
+
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
+
 TS_CPP_CALL_EXPRESSION = "call_expression"
+
 TS_CPP_FIELD_EXPRESSION = "field_expression"
+
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
+
 TS_CPP_NEW_EXPRESSION = "new_expression"
+
 TS_CPP_DELETE_EXPRESSION = "delete_expression"
+
 TS_CPP_BINARY_EXPRESSION = "binary_expression"
+
 TS_CPP_UNARY_EXPRESSION = "unary_expression"
+
 TS_CPP_UPDATE_EXPRESSION = "update_expression"
+
 TS_CPP_FUNCTION_DECLARATOR = "function_declarator"
+
 # (H) Substring shared by C++ declarator node types (pointer_declarator,
 # (H) reference_declarator, parenthesized_declarator, ...), used to unwrap a
 # (H) parameter declarator down to its bound identifier.
@@ -2461,45 +1547,70 @@ CPP_DECLARATOR_SUFFIX = "declarator"
 
 # (H) Tree-sitter Java node types for language_spec
 TS_JAVA_METHOD_INVOCATION = "method_invocation"
+
 TS_JAVA_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 
 TS_BASE_CLASS_CLAUSE = "base_class_clause"
+
 TS_TEMPLATE_TYPE = "template_type"
+
 TS_ACCESS_SPECIFIER = "access_specifier"
+
 TS_VIRTUAL = "virtual"
+
 TS_TYPE_LIST = "type_list"
+
 TS_CLASS_HERITAGE = "class_heritage"
+
 # (H) TS class `implements I, J` clause (a child of class_heritage).
 TS_IMPLEMENTS_CLAUSE = "implements_clause"
+
 TS_EXTENDS_CLAUSE = "extends_clause"
+
 TS_MEMBER_EXPRESSION = "member_expression"
+
 TS_SELECTOR_EXPRESSION = "selector_expression"
+
 TS_EXTENDS = "extends"
+
 TS_ARGUMENTS = "arguments"
+
 TS_EXTENDS_TYPE_CLAUSE = "extends_type_clause"
+
 # (H) Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
 TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
+
 TS_METHOD_DEFINITION = "method_definition"
+
 TS_DECORATOR = "decorator"
+
 TS_ERROR = "ERROR"
+
 TS_EXPRESSION_STATEMENT = "expression_statement"
+
 TS_STATEMENT_BLOCK = "statement_block"
+
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+
 TS_BINARY_EXPRESSION = "binary_expression"
+
 # (H) Receivers that address the MODULE itself in CommonJS code
 # (H) (`exports.render()`, `module.exports.x()`, prototype-pattern `this`):
 # (H) only these may bind a dotted call to a same-module free function; an
 # (H) ordinary identifier receiver (`view.render()`) is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
+
 TS_JAVA_CAST_EXPRESSION = "cast_expression"
+
 TS_ATTRIBUTE = "attribute"
 
-FIELD_OPERATOR = "operator"
 FIELD_MACRO = "macro"
 
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
+
 CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)
+
 # (H) Node types that open their own variable scope; C++ local-variable inference must
 # (H) not descend into them, or a name declared inside a lambda / nested function /
 # (H) local class body would be attributed to the enclosing function's scope.
@@ -2510,12 +1621,16 @@ CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
         *CPP_COMPOUND_TYPES,
     )
 )
+
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+
 # (H) JSX element nodes that carry a component name (javascript and tsx
 # (H) grammars share these); the closing element repeats the name and must not
 # (H) double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
+
 TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
+
 # (H) The `{...}` wrapper around an expression in a JSX attribute value or child
 # (H) (`onClick={handleLogout}`, `onClick={() => x()}`); its inner expression can
 # (H) hand a function to the element as a prop.
@@ -2523,7 +1638,9 @@ TS_JSX_EXPRESSION = "jsx_expression"
 
 # (H) Import processor function names
 IMPORT_REQUIRE = "require"
+
 IMPORT_PCALL = "pcall"
+
 IMPORT_IMPORT = "import"
 
 # (H) Lua stdlib module names
@@ -2544,24 +1661,34 @@ LUA_STDLIB_MODULES = frozenset(
 
 # (H) Entity type names
 ENTITY_CLASS = "Class"
+
 ENTITY_FUNCTION = "Function"
+
 ENTITY_METHOD = "Method"
 
 # (H) Anonymous function name prefixes
 PREFIX_LAMBDA = "lambda_"
+
 PREFIX_ANONYMOUS = "anonymous_"
+
 PREFIX_IIFE = "iife_"
+
 PREFIX_IIFE_DIRECT = "iife_direct_"
+
 PREFIX_ARROW = "arrow"
+
 PREFIX_FUNC = "func"
 
 # (H) C++ stdlib namespace and type inference prefixes
 CPP_STD_NAMESPACE = "std"
+
 CPP_PREFIX_IS = "is_"
+
 CPP_PREFIX_HAS = "has_"
 
 # (H) JSON keys for stdlib introspection subprocess responses
 JSON_KEY_HAS_ENTITY = "hasEntity"
+
 JSON_KEY_ENTITY_TYPE = "entityType"
 
 # (H) C++ stdlib entity names for heuristic detection
@@ -2625,19 +1752,30 @@ JAVA_STDLIB_CLASSES = frozenset(
 
 # (H) Import processor misc
 IMPORT_DEFAULT_SUFFIX = ".default"
+
 IMPORT_STD_PREFIX = "std."
+
 CPP_STD_PREFIX = "std"
+
 IMPORT_MODULE_LABEL = "Module"
+
 IMPORT_QUALIFIED_NAME = "qualified_name"
+
 IMPORT_RELATIONSHIP = "IMPORTS"
 
 # (H) Java type inference constants
 JAVA_LANG_PREFIX = "java.lang."
+
 JAVA_ARRAY_SUFFIX = "[]"
+
 JAVA_SUFFIX_EXCEPTION = "Exception"
+
 JAVA_SUFFIX_ERROR = "Error"
+
 JAVA_SUFFIX_INTERFACE = "Interface"
+
 JAVA_SUFFIX_BUILDER = "Builder"
+
 JAVA_PRIMITIVE_TYPES = frozenset(
     {
         "int",
@@ -2650,6 +1788,7 @@ JAVA_PRIMITIVE_TYPES = frozenset(
         "short",
     }
 )
+
 JAVA_WRAPPER_TYPES = frozenset(
     {
         "String",
@@ -2723,71 +1862,106 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
 
 # (H) Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
+
 TS_SPREAD_PARAMETER = "spread_parameter"
+
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
+
 TS_FIELD_DECLARATION = "field_declaration"
+
 TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
+
 # (H) TS "cast" wrappers that are transparent for reference resolution: `x as T`,
 # (H) `x satisfies T`, and the non-null assertion `x!`. Their first named child is
 # (H) the wrapped value, so unwrapping reaches the real referenced expression
 # (H) (`export const persist = persistImpl as unknown as Persist`).
 TS_AS_EXPRESSION = "as_expression"
+
 TS_SATISFIES_EXPRESSION = "satisfies_expression"
+
 TS_NON_NULL_EXPRESSION = "non_null_expression"
+
 TS_CAST_WRAPPER_TYPES = frozenset(
     {TS_AS_EXPRESSION, TS_SATISFIES_EXPRESSION, TS_NON_NULL_EXPRESSION}
 )
+
 TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+
 TS_METHOD_INVOCATION = "method_invocation"
+
 TS_FIELD_ACCESS = "field_access"
+
 TS_INTEGER_LITERAL = "integer_literal"
+
 TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
+
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
+
 TS_METHOD_DECLARATION = "method_declaration"
+
 TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"
+
 TS_RECORD_DECLARATION = "record_declaration"
+
 TS_TRUE = "true"
+
 TS_FALSE = "false"
 
 # (H) Tree-sitter field names for child_by_field_name
 TS_FIELD_NAME = "name"
-TS_FIELD_TYPE = "type"
-TS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
-TS_FIELD_SUPERCLASS = "superclass"
-TS_FIELD_INTERFACES = "interfaces"
-TS_FIELD_TYPE_PARAMETERS = "type_parameters"
-TS_FIELD_PARAMETERS = "parameters"
-TS_FIELD_DECLARATOR = "declarator"
-TS_FIELD_OBJECT = "object"
-TS_FIELD_ARGUMENTS = "arguments"
-TS_FIELD_FUNCTION = "function"
-TS_FIELD_BODY = "body"
-TS_FIELD_LEFT = "left"
-TS_FIELD_RIGHT = "right"
 
-QUERY_CAPTURE_CLASS = "class"
-QUERY_CAPTURE_FUNCTION = "function"
-QUERY_KEY_CLASSES = "classes"
-QUERY_KEY_FUNCTIONS = "functions"
+TS_FIELD_TYPE = "type"
+
+TS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
+
+TS_FIELD_SUPERCLASS = "superclass"
+
+TS_FIELD_INTERFACES = "interfaces"
+
+TS_FIELD_TYPE_PARAMETERS = "type_parameters"
+
+TS_FIELD_PARAMETERS = "parameters"
+
+TS_FIELD_DECLARATOR = "declarator"
+
+TS_FIELD_OBJECT = "object"
+
+TS_FIELD_ARGUMENTS = "arguments"
+
+TS_FIELD_FUNCTION = "function"
+
+TS_FIELD_BODY = "body"
+
+TS_FIELD_LEFT = "left"
+
+TS_FIELD_RIGHT = "right"
 
 # (H) Java type inference keywords
 JAVA_KEYWORD_THIS = "this"
-JAVA_KEYWORD_SUPER = "super"
 
-# (H) Java array type suffix
-JAVA_ARRAY_SUFFIX = "[]"
+JAVA_KEYWORD_SUPER = "super"
 
 # (H) Java heuristic patterns
 JAVA_GETTER_PATTERN = "get"
+
 JAVA_NAME_PATTERN = "name"
+
 JAVA_ID_PATTERN = "id"
+
 JAVA_SIZE_PATTERN = "size"
+
 JAVA_LENGTH_PATTERN = "length"
+
 JAVA_CREATE_PATTERN = "create"
+
 JAVA_NEW_PATTERN = "new"
+
 JAVA_IS_PATTERN = "is"
+
 JAVA_HAS_PATTERN = "has"
+
 JAVA_USER_PATTERN = "user"
+
 JAVA_ORDER_PATTERN = "order"
 
 # (H) Java entity type names
@@ -2804,40 +1978,66 @@ JAVA_CALLABLE_ENTITY_TYPES = frozenset(
 
 # (H) Java primitive type names
 JAVA_TYPE_STRING = "String"
+
 JAVA_TYPE_INT = "int"
+
 JAVA_TYPE_DOUBLE = "double"
+
 JAVA_TYPE_BOOLEAN = "boolean"
+
 JAVA_TYPE_LONG = "java.lang.Long"
+
 JAVA_TYPE_STRING_FQN = "java.lang.String"
+
 JAVA_TYPE_OBJECT = "Object"
 
 # (H) Java heuristic return type names
 JAVA_HEURISTIC_USER = "User"
+
 JAVA_HEURISTIC_ORDER = "Order"
 
 # (H) Java tree-sitter node types for java_utils
 TS_PACKAGE_DECLARATION = "package_declaration"
+
 TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
+
 TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+
 TS_ANNOTATION = "annotation"
+
 TS_MARKER_ANNOTATION = "marker_annotation"
+
 TS_GENERIC_TYPE = "generic_type"
+
 TS_TYPE_PARAMETER = "type_parameter"
+
 TS_MODIFIERS = "modifiers"
+
 TS_VOID_TYPE = "void_type"
+
 TS_PROGRAM = "program"
+
 TS_THIS = "this"
+
 TS_SUPER = "super"
 
 # (H) Java modifier node types
 JAVA_MODIFIER_PUBLIC = "public"
+
 JAVA_MODIFIER_PRIVATE = "private"
+
 JAVA_MODIFIER_PROTECTED = "protected"
+
 JAVA_MODIFIER_STATIC = "static"
+
 JAVA_MODIFIER_FINAL = "final"
+
 JAVA_MODIFIER_ABSTRACT = "abstract"
+
 JAVA_MODIFIER_SYNCHRONIZED = "synchronized"
+
 JAVA_MODIFIER_TRANSIENT = "transient"
+
 JAVA_MODIFIER_VOLATILE = "volatile"
 
 JAVA_CLASS_MODIFIERS = frozenset(
@@ -2877,13 +2077,18 @@ JAVA_FIELD_MODIFIERS = frozenset(
 
 # (H) Java visibility values
 JAVA_VISIBILITY_PUBLIC = "public"
+
 JAVA_VISIBILITY_PROTECTED = "protected"
+
 JAVA_VISIBILITY_PRIVATE = "private"
+
 JAVA_VISIBILITY_PACKAGE = "package"
 
 # (H) Java class type suffixes and names
 JAVA_DECLARATION_SUFFIX = "_declaration"
+
 JAVA_TYPE_METHOD = "method"
+
 JAVA_TYPE_CONSTRUCTOR = "constructor"
 
 # (H) Java class node types for matching
@@ -2907,16 +2112,24 @@ JAVA_METHOD_NODE_TYPES = frozenset(
 
 # (H) Java main method constants
 JAVA_MAIN_METHOD_NAME = "main"
+
 JAVA_MAIN_PARAM_ARRAY = "String[]"
+
 JAVA_MAIN_PARAM_VARARGS = "String..."
+
 JAVA_MAIN_PARAM_TYPE = "String"
 
 # (H) Java path parsing constants
 JAVA_PATH_JAVA = "java"
+
 JAVA_PATH_KOTLIN = "kotlin"
+
 JAVA_PATH_SCALA = "scala"
+
 JAVA_PATH_SRC = "src"
+
 JAVA_PATH_MAIN = "main"
+
 JAVA_PATH_TEST = "test"
 
 JAVA_JVM_LANGUAGES = frozenset(
@@ -2939,84 +2152,149 @@ DELIMITER_TOKENS = frozenset({"(", ")", ","})
 
 # (H) Python tree-sitter node types for type inference
 TS_PY_IDENTIFIER = "identifier"
+
 TS_PY_TYPED_PARAMETER = "typed_parameter"
+
 TS_PY_TYPED_DEFAULT_PARAMETER = "typed_default_parameter"
+
 TS_PY_ATTRIBUTE = "attribute"
+
 TS_PY_CALL = "call"
+
 TS_PY_LIST = "list"
+
 TS_PY_DICTIONARY = "dictionary"
+
 TS_PY_PAIR = "pair"
+
 TS_PY_SET = "set"
+
 TS_PY_TUPLE = "tuple"
+
 TS_PY_LIST_COMPREHENSION = "list_comprehension"
+
 TS_PY_FOR_STATEMENT = "for_statement"
+
 TS_PY_FOR_IN_CLAUSE = "for_in_clause"
+
 TS_PY_ASSIGNMENT = "assignment"
+
 PY_ASSIGNMENT_QUERY = "(assignment) @assignment"
+
 PY_RETURN_QUERY = "(return_statement) @return_stmt"
+
 TS_PY_CLASS_DEFINITION = "class_definition"
+
 TS_PY_BLOCK = "block"
+
 TS_PY_FUNCTION_DEFINITION = "function_definition"
+
 TS_PY_LAMBDA = "lambda"
+
 TS_PY_RETURN_STATEMENT = "return_statement"
+
 TS_PY_RETURN = "return"
+
 TS_PY_KEYWORD = "keyword"
+
 TS_PY_MODULE = "module"
+
 TS_PY_IMPORT_STATEMENT = "import_statement"
+
 TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
+
 TS_PY_WITH_STATEMENT = "with_statement"
+
 TS_PY_EXPRESSION_STATEMENT = "expression_statement"
+
 TS_PY_STRING = "string"
+
 TS_PY_DECORATED_DEFINITION = "decorated_definition"
+
 TS_PY_DECORATOR = "decorator"
+
 TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
+
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
+
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
+
 TS_PY_SUBSCRIPT = "subscript"
+
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
+
 TS_FIELD_OPERATORS = "operators"
+
 TS_PY_IF_STATEMENT = "if_statement"
+
 TS_PY_TRY_STATEMENT = "try_statement"
+
 TS_PY_WHILE_STATEMENT = "while_statement"
+
 TS_PY_ELIF_CLAUSE = "elif_clause"
+
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
+
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
+
 TS_PY_NOT_OPERATOR = "not_operator"
+
 TS_FIELD_CONDITION = "condition"
+
 TS_FIELD_ARGUMENT = "argument"
 
 # (H) Python operator syntax dispatches to dunder methods at runtime; these names
 # (H) let the call extractor synthesize the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
+
 PY_BUILTIN_LEN = "len"
+
 PY_BUILTIN_GETATTR = "getattr"
+
 TS_PY_STRING_CONTENT = "string_content"
+
 PY_DUNDER_GETITEM = "__getitem__"
+
 PY_DUNDER_SETITEM = "__setitem__"
+
 PY_DUNDER_CONTAINS = "__contains__"
+
 PY_DUNDER_LEN = "__len__"
+
 PY_DUNDER_BOOL = "__bool__"
+
 # (H) Operands with these characters are not simple attribute/name chains (calls,
 # (H) nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
+
 # (H) Optional annotation handling: X | None names a single concrete class.
 PY_UNION_SEPARATOR = "|"
+
 PY_NONE = "None"
 
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"
+
 PY_KEYWORD_CLS = "cls"
+
 # (H) Visibility by naming convention: a leading underscore marks a private
 # (H) symbol, while a dunder (__x__) is public API invoked by the runtime.
 PY_NAME_UNDERSCORE = "_"
+
 PY_NAME_DUNDER = "__"
+
 # (H) typing.Protocol base name and the conventional XxxProtocol class suffix
 # (H) used to map a Protocol to its concrete implementer.
 PY_PROTOCOL = "Protocol"
+
 PY_METHOD_INIT = "__init__"
+
 DECORATOR_AT = "@"
+
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
+
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 
 # (H) Eager builtins that invoke a callable argument synchronously within the
@@ -3028,31 +2306,42 @@ HIGHER_ORDER_BUILTINS: frozenset[str] = frozenset({"sorted", "min", "max", "redu
 
 # (H) Python attribute prefixes
 PY_SELF_PREFIX = "self."
+
 PY_CLS_PREFIX = "cls."
 
 # (H) Python type inference patterns
 PY_VAR_PATTERN_ALL = "all_"
+
 PY_VAR_SUFFIX_PLURAL = "s"
+
 PY_CLASS_REPOSITORY = "Repository"
+
 PY_MODELS_BASE_PATH = ".models.base."
+
 PY_METHOD_CREATE = "create"
 
 # (H) Type inference scoring
 PY_SCORE_EXACT_MATCH = 100
+
 PY_SCORE_SUFFIX_MATCH = 90
+
 PY_SCORE_CONTAINS_BASE = 80
 
 # (H) Type inference defaults
 TYPE_INFERENCE_LIST = "list"
+
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
 # (H) Recursion guard attributes
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
+
 GUARD_INHERITED_METHOD = "_inherited_method_guard"
 
 # (H) JS/TS ingest node types
 TS_PAIR = "pair"
+
 TS_OBJECT = "object"
+
 TS_ARRAY = "array"
 
 # (H) When a variable_declarator's value is one of these, the variable binds the
@@ -3061,33 +2350,31 @@ TS_ARRAY = "array"
 # (H) variable's name. Object-literal / arrow values are not here, so arrows nested
 # (H) directly under an object bound to a const still take the object's name.
 JS_CALL_RESULT_VALUE_TYPES = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
+
 TS_FUNCTION_EXPRESSION = "function_expression"
+
 TS_ARROW_FUNCTION = "arrow_function"
+
 TS_REQUIRED_PARAMETER = "required_parameter"
+
 TS_OPTIONAL_PARAMETER = "optional_parameter"
+
 TS_FIELD_PATTERN = "pattern"
+
 TS_FIELD_PARAMETER = "parameter"
+
 TS_MODULE = "module"
+
 TS_CLASS_BODY = "class_body"
-TS_STATIC = "static"
+
 TS_PROPERTY_IDENTIFIER = "property_identifier"
-TS_VARIABLE_DECLARATOR = "variable_declarator"
 
 # (H) JS prototype property keywords
 JS_PROTOTYPE_KEYWORD = "prototype"
-JS_OBJECT_NAME = "Object"
-JS_CREATE_METHOD = "create"
 
-# (H) JS/TS ingest query capture names
-CAPTURE_CHILD_CLASS = "child_class"
-CAPTURE_PARENT_CLASS = "parent_class"
-CAPTURE_CONSTRUCTOR_NAME = "constructor_name"
-CAPTURE_PROTOTYPE_KEYWORD = "prototype_keyword"
-CAPTURE_METHOD_NAME = "method_name"
-CAPTURE_METHOD_FUNCTION = "method_function"
-CAPTURE_MEMBER_EXPR = "member_expr"
-CAPTURE_FUNCTION_EXPR = "function_expr"
-CAPTURE_ARROW_FUNCTION = "arrow_function"
+JS_OBJECT_NAME = "Object"
+
+JS_CREATE_METHOD = "create"
 
 # (H) JS prototype inheritance query
 JS_PROTOTYPE_INHERITANCE_QUERY = """
@@ -3154,24 +2441,29 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
 
 # (H) JS/TS module system node types
 TS_OBJECT_PATTERN = "object_pattern"
-TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
-TS_PAIR_PATTERN = "pair_pattern"
-TS_FUNCTION_DECLARATION = "function_declaration"
-TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 
-# (H) Tree-sitter field names for module system
-FIELD_FUNCTION = "function"
-FIELD_KEY = "key"
+TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
+
+TS_PAIR_PATTERN = "pair_pattern"
+
+TS_FUNCTION_DECLARATION = "function_declaration"
+
+TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 
 # (H) JS/TS module system keywords
 JS_REQUIRE_KEYWORD = "require"
+
 JS_EXPORTS_KEYWORD = "exports"
+
 JS_MODULE_KEYWORD = "module"
 
 # (H) JS/TS export type descriptions
 JS_EXPORT_TYPE_COMMONJS = "CommonJS Export"
+
 JS_EXPORT_TYPE_COMMONJS_MODULE = "CommonJS Module Export"
+
 JS_EXPORT_TYPE_ES6_FUNCTION = "ES6 Export Function"
+
 JS_EXPORT_TYPE_ES6_FUNCTION_DECL = "ES6 Export Function Declaration"
 
 # (H) JS/TS CommonJS destructure query
@@ -3221,78 +2513,118 @@ JS_ES6_EXPORT_FUNCTION_QUERY = """
   [(function_declaration) (generator_function_declaration)] @export_function)
 """
 
-# (H) Query capture names for module system
-CAPTURE_FUNC = "func"
-CAPTURE_VARIABLE_DECLARATOR = "variable_declarator"
-CAPTURE_EXPORTS_OBJ = "exports_obj"
-CAPTURE_MODULE_OBJ = "module_obj"
-CAPTURE_EXPORTS_PROP = "exports_prop"
-CAPTURE_EXPORT_NAME = "export_name"
-CAPTURE_EXPORT_FUNCTION = "export_function"
-
 # (H) Tree-sitter Rust node types
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
+
 TS_RS_PRIMITIVE_TYPE = "primitive_type"
+
 TS_RS_USE_AS_CLAUSE = "use_as_clause"
+
 TS_RS_USE_WILDCARD = "use_wildcard"
+
 TS_RS_USE_LIST = "use_list"
+
 TS_RS_SCOPED_USE_LIST = "scoped_use_list"
+
 TS_RS_SOURCE_FILE = "source_file"
+
 TS_RS_MOD_ITEM = "mod_item"
+
 TS_RS_CRATE = "crate"
+
 TS_RS_KEYWORD_AS = "as"
+
 TS_RS_STRUCT_ITEM = "struct_item"
+
 TS_RS_ENUM_ITEM = "enum_item"
+
 TS_RS_TRAIT_ITEM = "trait_item"
+
 TS_RS_TYPE_ITEM = "type_item"
+
 TS_RS_FUNCTION_ITEM = "function_item"
+
 TS_RS_IMPL_ITEM = "impl_item"
+
 TS_RS_FUNCTION_SIGNATURE_ITEM = "function_signature_item"
+
 TS_RS_CLOSURE_EXPRESSION = "closure_expression"
+
 TS_RS_UNION_ITEM = "union_item"
+
 TS_RS_USE_DECLARATION = "use_declaration"
+
 TS_RS_EXTERN_CRATE_DECLARATION = "extern_crate_declaration"
+
 TS_RS_CALL_EXPRESSION = "call_expression"
+
 TS_RS_MACRO_INVOCATION = "macro_invocation"
+
 TS_RS_MACRO_DEFINITION = "macro_definition"
+
 RS_MACRO_EXPORT_ATTR = "macro_export"
+
 TS_RS_LINE_COMMENT = "line_comment"
+
 TS_RS_BLOCK_COMMENT = "block_comment"
+
 RS_COMMENT_TYPES = (TS_RS_LINE_COMMENT, TS_RS_BLOCK_COMMENT)
+
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
+
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
 
 # (H) Rust node types for local-variable type inference (receiver-dispatch)
 TS_RS_LET_DECLARATION = "let_declaration"
+
 TS_RS_PARAMETER = "parameter"
+
 TS_RS_SELF_PARAMETER = "self_parameter"
+
 TS_RS_STRUCT_EXPRESSION = "struct_expression"
+
 TS_RS_FIELD_DECLARATION_LIST = "field_declaration_list"
+
 TS_RS_FIELD_DECLARATION = "field_declaration"
+
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
+
 TS_RS_MATCH_EXPRESSION = "match_expression"
+
 TS_RS_MATCH_ARM = "match_arm"
+
 # (H) A Rust call node whose callee is descended for chain flattening: a plain call
 # (H) or a turbofish generic_function (`f::<T>()`).
 RS_CALL_OR_GENERIC_FN = (TS_RS_CALL_EXPRESSION, TS_GENERIC_FUNCTION)
+
 TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
+
 TS_RS_TYPE_ARGUMENTS = "type_arguments"
+
 TS_RS_TRY_EXPRESSION = "try_expression"
+
 TS_RS_FIELD_EXPRESSION = "field_expression"
+
 TS_RS_FIELD_PATH = "path"
+
 TS_RS_TOKEN_DOT = "."
+
 # (H) Nodes that can be a receiver token preceding `.method` in a macro token
 # (H) stream: a plain identifier or the `self` keyword.
 # (H) A receiver/chain base that is a plain identifier or the `self` keyword (used
 # (H) both for macro-token receiver reconstruction and value-chain base flattening).
 RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
+
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
+
 # (H) Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
+
 # (H) Transparent smart pointers that auto-deref (Rust deref coercion) to their
 # (H) inner type: a method call on the pointer dispatches to the inner type's method,
 # (H) so strip them from any type name (receiver OR return) to reach the real type.
 RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
+
 # (H) Guard containers that do NOT deref-coerce: the inner value is only reachable
 # (H) through a lock/borrow guard accessor. Stripped to the inner type ONLY in field
 # (H) extraction (where the field is virtually always accessed via a lock chain, e.g.
@@ -3300,14 +2632,19 @@ RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
 # (H) is preserved so a direct wrapper-method call (`m.is_poisoned()`) is not
 # (H) mis-resolved to an inner-type method.
 RS_GUARD_WRAPPERS = frozenset({"Mutex", "RwLock", "RefCell", "Cell"})
+
 # (H) Result<T>/Option<T>: stripped to their inner T only for a RETURN type (the
 # (H) value a `?`/`.unwrap()` yields). NOT stripped for a receiver type, where a
 # (H) method call `opt.map(..)` dispatches to Option itself.
 RS_RESULT_WRAPPERS = frozenset({"Result", "Option"})
+
 # (H) Full strip set for return types (deref pointers + Result/Option unwrap).
 RS_RETURN_STRIP_WRAPPERS = RS_DEREF_WRAPPERS | RS_RESULT_WRAPPERS
+
 TS_RS_REFERENCE_TYPE = "reference_type"
+
 TS_RS_POINTER_TYPE = "pointer_type"
+
 # (H) Node types that can stand for a Rust return/field type. Reference/pointer
 # (H) wrappers (`&Frame`, `*const T`) are included so a generic inner argument
 # (H) (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent.
@@ -3319,6 +2656,7 @@ RS_RETURN_TYPE_NODE_TYPES = (
     TS_RS_REFERENCE_TYPE,
     TS_RS_POINTER_TYPE,
 )
+
 # (H) Wrapper-passthrough methods: they return the receiver's own (inner) type, so
 # (H) a call-bound local keeps its type across them (`Type::mk().unwrap().m()`).
 RS_IDENTITY_METHODS = frozenset(
@@ -3336,6 +2674,7 @@ RS_IDENTITY_METHODS = frozenset(
         "as_deref_mut",
     }
 )
+
 # (H) Guard accessors: called on a guard container (Mutex/RwLock/RefCell) to obtain a
 # (H) guard that derefs to the inner type. In a receiver chain, one of these
 # (H) immediately after a guard-wrapped field unwraps the wrapper to its inner type
@@ -3347,7 +2686,9 @@ RS_GUARD_ACCESSORS = frozenset(
 
 # (H) Rust identifier tuples
 RS_IDENTIFIER_TYPES = (TS_IDENTIFIER, TS_TYPE_IDENTIFIER)
+
 RS_SCOPED_TYPES = (TS_SCOPED_IDENTIFIER, TS_RS_SCOPED_TYPE_IDENTIFIER)
+
 RS_PATH_KEYWORDS = (TS_RS_CRATE, KEYWORD_SUPER, KEYWORD_SELF)
 
 # (H) Delimiter tokens for Rust use lists
@@ -3429,39 +2770,65 @@ class MCPParamName(StrEnum):
 
 # (H) MCP server constants
 MCP_SERVER_NAME = "code-graph-rag"
+
 MCP_CONTENT_TYPE_TEXT = "text"
+
 MCP_DEFAULT_DIRECTORY = "."
+
 MCP_JSON_INDENT = 2
+
 MCP_LOG_LEVEL_INFO = "INFO"
+
 MCP_LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+
 MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
 
 # (H) MCP response messages
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
+
 MCP_INDEX_SUCCESS_PROJECT = "Successfully indexed repository at {path}. Project '{project_name}' has been updated."
+
 MCP_INDEX_ERROR = "Error indexing repository: {error}"
+
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
+
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
+
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
+
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
+
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
+
 MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
+
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
+
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
+
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
+
 MCP_WIPE_ERROR = "Error wiping database: {error}"
 
 # (H) MCP dict keys and values
 MCP_KEY_RESULTS = "results"
+
 MCP_KEY_ERROR = "error"
+
 MCP_KEY_FOUND = "found"
+
 MCP_KEY_ERROR_MESSAGE = "error_message"
+
 MCP_KEY_QUERY_USED = "query_used"
+
 MCP_KEY_SUMMARY = "summary"
+
 MCP_NOT_AVAILABLE = "N/A"
+
 MCP_TOOL_NAME_QUERY = "query"
 
 # (H) TS-specific node types
@@ -3473,6 +2840,7 @@ FQN_PY_SCOPE_TYPES = (
     TS_PY_MODULE,
     TS_PY_FUNCTION_DEFINITION,
 )
+
 FQN_PY_FUNCTION_TYPES = (TS_PY_FUNCTION_DEFINITION,)
 
 # (H) FQN node type tuples for JS
@@ -3484,6 +2852,7 @@ FQN_JS_SCOPE_TYPES = (
     TS_ARROW_FUNCTION,
     TS_METHOD_DEFINITION,
 )
+
 FQN_JS_FUNCTION_TYPES = (
     TS_FUNCTION_DECLARATION,
     TS_METHOD_DEFINITION,
@@ -3505,6 +2874,7 @@ FQN_TS_SCOPE_TYPES = (
     TS_ARROW_FUNCTION,
     TS_METHOD_DEFINITION,
 )
+
 FQN_TS_FUNCTION_TYPES = (
     TS_FUNCTION_DECLARATION,
     TS_METHOD_DEFINITION,
@@ -3546,6 +2916,7 @@ FQN_RS_SCOPE_TYPES = (
     TS_RS_MOD_ITEM,
     TS_RS_SOURCE_FILE,
 )
+
 FQN_RS_FUNCTION_TYPES = (
     TS_RS_FUNCTION_ITEM,
     TS_RS_FUNCTION_SIGNATURE_ITEM,
@@ -3567,6 +2938,7 @@ FQN_JAVA_SCOPE_TYPES = (
     TS_METHOD_DECLARATION,
     TS_CONSTRUCTOR_DECLARATION,
 )
+
 FQN_JAVA_FUNCTION_TYPES = (
     TS_METHOD_DECLARATION,
     TS_CONSTRUCTOR_DECLARATION,
@@ -3579,6 +2951,7 @@ FQN_CPP_SCOPE_TYPES = (
     TS_NAMESPACE_DEFINITION,
     TS_CPP_TRANSLATION_UNIT,
 )
+
 FQN_CPP_FUNCTION_TYPES = (
     TS_CPP_FUNCTION_DEFINITION,
     TS_CPP_DECLARATION,
@@ -3589,6 +2962,7 @@ FQN_CPP_FUNCTION_TYPES = (
 
 # (H) FQN node type tuples for Lua
 FQN_LUA_SCOPE_TYPES = (TS_LUA_CHUNK,)
+
 FQN_LUA_FUNCTION_TYPES = (
     TS_LUA_FUNCTION_DECLARATION,
     TS_LUA_FUNCTION_DEFINITION,
@@ -3599,6 +2973,7 @@ FQN_GO_SCOPE_TYPES = (
     TS_GO_TYPE_DECLARATION,
     TS_GO_SOURCE_FILE,
 )
+
 FQN_GO_FUNCTION_TYPES = (
     TS_GO_FUNCTION_DECLARATION,
     TS_GO_METHOD_DECLARATION,
@@ -3611,6 +2986,7 @@ FQN_SCALA_SCOPE_TYPES = (
     TS_SCALA_TRAIT_DEFINITION,
     TS_SCALA_COMPILATION_UNIT,
 )
+
 FQN_SCALA_FUNCTION_TYPES = (
     TS_SCALA_FUNCTION_DEFINITION,
     TS_SCALA_FUNCTION_DECLARATION,
@@ -3624,6 +3000,7 @@ FQN_PHP_SCOPE_TYPES = (
     TS_PHP_NAMESPACE_DEFINITION,
     TS_PROGRAM,
 )
+
 FQN_PHP_FUNCTION_TYPES = (
     TS_PHP_FUNCTION_DEFINITION,
     TS_PHP_METHOD_DECLARATION,
@@ -3633,15 +3010,22 @@ FQN_PHP_FUNCTION_TYPES = (
 
 # (H) LANGUAGE_SPECS node type tuples for Python
 SPEC_PY_FUNCTION_TYPES = (TS_PY_FUNCTION_DEFINITION,)
+
 SPEC_PY_CLASS_TYPES = (TS_PY_CLASS_DEFINITION,)
+
 SPEC_PY_MODULE_TYPES = (TS_PY_MODULE,)
+
 SPEC_PY_CALL_TYPES = (TS_PY_CALL, TS_PY_WITH_STATEMENT)
+
 SPEC_PY_IMPORT_TYPES = (TS_PY_IMPORT_STATEMENT,)
+
 SPEC_PY_IMPORT_FROM_TYPES = (TS_PY_IMPORT_FROM_STATEMENT,)
+
 SPEC_PY_PACKAGE_INDICATORS = (PKG_INIT_PY,)
 
 # (H) LANGUAGE_SPECS node type tuples for JS/TS
 SPEC_JS_MODULE_TYPES = (TS_PROGRAM,)
+
 SPEC_JS_CALL_TYPES = (TS_CALL_EXPRESSION, TS_NEW_EXPRESSION)
 
 # (H) Derived node types for _js_get_name
@@ -3660,6 +3044,7 @@ RS_TYPE_NODE_TYPES = (
     TS_RS_TRAIT_ITEM,
     TS_RS_TYPE_ITEM,
 )
+
 RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
 
 # (H) Derived node types for _cpp_get_name
@@ -3687,6 +3072,7 @@ SPEC_RS_FUNCTION_TYPES = (
     # (H) first-party definition to resolve to.
     TS_RS_MACRO_DEFINITION,
 )
+
 SPEC_RS_CLASS_TYPES = (
     TS_RS_STRUCT_ITEM,
     TS_RS_ENUM_ITEM,
@@ -3695,17 +3081,26 @@ SPEC_RS_CLASS_TYPES = (
     TS_RS_IMPL_ITEM,
     TS_RS_TYPE_ITEM,
 )
+
 SPEC_RS_MODULE_TYPES = (TS_RS_SOURCE_FILE, TS_RS_MOD_ITEM)
+
 SPEC_RS_CALL_TYPES = (TS_RS_CALL_EXPRESSION, TS_RS_MACRO_INVOCATION)
+
 SPEC_RS_IMPORT_TYPES = (TS_RS_USE_DECLARATION, TS_RS_EXTERN_CRATE_DECLARATION)
+
 SPEC_RS_IMPORT_FROM_TYPES = (TS_RS_USE_DECLARATION,)
+
 SPEC_RS_PACKAGE_INDICATORS = (PKG_CARGO_TOML,)
 
 # (H) LANGUAGE_SPECS node type tuples for Go
 SPEC_GO_FUNCTION_TYPES = (TS_GO_FUNCTION_DECLARATION, TS_GO_METHOD_DECLARATION)
+
 SPEC_GO_CLASS_TYPES = (TS_GO_TYPE_SPEC, TS_GO_TYPE_ALIAS)
+
 SPEC_GO_MODULE_TYPES = (TS_GO_SOURCE_FILE,)
+
 SPEC_GO_CALL_TYPES = (TS_GO_CALL_EXPRESSION,)
+
 SPEC_GO_IMPORT_TYPES = (TS_GO_IMPORT_DECLARATION,)
 
 # (H) LANGUAGE_SPECS node type tuples for Scala
@@ -3713,22 +3108,27 @@ SPEC_SCALA_FUNCTION_TYPES = (
     TS_SCALA_FUNCTION_DEFINITION,
     TS_SCALA_FUNCTION_DECLARATION,
 )
+
 SPEC_SCALA_CLASS_TYPES = (
     TS_SCALA_CLASS_DEFINITION,
     TS_SCALA_OBJECT_DEFINITION,
     TS_SCALA_TRAIT_DEFINITION,
 )
+
 SPEC_SCALA_MODULE_TYPES = (TS_SCALA_COMPILATION_UNIT,)
+
 SPEC_SCALA_CALL_TYPES = (
     TS_SCALA_CALL_EXPRESSION,
     TS_SCALA_GENERIC_FUNCTION,
     TS_SCALA_FIELD_EXPRESSION,
     TS_SCALA_INFIX_EXPRESSION,
 )
+
 SPEC_SCALA_IMPORT_TYPES = (TS_SCALA_IMPORT_DECLARATION,)
 
 # (H) LANGUAGE_SPECS node type tuples for Java
 SPEC_JAVA_FUNCTION_TYPES = (TS_METHOD_DECLARATION, TS_CONSTRUCTOR_DECLARATION)
+
 SPEC_JAVA_CLASS_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
@@ -3736,8 +3136,11 @@ SPEC_JAVA_CLASS_TYPES = (
     TS_JAVA_ANNOTATION_TYPE_DECLARATION,
     TS_RECORD_DECLARATION,
 )
+
 SPEC_JAVA_MODULE_TYPES = (TS_PROGRAM,)
+
 SPEC_JAVA_CALL_TYPES = (TS_JAVA_METHOD_INVOCATION, TS_OBJECT_CREATION_EXPRESSION)
+
 SPEC_JAVA_IMPORT_TYPES = (TS_IMPORT_DECLARATION,)
 
 # (H) LANGUAGE_SPECS node type tuples for C++
@@ -3748,18 +3151,21 @@ SPEC_CPP_FUNCTION_TYPES = (
     TS_CPP_TEMPLATE_DECLARATION,
     TS_CPP_LAMBDA_EXPRESSION,
 )
+
 SPEC_CPP_CLASS_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
     TS_STRUCT_SPECIFIER,
     TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
+
 SPEC_CPP_MODULE_TYPES = (
     TS_CPP_TRANSLATION_UNIT,
     TS_NAMESPACE_DEFINITION,
     TS_CPP_LINKAGE_SPECIFICATION,
     TS_CPP_DECLARATION,
 )
+
 SPEC_CPP_CALL_TYPES = (
     TS_CPP_CALL_EXPRESSION,
     TS_CPP_FIELD_EXPRESSION,
@@ -3770,6 +3176,7 @@ SPEC_CPP_CALL_TYPES = (
     TS_CPP_UNARY_EXPRESSION,
     TS_CPP_UPDATE_EXPRESSION,
 )
+
 SPEC_CPP_PACKAGE_INDICATORS = (
     PKG_CMAKE_LISTS,
     PKG_MAKEFILE,
@@ -3784,17 +3191,22 @@ FQN_C_SCOPE_TYPES = (
     TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
+
 FQN_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
 
 # (H) LANGUAGE_SPECS node type tuples for C
 SPEC_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+
 SPEC_C_CLASS_TYPES = (
     TS_STRUCT_SPECIFIER,
     TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
+
 SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
+
 SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
+
 SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
 
 # (H) LANGUAGE_SPECS node type tuples for PHP
@@ -3804,13 +3216,16 @@ SPEC_PHP_FUNCTION_TYPES = (
     TS_PHP_ANONYMOUS_FUNCTION,
     TS_PHP_ARROW_FUNCTION,
 )
+
 SPEC_PHP_CLASS_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
     TS_ENUM_DECLARATION,
 )
+
 SPEC_PHP_MODULE_TYPES = (TS_PROGRAM,)
+
 SPEC_PHP_CALL_TYPES = (
     TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_MEMBER_CALL_EXPRESSION,
@@ -3818,7 +3233,9 @@ SPEC_PHP_CALL_TYPES = (
     TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION,
     TS_PHP_OBJECT_CREATION_EXPRESSION,
 )
+
 SPEC_PHP_IMPORT_TYPES = (TS_PHP_NAMESPACE_USE_DECLARATION,)
+
 SPEC_PHP_IMPORT_FROM_TYPES = (
     TS_PHP_INCLUDE_EXPRESSION,
     TS_PHP_INCLUDE_ONCE_EXPRESSION,
@@ -3828,55 +3245,89 @@ SPEC_PHP_IMPORT_FROM_TYPES = (
 
 # (H) LANGUAGE_SPECS node type tuples for Lua
 SPEC_LUA_FUNCTION_TYPES = (TS_LUA_FUNCTION_DECLARATION, TS_LUA_FUNCTION_DEFINITION)
+
 SPEC_LUA_CLASS_TYPES: tuple[str, ...] = ()
+
 SPEC_LUA_MODULE_TYPES = (TS_LUA_CHUNK,)
+
 SPEC_LUA_CALL_TYPES = (TS_LUA_FUNCTION_CALL,)
+
 SPEC_LUA_IMPORT_TYPES = (TS_LUA_FUNCTION_CALL,)
 
 HEALTH_CHECK_DOCKER_RUNNING = "Docker daemon is running"
+
 HEALTH_CHECK_DOCKER_NOT_RUNNING = "Docker daemon is not running"
+
 HEALTH_CHECK_DOCKER_RUNNING_MSG = "Running (version {version})"
+
 HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG = "Not responding"
+
 HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG = "Not installed"
+
 HEALTH_CHECK_DOCKER_NOT_IN_PATH = "docker command not found in PATH"
+
 HEALTH_CHECK_DOCKER_TIMEOUT_MSG = "Check timed out"
+
 HEALTH_CHECK_DOCKER_TIMEOUT_ERROR = (
     "The 'docker info' command took more than 5 seconds to respond."
 )
+
 HEALTH_CHECK_DOCKER_FAILED_MSG = "Check failed"
+
 HEALTH_CHECK_DOCKER_EXIT_CODE = "Non-zero exit code"
 
 HEALTH_CHECK_MEMGRAPH_SUCCESSFUL = "Memgraph connection successful"
+
 HEALTH_CHECK_MEMGRAPH_FAILED = "Memgraph connection failed"
+
 HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {host}:{port}"
+
 HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
+
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
+
 HEALTH_CHECK_MEMGRAPH_ERROR = "Memgraph error: {error}"
+
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
 
 HEALTH_CHECK_GRAPH_INTEGRITY_OK = "Graph structural integrity verified"
+
 HEALTH_CHECK_GRAPH_INTEGRITY_FAILED = "Graph structural integrity violations"
+
 HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG = "No orphans or schema violations"
+
 HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG = "{count} violation(s) found"
+
 HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG = "Audit queries failed"
+
 HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
 
 HEALTH_CHECK_API_KEY_SET = "{display_name} API key is set"
+
 HEALTH_CHECK_API_KEY_NOT_SET = "{display_name} API key is not set"
+
 HEALTH_CHECK_API_KEY_CONFIGURED = "Configured"
+
 HEALTH_CHECK_API_KEY_NOT_CONFIGURED = "Not set"
+
 HEALTH_CHECK_API_KEY_MISSING_MSG = (
     "Set the {env_name} environment variable or configure it in your settings."
 )
 
 HEALTH_CHECK_TOOL_INSTALLED = "{tool_name} is installed"
+
 HEALTH_CHECK_TOOL_NOT_INSTALLED = "{tool_name} is not installed"
+
 HEALTH_CHECK_TOOL_INSTALLED_MSG = "Installed ({path})"
+
 HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG = "'{cmd}' not found in PATH"
+
 HEALTH_CHECK_TOOL_TIMEOUT_MSG = "Check timed out"
+
 HEALTH_CHECK_TOOL_TIMEOUT_ERROR = (
     "The command to find '{cmd}' took more than 4 seconds to respond."
 )
+
 HEALTH_CHECK_TOOL_FAILED_MSG = "Check failed"
 
 HEALTH_CHECK_TOOLS = [
@@ -3890,6 +3341,3 @@ HEALTH_CHECK_EXTERNAL_TOOLS = [
     ("ripgrep", "rg"),
     ("cmake", "cmake"),
 ]
-
-SHELL_CMD_WHERE = "where"
-SHELL_CMD_WHICH = "which"
