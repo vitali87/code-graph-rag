@@ -97,7 +97,7 @@ class IOAccessProcessor:
             var_text = left.text
             if var_text is None:
                 continue
-            identity = self._literal_target(right, ctor.target_arg)
+            identity = self._literal_target(right, ctor.target_arg, ctor.target_kw)
             handles[var_text.decode(cs.ENCODING_UTF8)] = HandleBinding(
                 kind=ctor.kind, identity=identity
             )
@@ -127,13 +127,13 @@ class IOAccessProcessor:
             if sink is None:
                 continue
             mode = (
-                self._literal_target(node, sink.mode_arg)
-                if sink.mode_arg is not None
+                self._literal_target(node, sink.mode_arg, sink.mode_kw)
+                if sink.mode_arg is not None or sink.mode_kw is not None
                 else None
             )
             mode_literal = None if mode == DYNAMIC_TARGET else mode
             direction = sink.effective_direction(mode_literal)
-            identity = self._literal_target(node, sink.target_arg)
+            identity = self._literal_target(node, sink.target_arg, sink.target_kw)
             self._emit(caller_spec, direction, sink.kind, identity)
 
     def _emit_handle_method(
@@ -221,8 +221,10 @@ class IOAccessProcessor:
         return f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
 
     @staticmethod
-    def _literal_target(call_node: Node, arg_index: int | None) -> str:
-        if arg_index is None:
+    def _literal_target(
+        call_node: Node, arg_index: int | None, arg_keyword: str | None = None
+    ) -> str:
+        if arg_index is None and arg_keyword is None:
             return DYNAMIC_TARGET
         args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if args is None:
@@ -230,10 +232,28 @@ class IOAccessProcessor:
         positional = [
             c for c in args.named_children if c.type != cs.TS_PY_KEYWORD_ARGUMENT
         ]
-        if arg_index >= len(positional):
-            return DYNAMIC_TARGET
-        arg = positional[arg_index]
-        if arg.type != cs.TS_PY_STRING:
+        if arg_index is not None and arg_index < len(positional):
+            return IOAccessProcessor._string_literal(positional[arg_index])
+        if arg_keyword is not None:
+            return IOAccessProcessor._string_literal(
+                IOAccessProcessor._keyword_value(args, arg_keyword)
+            )
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _keyword_value(args: Node, keyword: str) -> Node | None:
+        for child in args.named_children:
+            if child.type != cs.TS_PY_KEYWORD_ARGUMENT:
+                continue
+            name = child.child_by_field_name(cs.TS_FIELD_NAME)
+            if name is not None and name.text is not None:
+                if name.text.decode(cs.ENCODING_UTF8) == keyword:
+                    return child.child_by_field_name(cs.FIELD_VALUE)
+        return None
+
+    @staticmethod
+    def _string_literal(arg: Node | None) -> str:
+        if arg is None or arg.type != cs.TS_PY_STRING:
             return DYNAMIC_TARGET
         for child in arg.named_children:
             if child.type == cs.TS_PY_STRING_CONTENT and child.text is not None:

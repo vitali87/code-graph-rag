@@ -6,23 +6,76 @@ from .models import HandleConstructor, IOSink
 
 # (H) Direct I/O sink calls, keyed by normalised (import-expanded) callee name.
 _PYTHON_SINKS: tuple[IOSink, ...] = (
-    IOSink("open", ResourceKind.FILE, IODirection.READ, target_arg=0, mode_arg=1),
-    IOSink("os.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
-    IOSink("os.environ.get", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink(
+        "open",
+        ResourceKind.FILE,
+        IODirection.READ,
+        target_arg=0,
+        mode_arg=1,
+        target_kw="file",
+        mode_kw="mode",
+    ),
+    IOSink(
+        "os.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0, target_kw="key"
+    ),
+    IOSink(
+        "os.environ.get",
+        ResourceKind.ENV,
+        IODirection.READ,
+        target_arg=0,
+        target_kw="key",
+    ),
     IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("json.load", ResourceKind.FILE, IODirection.READ),
     IOSink("json.dump", ResourceKind.FILE, IODirection.WRITE),
-    IOSink("requests.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
-    IOSink("requests.head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
-    IOSink("requests.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
-    IOSink("requests.put", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
-    IOSink("requests.patch", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
-    IOSink("requests.delete", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "requests.get",
+        ResourceKind.NETWORK,
+        IODirection.READ,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "requests.head",
+        ResourceKind.NETWORK,
+        IODirection.READ,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "requests.post",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "requests.put",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "requests.patch",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "requests.delete",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
     IOSink(
         "urllib.request.urlopen",
         ResourceKind.NETWORK,
         IODirection.READ,
         target_arg=0,
+        target_kw="url",
     ),
 )
 
@@ -33,8 +86,10 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
 # (H) Calls whose result is a resource handle; later method calls on the bound
 # (H) variable are attributed to the same resource.
 _PYTHON_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
-    HandleConstructor("open", ResourceKind.FILE, target_arg=0),
-    HandleConstructor("sqlite3.connect", ResourceKind.DATABASE, target_arg=0),
+    HandleConstructor("open", ResourceKind.FILE, target_arg=0, target_kw="file"),
+    HandleConstructor(
+        "sqlite3.connect", ResourceKind.DATABASE, target_arg=0, target_kw="database"
+    ),
     HandleConstructor("socket.socket", ResourceKind.SOCKET),
 )
 

@@ -20,6 +20,8 @@ class IOSink:
     direction: IODirection
     target_arg: int | None = None
     mode_arg: int | None = None
+    target_kw: str | None = None
+    mode_kw: str | None = None
 
     def effective_direction(self, mode_literal: str | None) -> IODirection:
         if self.mode_arg is None or mode_literal is None:
@@ -40,6 +42,7 @@ class HandleConstructor:
     callee: str
     kind: ResourceKind
     target_arg: int | None = None
+    target_kw: str | None = None
 
 
 @dataclass(frozen=True)

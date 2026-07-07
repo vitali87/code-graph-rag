@@ -62,6 +62,20 @@ def test_open_write_dynamic_target(tmp_path: Path) -> None:
     assert _has(rels, "m.save", WRITES_TO, "resource::FILE::<dynamic>")
 
 
+def test_open_keyword_mode_write(tmp_path: Path) -> None:
+    # (H) mode passed by keyword must still refine direction to WRITE.
+    files = {"m.py": "def save():\n    open('out.txt', mode='w')\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_open_all_keyword_args(tmp_path: Path) -> None:
+    # (H) both target and mode by keyword: target and direction still resolve.
+    files = {"m.py": "def save():\n    open(file='out.txt', mode='w')\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.save", WRITES_TO, "resource::FILE::out.txt")
+
+
 def test_requests_get_read(tmp_path: Path) -> None:
     files = {
         "m.py": "import requests\n\ndef fetch(url):\n    requests.get(url)\n",

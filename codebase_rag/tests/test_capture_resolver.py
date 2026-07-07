@@ -48,6 +48,18 @@ def test_all_base_includes_io() -> None:
     assert sel.rel_enabled(RT.CALLS)
 
 
+def test_later_base_token_wins() -> None:
+    # (H) CGR_CAPTURE=none then --capture all must enable everything: the last
+    # (H) base token in order wins, not whichever the unordered set happens on.
+    sel = resolve_capture(["none", "all"])
+    assert sel.io_enabled
+    assert sel.rel_enabled(RT.CALLS)
+    # (H) and the reverse order disables the core base.
+    sel = resolve_capture(["all", "none"])
+    assert not sel.io_enabled
+    assert not sel.rel_enabled(RT.CALLS)
+
+
 def test_drop_group() -> None:
     sel = resolve_capture(["-imports"])
     assert not sel.rel_enabled(RT.IMPORTS)

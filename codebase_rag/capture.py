@@ -80,14 +80,16 @@ def _resolve_token(token: str) -> frozenset[cs.RelationshipType] | None:
 
 def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
     cleaned = [t.strip() for t in tokens if t and t.strip()]
-    bare = {t.lower() for t in cleaned}
 
-    if cs.CAPTURE_TOKEN_NONE in bare:
-        base_groups: frozenset[cs.CaptureGroup] = frozenset()
-    elif cs.CAPTURE_TOKEN_ALL in bare:
-        base_groups = frozenset(cs.CaptureGroup)
-    else:
-        base_groups = cs.DEFAULT_CAPTURE_GROUPS
+    # (H) The last base token in order wins, so `--capture all` can override an
+    # (H) inherited `CGR_CAPTURE=none` (and vice versa), not whichever the set hits.
+    base_groups: frozenset[cs.CaptureGroup] = cs.DEFAULT_CAPTURE_GROUPS
+    for token in cleaned:
+        low = token.lower()
+        if low == cs.CAPTURE_TOKEN_NONE:
+            base_groups = frozenset()
+        elif low == cs.CAPTURE_TOKEN_ALL:
+            base_groups = frozenset(cs.CaptureGroup)
 
     enabled: set[cs.RelationshipType] = set()
     for group in base_groups:
