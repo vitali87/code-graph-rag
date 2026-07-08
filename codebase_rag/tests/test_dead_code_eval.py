@@ -161,6 +161,38 @@ def test_cpp_operator_overloads_are_roots() -> None:
     assert "proj.mod.operator_equal" in dead
 
 
+def test_java_serialization_hooks_are_roots() -> None:
+    # (H) Java serialization hooks (readObject/writeObject/writeReplace/readResolve/
+    # (H) readObjectNoData) are invoked reflectively by the java.io runtime, never by a
+    # (H) call the graph can see, so they are reachability roots (like Python dunders),
+    # (H) gated by the .java extension. The real Java QN carries a signature
+    # (H) (`readObject(ObjectInputStream)`), which must be stripped to the bare name. A
+    # (H) regular uncalled method stays dead, and a same-named symbol on a non-Java file
+    # (H) is NOT rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.S"),
+                {cs.KEY_QUALIFIED_NAME: "proj.S", cs.KEY_PATH: "S.java"},
+            ),
+            _method("proj.S.S.readObject(ObjectInputStream)", "S.java"),
+            _method("proj.S.S.writeReplace()", "S.java"),
+            _method("proj.S.S.readResolve()", "S.java"),
+            _method("proj.S.S.helper()", "S.java"),
+            _method("proj.mod.C.readObject(ObjectInputStream)", "mod.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.S.S.readObject(ObjectInputStream)" not in dead
+    assert "proj.S.S.writeReplace()" not in dead
+    assert "proj.S.S.readResolve()" not in dead
+    # (H) A regular uncalled method is still dead -- rooting is name-scoped to the
+    # (H) reserved serialization hooks, not a blanket Java exemption.
+    assert "proj.S.S.helper()" in dead
+    # (H) The hook names only root on a .java file; a .py symbol stays dead.
+    assert "proj.mod.C.readObject(ObjectInputStream)" in dead
+
+
 def test_root_level_tests_dir_is_excluded() -> None:
     # (H) A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
     # (H) `tests/` folder) is test infrastructure. The `/tests/` pattern needs a

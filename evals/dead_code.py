@@ -106,6 +106,19 @@ def _is_cpp_operator_root(name: str, path: str) -> bool:
     return name.startswith(cs.CPP_OPERATOR_PREFIX) and path.endswith(cs.CPP_EXTENSIONS)
 
 
+def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
+    # (H) A Java serialization hook (`readObject`/`writeObject`/`writeReplace`/
+    # (H) `readResolve`/`readObjectNoData`) is invoked reflectively by the java.io
+    # (H) serialization runtime, never by a named call the graph can see, so it is a
+    # (H) reachability root (like Python dunders / Rust trait methods). Gated to methods
+    # (H) on a .java file; `name` is the bare method name (signature stripped by caller).
+    return (
+        is_method
+        and path.endswith(cs.EXT_JAVA)
+        and name in cs.JAVA_SERIALIZATION_METHOD_NAMES
+    )
+
+
 def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
     # (H) Match test-path patterns against a leading-slash-normalized path so a dir
     # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
@@ -225,6 +238,12 @@ def dead_code_from_graph(
             roots.add(qn)
         elif _is_cpp_operator_root(
             qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], str(props.get(cs.KEY_PATH, ""))
+        ):
+            roots.add(qn)
+        elif _is_java_serialization_root(
+            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[0],
+            qn in method_qns,
+            str(props.get(cs.KEY_PATH, "")),
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
