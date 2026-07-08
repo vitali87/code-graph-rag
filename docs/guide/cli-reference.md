@@ -51,6 +51,27 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 
 Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
 
+### `cgr dead-code`
+
+Report functions and methods unreachable from any entry point (candidates for
+review, not a guaranteed delete list). See [Dead Code Detection](dead-code.md).
+
+```bash
+cgr dead-code [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
+| `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
+| `--decorator-root` | Treat symbols carrying this decorator as roots. Repeatable. |
+| `--exclude` | Glob matched against a symbol's file path to exclude. Repeatable. |
+| `--include-tests` / `--no-include-tests` | Treat test code as reachable roots. On by default. |
+| `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
+| `--format` | Output format: `table` (default) or `json`. |
+| `--output`, `-o` | Write the report to a file instead of stdout. |
+| `--fail-on-found` | Exit with code 1 when any candidate is found (useful in CI). |
+
 ### `cgr mcp-server`
 
 Start the MCP server for Claude Code integration.

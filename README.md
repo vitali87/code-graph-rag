@@ -97,6 +97,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
 - **🚀 Interactive Code Optimization**: AI-powered codebase optimization with language-specific best practices and interactive approval workflow
 - **📚 Reference-Guided Optimization**: Use your own coding standards and architectural documents to guide optimization suggestions
+- **🧹 Dead Code Detection**: Report functions and methods unreachable from any entry point by walking `CALLS`/`REFERENCES` edges from roots (with a CI-friendly `--fail-on-found`)
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
 - **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
@@ -606,6 +607,54 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--repo-path`: Path to repository (defaults to current directory)
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
+
+### Step 5: Dead Code Detection
+
+Once a repository is indexed, report functions and methods that are unreachable
+from any entry point. The walk starts from roots (exported/public symbols,
+tests, decorated handlers like routes/tasks/commands, dunder/lifecycle methods)
+and follows `CALLS` and `REFERENCES` edges; anything it never reaches is listed.
+
+```bash
+# Scan the indexed project (auto-selected when only one exists)
+cgr dead-code
+
+# Pick a project when several are indexed
+cgr dead-code --project-name my-project
+```
+
+**Declare framework/external entry points** so the code they reach is not flagged:
+
+```bash
+cgr dead-code -e main -e cli.run --decorator-root celery_app.task
+```
+
+**Exclude generated or vendored code** (noisy with library-invoked callbacks):
+
+```bash
+cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
+```
+
+**Fail CI when new unreachable code appears**, writing a JSON report:
+
+```bash
+cgr dead-code --format json --output dead-code.json --fail-on-found
+```
+
+> Results are candidates for review, not a guaranteed delete list: code reached
+> only via dynamic dispatch, reflection, or an external framework may still be
+> reported. See the [Dead Code Detection guide](https://docs.code-graph-rag.com/guide/dead-code/) for details.
+
+**Dead Code CLI Arguments:**
+- `--project-name`, `-n`: Project to scan (defaults to the sole indexed project)
+- `--entry-point`, `-e`: Treat symbols ending with this qualified name as reachable roots (repeatable)
+- `--decorator-root`: Treat symbols carrying this decorator as roots (repeatable)
+- `--exclude`: Glob matched against a symbol's file path to exclude (repeatable)
+- `--include-tests` / `--no-include-tests`: Treat test code as roots (on by default)
+- `--classes` / `--no-classes`: Also report unreachable classes (off by default)
+- `--format`: `table` (default) or `json`
+- `--output`, `-o`: Write the report to a file instead of stdout
+- `--fail-on-found`: Exit with code 1 when any candidate is found
 
 ## 🔌 MCP Server (Claude Code Integration)
 

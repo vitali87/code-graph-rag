@@ -26,6 +26,7 @@ Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that a
 - **Shell Command Execution** for running tests and CLI tools
 - **Interactive Code Optimization** with language-specific best practices
 - **Reference-Guided Optimization** using your own coding standards
+- **Dead Code Detection** to find functions unreachable from any entry point
 - **Dependency Analysis** from `pyproject.toml`
 - **Semantic Code Search** using UniXcoder embeddings to find functions by intent
 - **MCP Server Integration** for seamless use with Claude Code
