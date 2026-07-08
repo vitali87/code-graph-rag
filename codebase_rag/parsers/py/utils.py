@@ -85,7 +85,11 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         try:
             module = importlib.import_module(module_path)
             base = getattr(module, class_name, None)
-        except ImportError:
+        except Exception:
+            # (H) Broad on purpose: importing a stdlib module executes its
+            # (H) module-level code, which can raise arbitrary platform-specific
+            # (H) errors; the parser must degrade to "no external base info"
+            # (H) rather than crash the indexing run.
             continue
         if isinstance(base, type):
             names.update(dir(base))

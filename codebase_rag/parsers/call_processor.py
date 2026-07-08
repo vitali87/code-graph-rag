@@ -2035,13 +2035,17 @@ class CallProcessor:
                 # (H) A platform-conditional import with a local fallback def (click's
                 # (H) `if WIN: from ._winconsole import X ... else: def X(...)`) is
                 # (H) statically undecidable; the call resolves to the import, so the
-                # (H) mutually-exclusive local def looks dead. When the CURRENT module
-                # (H) also defines the bare-called name, fan the call out to it too --
-                # (H) mirrors the Go build-variant fan-out; registry-guarded, so a
-                # (H) module without the local twin adds nothing.
+                # (H) mutually-exclusive local def looks dead. When the name was bound
+                # (H) by a CONDITIONAL import and the CURRENT module also defines it,
+                # (H) fan the call out to the local twin too -- mirrors the Go
+                # (H) build-variant fan-out. An UNCONDITIONAL import shadowing a local
+                # (H) def is plain shadowing: the local stays dead, so no edge.
                 local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{call_name}"
-                if local_qn != callee_qn and (
-                    resolver.function_registry.get(local_qn) == cs.NodeLabel.FUNCTION
+                if (
+                    local_qn != callee_qn
+                    and call_name
+                    in resolver.import_processor.conditional_imports.get(module_qn, ())
+                    and resolver.function_registry.get(local_qn) == NodeType.FUNCTION
                 ):
                     for variant in resolver.function_registry.variants(local_qn):
                         ensure_rel(

@@ -44,3 +44,33 @@ def test_conditional_import_local_fallback_gets_call_edge(
         f.endswith(".get_text_stdin") and t.endswith("._compat.helper")
         for f, t in calls
     ), sorted(t for f, t in calls if "helper" in t)
+
+
+def test_unconditional_import_shadowing_gets_no_fanout(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An UNCONDITIONAL import that shadows an earlier local def is plain
+    # (H) shadowing, not a platform variant: the local def is genuinely dead and
+    # (H) must NOT receive a fan-out edge. The fan-out is gated to names bound by
+    # (H) a CONDITIONAL (if/try-nested) import.
+    root = temp_repo / "pyshad"
+    root.mkdir(parents=True)
+    (root / "other.py").write_text(
+        "def helper(stream):\n    return stream\n",
+        encoding="utf-8",
+    )
+    (root / "user.py").write_text(
+        "def helper(stream):\n"
+        "    return None\n"
+        "from .other import helper\n"
+        "def use():\n"
+        "    return helper(1)\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing=None)
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert not any(
+        f.endswith(".use") and t.endswith(".user.helper") for f, t in calls
+    ), "shadowed local def wrongly kept alive by the fan-out"
