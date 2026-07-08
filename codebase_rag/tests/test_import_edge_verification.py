@@ -281,3 +281,33 @@ def test_python_from_package_import_submodule_targets_the_submodule(
     targets = _import_targets(mock_ingestor, f"{project}.src.user")
     assert f"{project}.src.transport.TTransport" in targets, targets
     assert f"{project}.src.transport.__init__" not in targets, targets
+
+
+def test_python_import_suffix_match_ignores_other_language_modules(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) thrift lib/py: src/protocol/__init__.py AND src/ext/protocol.h both
+    # (H) yield module qns ending `.protocol`, so the language-blind suffix
+    # (H) match went ambiguous and dropped the edge for a Python import that
+    # (H) can only target the Python module. Candidates are tie-broken by the
+    # (H) importing language's file extensions.
+    src = temp_repo / "src"
+    proto = src / "protocol"
+    ext = src / "ext"
+    proto.mkdir(parents=True)
+    ext.mkdir()
+    (proto / "__init__.py").write_text("")
+    (ext / "protocol.h").write_text("struct TProtocol { int dummy; };\n")
+    (src / "TBinaryProtocol.py").write_text(
+        "class Accelerated(object):\n"
+        "    def __init__(self):\n"
+        "        try:\n"
+        "            from " + temp_repo.name + ".protocol import fastbinary\n"
+        "        except ImportError:\n"
+        "            pass\n"
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.src.TBinaryProtocol")
+    assert f"{project}.src.protocol" in targets, targets

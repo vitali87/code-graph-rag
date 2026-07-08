@@ -460,11 +460,19 @@ class ClassIngestMixin:
         fact the source declares.
         """
         if entry.parent_qn == entry.child_qn:
-            # (H) Parse-time resolution of a nested external base (`Entry
-            # (H) implements Map.Entry`) can land on the child ITSELF (the only
-            # (H) registered qn ending in Entry); a self-edge is never real,
-            # (H) and the raw-name derivation below would be a lie here (the
-            # (H) remainder is the child's own name, not the written base).
+            # (H) Parse-time resolution can land on the child ITSELF. A
+            # (H) self-edge is never real, so the written base must refer to a
+            # (H) SHADOWED outer name (thrift's `pub enum Error` implementing
+            # (H) the std `Error` trait): when the module-anchored remainder is
+            # (H) a bare single segment it IS the written name and
+            # (H) externalizes. A dotted remainder (a nested child like
+            # (H) SimpleHashMap.Entry) was never written as such; derivation
+            # (H) would be a lie, so no edge.
+            self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+            if entry.parent_qn.startswith(self_prefix):
+                raw = entry.parent_qn[len(self_prefix) :]
+                if raw and cs.SEPARATOR_DOT not in raw:
+                    return self._externalize_written_base(raw, entry.language)
             return None
         if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
@@ -505,15 +513,17 @@ class ClassIngestMixin:
             and self.function_registry.get(resolved) is not None
         ):
             return resolved, False
-        if (
-            entry.language in cs.JS_TS_LANGUAGES
-            and raw_name in cs.JS_GLOBAL_CLASS_NAMES
-        ):
+        return self._externalize_written_base(raw_name, entry.language)
+
+    def _externalize_written_base(
+        self, raw_name: str, language: cs.SupportedLanguage
+    ) -> tuple[str, bool]:
+        if language in cs.JS_TS_LANGUAGES and raw_name in cs.JS_GLOBAL_CLASS_NAMES:
             return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
         # (H) java.lang is implicitly imported: a bare base in its table gets
         # (H) its canonical java.lang qn.
         if (
-            entry.language == cs.SupportedLanguage.JAVA
+            language == cs.SupportedLanguage.JAVA
             and raw_name in cs.JAVA_LANG_CLASS_NAMES
         ):
             return f"{cs.JAVA_LANG_PREFIX}{raw_name}", True

@@ -416,6 +416,23 @@ class ImportProcessor:
         module_aliases = self._module_alias_map(known_module_qns)
         emitted = 0
         for entry in deferred:
+            # (H) `from pkg.transport import TTransport` is ambiguous in
+            # (H) Python: TTransport may be an item OR a submodule. The stdlib
+            # (H) extractor strips it as an item, anchoring the edge at the
+            # (H) package; when the FULL dotted name verifies as a real module,
+            # (H) the submodule is the true target.
+            if entry.language == cs.SupportedLanguage.PYTHON and (
+                full_target := self._verify_internal_import_target(
+                    entry.full_name, known_module_qns, module_aliases
+                )
+            ):
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.IMPORTS,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, full_target),
+                )
+                emitted += 1
+                continue
             module_path = self._resolve_module_path(
                 entry.full_name, entry.module_qn, entry.language
             )
