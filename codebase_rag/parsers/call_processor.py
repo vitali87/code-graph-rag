@@ -2132,13 +2132,17 @@ class CallProcessor:
         # (H) call site is not statically resolvable. Treat each such reference as a call
         # (H) from the enclosing scope so the handler is reachable. The walk stops at
         # (H) nested function/class boundaries, so a table built inside a nested scope
-        # (H) is attributed to that scope's own pass, not this one.
+        # (H) is attributed to that scope's own pass, not this one -- EXCEPT an unowned
+        # (H) JS/TS arrow (a Promise executor, a `.forEach` callback), which gets no
+        # (H) caller pass of its own; its calls bubble to this scope, so its object
+        # (H) tables (a `defineProperty` getter descriptor) must be scanned here too or
+        # (H) the callbacks inside it are orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types:
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:

@@ -423,6 +423,69 @@ def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> 
     )
 
 
+def test_promise_executor_in_constructor_is_referenced(tmp_path: Path) -> None:
+    # (H) The openapi-ts CancelablePromise shape: a class constructor builds
+    # (H) `this.promise = new Promise((resolve, reject) => {...})`. The executor arrow
+    # (H) is anonymous and nested inside the constructor, so its qn must keep the full
+    # (H) class.constructor path (not flatten to module.anonymous) for the constructor's
+    # (H) CALLS edge to connect; otherwise the executor is orphaned and reports dead.
+    files = {
+        "CancelablePromise.ts": (
+            "export class CancelablePromise {\n"
+            "  constructor(executor) {\n"
+            "    this.promise = new Promise((resolve, reject) => {\n"
+            "      run(resolve)\n"
+            "    })\n"
+            "  }\n"
+            "}\n\n\n"
+            "function run(f) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {
+        b
+        for a, r, b in rels
+        if a.endswith("CancelablePromise.constructor") and r != defines
+    }
+    assert any(".CancelablePromise.constructor.anonymous_" in b for b in edges), (
+        f"promise executor in constructor not referenced; edges={edges}"
+    )
+
+
+def test_defineproperty_getter_in_executor_is_referenced(tmp_path: Path) -> None:
+    # (H) A getter descriptor (`Object.defineProperty(x, 'y', {get: () => ...})`) sits
+    # (H) inside an anonymous Promise-executor arrow that gets no caller pass of its own;
+    # (H) its calls bubble to the enclosing constructor. The constructor's collection
+    # (H) walk must therefore descend into the unowned executor and reference the getter,
+    # (H) or every defineProperty getter/setter reports as dead.
+    files = {
+        "CancelablePromise.ts": (
+            "export class CancelablePromise {\n"
+            "  constructor(executor) {\n"
+            "    this.promise = new Promise((resolve, reject) => {\n"
+            "      const onCancel = (h) => { track(h) }\n"
+            "      Object.defineProperty(onCancel, 'isResolved', {\n"
+            "        get: () => this._isResolved,\n"
+            "      })\n"
+            "    })\n"
+            "  }\n"
+            "}\n\n\n"
+            "function track(h) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    refs = {
+        b
+        for a, r, b in rels
+        if r == REFERENCES and a.endswith("CancelablePromise.constructor")
+    }
+    assert any(
+        ".CancelablePromise.constructor." in b and b.rsplit(".", 1)[-1] == "get"
+        for b in refs
+    ), f"defineProperty getter in executor not referenced; refs={refs}"
+
+
 def test_inline_arrow_call_argument_function_expr_is_referenced(
     tmp_path: Path,
 ) -> None:
