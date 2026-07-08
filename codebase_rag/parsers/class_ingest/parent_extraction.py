@@ -233,6 +233,17 @@ def extract_python_superclasses(
     import_map = import_processor.import_mapping.get(module_qn)
 
     for child in superclasses_node.children:
+        # (H) A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
+        # (H) int])`, click) is a `subscript` node; the base name is its `value`
+        # (H) field. Skipping it dropped the INHERITS edge and with it every
+        # (H) OVERRIDES/dispatch relationship of the subclass.
+        if child.type == cs.TS_PY_SUBSCRIPT:
+            value = child.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None and value.type in (
+                cs.TS_IDENTIFIER,
+                cs.TS_PY_ATTRIBUTE,
+            ):
+                child = value
         if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
             continue
         if not (parent_name := safe_decode_text(child)):

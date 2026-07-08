@@ -822,3 +822,25 @@ def test_cgr_dead_code_keeps_stored_callback_alive(tmp_path: Path) -> None:
     _make_callback_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
     assert not any(qn.endswith("create_context") for qn in dead)
+
+
+def test_external_override_property_is_root() -> None:
+    # (H) A method flagged `overrides_external` (subclass of a stdlib class
+    # (H) overriding one of its methods, click's textwrap.TextWrapper subclass) is
+    # (H) invoked by the external base's machinery -- a reachability root. An
+    # (H) unflagged sibling with no callers is still dead.
+    flagged = _method("proj.tw.TextWrapper._wrap_chunks", path="tw.py")
+    flagged[1][cs.KEY_OVERRIDES_EXTERNAL] = True
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.tw"),
+                {cs.KEY_QUALIFIED_NAME: "proj.tw", cs.KEY_PATH: "tw.py"},
+            ),
+            flagged,
+            _method("proj.tw.TextWrapper.unused", path="tw.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.tw.TextWrapper._wrap_chunks" not in dead
+    assert "proj.tw.TextWrapper.unused" in dead

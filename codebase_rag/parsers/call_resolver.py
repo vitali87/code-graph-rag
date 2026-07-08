@@ -304,6 +304,22 @@ class CallResolver:
             candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
             if candidate in self.function_registry:
                 return self.function_registry[candidate], candidate
+            # (H) A duplicate-variant caller (click's real `command` registers as
+            # (H) `command@168` behind its @t.overload stubs) owns nested defs the
+            # (H) def pass registers under the NATURAL qn (`command.decorator`);
+            # (H) probe the variant-stripped scope too, or the call falls to the
+            # (H) module trie and mis-binds to a sibling's same-named nested.
+            last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            if cs.DUP_QN_MARKER in last:
+                natural_scope = (
+                    scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+                )
+                natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
+                if natural_candidate in self.function_registry:
+                    return (
+                        self.function_registry[natural_candidate],
+                        natural_candidate,
+                    )
             if cs.SEPARATOR_DOT not in scope:
                 return None
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]

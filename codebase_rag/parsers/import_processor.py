@@ -172,6 +172,19 @@ def _has_aliased_scheme(specifier: str) -> bool:
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
 
+def _is_conditional_import_node(import_node: Node) -> bool:
+    # (H) An import nested under an if/try (click's platform-conditional
+    # (H) `if WIN: from ._winconsole import X ... else: def X(...)`) binds its
+    # (H) name only on some runtime paths; a same-named local def is then a
+    # (H) mutually-exclusive fallback variant, not shadowed dead code.
+    current = import_node.parent
+    while current is not None:
+        if current.type in (cs.TS_PY_IF_STATEMENT, cs.TS_PY_TRY_STATEMENT):
+            return True
+        current = current.parent
+    return False
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -179,6 +192,7 @@ class ImportProcessor:
         "ingestor",
         "function_registry",
         "import_mapping",
+        "conditional_imports",
         "php_function_imports",
         "js_ts_bare_imports",
         "js_path_aliases",
@@ -205,6 +219,11 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # (H) Names bound by a CONDITIONAL Python import (nested under if/try --
+        # (H) click's `if WIN: from ._winconsole import X`): the dead-code fan-out
+        # (H) treats a same-named local def as the mutually-exclusive fallback
+        # (H) variant ONLY for these; an unconditional import is plain shadowing.
+        self.conditional_imports: dict[str, set[str]] = {}
         # (H) Lazy: replayed walk of every eligible repo file, built on the first
         # (H) C++ include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -561,10 +580,17 @@ class ImportProcessor:
             cs.CAPTURE_IMPORT_FROM, []
         )
         for import_node in all_imports:
+            before = set(self.import_mapping[module_qn])
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
                 self._handle_python_import_from_statement(import_node, module_qn)
+            if _is_conditional_import_node(import_node):
+                new_names = set(self.import_mapping[module_qn]) - before
+                if new_names:
+                    self.conditional_imports.setdefault(module_qn, set()).update(
+                        new_names
+                    )
 
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str

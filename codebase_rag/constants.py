@@ -721,6 +721,10 @@ KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
+# (H) Marks a method that overrides a method of an EXTERNAL stdlib base class
+# (H) (click's textwrap.TextWrapper subclass): invoked by the base's machinery,
+# (H) never by first-party code, so dead-code reachability roots it.
+KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
@@ -2950,6 +2954,7 @@ TS_PY_SUBSCRIPT = "subscript"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
+TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"

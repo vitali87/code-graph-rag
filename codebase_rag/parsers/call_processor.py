@@ -160,6 +160,18 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
 
 
+def _scope_qn_candidates(scope_qn: str) -> list[str]:
+    # (H) The scope itself plus its duplicate-variant-stripped form (`useStore@27`
+    # (H) -> `useStore`): the def pass registers nested/anon members under the
+    # (H) NATURAL qn while the caller may carry the variant suffix. Registry-guarded
+    # (H) at every use, so a scope without a twin adds nothing.
+    last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    if cs.DUP_QN_MARKER not in last:
+        return [scope_qn]
+    natural = scope_qn[: len(scope_qn) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+    return [scope_qn, natural]
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -968,9 +980,15 @@ class CallProcessor:
         # (H) The registry membership check guards incremental runs, where an
         # (H) unchanged file's locations were not re-recorded this run.
         loc = self.function_locations.get((module_qn, func_node.start_point[0] + 1))
-        if loc is not None and loc.qualified_name in self._resolver.function_registry:
-            return loc
-        return None
+        if loc is None or loc.qualified_name not in self._resolver.function_registry:
+            return None
+        # (H) Two functions can start on one line (a one-line curried arrow); the
+        # (H) line-keyed entry then belongs to only one of them. A column mismatch
+        # (H) means THIS node is the other one -- fall back to name-based
+        # (H) attribution rather than adopt the wrong function's qn.
+        if loc.start_col is not None and loc.start_col != func_node.start_point[1]:
+            return None
+        return loc
 
     def _cpp_out_of_class_method_caller(
         self, func_node: Node, method_name: str, module_qn: str
@@ -2009,6 +2027,33 @@ class CallProcessor:
                             caller_spec, calls_rel, (sibling_type, qn_key, variant)
                         )
 
+            if (
+                is_python
+                and callee_type == cs.NodeLabel.FUNCTION
+                and cs.SEPARATOR_DOT not in call_name
+            ):
+                # (H) A platform-conditional import with a local fallback def (click's
+                # (H) `if WIN: from ._winconsole import X ... else: def X(...)`) is
+                # (H) statically undecidable; the call resolves to the import, so the
+                # (H) mutually-exclusive local def looks dead. When the name was bound
+                # (H) by a CONDITIONAL import and the CURRENT module also defines it,
+                # (H) fan the call out to the local twin too -- mirrors the Go
+                # (H) build-variant fan-out. An UNCONDITIONAL import shadowing a local
+                # (H) def is plain shadowing: the local stays dead, so no edge.
+                local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{call_name}"
+                if (
+                    local_qn != callee_qn
+                    and call_name
+                    in resolver.import_processor.conditional_imports.get(module_qn, ())
+                    and resolver.function_registry.get(local_qn) == NodeType.FUNCTION
+                ):
+                    for variant in resolver.function_registry.variants(local_qn):
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (cs.NodeLabel.FUNCTION, qn_key, variant),
+                        )
+
     def _ingest_operator_dispatch_calls(
         self,
         caller_node: Node,
@@ -2780,18 +2825,23 @@ class CallProcessor:
         # (H) callable-param path). Registry guard skips unregistered names.
         registry = self._resolver.function_registry
         scope_qn = caller_qn or source_spec[2]
-        candidate = (
-            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+        suffix = (
+            f"{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
             f"{arg_node.start_point[0]}_{arg_node.start_point[1]}"
         )
-        for target_qn in registry.variants(candidate):
-            if registry.get(target_qn) is None:
-                continue
-            ensure_rel(
-                source_spec,
-                rel_type,
-                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+        # (H) A duplicate-variant caller (a TS overload implementation registers as
+        # (H) `useStore@27`) owns anons the def pass registers under the NATURAL qn
+        # (H) (`useStore.anonymous_R_C`); try the variant-stripped scope too.
+        for scope in _scope_qn_candidates(scope_qn):
+            candidate = f"{scope}{suffix}"
+            for target_qn in registry.variants(candidate):
+                if registry.get(target_qn) is None:
+                    continue
+                ensure_rel(
+                    source_spec,
+                    rel_type,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:

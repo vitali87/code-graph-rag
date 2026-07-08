@@ -386,6 +386,7 @@ class FunctionIngestMixin:
                     label=cs.NodeLabel.METHOD.value,
                     qualified_name=bound_qn,
                     container_qn=class_qn,
+                    start_col=func_node.start_point[1],
                 )
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
@@ -679,6 +680,7 @@ class FunctionIngestMixin:
             label=cs.NodeLabel.FUNCTION.value,
             qualified_name=resolution.qualified_name,
             container_qn=None,
+            start_col=func_node.start_point[1],
         )
         self.function_locations[(module_qn, func_node.start_point[0] + 1)] = location
         if language == cs.SupportedLanguage.CPP:
@@ -688,9 +690,12 @@ class FunctionIngestMixin:
             if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
                 for child in func_node.children:
                     if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                        # (H) The Pass-3 walk matches on the CHILD node, so the
+                        # (H) entry must carry the child's column, not the
+                        # (H) wrapper's, or the column check rejects it.
                         self.function_locations[
                             (module_qn, child.start_point[0] + 1)
-                        ] = location
+                        ] = location._replace(start_col=child.start_point[1])
                         break
 
         # (H) A method-body anonymous-class override (`new Base(){ @Override m(){} }`
@@ -799,7 +804,11 @@ class FunctionIngestMixin:
         if name_node and name_node.text:
             return safe_decode_text(name_node)
 
-        if func_node.type == cs.TS_ARROW_FUNCTION:
+        # (H) Anonymous function EXPRESSIONS bound to a declarator (`export const
+        # (H) api = (function (x) {...}) as unknown as Api`) take the binding name
+        # (H) exactly like arrows -- the call pass's binding-name climb accepts
+        # (H) both, and the two passes must agree or the caller qn is a phantom.
+        if func_node.type in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             current = func_node.parent
             while current:
                 if current.type == cs.TS_VARIABLE_DECLARATOR:

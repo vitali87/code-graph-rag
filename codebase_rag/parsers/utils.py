@@ -559,6 +559,7 @@ def ingest_method(
     repo_path: Path | None = None,
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
+    external_override_names: frozenset[str] = frozenset(),
 ) -> str | None:
     # (H) Returns the registered method qn (post register_unique_qn, so with any
     # (H) @line dedup suffix) so a caller can wire further edges to the exact node --
@@ -618,6 +619,12 @@ def ingest_method(
     is_property = _is_property_decorator(decorators)
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
+
+    # (H) Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
+    # (H) subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
+    # (H) it, so the dead-code surfaces root this property.
+    if method_name in external_override_names:
+        method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
