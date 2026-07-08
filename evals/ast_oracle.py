@@ -1,4 +1,6 @@
 import ast
+import io
+import tokenize
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -25,26 +27,91 @@ def extract_oracle_graph(target: Path, project_name: str) -> GraphData:
     edges: set[EdgeKey] = set()
     name_edges: set[NameEdge] = set()
 
-    parsed: list[tuple[str, ast.Module]] = []
+    parsed: list[tuple[str, ast.Module, str]] = []
     module_index: dict[str, str] = {}
     for path in _iter_py_files(target):
         rel = path.relative_to(target).as_posix()
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
         except (SyntaxError, UnicodeDecodeError, ValueError) as error:
             logger.warning(ls.ORACLE_PARSE_FAILED.format(path=rel, error=error))
             continue
-        parsed.append((rel, tree))
+        parsed.append((rel, tree, text))
         module_index[_module_dotted(rel, project_name)] = rel
 
-    for rel, tree in parsed:
+    for rel, tree, text in parsed:
         module_key = NodeKey(_MODULE, rel, ec.MODULE_START_LINE)
         nodes[module_key] = DefNode(module_key, Path(rel).stem, 0)
         _walk_scope(tree.body, _MODULE, module_key, rel, nodes, edges, name_edges)
+        _extend_spans_over_trailing_comments(tree, text, rel, nodes)
         for target_file in _import_targets(tree, rel, module_index, project_name):
             name_edges.add(NameEdge(_IMPORTS, module_key, target_file))
 
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
+
+
+def _comment_and_code_lines(text: str) -> tuple[dict[int, int], set[int]]:
+    # (H) line -> column for comment-only lines, plus every line carrying code;
+    # (H) drives the trailing-comment span extension below.
+    comment_cols: dict[int, int] = {}
+    code_lines: set[int] = set()
+    skip = (
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENCODING,
+        tokenize.ENDMARKER,
+    )
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                comment_cols.setdefault(tok.start[0], tok.start[1])
+            elif tok.type not in skip:
+                code_lines.update(range(tok.start[0], tok.end[0] + 1))
+    except tokenize.TokenError:
+        return {}, set()
+    # (H) A comment sharing a line with code is not a comment-only line.
+    for line in code_lines:
+        comment_cols.pop(line, None)
+    return comment_cols, code_lines
+
+
+def _extend_spans_over_trailing_comments(
+    tree: ast.Module, text: str, rel: str, nodes: dict[NodeKey, DefNode]
+) -> None:
+    # (H) ast ends a def/class at its last STATEMENT; tree-sitter's block also
+    # (H) spans trailing comment lines indented deeper than the def keyword
+    # (H) (they lexically belong to the suite). Extend to match; a comment at
+    # (H) the def's own indentation is a sibling and stops the scan.
+    comment_cols, code_lines = _comment_and_code_lines(text)
+    if not comment_cols:
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        end = node.end_lineno
+        if end is None:
+            continue
+        extended = end
+        line = end + 1
+        while line not in code_lines:
+            col = comment_cols.get(line)
+            if col is not None:
+                if col <= node.col_offset:
+                    break
+                extended = line
+            elif line > max(comment_cols, default=0):
+                break
+            line += 1
+        if extended == end:
+            continue
+        for kind in (_CLASS, _FUNCTION, _METHOD):
+            key = NodeKey(kind, rel, node.lineno)
+            existing = nodes.get(key)
+            if existing is not None and existing.end_line == end:
+                nodes[key] = DefNode(key, existing.name, extended)
 
 
 def _module_dotted(rel: str, project_name: str) -> str:
@@ -115,9 +182,7 @@ def _import_targets(
                 sub = cs.SEPARATOR_DOT.join([*base_parts, alias.name])
                 if target := _lookup_module(sub, module_index, project_name):
                     targets.add(target)
-                elif target := _lookup_module(
-                    base_dotted, module_index, project_name
-                ):
+                elif target := _lookup_module(base_dotted, module_index, project_name):
                     targets.add(target)
     return targets
 

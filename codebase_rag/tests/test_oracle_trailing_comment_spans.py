@@ -11,7 +11,7 @@ from pathlib import Path
 
 from evals.ast_oracle import extract_oracle_graph
 
-SRC = '''class Server:
+SRC = """class Server:
     def serve(self):
         self.count = 1
 
@@ -22,7 +22,7 @@ SRC = '''class Server:
     # sibling comment about the next method
     def restart(self):
         self.shutdown()
-'''
+"""
 
 
 def test_trailing_body_comment_extends_span(tmp_path: Path) -> None:

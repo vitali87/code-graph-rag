@@ -15,7 +15,7 @@ from evals.cgr_graph import extract_cgr_go_graph
 from evals.oracles import go_available, run_go_oracle
 from evals.score import score_edge_types
 
-GO_SRC = '''package thrift
+GO_SRC = """package thrift
 
 import (
 	"encoding/json"
@@ -41,7 +41,7 @@ func TestHeaderContext(t *testing.T) {
 		},
 	)
 }
-'''
+"""
 
 
 @pytest.mark.skipif(not go_available(), reason="go toolchain not available")

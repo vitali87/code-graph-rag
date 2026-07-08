@@ -1042,11 +1042,15 @@ class FunctionIngestMixin:
         child_label: str,
         child_qn: str,
         module_qn: str,
+        fallback_label: str | None = None,
+        fallback_qn: str | None = None,
     ) -> None:
         # (H) Module nodes always exist, so module-parented edges emit directly.
         # (H) Any other parent may be registered by a later pass (methods land
         # (H) after functions) or may be a phantom recomputed qn the database
-        # (H) would drop; both resolve in resolve_deferred_parent_links.
+        # (H) would drop; both resolve in resolve_deferred_parent_links, where
+        # (H) the optional fallback (a nested child's lexical enclosing
+        # (H) function) beats the module anchor.
         if parent_label == cs.NodeLabel.MODULE:
             self.ingestor.ensure_relationship_batch(
                 (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
@@ -1061,6 +1065,8 @@ class FunctionIngestMixin:
                 child_label=child_label,
                 child_qn=child_qn,
                 module_qn=module_qn,
+                fallback_label=fallback_label,
+                fallback_qn=fallback_qn,
             )
         )
 
@@ -1083,6 +1089,21 @@ class FunctionIngestMixin:
                     entry.parent_qn,
                 )
                 rel_type = entry.rel_type
+            elif (
+                entry.fallback_qn is not None
+                and entry.fallback_label is not None
+                and self.function_registry.get(entry.fallback_qn) is not None
+            ):
+                # (H) The parent guess never registered but the child's lexical
+                # (H) enclosing function did (a prototype assignment on a
+                # (H) parameter inside a function body); the lexical parent is
+                # (H) the true containment, not the module.
+                parent_spec = (
+                    cs.NodeLabel(entry.fallback_label),
+                    cs.KEY_QUALIFIED_NAME,
+                    entry.fallback_qn,
+                )
+                rel_type = cs.RelationshipType.DEFINES.value
             else:
                 # (H) A method whose container never registered (impl on a
                 # (H) primitive, macro-corrupted class) anchors to its module
@@ -1172,6 +1193,26 @@ class FunctionIngestMixin:
                 # (H) loses that callback: anonymous scopes contribute no segment to
                 # (H) the child qn, so trimming the child qn would skip the callback
                 # (H) and hoist the child to the nearest named ancestor.
+                # (H) A Go receiver method's node lives under its receiver type
+                # (H) (module.Type.Method); identity resolution alone gives the
+                # (H) receiver-dropping module.Method, a phantom, so a local
+                # (H) type declared in the method body would fall back to the
+                # (H) module instead of its true lexical parent.
+                if (
+                    language == cs.SupportedLanguage.GO
+                    and go_utils.is_receiver_method(current)
+                    and (name_node := current.child_by_field_name(cs.FIELD_NAME))
+                    is not None
+                    and (method_name := safe_decode_text(name_node))
+                    and (receiver_type := go_utils.extract_receiver_type_name(current))
+                ):
+                    container_qn = self._resolve_go_container_qn(
+                        module_qn, receiver_type
+                    )
+                    return (
+                        cs.NodeLabel.METHOD,
+                        f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
+                    )
                 resolution = (
                     self._resolve_function_identity(
                         current, module_qn, language, lang_config, file_path
