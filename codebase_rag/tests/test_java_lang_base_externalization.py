@@ -97,16 +97,23 @@ def test_java_lang_interfaces_emit_external_implements(
         assert expected in implements, implements
 
 
-def test_unknown_bare_base_still_emits_nothing(
+def test_unknown_bare_base_externalizes_under_written_name(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A bare base NOT in the java.lang table stays an unresolvable guess;
-    # (H) knowledge and guesses are not the same.
+    # (H) A bare base NOT in the java.lang table is still a syntactic
+    # (H) inheritance fact, and a name resolving to no indexed class is by
+    # (H) construction defined outside the indexed tree (a generated Iface, a
+    # (H) dependency class). The thrift oracle re-measure showed dropping
+    # (H) these loses real recall, so the WRITTEN name externalizes; the
+    # (H) java.lang table now only refines the qn for known java.lang types.
     (temp_repo / "FancyWidget.java").write_text(UNKNOWN_BASE_JAVA)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
 
     project = temp_repo.name
     inherits = _pairs(mock_ingestor, cs.RelationshipType.INHERITS)
-    assert not any(
-        frm == f"{project}.FancyWidget.FancyWidget" for frm, _, _ in inherits
-    ), inherits
+    expected = (
+        f"{project}.FancyWidget.FancyWidget",
+        cs.NodeLabel.EXTERNAL_MODULE.value,
+        "Widget",
+    )
+    assert expected in inherits, inherits
