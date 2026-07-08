@@ -1059,10 +1059,12 @@ class ImportProcessor:
             return None
         if len(matches) > 1 and includer_rel is not None:
             # (H) Prefer the header sharing the longest path prefix with the
-            # (H) includer (the same source tree), deterministically.
+            # (H) includer (the same source tree), deterministically. commonpath
+            # (H) (not commonprefix) so sibling dirs with a shared name prefix
+            # (H) (src/ast vs src/ast_new) rank by whole components.
             matches.sort(
                 key=lambda rel: (
-                    -len(os.path.commonprefix([rel, includer_rel])),
+                    -len(os.path.commonpath([rel, includer_rel])),
                     rel,
                 )
             )
