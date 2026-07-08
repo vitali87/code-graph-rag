@@ -709,7 +709,9 @@ class FunctionIngestMixin:
             return self._get_name_from_function_ancestor(current)
 
         if current.type in lang_config.class_node_types:
-            return self._handle_class_ancestor(func_node, current, skip_classes)
+            return self._handle_class_ancestor(
+                func_node, current, skip_classes, lang_config
+            )
 
         if current.type == cs.TS_METHOD_DEFINITION:
             return self._extract_node_name(current)
@@ -722,12 +724,40 @@ class FunctionIngestMixin:
         return self._extract_function_name(node)
 
     def _handle_class_ancestor(
-        self, func_node: Node, class_node: Node, skip_classes: bool
+        self,
+        func_node: Node,
+        class_node: Node,
+        skip_classes: bool,
+        lang_config: LanguageSpec,
     ) -> str | None | Literal[False]:
         if skip_classes:
             return None
-        if self._handler.is_inside_method_with_object_literals(func_node):
+        # (H) A function that is a DIRECT class member is a method, handled by the
+        # (H) class-ingest path -- return False so the whole qn collapses to the flat
+        # (H) module.name form that path expects. But a function NESTED inside a
+        # (H) method body (a Promise executor `new Promise(cb)`, a defineProperty
+        # (H) getter, any closure) must keep the full class.method.<name> path so the
+        # (H) call pass, which always builds that path, references the same node;
+        # (H) otherwise the closure is orphaned and reports as dead.
+        if self._is_nested_within_class_member(func_node, class_node, lang_config):
             return self._extract_node_name(class_node)
+        return False
+
+    def _is_nested_within_class_member(
+        self, func_node: Node, class_node: Node, lang_config: LanguageSpec
+    ) -> bool:
+        # (H) True when a function/method boundary sits between func_node and its
+        # (H) enclosing class -- i.e. func_node lives inside a member's body rather
+        # (H) than being the member itself. A direct method has no such intervening
+        # (H) boundary (its parent chain reaches the class body directly).
+        current = func_node.parent
+        while current is not None and current != class_node:
+            if (
+                current.type == cs.TS_METHOD_DEFINITION
+                or current.type in lang_config.function_node_types
+            ):
+                return True
+            current = current.parent
         return False
 
     def _extract_node_name(self, node: Node) -> str | None:
