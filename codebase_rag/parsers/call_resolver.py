@@ -413,17 +413,15 @@ class CallResolver:
             return set()
         targets: set[tuple[str, str]] = set()
         for qn in self.function_registry.find_ending_with(name):
-            if (
-                qn == callee_qn
-                or self.function_registry.get(qn) != cs.NodeLabel.FUNCTION
-            ):
+            label = self.function_registry.get(qn)
+            if qn == callee_qn or label != cs.NodeLabel.FUNCTION:
                 continue
             other_module, d, other_name = qn.rpartition(cs.SEPARATOR_DOT)
             if not d or other_name != name or other_module == file_module_qn:
                 continue
             other_pkg, d2, _f = other_module.rpartition(cs.SEPARATOR_DOT)
             if d2 and other_pkg == pkg_dir:
-                targets.add((self.function_registry[qn], qn))
+                targets.add((label, qn))
         return targets
 
     def cpp_dispatch_targets(
