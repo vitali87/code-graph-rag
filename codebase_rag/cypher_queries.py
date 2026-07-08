@@ -232,6 +232,15 @@ UNWIND (
 OPTIONAL MATCH (cr)-[:{traversal}*BFS]->(cr_reached)
 WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
 WITH live_set + closure_roots + cr_reached_set AS live_set
+OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES]->(base)
+WHERE base IN live_set AND NOT ov IN live_set
+WITH live_set, collect(DISTINCT ov) AS override_roots
+UNWIND (
+  CASE WHEN size(override_roots) = 0 THEN [null] ELSE override_roots END
+) AS orr
+OPTIONAL MATCH (orr)-[:{traversal}*BFS]->(or_reached)
+WITH live_set, override_roots, collect(DISTINCT or_reached) AS or_reached_set
+WITH live_set + override_roots + or_reached_set AS live_set
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set{candidate_clause}

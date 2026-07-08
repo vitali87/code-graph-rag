@@ -36,6 +36,7 @@ _INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
+_OVERRIDES = cs.RelationshipType.OVERRIDES.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 _NodeId = tuple[str, PropertyValue]
@@ -257,6 +258,14 @@ def dead_code_from_graph(
     for from_label, from_val, rel_type, _to_label, to_val in rels:
         if rel_type in traversal:
             adjacency[str(from_val)].add(str(to_val))
+        elif rel_type == _OVERRIDES:
+            # (H) OVERRIDES is recorded overrider -> overridden. A call to the base
+            # (H) method dispatches at runtime to any override, so an override of a
+            # (H) REACHABLE method is itself reachable. Add the REVERSE edge
+            # (H) (overridden -> overrider) so the walk reaches every override -- and
+            # (H) transitively its callees -- of any live base; an override of a dead
+            # (H) base stays dead. Sound virtual dispatch, mirroring self-dispatch.
+            adjacency[str(to_val)].add(str(from_val))
 
     live = set(roots)
     _walk(roots, adjacency, live)
