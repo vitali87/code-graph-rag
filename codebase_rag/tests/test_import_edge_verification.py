@@ -176,6 +176,56 @@ int internal_helper() { return 7; }
     ) in implements, implements
 
 
+def test_js_destructured_require_of_missing_module_emits_no_phantom(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The CommonJS destructuring fallback emitted its IMPORTS edges
+    # (H) directly, bypassing deferred verification entirely.
+    utils = temp_repo / "src" / "utils"
+    utils.mkdir(parents=True)
+    (utils / "helpers.js").write_text("module.exports = { helper: () => {} };\n")
+    (temp_repo / "main.js").write_text(
+        "const { helper, validator } = require('./src/utils/helpers');\n"
+        "const { api: apiClient, db: database } = require('./src/services');\n"
+        "helper();\n"
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.main")
+    assert f"{project}.src.utils.helpers" in targets, targets
+    _assert_no_dangling_imports(mock_ingestor)
+
+
+def test_java_inner_class_never_self_implements(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `static class Entry implements Map.Entry<K, V>`: the parse-time
+    # (H) resolution can land on the inner class ITSELF (the only registered
+    # (H) qn ending in Entry); a self-IMPLEMENTS is never real.
+    (temp_repo / "SimpleHashMap.java").write_text(
+        """
+import java.util.Map;
+
+public class SimpleHashMap<K, V> {
+    static class Entry<K, V> implements Map.Entry<K, V> {
+        K key;
+        V value;
+
+        public K getKey() { return key; }
+        public V getValue() { return value; }
+        public V setValue(V value) { this.value = value; return value; }
+    }
+}
+"""
+    )
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+
+    for rel_type in (cs.RelationshipType.IMPLEMENTS, cs.RelationshipType.INHERITS):
+        for call in get_relationships(mock_ingestor, rel_type.value):
+            assert call.args[0][2] != call.args[2][2], call.args
+
+
 def test_lua_require_of_missing_module_emits_no_phantom(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
