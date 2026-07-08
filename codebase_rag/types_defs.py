@@ -682,7 +682,9 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.INTERFACE,),
     ),
     RelationshipSchema(
-        (NodeLabel.METHOD,),
+        # (H) A method-body anonymous-class override is registered as a Function node,
+        # (H) so it can be the source of an OVERRIDES edge onto the base Method.
+        (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),
     ),

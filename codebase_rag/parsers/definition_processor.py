@@ -68,6 +68,12 @@ class DefinitionProcessor(
         # (H) method resolves via the field's declared type. Populated at class
         # (H) ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # (H) Java anonymous-class override methods: (anon_method_qn, method_name,
+        # (H) base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
+        # (H) is not modelled as a subclass, so its overrides register under the
+        # (H) enclosing class with no OVERRIDES edge and look dead. Recorded at method
+        # (H) ingestion, resolved to OVERRIDES edges once every base type is registered.
+        self.java_anon_overrides: list[tuple[str, str, str, str]] = []
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a

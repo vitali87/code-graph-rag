@@ -36,6 +36,12 @@ _INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
+_OVERRIDES = cs.RelationshipType.OVERRIDES.value
+# (H) Rounds of override-reachability expansion; must equal the number of OVERRIDES
+# (H) stages the Cypher dead-code query emits so eval and query agree. Covers depth-N
+# (H) override/callee interleaving (a base revived via an override's callee, whose own
+# (H) overrides then need reviving).
+_OVERRIDE_EXPANSION_ROUNDS = 3
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 _NodeId = tuple[str, PropertyValue]
@@ -254,9 +260,14 @@ def dead_code_from_graph(
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
+    # (H) OVERRIDES is recorded overrider -> overridden; keep the REVERSE mapping
+    # (H) (overridden -> overriders) to expand virtual-dispatch targets below.
+    override_rev: dict[str, set[str]] = defaultdict(set)
     for from_label, from_val, rel_type, _to_label, to_val in rels:
         if rel_type in traversal:
             adjacency[str(from_val)].add(str(to_val))
+        elif rel_type == _OVERRIDES:
+            override_rev[str(to_val)].add(str(from_val))
 
     live = set(roots)
     _walk(roots, adjacency, live)
@@ -276,6 +287,29 @@ def dead_code_from_graph(
     }
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
+
+    # (H) Override expansion, mirroring the query's OVERRIDES* stage: a call to a base
+    # (H) or interface method dispatches at runtime to any override, so every
+    # (H) (transitive) override of a LIVE method is a reachable dispatch target, as is
+    # (H) its callee closure. `override_rev` walks all multi-level overriders
+    # (H) (Base<-Sub<-SubSub); an override of a DEAD base stays dead. Run several rounds
+    # (H) because a base can go live only via a revived override's CALLEE (depth-2+
+    # (H) interleaving: FieldReflectionAdapter.readField -> BoundField.readIntoField ->
+    # (H) its anon overrides); one pass would miss those. `_OVERRIDE_EXPANSION_ROUNDS`
+    # (H) matches the number of OVERRIDES stages the Cypher query emits, so the offline
+    # (H) eval and the production query agree; a round that adds nothing is a no-op.
+    for _ in range(_OVERRIDE_EXPANSION_ROUNDS):
+        override_roots: set[str] = set()
+        stack = list(live)
+        while stack:
+            for overrider in override_rev.get(stack.pop(), ()):
+                if overrider not in live and overrider not in override_roots:
+                    override_roots.add(overrider)
+                    stack.append(overrider)
+        if not override_roots:
+            break
+        live |= override_roots
+        _walk(override_roots, adjacency, live)
 
     dead = candidates - live
     # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from

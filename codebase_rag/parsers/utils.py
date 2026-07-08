@@ -560,6 +560,10 @@ def ingest_method(
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
 ) -> str | None:
+    # (H) Returns the registered method qn (post register_unique_qn, so with any
+    # (H) @line dedup suffix) so a caller can wire further edges to the exact node --
+    # (H) e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
+    # (H) None only when the method has no resolvable name and nothing was registered.
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 

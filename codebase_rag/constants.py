@@ -3405,6 +3405,14 @@ FQN_JAVA_SCOPE_TYPES = (
     TS_INTERFACE_DECLARATION,
     TS_ENUM_DECLARATION,
     TS_PROGRAM,
+    # (H) An enclosing method/constructor is a qn scope for a function nested in its
+    # (H) body (a method-body anonymous class's method): the call pass builds
+    # (H) `Class.method.nested`, so the definition pass must include the method too --
+    # (H) else the two disagree and every edge from the nested function dangles onto a
+    # (H) phantom `Class.method.nested` node, orphaning its callees. A direct method is
+    # (H) the func itself, not an ancestor, so its own qn is unaffected.
+    TS_METHOD_DECLARATION,
+    TS_CONSTRUCTOR_DECLARATION,
 )
 FQN_JAVA_FUNCTION_TYPES = (
     TS_METHOD_DECLARATION,
