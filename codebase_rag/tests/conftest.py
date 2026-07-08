@@ -196,22 +196,25 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
         GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
     ]
+    all_violations = graph_audit.collect_violations(nodes, rels)
+    if sweep_path := os.environ.get("CGR_AUDIT_SWEEP"):
+        import json
+
+        test_id = os.environ.get("PYTEST_CURRENT_TEST", "")
+        with open(sweep_path, "a") as f:
+            for v in all_violations:
+                f.write(json.dumps([str(v.check), v.detail, test_id]) + "\n")
+        return
     violations = [
         v
         # (H) Dangling relationships are a pervasive pre-existing debt class
         # (H) (302 fixture tests emit them across every language; issue #652).
         # (H) Gate on them once that campaign lands; orphan detection already
-        # (H) uses live-faithful connectivity.
-        for v in graph_audit.collect_violations(nodes, rels)
+        # (H) uses live-faithful connectivity. Sweep mode above records them
+        # (H) unfiltered so the campaign can see what remains.
+        for v in all_violations
         if v.check != cs.AuditCheck.DANGLING_RELATIONSHIP
     ]
-    if sweep_path := os.environ.get("CGR_AUDIT_SWEEP"):
-        import json
-
-        with open(sweep_path, "a") as f:
-            for v in violations:
-                f.write(json.dumps([str(v.check), v.detail]) + "\n")
-        return
     assert not violations, "\n".join(v.detail for v in violations)
 
 
