@@ -2,6 +2,9 @@
 # (H) Replaces the digest-baseline CI artifacts proposed in #522/#646: rather
 # (H) than comparing a stored hash across runs, index the same fixture twice
 # (H) in-process and require byte-identical node and relationship output.
+# (H) Known blind spot: both runs share one hash seed, so set/dict iteration
+# (H) nondeterminism under PYTHONHASHSEED randomization across processes is
+# (H) not exercised here; parser code must sort such collections regardless.
 from __future__ import annotations
 
 from pathlib import Path

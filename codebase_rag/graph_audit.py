@@ -26,6 +26,10 @@ def documented_node_properties() -> dict[str, dict[str, bool]]:
         for entry in schema.properties.strip(cs.SCHEMA_PROPS_BRACES).split(
             cs.SEPARATOR_COMMA
         ):
+            # (H) A trailing comma or stray whitespace in a schema string must
+            # (H) not register an empty-named required property.
+            if not (entry := entry.strip()):
+                continue
             name, _, type_part = entry.partition(cs.SEPARATOR_COLON)
             props[name.strip()] = not type_part.strip().endswith(
                 cs.SCHEMA_OPTIONAL_SUFFIX
@@ -203,6 +207,10 @@ def collect_live_violations(
             )
     for label, schema_props in documented_props.items():
         required = [prop for prop, is_required in schema_props.items() if is_required]
+        # (H) An all-optional schema would render an empty WHERE clause, which
+        # (H) is a Cypher syntax error.
+        if not required:
+            continue
         rows = fetch_all(build_missing_required_query(label, required))
         if rows and (count := rows[0]["missing"]):
             violations.append(

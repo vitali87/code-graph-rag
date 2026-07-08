@@ -292,6 +292,44 @@ class TestLiveGraphAudit:
         assert "Module" in violations[0].detail
 
 
+JS_EXPORT_NAME_COLLISION = """
+class Service {
+    helper() {
+        return 1;
+    }
+}
+
+module.exports.helper = function() {
+    return new Service().helper();
+};
+"""
+
+
+class TestExportNameCollision:
+    def test_export_sharing_a_method_name_is_still_ingested(
+        self, temp_repo, mock_ingestor
+    ) -> None:
+        # (H) The nested-export guard must not skip a legitimate top-level
+        # (H) export just because a class method elsewhere in the module
+        # (H) shares its simple name.
+        from codebase_rag.tests.conftest import run_updater
+
+        (temp_repo / "svc.js").write_text(JS_EXPORT_NAME_COLLISION)
+        run_updater(temp_repo, mock_ingestor)
+
+        function_qns = {
+            c.args[1]["qualified_name"]
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if str(c.args[0]) == cs.NodeLabel.FUNCTION.value
+        }
+        module_level = [
+            qn
+            for qn in function_qns
+            if qn.endswith(".helper") and ".Service." not in qn
+        ]
+        assert module_level, function_qns
+
+
 class TestSchemaParsing:
     def test_every_documented_label_has_parsed_properties(self) -> None:
         parsed = ga.documented_node_properties()

@@ -690,12 +690,14 @@ def ingest_exported_function(
     # (H) Same for a nested export (TS namespace / module block): the main pass
     # (H) already ingested it under its nested qn (e.g. lib.geo.helper), so a
     # (H) module-level re-ingest would mint a phantom duplicate node plus a
-    # (H) spurious Module-DEFINES edge.
-    module_prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
-    if any(
-        qn.startswith(module_prefix) for qn in simple_name_lookup.get(function_name, ())
-    ):
-        return
+    # (H) spurious Module-DEFINES edge. Walk ancestors instead of matching
+    # (H) simple names so a top-level export may share a name with an
+    # (H) unrelated method elsewhere in the module.
+    current = function_node.parent
+    while current is not None:
+        if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+            return
+        current = current.parent
     function_qn = function_registry.register_unique_qn(
         function_qn, function_node.start_point[0] + 1
     )
