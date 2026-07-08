@@ -2417,6 +2417,7 @@ TS_ERROR = "ERROR"
 TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_JAVA_CAST_EXPRESSION = "cast_expression"
 TS_ATTRIBUTE = "attribute"
 
 FIELD_OPERATOR = "operator"
@@ -2658,7 +2659,13 @@ JAVA_ORDER_PATTERN = "order"
 ENTITY_CONSTRUCTOR = "Constructor"
 
 # (H) Java callable entity types for method resolution
-JAVA_CALLABLE_ENTITY_TYPES = frozenset({ENTITY_METHOD, ENTITY_CONSTRUCTOR})
+# (H) FUNCTION is included so an unqualified call inside a method-body anonymous class
+# (H) can reach the anon's OWN methods (registered as Function nodes under the enclosing
+# (H) scope, e.g. gson's `delegate()` called by the same anon's `read()`); the module
+# (H) scan is a last-resort fallback after precise class/anon-base/enclosing lookups.
+JAVA_CALLABLE_ENTITY_TYPES = frozenset(
+    {ENTITY_METHOD, ENTITY_CONSTRUCTOR, ENTITY_FUNCTION}
+)
 
 # (H) Java primitive type names
 JAVA_TYPE_STRING = "String"

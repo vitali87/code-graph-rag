@@ -80,3 +80,31 @@ def test_inherited_overload_binds_to_arity_match(
     assert not any(
         f.endswith(".M.use(Sub)") and t.endswith(".Base.resolve(int)") for f, t in calls
     ), "2-arg call wrongly bound to the 1-arg inherited overload"
+
+
+def test_same_arity_overload_binds_by_argument_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Two overloads of the SAME arity (isX(Class) vs isX(String)) can't be told
+    # (H) apart by arg count; a call with a String-typed argument must bind to the
+    # (H) isX(String) overload (gson's isJavaType/isAndroidType String overloads).
+    root = temp_repo / "jovl3"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  static boolean isX(Class<?> c) { return false; }\n"
+        "  static boolean isX(String s) { return true; }\n"
+        "  static boolean use(String name) { return isX(name); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    assert any(
+        f.endswith(".M.use(String)") and t.endswith(".M.isX(String)") for f, t in calls
+    ), sorted(t for f, t in calls if "isX" in t)
+    assert not any(
+        f.endswith(".M.use(String)") and t.endswith(".M.isX(Class<?>)") for f, t in calls
+    ), "String-arg call wrongly bound to the Class overload"

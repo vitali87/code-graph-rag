@@ -1827,11 +1827,14 @@ class CallResolver:
         call_node: Node,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 
         result = self._redirect_protocol_method(
-            java_engine.resolve_java_method_call(call_node, local_var_types, module_qn)
+            java_engine.resolve_java_method_call(
+                call_node, local_var_types, module_qn, caller_qn
+            )
         )
 
         if result:

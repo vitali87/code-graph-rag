@@ -110,10 +110,14 @@ class JavaTypeInferenceEngine(
         return local_var_types
 
     def resolve_java_method_call(
-        self, call_node: ASTNode, local_var_types: dict[str, str] | None, module_qn: str
+        self,
+        call_node: ASTNode,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         return self._do_resolve_java_method_call(
-            call_node, local_var_types or {}, module_qn
+            call_node, local_var_types or {}, module_qn, caller_qn
         )
 
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None:
