@@ -388,6 +388,18 @@ class ImportProcessor:
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
 
+    def defer_import_edge(
+        self, module_qn: str, full_name: str, language: cs.SupportedLanguage
+    ) -> None:
+        # (H) Entry point for import shapes discovered outside parse_imports
+        # (H) (the CommonJS destructuring fallback); every IMPORTS edge must go
+        # (H) through the same deferred verification.
+        self._deferred_import_edges.append(
+            DeferredImportEdge(
+                module_qn=module_qn, full_name=full_name, language=language
+            )
+        )
+
     def flush_deferred_import_edges(self, known_module_qns: set[str]) -> int:
         """Emit IMPORTS edges now that every file is parsed.
 

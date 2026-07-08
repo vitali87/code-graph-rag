@@ -453,7 +453,13 @@ class ClassIngestMixin:
         ExternalModule node; a module-anchored GUESS that re-resolves nowhere
         emits nothing, except a JS/TS global (Error) which is externalized.
         """
-        if self.function_registry.get(entry.parent_qn) is not None:
+        if (
+            # (H) Parse-time resolution of a nested external base (`Entry
+            # (H) implements Map.Entry`) can land on the child ITSELF (the only
+            # (H) registered qn ending in Entry); a self-edge is never real.
+            entry.parent_qn != entry.child_qn
+            and self.function_registry.get(entry.parent_qn) is not None
+        ):
             return entry.parent_qn, False
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):

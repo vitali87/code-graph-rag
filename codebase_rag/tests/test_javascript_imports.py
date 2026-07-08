@@ -851,6 +851,20 @@ def test_commonjs_multiple_destructured_variables_regression(
     const { a, b, c } = require('module'); // 3 destructured, 1 module, 1 require
     Old code: iterate i=0,1,2 over [a,b,c] but access module_names[1] (IndexError)
     """
+    # (H) Every required path must reference a real fixture module: an IMPORTS
+    # (H) edge to a module no file yields is a phantom the database drops.
+    services_dir = javascript_imports_project / "src" / "services"
+    services_dir.mkdir()
+    (services_dir / "index.js").write_text(
+        encoding="utf-8",
+        data="module.exports = { api: {}, db: {}, cache: {} };",
+    )
+    core_dir = javascript_imports_project / "src" / "core"
+    core_dir.mkdir()
+    (core_dir / "index.js").write_text(
+        encoding="utf-8",
+        data="module.exports = { logger: {}, config: {}, utils: {}, DEBUG: true };",
+    )
     test_file = javascript_imports_project / "regression_multiple_destructured.js"
     test_file.write_text(
         encoding="utf-8",
