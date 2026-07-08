@@ -141,6 +141,9 @@ exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# (H) loadgroup honors the xdist_group marker that pins the integration dir to
+# (H) one worker; for unmarked tests it schedules identically to the default.
+addopts = "--dist=loadgroup"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
