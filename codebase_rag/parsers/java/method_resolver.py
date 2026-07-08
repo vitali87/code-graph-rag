@@ -274,11 +274,13 @@ class JavaMethodResolverMixin:
             return method_result
 
         if inherited_result := self._find_inherited_method(
-            resolved_type, method_name, module_qn
+            resolved_type, method_name, module_qn, arg_count
         ):
             return inherited_result
 
-        return self._find_interface_method(resolved_type, method_name, module_qn)
+        return self._find_interface_method(
+            resolved_type, method_name, module_qn, arg_count
+        )
 
     def _find_method_with_any_signature(
         self,
@@ -293,7 +295,7 @@ class JavaMethodResolverMixin:
 
         if class_qn and not class_qn.startswith(self.project_name):
             return self._search_method_in_alternate_modules(
-                class_qn, method_name, current_module_qn
+                class_qn, method_name, current_module_qn, arg_count
             )
 
         return None
@@ -324,7 +326,11 @@ class JavaMethodResolverMixin:
         return None
 
     def _search_method_in_alternate_modules(
-        self, class_qn: str, method_name: str, current_module_qn: str | None
+        self,
+        class_qn: str,
+        method_name: str,
+        current_module_qn: str | None,
+        arg_count: int | None = None,
     ) -> tuple[str, str] | None:
         suffixes = class_qn.split(cs.SEPARATOR_DOT)
         lookup_keys = [
@@ -340,7 +346,9 @@ class JavaMethodResolverMixin:
 
         for module_qn in ranked_candidates:
             registry_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{simple_class_name}"
-            if result := self._search_method_in_class(registry_class_qn, method_name):
+            if result := self._search_method_in_class(
+                registry_class_qn, method_name, arg_count
+            ):
                 return result
 
         return None
@@ -370,24 +378,34 @@ class JavaMethodResolverMixin:
         guard_name=cs.GUARD_INHERITED_METHOD,
     )
     def _find_inherited_method(
-        self, class_qn: str, method_name: str, module_qn: str
+        self,
+        class_qn: str,
+        method_name: str,
+        module_qn: str,
+        arg_count: int | None = None,
     ) -> tuple[str, str] | None:
         if not (superclass_qn := self._get_superclass_name(class_qn)):
             return None
 
         if method_result := self._find_method_with_any_signature(
-            superclass_qn, method_name, module_qn
+            superclass_qn, method_name, module_qn, arg_count
         ):
             return method_result
 
-        return self._find_inherited_method(superclass_qn, method_name, module_qn)
+        return self._find_inherited_method(
+            superclass_qn, method_name, module_qn, arg_count
+        )
 
     def _find_interface_method(
-        self, class_qn: str, method_name: str, module_qn: str
+        self,
+        class_qn: str,
+        method_name: str,
+        module_qn: str,
+        arg_count: int | None = None,
     ) -> tuple[str, str] | None:
         for interface_qn in self._get_implemented_interfaces(class_qn):
             if method_result := self._find_method_with_any_signature(
-                interface_qn, method_name, module_qn
+                interface_qn, method_name, module_qn, arg_count
             ):
                 return method_result
 
