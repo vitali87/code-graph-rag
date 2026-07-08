@@ -1764,24 +1764,27 @@ class CallProcessor:
             # (H) A callee that resolved to a builtin (e.g. JS setTimeout(target))
             # (H) has no first-party body to follow into, so pass-through flow is
             # (H) pointless; but a first-party callback handed to it is still invoked,
-            # (H) so record a reference edge from this scope to keep it reachable. The
-            # (H) builtin call edge itself is still emitted by the normal path below.
-            callee_is_builtin = is_flow_lang and callee_qn.startswith(
-                _BUILTIN_QN_PREFIX
-            )
+            # (H) so record a reference edge from this scope to keep it reachable.
+            # (H) The synthetic builtin.* qn never has a node, so emitting a CALLS
+            # (H) edge to it would only mint a phantom the database drops (issue
+            # (H) #652: 485 across the fixture suite) -- mirror the C++ builtin
+            # (H) operator rule and emit no edge at all.
+            callee_is_builtin = callee_qn.startswith(_BUILTIN_QN_PREFIX)
             if callee_is_builtin:
-                self._ingest_argument_function_references(
-                    call_node,
-                    caller_spec,
-                    module_qn,
-                    local_var_types,
-                    class_context,
-                    resolve_func,
-                    ensure_rel,
-                    caller_qn,
-                )
+                if is_flow_lang:
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                    )
+                continue
 
-            if is_flow_lang and not callee_is_builtin:
+            if is_flow_lang:
                 self._collect_callable_flow(
                     call_node,
                     callee_qn,
