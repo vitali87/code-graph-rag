@@ -54,6 +54,54 @@ def _lambda_defines(mock_ingestor: MagicMock) -> dict[str, tuple[str, str]]:
     return parents
 
 
+TWO_NAMESPACES_HDR = """
+#pragma once
+namespace alpha {
+class Widget {
+public:
+    void print() const;
+};
+}
+namespace beta {
+class Widget {
+public:
+    void print() const;
+};
+}
+"""
+
+TWO_NAMESPACES_CPP = """
+#include "Widget.h"
+namespace alpha {
+void Widget::print() const {
+    invoke(1, [](int x) { return x + 1; });
+}
+}
+namespace beta {
+void Widget::print() const {
+    invoke(2, [](int y) { return y * 2; });
+}
+}
+"""
+
+
+def test_same_leaf_classes_bind_lambdas_to_their_own_namespace(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) alpha::Widget and beta::Widget share a leaf name; each out-of-line
+    # (H) method's lambda must bind to its own namespace's Method node, not
+    # (H) whichever Widget resolves first from the simple-name index.
+    (temp_repo / "Widget.h").write_text(TWO_NAMESPACES_HDR)
+    (temp_repo / "Widget.cpp").write_text(TWO_NAMESPACES_CPP)
+    run_updater(temp_repo, mock_ingestor)
+
+    parents = _lambda_defines(mock_ingestor)
+    alpha_lambda = next(parents[qn] for qn in parents if "lambda_4_" in qn)
+    beta_lambda = next(parents[qn] for qn in parents if "lambda_9_" in qn)
+    assert ".alpha." in alpha_lambda[1], alpha_lambda
+    assert ".beta." in beta_lambda[1], beta_lambda
+
+
 def test_out_of_line_method_lambda_binds_to_method_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

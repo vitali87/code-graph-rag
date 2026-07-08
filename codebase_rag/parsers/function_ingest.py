@@ -69,13 +69,17 @@ class _DeferredCppContainment(NamedTuple):
 
     The parent method's final qn is only known after the deferred method
     resolution binds it to its class (declared in a possibly later-parsed
-    header), so the containment edge must wait for that pass.
+    header), so the containment edge must wait for that pass. namespace_path
+    carries the definition site's enclosing namespaces: the written qualifier
+    inside `namespace beta { void Widget::print() ... }` is just `Widget`, and
+    without the namespace two same-leaf classes are indistinguishable.
     """
 
     child_qn: str
     class_name: str
     method_name: str
     module_qn: str
+    namespace_path: str
 
 
 # (H) Go node labels a receiver type can resolve to (struct -> Class, defined
@@ -830,15 +834,18 @@ class FunctionIngestMixin:
         method_name = cpp_utils.extract_function_name(enclosing)
         if not class_name or not method_name:
             return False
-        leaf = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
-            cs.SEPARATOR_DOT, 1
-        )[-1]
+        # (H) Keep the FULL written qualifier (ns::Widget): _resolve_cpp_class_qn
+        # (H) splits the leaf itself and its endswith guard needs the qualifier to
+        # (H) tell same-leaf classes in different namespaces apart.
         self._deferred_cpp_containment.append(
             _DeferredCppContainment(
                 child_qn=child_qn,
-                class_name=leaf,
+                class_name=class_name,
                 method_name=method_name,
                 module_qn=module_qn,
+                namespace_path=cs.SEPARATOR_DOT.join(
+                    cpp_utils.extract_namespace_path(enclosing)
+                ),
             )
         )
         return True
@@ -923,16 +930,29 @@ class FunctionIngestMixin:
             return 0
         emitted = 0
         for entry in deferred:
-            class_qn, resolved = self._resolve_cpp_class_qn(entry.class_name, "")
-            parent_qn = f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
-            if resolved and parent_qn in self.function_registry:
-                parent_spec = (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_qn)
-            else:
-                parent_spec = (
-                    cs.NodeLabel.MODULE,
-                    cs.KEY_QUALIFIED_NAME,
-                    entry.module_qn,
+            # (H) Try the namespace-scoped name first (alpha.Widget beats a
+            # (H) same-leaf beta.Widget via the endswith guard), then the raw
+            # (H) written qualifier for classes matched through other scopes.
+            candidates = [entry.class_name]
+            if entry.namespace_path:
+                candidates.insert(
+                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
                 )
+            parent_spec = (
+                cs.NodeLabel.MODULE,
+                cs.KEY_QUALIFIED_NAME,
+                entry.module_qn,
+            )
+            for candidate in candidates:
+                class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+                parent_qn = f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
+                if resolved and parent_qn in self.function_registry:
+                    parent_spec = (
+                        cs.NodeLabel.METHOD,
+                        cs.KEY_QUALIFIED_NAME,
+                        parent_qn,
+                    )
+                    break
             self.ingestor.ensure_relationship_batch(
                 parent_spec,
                 cs.RelationshipType.DEFINES,
