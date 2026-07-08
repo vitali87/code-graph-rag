@@ -120,7 +120,11 @@ def check_method_overrides(
                     or parent_method_qn
                 )
 
-            if parent_method_qn in function_registry:
+            # (H) The parent member must BE a method: a ctor of a nested class
+            # (H) that inherits its encloser (node::inner_node : node) shares
+            # (H) its name with the nested CLASS registered at parent.name, and
+            # (H) an OVERRIDES onto that class qn is a label-mismatched phantom.
+            if function_registry.get(parent_method_qn) == NodeType.METHOD:
                 ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
                     cs.RelationshipType.OVERRIDES,

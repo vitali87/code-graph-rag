@@ -509,6 +509,37 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
 
 
+class CppFunctionLocation(NamedTuple):
+    """Where the definition pass put a C++ function/method node.
+
+    Keyed by (module_qn, start_line) so Pass-3 call attribution reuses the
+    exact label and qn Pass 2 registered instead of re-deriving them from the
+    AST; the two walks diverge on preprocessor-distorted class bodies and
+    every divergence is a phantom caller the database drops (issue #652).
+    """
+
+    label: str
+    qualified_name: str
+    container_qn: str | None
+
+
+class DeferredCppInherit(NamedTuple):
+    """C++ INHERITS edge held back until every class is registered.
+
+    A base written in another header cannot resolve at parse time, so the
+    edge is emitted after Pass 2 with the base resolved namespace-scoped
+    across files; an unresolvable base emits no edge rather than a phantom
+    the database would drop.
+    """
+
+    child_label: str
+    child_qn: str
+    base_name: str
+    guess_qn: str
+    namespace_path: str
+    base_index: int
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType

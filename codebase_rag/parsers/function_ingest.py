@@ -12,6 +12,8 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
+    CppFunctionLocation,
+    DeferredCppInherit,
     DeferredParentLink,
     FunctionRegistryTrieProtocol,
     NodeType,
@@ -137,6 +139,10 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
+    cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
+    class_inheritance: dict[str, list[str]]
+    _deferred_cpp_inherits: list[DeferredCppInherit]
+    rehydrated_definition_paths: dict[str, str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -170,6 +176,17 @@ class FunctionIngestMixin:
 
             if language == cs.SupportedLanguage.CPP:
                 if self._handle_cpp_out_of_class_method(func_node, module_qn):
+                    continue
+                # (H) The query captures a templated function twice: the
+                # (H) template_declaration wrapper AND its inner definition.
+                # (H) The wrapper is the canonical node (mirroring the class
+                # (H) rule); registering the inner too mints a `qn@line`
+                # (H) duplicate that call attribution can bind to (issue #652).
+                if (
+                    func_node.type == cs.CppNodeType.FUNCTION_DEFINITION
+                    and func_node.parent is not None
+                    and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+                ):
                     continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
@@ -261,7 +278,7 @@ class FunctionIngestMixin:
         )
 
     def _resolve_cpp_class_qn(
-        self, class_name: str, module_qn: str
+        self, class_name: str, module_qn: str, exclude_qn: str | None = None
     ) -> tuple[str, bool]:
         """Look up an existing Class node for *class_name* across all parsed files.
 
@@ -278,6 +295,8 @@ class FunctionIngestMixin:
             # (H) Sorted: the lookup is a set, and same-leaf classes in
             # (H) different namespaces would otherwise bind nondeterministically.
             for candidate_qn in sorted(self.simple_name_lookup[leaf_name]):
+                if candidate_qn == exclude_qn:
+                    continue
                 node_type = self.function_registry.get(candidate_qn)
                 if node_type in {NodeType.CLASS, NodeType.TYPE}:
                     # (H) An out-of-class nested definition keeps `Outer::Inner`
@@ -305,6 +324,12 @@ class FunctionIngestMixin:
                     path.suffix in cs.CPP_EXTENSIONS or path.suffix in cs.C_EXTENSIONS
                 )
             parts = parts[:-1]
+        # (H) An incremental run only populates module_qn_to_file_path for
+        # (H) re-parsed files; a definition rehydrated from the graph resolves
+        # (H) through its node's recorded file path instead.
+        if rehydrated := self.rehydrated_definition_paths.get(qn):
+            suffix = Path(rehydrated).suffix
+            return suffix in cs.CPP_EXTENSIONS or suffix in cs.C_EXTENSIONS
         return False
 
     def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
@@ -354,9 +379,14 @@ class FunctionIngestMixin:
             if bound_name := cpp_utils.extract_function_name(func_node):
                 # (H) Record the binding so Pass-3 call attribution reuses this
                 # (H) exact decision instead of re-resolving (and diverging).
-                self.cpp_out_of_class_methods[
-                    (module_qn, func_node.start_point[0] + 1)
-                ] = (f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}", class_qn)
+                bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
+                location = (module_qn, func_node.start_point[0] + 1)
+                self.cpp_out_of_class_methods[location] = (bound_qn, class_qn)
+                self.cpp_function_locations[location] = CppFunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=bound_qn,
+                    container_qn=class_qn,
+                )
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
             ):
@@ -433,6 +463,13 @@ class FunctionIngestMixin:
             self.cpp_out_of_class_methods[(entry.module_qn, entry.start_line)] = (
                 method_qn,
                 class_qn,
+            )
+            self.cpp_function_locations[(entry.module_qn, entry.start_line)] = (
+                CppFunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=method_qn,
+                    container_qn=class_qn,
+                )
             )
 
             props = dict(entry.method_props)
@@ -634,6 +671,27 @@ class FunctionIngestMixin:
         )
         if resolution.name:
             self.simple_name_lookup[resolution.name].add(resolution.qualified_name)
+        if language == cs.SupportedLanguage.CPP:
+            # (H) Record where this function landed so Pass-3 call attribution
+            # (H) reuses the registered qn/label instead of re-deriving them.
+            location = CppFunctionLocation(
+                label=cs.NodeLabel.FUNCTION.value,
+                qualified_name=resolution.qualified_name,
+                container_qn=None,
+            )
+            self.cpp_function_locations[(module_qn, func_node.start_point[0] + 1)] = (
+                location
+            )
+            # (H) A template wrapper's body walk in Pass 3 visits the INNER
+            # (H) definition (it starts on its own line), so record that line
+            # (H) against the wrapper's node too.
+            if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+                for child in func_node.children:
+                    if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                        self.cpp_function_locations[
+                            (module_qn, child.start_point[0] + 1)
+                        ] = location
+                        break
 
         # (H) A method-body anonymous-class override (`new Base(){ @Override m(){} }`
         # (H) inside a method) is captured as a function here; record it so the deferred

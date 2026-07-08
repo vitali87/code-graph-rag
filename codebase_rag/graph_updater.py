@@ -575,6 +575,12 @@ class GraphUpdater:
                 kept_forwards,
             )
 
+        # (H) After forward declarations so a base whose only representation is
+        # (H) a kept forward declaration still resolves to a real node.
+        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
+        if inherits:
+            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+
         # (H) Last containment step: every node-registering pass above (deferred
         # (H) C++ methods, Go receivers, kept forward declarations) must finish
         # (H) before parent qns are verified against the registry.
@@ -622,6 +628,11 @@ class GraphUpdater:
             # (H) @property defined elsewhere would otherwise drop vs a clean index.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
+            # (H) Record the defining file so _is_cpp_defined can language-check
+            # (H) rehydrated candidates (deferred C++ INHERITS resolution runs
+            # (H) after this and must reach bases in UNCHANGED headers).
+            if isinstance(path := row.get(cs.KEY_PATH), str):
+                self.factory.definition_processor.rehydrated_definition_paths[qn] = path
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)

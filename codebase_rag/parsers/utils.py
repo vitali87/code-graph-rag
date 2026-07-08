@@ -569,15 +569,15 @@ def ingest_method(
 
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
-            return
+            return None
     elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # (H) field on the function node; take the binding name from the enclosing
         # (H) field definition so it is modelled as a member instead of dropped.
         if not (method_name := _js_ts_field_member_name(method_node, language)):
-            return
+            return None
     elif (text := method_name_node.text) is None:
-        return
+        return None
     else:
         method_name = text.decode(cs.ENCODING_UTF8)
 
