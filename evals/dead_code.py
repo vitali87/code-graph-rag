@@ -222,6 +222,11 @@ def dead_code_from_graph(
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
             roots.add(qn)
+        # (H) A method overriding an EXTERNAL stdlib base's method (click's
+        # (H) textwrap.TextWrapper subclass) is invoked by the base's machinery,
+        # (H) never by a first-party call -- a root, mirroring the query clause.
+        elif props.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
+            roots.add(qn)
         elif qn in protocol_stubs:
             roots.add(qn)
         elif (

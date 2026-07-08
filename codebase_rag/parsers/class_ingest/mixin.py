@@ -25,7 +25,7 @@ from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
-from ..py import resolve_class_name
+from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import ingest_method, safe_decode_text, sorted_captures
@@ -827,6 +827,23 @@ class ClassIngestMixin:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
 
+        # (H) Names defined by an EXTERNAL stdlib base of this class (click's
+        # (H) `class TextWrapper(textwrap.TextWrapper)`): a method matching one
+        # (H) overrides the base and is invoked by its machinery, so mark it for
+        # (H) the dead-code root property. Only unregistered (external) parents
+        # (H) contribute; first-party bases resolve via OVERRIDES edges.
+        external_override_names: frozenset[str] = frozenset()
+        if language == cs.SupportedLanguage.PYTHON:
+            external_parents = [
+                p
+                for p in self.class_inheritance.get(class_qn, [])
+                if self.function_registry.get(p) is None
+            ]
+            if external_parents:
+                external_override_names = external_stdlib_base_method_names(
+                    external_parents
+                )
+
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
@@ -854,6 +871,7 @@ class ClassIngestMixin:
                 method_qualified_name,
                 file_path=file_path,
                 repo_path=self.repo_path,
+                external_override_names=external_override_names,
             )
             # (H) A Java method declared inside an anonymous class body
             # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
@@ -883,6 +901,7 @@ class ClassIngestMixin:
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
+                        start_col=method_node.start_point[1],
                     )
                 )
             if language == cs.SupportedLanguage.CPP:

@@ -521,6 +521,13 @@ class FunctionLocation(NamedTuple):
     label: str
     qualified_name: str
     container_qn: str | None
+    # (H) Start COLUMN of the recorded node. Two functions can share a start line
+    # (H) (a one-line curried arrow `const f = (a) => (b) => ...` records both the
+    # (H) outer and inner arrow at line 1), and the line-keyed map keeps only one;
+    # (H) the reader compares columns and falls back to name-based attribution on
+    # (H) a mismatch instead of adopting the WRONG function's qn. None (the
+    # (H) deferred C++ out-of-class path, which has no node) skips the check.
+    start_col: int | None = None
 
 
 class DeferredCppInherit(NamedTuple):
@@ -601,7 +608,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
