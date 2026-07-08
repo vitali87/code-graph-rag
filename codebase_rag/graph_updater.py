@@ -551,6 +551,10 @@ class GraphUpdater:
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
 
+        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
+        if contained:
+            logger.info("Resolved {} deferred C++ nested containments", contained)
+
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
             logger.info("Resolved {} Go receiver methods", go_methods)
@@ -570,6 +574,13 @@ class GraphUpdater:
                 "Registered {} forward-declared C/C++ types with no definition",
                 kept_forwards,
             )
+
+        # (H) Last containment step: every node-registering pass above (deferred
+        # (H) C++ methods, Go receivers, kept forward declarations) must finish
+        # (H) before parent qns are verified against the registry.
+        linked = self.factory.definition_processor.resolve_deferred_parent_links()
+        if linked:
+            logger.info("Resolved {} deferred containment parents", linked)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)

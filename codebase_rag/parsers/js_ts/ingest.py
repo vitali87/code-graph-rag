@@ -49,6 +49,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     @abstractmethod
+    def _emit_or_defer_defines(
+        self,
+        parent_label: str,
+        parent_qn: str,
+        child_label: str,
+        child_qn: str,
+        module_qn: str,
+    ) -> None: ...
+
+    @abstractmethod
     def _build_nested_qualified_name(
         self,
         func_node: ASTNode,
@@ -191,10 +201,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 self.function_registry[method_qn] = NodeType.FUNCTION
                 self.simple_name_lookup[method_name].add(method_qn)
 
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, constructor_qn),
-                    cs.RelationshipType.DEFINES,
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, method_qn),
+                # (H) The assignment target is not always a registered constructor
+                # (H) function: `target.prototype.render = ...` inside a decorator
+                # (H) names a parameter, so the parent qn would be a phantom the
+                # (H) database drops. Defer so it verifies against the registry.
+                self._emit_or_defer_defines(
+                    cs.NodeLabel.FUNCTION,
+                    constructor_qn,
+                    cs.NodeLabel.FUNCTION,
+                    method_qn,
+                    module_qn,
                 )
 
                 logger.debug(

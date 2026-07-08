@@ -71,13 +71,24 @@ def merge_node_records(
     return list(merged.values())
 
 
+def _node_identities(
+    nodes: Sequence[GraphNodeRecord],
+) -> set[tuple[str, PropertyValue]]:
+    return {(node.label, _node_key(node)) for node in merge_node_records(nodes)}
+
+
 def find_orphans(
     nodes: Sequence[GraphNodeRecord], relationships: Sequence[GraphRelRecord]
 ) -> list[GraphNodeRecord]:
+    identities = _node_identities(nodes)
     connected: set[tuple[str, PropertyValue]] = set()
     for rel in relationships:
-        for label, _, value in (rel.from_spec, rel.to_spec):
-            connected.add((label, value))
+        # (H) The database MERGEs a relationship by MATCHing both endpoints, so
+        # (H) an edge with a nonexistent endpoint is silently dropped and must
+        # (H) not count as connectivity for the endpoint that does exist.
+        endpoints = [(label, value) for label, _, value in (rel.from_spec, rel.to_spec)]
+        if all(endpoint in identities for endpoint in endpoints):
+            connected.update(endpoints)
     return [
         node
         for node in merge_node_records(nodes)
@@ -86,6 +97,36 @@ def find_orphans(
         if node.label != cs.NodeLabel.PROJECT.value
         and (node.label, _node_key(node)) not in connected
     ]
+
+
+def find_dangling_relationships(
+    nodes: Sequence[GraphNodeRecord], relationships: Sequence[GraphRelRecord]
+) -> list[AuditViolation]:
+    identities = _node_identities(nodes)
+    violations: list[AuditViolation] = []
+    seen: set[tuple[str, PropertyValue, str, str, PropertyValue]] = set()
+    for rel in relationships:
+        from_label, _, from_key = rel.from_spec
+        to_label, _, to_key = rel.to_spec
+        if (from_label, from_key) in identities and (to_label, to_key) in identities:
+            continue
+        signature = (from_label, from_key, rel.rel_type, to_label, to_key)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        violations.append(
+            AuditViolation(
+                cs.AuditCheck.DANGLING_RELATIONSHIP,
+                cs.AUDIT_DETAIL_DANGLING.format(
+                    from_label=from_label,
+                    from_key=from_key,
+                    rel_type=rel.rel_type,
+                    to_label=to_label,
+                    to_key=to_key,
+                ),
+            )
+        )
+    return violations
 
 
 def find_property_violations(
@@ -236,4 +277,5 @@ def collect_violations(
     ]
     violations.extend(find_property_violations(nodes))
     violations.extend(find_relationship_violations(relationships))
+    violations.extend(find_dangling_relationships(nodes, relationships))
     return violations

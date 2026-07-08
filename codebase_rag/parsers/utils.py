@@ -12,6 +12,7 @@ from .. import constants as cs
 from .. import logs
 from ..types_defs import (
     ASTNode,
+    DeferredParentLink,
     LanguageQueries,
     NodeType,
     PropertyDict,
@@ -556,6 +557,8 @@ def ingest_method(
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
     repo_path: Path | None = None,
+    defer_containment: list[DeferredParentLink] | None = None,
+    module_qn: str | None = None,
 ) -> None:
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
@@ -623,6 +626,22 @@ def ingest_method(
         method_qn, callable_parameter_indices(method_node, language)
     )
     simple_name_lookup[method_name].add(method_qn)
+
+    # (H) A container that may never register (a Rust impl on a primitive type)
+    # (H) defers so the edge is verified once every pass has run, falling back
+    # (H) to the module rather than a phantom the database would drop.
+    if defer_containment is not None and module_qn is not None:
+        defer_containment.append(
+            DeferredParentLink(
+                parent_label_guess=container_type,
+                parent_qn=container_qn,
+                child_label=cs.NodeLabel.METHOD,
+                child_qn=method_qn,
+                module_qn=module_qn,
+                rel_type=cs.RelationshipType.DEFINES_METHOD.value,
+            )
+        )
+        return
 
     # (H) The DEFINES_METHOD parent is matched in the graph by LABEL +
     # (H) qualified_name, so it must carry the container's real node label. Callers

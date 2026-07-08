@@ -491,6 +491,24 @@ class AuditViolation(NamedTuple):
     detail: str
 
 
+class DeferredParentLink(NamedTuple):
+    """Containment edge whose non-module parent must exist before emission.
+
+    Parents can be registered by a later pass than the child (methods land in
+    the class pass after the function pass; forward declarations register
+    last), so verification waits until every pass finishes. A parent qn that
+    never registers is a phantom the database would drop, so the child
+    anchors to its module instead.
+    """
+
+    parent_label_guess: str
+    parent_qn: str
+    child_label: str
+    child_qn: str
+    module_qn: str
+    rel_type: str = RelationshipType.DEFINES.value
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType
@@ -578,11 +596,12 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE,),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
         RelationshipType.DEFINES,
         (
             NodeLabel.CLASS,
             NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
             NodeLabel.ENUM,
             NodeLabel.INTERFACE,
             NodeLabel.TYPE,

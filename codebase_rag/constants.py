@@ -660,6 +660,7 @@ class AuditCheck(StrEnum):
     UNDOCUMENTED_PROPERTY = "undocumented_property"
     MISSING_REQUIRED_PROPERTY = "missing_required_property"
     UNDOCUMENTED_RELATIONSHIP = "undocumented_relationship"
+    DANGLING_RELATIONSHIP = "dangling_relationship"
 
 
 # (H) Graph audit violation details (issue #646)
@@ -672,6 +673,10 @@ AUDIT_DETAIL_MISSING_REQUIRED = "{label} '{key}' is missing required property '{
 AUDIT_DETAIL_UNDOCUMENTED_RELATIONSHIP = (
     "({from_label})-[:{rel_type}]->({to_label}) is not documented"
     " in RELATIONSHIP_SCHEMAS"
+)
+AUDIT_DETAIL_DANGLING = (
+    "({from_label} '{from_key}')-[:{rel_type}]->({to_label} '{to_key}')"
+    " references a nonexistent node and would be dropped by the database"
 )
 
 # (H) Live-graph audit details (doctor)

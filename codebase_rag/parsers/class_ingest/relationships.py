@@ -19,8 +19,6 @@ def create_class_relationships(
     class_node: Node,
     class_qn: str,
     module_qn: str,
-    parent_label: str,
-    parent_qn: str,
     node_type: NodeType,
     is_exported: bool,
     language: cs.SupportedLanguage,
@@ -36,11 +34,9 @@ def create_class_relationships(
     )
     class_inheritance[class_qn] = parent_classes
 
-    ingestor.ensure_relationship_batch(
-        (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
-        cs.RelationshipType.DEFINES,
-        (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
-    )
+    # (H) The DEFINES containment edge is emitted by the caller via
+    # (H) _emit_or_defer_defines, so a non-module parent is verified against
+    # (H) the registry after all passes instead of risking a phantom endpoint.
 
     if is_exported and language == cs.SupportedLanguage.CPP:
         ingestor.ensure_relationship_batch(

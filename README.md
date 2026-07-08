@@ -705,7 +705,7 @@ The knowledge graph uses the following node types and relationships:
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
-| Module, Function, Method | DEFINES | Class, Function, Enum, Interface, Type, Union, Module |
+| Module, Function, Method, Class | DEFINES | Class, Function, Method, Enum, Interface, Type, Union, Module |
 | Class, Interface, Enum, Type, Union | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module, ExternalModule |
 | Module | EXPORTS | Class, Function |
