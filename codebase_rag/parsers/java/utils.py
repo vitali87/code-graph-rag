@@ -336,9 +336,12 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
 
 
 def _java_cast_target_type(object_node: ASTNode) -> str | None:
-    # (H) The simple target type of a cast receiver: unwrap a parenthesized wrapper to
-    # (H) the cast_expression, read its `type` field, strip generic args and any scope
-    # (H) so `((a.b.Reader<T>) x)` -> `Reader`. None when there is no cast type.
+    # (H) The target type of a cast receiver: unwrap a parenthesized wrapper to the
+    # (H) cast_expression, read its `type` field, strip generic args so
+    # (H) `((a.b.Reader<T>) x)` -> `a.b.Reader`. The package is KEPT so a qualified cast
+    # (H) resolves to the right class (the resolver handles dotted/alternate-module
+    # (H) names); stripping it would collapse it onto a same-package/imported same-leaf
+    # (H) type. None when there is no cast type.
     cast = object_node
     if cast.type == cs.TS_PARENTHESIZED_EXPRESSION:
         cast = next(
@@ -350,7 +353,7 @@ def _java_cast_target_type(object_node: ASTNode) -> str | None:
     if type_node is None or type_node.text is None:
         return None
     base = type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
-    return base.rsplit(cs.SEPARATOR_DOT, 1)[-1].strip() or None
+    return base.strip() or None
 
 
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:

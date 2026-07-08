@@ -45,3 +45,41 @@ def test_cast_receiver_resolves_cross_file(
     assert not any(
         f.endswith(".M.use(Object)") and t.endswith(".Other.nextX()") for f, t in calls
     ), "cast receiver wrongly bound to the decoy"
+
+
+def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A fully-qualified cast target `((com.other.Reader) in).m()` must NOT resolve to
+    # (H) a same-package `Reader` decoy. Stripping the package off the cast type collapses
+    # (H) `com.other.Reader` to `Reader` and binds it to the wrong same-package class;
+    # (H) keeping the qualified name prevents that wrong edge.
+    root = temp_repo / "jqcast"
+    (root / "com" / "other").mkdir(parents=True)
+    (root / "com" / "example").mkdir(parents=True)
+    (root / "com" / "other" / "Reader.java").write_text(
+        "package com.other;\n"
+        "public class Reader { public int nextX() { return 1; } }\n",
+        encoding="utf-8",
+    )
+    # (H) same-package decoy Reader: without the qualified type the call mis-binds here.
+    (root / "com" / "example" / "Reader.java").write_text(
+        "package com.example;\n"
+        "public class Reader { public int nextX() { return 2; } }\n",
+        encoding="utf-8",
+    )
+    (root / "com" / "example" / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  int use(Object in) { return ((com.other.Reader) in).nextX(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert not any(
+        f.endswith(".M.use(Object)") and t.endswith(".example.Reader.nextX()")
+        for f, t in calls
+    ), "qualified cast receiver wrongly bound to the same-package decoy"

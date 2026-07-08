@@ -150,6 +150,37 @@ def test_anon_own_method_unqualified_call_resolves(
     calls = {
         (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
     }
-    assert any(
-        f.endswith(".read") and t.endswith(".helper") for f, t in calls
-    ), sorted(t for f, t in calls if "helper" in t)
+    assert any(f.endswith(".read") and t.endswith(".helper") for f, t in calls), sorted(
+        t for f, t in calls if "helper" in t
+    )
+
+
+def test_outside_call_does_not_bind_to_anon_local_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An anon class's OWN method registers as a module-scoped Function; the
+    # (H) unqualified module-wide fallback must NOT let a call OUTSIDE that anon bind to
+    # (H) it. `M.use()` calling `helper()` is not lexically inside the anon that declares
+    # (H) `helper()`, so no CALLS edge to the anon-local helper may be emitted.
+    root = temp_repo / "janonscope"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  Object make() {\n"
+        "    return new Object() {\n"
+        "      int helper() { return 1; }\n"
+        "    };\n"
+        "  }\n"
+        "  int use() { return helper(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert not any(
+        f.endswith(".M.use()") and t.endswith(".make.helper") for f, t in calls
+    ), "outside call wrongly bound to an anon-class-local method (scope violation)"

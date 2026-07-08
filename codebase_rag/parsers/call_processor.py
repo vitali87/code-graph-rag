@@ -1662,7 +1662,7 @@ class CallProcessor:
 
             if is_java and call_node.type == method_invocation_type:
                 callee_info = resolver.resolve_java_method_call(
-                    call_node, module_qn, local_var_types
+                    call_node, module_qn, local_var_types, caller_qn
                 )
             else:
                 callee_info = resolve_func(

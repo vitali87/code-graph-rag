@@ -93,6 +93,23 @@ def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> b
     )
 
 
+def _callable_visible_to_caller(
+    entity_type: str, qn: str, caller_qn: str | None
+) -> bool:
+    # (H) A Java FUNCTION entry is a method declared inside another method's body -- i.e.
+    # (H) an anonymous/local class method, only visible lexically. The unqualified
+    # (H) module-wide fallback must not let a call OUTSIDE that anon bind to it (M.use()
+    # (H) -> an anon-local helper() elsewhere). Accept a FUNCTION only when the caller is
+    # (H) lexically within its owning scope (owner qn prefixes the caller). METHOD and
+    # (H) CONSTRUCTOR entries are top-level and stay module-visible.
+    if entity_type != cs.ENTITY_FUNCTION:
+        return True
+    if not caller_qn:
+        return False
+    owner = qn.split(cs.CHAR_PAREN_OPEN)[0].rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return caller_qn == owner or caller_qn.startswith(f"{owner}{cs.SEPARATOR_DOT}")
+
+
 def _pick_overload(
     matches: list[tuple[str, str]],
     arg_count: int | None,
@@ -351,6 +368,7 @@ class JavaMethodResolverMixin:
         module_qn: str,
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         matches = [
             (entity_type, qn)
@@ -359,6 +377,7 @@ class JavaMethodResolverMixin:
             and qn.split(cs.CHAR_PAREN_OPEN)[0].endswith(
                 f"{cs.SEPARATOR_DOT}{method_name}"
             )
+            and _callable_visible_to_caller(entity_type, qn, caller_qn)
         ]
         return _pick_overload(matches, arg_count, arg_types)
 
@@ -647,7 +666,11 @@ class JavaMethodResolverMixin:
         return tuple(arg_types)
 
     def _do_resolve_java_method_call(
-        self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self,
+        call_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         if call_node.type != cs.TS_METHOD_INVOCATION:
             return None
@@ -692,7 +715,7 @@ class JavaMethodResolverMixin:
                 logger.debug(ls.JAVA_FOUND_STATIC, result=result)
                 return result
             result = self._resolve_static_or_local_method(
-                str(method_name), module_qn, arg_count, arg_types
+                str(method_name), module_qn, arg_count, arg_types, caller_qn
             )
             if result:
                 logger.debug(ls.JAVA_FOUND_STATIC, result=result)
