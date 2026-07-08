@@ -159,6 +159,22 @@ class JavaTypeResolverMixin:
         ] in [NodeType.CLASS, NodeType.INTERFACE]:
             return same_package_qn
 
+        # (H) A nested class referenced by its simple name from within the same file
+        # (H) (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
+        # (H) `module.Outer.Nested`, not `module.Nested`, so the direct check above
+        # (H) misses it. Search this module for a CLASS/INTERFACE whose last segment is
+        # (H) the simple name, and use it only when unambiguous so a same-named nested
+        # (H) type elsewhere cannot mis-resolve.
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        nested = [
+            qn
+            for qn in self.function_registry.find_ending_with(type_name)
+            if qn.startswith(prefix)
+            and self.function_registry[qn] in [NodeType.CLASS, NodeType.INTERFACE]
+        ]
+        if len(nested) == 1:
+            return nested[0]
+
         return type_name
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
