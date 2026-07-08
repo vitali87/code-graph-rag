@@ -1903,11 +1903,8 @@ class CallProcessor:
                     # (H) a colliding function as a Function); only class-typed
                     # (H) variants are instantiable, and a mismatched label is
                     # (H) a phantom the database drops (issue #652).
-                    if (
-                        class_variant != callee_qn
-                        and resolver.function_registry.get(class_variant)
-                        != NodeType.CLASS
-                    ):
+                    variant_type = resolver.function_registry.get(class_variant)
+                    if variant_type is not None and variant_type != NodeType.CLASS:
                         continue
                     ensure_rel(
                         caller_spec,
@@ -1939,10 +1936,14 @@ class CallProcessor:
                 # (H) node (a TS namespace merged onto a function registers as
                 # (H) a class); only callable variants take a CALLS edge, and
                 # (H) emitting the primary's label onto a differently-typed
-                # (H) node is a phantom the database drops (issue #652).
-                if target_qn != callee_qn and resolver.function_registry.get(
-                    target_qn
-                ) not in (NodeType.FUNCTION, NodeType.METHOD):
+                # (H) node is a phantom the database drops (issue #652). An
+                # (H) unregistered target keeps its edge (resolver-derived
+                # (H) callees like an unwrapped fn.call base may not register).
+                target_type = resolver.function_registry.get(target_qn)
+                if target_type is not None and target_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ):
                     continue
                 ensure_rel(
                     caller_spec,

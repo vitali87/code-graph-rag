@@ -896,20 +896,22 @@ class ImportProcessor:
 
     @staticmethod
     def _strip_js_extension(import_path: str) -> str:
-        # (H) ESM specifiers may carry an explicit extension (`./b.js`); the
-        # (H) module qn never does, so keeping it poisons the import map AND
-        # (H) the IMPORTS edge with a phantom `.js` segment (issue #652).
+        # (H) An ESM RELATIVE specifier may carry an explicit extension
+        # (H) (`./b.js`); the module qn never does, so keeping it poisons the
+        # (H) import map AND the IMPORTS edge with a phantom `.js` segment
+        # (H) (issue #652). Bare package specifiers are exempt: a package can
+        # (H) legitimately be NAMED with the extension (p5.js, highlight.js).
         for ext in cs.JS_TS_ALL_EXTENSIONS:
             if import_path.endswith(ext) and len(import_path) > len(ext):
                 return import_path[: -len(ext)]
         return import_path
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
-        import_path = self._strip_js_extension(import_path)
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return aliased
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        import_path = self._strip_js_extension(import_path)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
         import_parts = import_path.split(cs.SEPARATOR_SLASH)
