@@ -498,7 +498,8 @@ class DeferredParentLink(NamedTuple):
     the class pass after the function pass; forward declarations register
     last), so verification waits until every pass finishes. A parent qn that
     never registers is a phantom the database would drop, so the child
-    anchors to its module instead.
+    anchors to its registered lexical fallback when one is known (a nested
+    prototype assignment belongs to its enclosing function), else its module.
     """
 
     parent_label_guess: str
@@ -507,6 +508,8 @@ class DeferredParentLink(NamedTuple):
     child_qn: str
     module_qn: str
     rel_type: str = RelationshipType.DEFINES.value
+    fallback_label: str | None = None
+    fallback_qn: str | None = None
 
 
 class FunctionLocation(NamedTuple):

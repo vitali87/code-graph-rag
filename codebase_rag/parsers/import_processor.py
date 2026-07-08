@@ -10,7 +10,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import LanguageSpec
+from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import (
     DeferredImportEdge,
@@ -400,22 +400,41 @@ class ImportProcessor:
             )
         )
 
-    def flush_deferred_import_edges(self, known_module_qns: set[str]) -> int:
+    def flush_deferred_import_edges(self, known_module_paths: dict[str, str]) -> int:
         """Emit IMPORTS edges now that every file is parsed.
 
         An external target gets its ExternalModule node as before. An internal
-        target must verify against the real module qns; a guess that resolves
-        nowhere (a broken import, a directory with no index module, a crate
-        path resolved from the wrong root) emits no edge, because the phantom
-        endpoint is silently dropped by the database anyway.
+        target must verify against the real module qns (with their file paths
+        for language tie-breaking); a guess that resolves nowhere (a broken
+        import, a directory with no index module, a crate path resolved from
+        the wrong root) emits no edge, because the phantom endpoint is
+        silently dropped by the database anyway.
         """
         deferred = self._deferred_import_edges
         if not deferred or self.ingestor is None:
             return 0
         self._deferred_import_edges = []
+        known_module_qns = set(known_module_paths)
         module_aliases = self._module_alias_map(known_module_qns)
         emitted = 0
         for entry in deferred:
+            # (H) `from pkg.transport import TTransport` is ambiguous in
+            # (H) Python: TTransport may be an item OR a submodule. The stdlib
+            # (H) extractor strips it as an item, anchoring the edge at the
+            # (H) package; when the FULL dotted name verifies as a real module,
+            # (H) the submodule is the true target.
+            if entry.language == cs.SupportedLanguage.PYTHON and (
+                full_target := self._verify_internal_import_target(
+                    entry.full_name, known_module_paths, module_aliases, entry.language
+                )
+            ):
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.IMPORTS,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, full_target),
+                )
+                emitted += 1
+                continue
             module_path = self._resolve_module_path(
                 entry.full_name, entry.module_qn, entry.language
             )
@@ -427,7 +446,7 @@ class ImportProcessor:
                 self._ensure_external_module_node(module_path, entry.full_name)
             else:
                 verified = self._verify_internal_import_target(
-                    module_path, known_module_qns, module_aliases
+                    module_path, known_module_paths, module_aliases, entry.language
                 )
                 if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
                     # (H) A package-anchored guess that names no sibling module
@@ -491,10 +510,11 @@ class ImportProcessor:
     def _verify_internal_import_target(
         self,
         module_path: str,
-        known_module_qns: set[str],
+        known_module_paths: dict[str, str],
         module_aliases: dict[str, str],
+        language: cs.SupportedLanguage,
     ) -> str | None:
-        if module_path in known_module_qns:
+        if module_path in known_module_paths:
             return module_path
         if alias := module_aliases.get(module_path):
             return alias
@@ -508,13 +528,33 @@ class ImportProcessor:
         if not tail:
             return None
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        matches = {qn for qn in known_module_qns if qn.endswith(suffix)}
+        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
         matches.update(
             real for base, real in module_aliases.items() if base.endswith(suffix)
         )
+        if len(matches) > 1:
+            # (H) A polyglot repo can hold same-named modules in several
+            # (H) languages (thrift: src/protocol/__init__.py vs
+            # (H) src/ext/protocol.h); the importing language can only target
+            # (H) its own modules, so tie-break by file extension. Inline
+            # (H) modules (no file) stay eligible.
+            matches = {
+                qn
+                for qn in matches
+                if self._path_matches_language(known_module_paths.get(qn, ""), language)
+            }
         if len(matches) == 1:
             return matches.pop()
         return None
+
+    @staticmethod
+    def _path_matches_language(path: str, language: cs.SupportedLanguage) -> bool:
+        if not path:
+            return True
+        spec = LANGUAGE_SPECS.get(language)
+        if spec is None:
+            return True
+        return path.endswith(tuple(spec.file_extensions))
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(

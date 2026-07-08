@@ -450,17 +450,31 @@ class ClassIngestMixin:
 
         First-party wins; a qn outside the project prefix is positive external
         knowledge (import-mapped or ::-qualified) and keeps its edge onto an
-        ExternalModule node; a module-anchored GUESS that re-resolves nowhere
-        emits nothing, except a JS/TS global (Error) or an implicitly imported
-        java.lang type (Exception, Runnable), which are externalized.
+        ExternalModule node. A project-prefixed qn that is not a real class
+        may still name one through a src-root layout (setup.py maps src/ to
+        the distribution name), recovered by a unique whole-segment suffix
+        match. A module-anchored guess that re-resolves nowhere externalizes
+        its WRITTEN name (canonicalized for JS globals and java.lang): a base
+        name resolving to no indexed class is by construction defined outside
+        the indexed tree, and dropping it would lose a syntactic inheritance
+        fact the source declares.
         """
-        if (
-            # (H) Parse-time resolution of a nested external base (`Entry
-            # (H) implements Map.Entry`) can land on the child ITSELF (the only
-            # (H) registered qn ending in Entry); a self-edge is never real.
-            entry.parent_qn != entry.child_qn
-            and self.function_registry.get(entry.parent_qn) is not None
-        ):
+        if entry.parent_qn == entry.child_qn:
+            # (H) Parse-time resolution can land on the child ITSELF. A
+            # (H) self-edge is never real, so the written base must refer to a
+            # (H) SHADOWED outer name (thrift's `pub enum Error` implementing
+            # (H) the std `Error` trait): when the module-anchored remainder is
+            # (H) a bare single segment it IS the written name and
+            # (H) externalizes. A dotted remainder (a nested child like
+            # (H) SimpleHashMap.Entry) was never written as such; derivation
+            # (H) would be a lie, so no edge.
+            self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+            if entry.parent_qn.startswith(self_prefix):
+                raw = entry.parent_qn[len(self_prefix) :]
+                if raw and cs.SEPARATOR_DOT not in raw:
+                    return self._externalize_written_base(raw, entry.language)
+            return None
+        if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):
@@ -468,11 +482,27 @@ class ClassIngestMixin:
                 cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
             )
             return external, True
-        # (H) The module-anchored fallback shape is re-resolvable: its raw
-        # (H) written name is the remainder after the module qn.
         prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(prefix):
+            # (H) Project-prefixed but not module-anchored: an import-mapped
+            # (H) qn whose written path skips real directories (thrift's
+            # (H) setup.py maps lib/py/src -> package `thrift`, so the import
+            # (H) says thrift.Thrift while the class qn says
+            # (H) thrift.src.Thrift). A UNIQUE whole-segment suffix match
+            # (H) recovers the real node; ambiguity means no edge.
+            tail = entry.parent_qn[len(project_prefix) :]
+            simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            suffix = f"{cs.SEPARATOR_DOT}{tail}"
+            matches = {
+                qn
+                for qn in self.function_registry.find_ending_with(simple)
+                if qn.endswith(suffix) and qn != entry.child_qn
+            }
+            if len(matches) == 1:
+                return matches.pop(), False
             return None
+        # (H) The module-anchored fallback shape carries the raw written name
+        # (H) as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
         resolved = self._resolve_class_name(raw_name, entry.module_qn)
         if (
@@ -483,19 +513,25 @@ class ClassIngestMixin:
             and self.function_registry.get(resolved) is not None
         ):
             return resolved, False
-        if (
-            entry.language in cs.JS_TS_LANGUAGES
-            and raw_name in cs.JS_GLOBAL_CLASS_NAMES
-        ):
+        return self._externalize_written_base(raw_name, entry.language)
+
+    def _externalize_written_base(
+        self, raw_name: str, language: cs.SupportedLanguage
+    ) -> tuple[str, bool]:
+        if language in cs.JS_TS_LANGUAGES and raw_name in cs.JS_GLOBAL_CLASS_NAMES:
             return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
-        # (H) java.lang is implicitly imported: a bare base in its table is
-        # (H) positive external knowledge, not a guess.
+        # (H) java.lang is implicitly imported: a bare base in its table gets
+        # (H) its canonical java.lang qn.
         if (
-            entry.language == cs.SupportedLanguage.JAVA
+            language == cs.SupportedLanguage.JAVA
             and raw_name in cs.JAVA_LANG_CLASS_NAMES
         ):
             return f"{cs.JAVA_LANG_PREFIX}{raw_name}", True
-        return None
+        # (H) Language-agnostic fallback: the written base name resolves to no
+        # (H) indexed class, so the base is external to the index by
+        # (H) construction (Python `object`, Rust `Default`, a generated Java
+        # (H) `Iface`); keep the fact under the written name.
+        return raw_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT), True
 
     def _process_class_node(
         self,
