@@ -84,6 +84,12 @@ class TestOrphans:
         nodes, rels = _clean_graph()
         assert ga.find_orphans(nodes, rels) == []
 
+    def test_project_only_graph_is_valid(self) -> None:
+        # (H) An empty repo indexes to just its Project root; the recorder
+        # (H) stores labels as plain strings, so the exemption must hold for
+        # (H) the string form.
+        assert ga.collect_violations([_project()], []) == []
+
 
 class TestLabelConformance:
     def test_undocumented_label_is_flagged(self) -> None:

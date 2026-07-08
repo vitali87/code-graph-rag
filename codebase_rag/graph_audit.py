@@ -79,7 +79,7 @@ def find_orphans(
         for node in merge_node_records(nodes)
         # (H) A repo with no indexable content is just its Project root, so a
         # (H) zero-degree Project is valid rather than a construction failure.
-        if node.label != cs.NodeLabel.PROJECT
+        if node.label != cs.NodeLabel.PROJECT.value
         and (node.label, _node_key(node)) not in connected
     ]
 
