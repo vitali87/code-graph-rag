@@ -66,6 +66,30 @@ def _from_base_parts(node: ast.ImportFrom, pkg_parts: list[str]) -> list[str] | 
     return parts
 
 
+def _lookup_module(
+    dotted: str, module_index: dict[str, str], project_name: str
+) -> str | None:
+    if dotted in module_index:
+        return module_index[dotted]
+    # (H) A src-root distribution (setup.py maps src/ to the package named
+    # (H) after the project) writes imports against the DISTRIBUTION name
+    # (H) (`thrift.Thrift`) while the index keys are path-based
+    # (H) (`thrift.src.Thrift`). An import claiming the project's own
+    # (H) top-level name must be internal; a UNIQUE whole-segment suffix
+    # (H) match recovers the file, ambiguity resolves nothing.
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    if not dotted.startswith(prefix):
+        return None
+    tail = dotted[len(prefix) :]
+    if not tail:
+        return None
+    suffix = f"{cs.SEPARATOR_DOT}{tail}"
+    matches = {rel for key, rel in module_index.items() if key.endswith(suffix)}
+    if len(matches) == 1:
+        return matches.pop()
+    return None
+
+
 def _import_targets(
     tree: ast.Module, rel: str, module_index: dict[str, str], project_name: str
 ) -> set[str]:
@@ -74,8 +98,8 @@ def _import_targets(
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in module_index:
-                    targets.add(module_index[alias.name])
+                if target := _lookup_module(alias.name, module_index, project_name):
+                    targets.add(target)
         elif isinstance(node, ast.ImportFrom):
             base_parts = _from_base_parts(node, pkg_parts)
             if base_parts is None:
@@ -83,14 +107,18 @@ def _import_targets(
             base_dotted = cs.SEPARATOR_DOT.join(base_parts)
             for alias in node.names:
                 if alias.name == "*":
-                    if base_dotted in module_index:
-                        targets.add(module_index[base_dotted])
+                    if target := _lookup_module(
+                        base_dotted, module_index, project_name
+                    ):
+                        targets.add(target)
                     continue
                 sub = cs.SEPARATOR_DOT.join([*base_parts, alias.name])
-                if sub in module_index:
-                    targets.add(module_index[sub])
-                elif base_dotted in module_index:
-                    targets.add(module_index[base_dotted])
+                if target := _lookup_module(sub, module_index, project_name):
+                    targets.add(target)
+                elif target := _lookup_module(
+                    base_dotted, module_index, project_name
+                ):
+                    targets.add(target)
     return targets
 
 
