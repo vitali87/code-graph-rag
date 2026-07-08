@@ -325,7 +325,13 @@ class ClassIngestMixin:
             )
             if resolved:
                 return parent_qn
-        if self.function_registry.get(entry.guess_qn) is not None:
+        # (H) The guess strips a qualified base (`other::Type`) to its leaf, so
+        # (H) it can collide with the CHILD's own qn when the base is
+        # (H) unresolvable; a self-INHERITS is never real.
+        if (
+            entry.guess_qn != entry.child_qn
+            and self.function_registry.get(entry.guess_qn) is not None
+        ):
             return entry.guess_qn
         return None
 
