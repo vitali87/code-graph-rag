@@ -106,5 +106,6 @@ def test_same_arity_overload_binds_by_argument_type(
         f.endswith(".M.use(String)") and t.endswith(".M.isX(String)") for f, t in calls
     ), sorted(t for f, t in calls if "isX" in t)
     assert not any(
-        f.endswith(".M.use(String)") and t.endswith(".M.isX(Class<?>)") for f, t in calls
+        f.endswith(".M.use(String)") and t.endswith(".M.isX(Class<?>)")
+        for f, t in calls
     ), "String-arg call wrongly bound to the Class overload"

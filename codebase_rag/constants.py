@@ -2634,6 +2634,66 @@ JAVA_WRAPPER_TYPES = frozenset(
     }
 )
 
+# (H) java.lang types Java code names WITHOUT an import (the implicit java.lang
+# (H) import). A bare `extends`/`implements` base matching one of these that
+# (H) resolves to no first-party type is positively external
+# (H) (java.lang.<Name>), not an unresolvable guess; mirrors the JS global
+# (H) class rule (JS_GLOBAL_CLASS_NAMES -> builtin.<Name>).
+JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
+    {
+        "Byte",
+        "Short",
+        "Float",
+        "Character",
+        "Number",
+        "Void",
+        "Enum",
+        "Record",
+        "Thread",
+        "ThreadLocal",
+        "ClassLoader",
+        "SecurityManager",
+        "StringBuilder",
+        "StringBuffer",
+        "Throwable",
+        "Exception",
+        "RuntimeException",
+        "Error",
+        "IllegalArgumentException",
+        "IllegalStateException",
+        "UnsupportedOperationException",
+        "NullPointerException",
+        "IndexOutOfBoundsException",
+        "ArrayIndexOutOfBoundsException",
+        "StringIndexOutOfBoundsException",
+        "ClassCastException",
+        "ArithmeticException",
+        "NumberFormatException",
+        "InterruptedException",
+        "CloneNotSupportedException",
+        "ReflectiveOperationException",
+        "ClassNotFoundException",
+        "NoSuchMethodException",
+        "NoSuchFieldException",
+        "InstantiationException",
+        "IllegalAccessException",
+        "SecurityException",
+        "AssertionError",
+        "StackOverflowError",
+        "OutOfMemoryError",
+        "LinkageError",
+        "NoClassDefFoundError",
+        "Runnable",
+        "Comparable",
+        "Iterable",
+        "Cloneable",
+        "AutoCloseable",
+        "CharSequence",
+        "Appendable",
+        "Readable",
+    }
+)
+
 # (H) Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
