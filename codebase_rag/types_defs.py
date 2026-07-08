@@ -540,6 +540,22 @@ class DeferredCppInherit(NamedTuple):
     base_index: int
 
 
+class DeferredInherit(NamedTuple):
+    """Non-C++ INHERITS/IMPLEMENTS edge held back until every class is registered.
+
+    A parent that does not resolve at parse time is anchored to the child's
+    own module qn as a guess; the edge is emitted after Pass 2 with the guess
+    re-resolved against the full registry. An unresolvable parent emits no
+    edge rather than a phantom the database would drop.
+    """
+
+    rel_type: RelationshipType
+    child_qn: str
+    parent_qn: str
+    module_qn: str
+    base_index: int
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType

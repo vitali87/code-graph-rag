@@ -581,6 +581,16 @@ class GraphUpdater:
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
+        # (H) Same reasoning for every other language: parents resolve against
+        # (H) the full registry (including rehydrated definitions), and an
+        # (H) unresolvable parent emits no edge instead of a phantom.
+        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
+        if generic_inherits:
+            logger.info(
+                "Resolved {} deferred inheritance/implements parents",
+                generic_inherits,
+            )
+
         # (H) Last containment step: every node-registering pass above (deferred
         # (H) C++ methods, Go receivers, kept forward declarations) must finish
         # (H) before parent qns are verified against the registry.

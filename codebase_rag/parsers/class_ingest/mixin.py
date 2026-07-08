@@ -16,6 +16,7 @@ from ...types_defs import (
     ASTNode,
     CppFunctionLocation,
     DeferredCppInherit,
+    DeferredInherit,
     NodeType,
     PropertyDict,
 )
@@ -142,6 +143,7 @@ class ClassIngestMixin:
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
+    _deferred_inherits: list[DeferredInherit]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -357,6 +359,71 @@ class ClassIngestMixin:
             return entry.guess_qn
         return None
 
+    def resolve_deferred_inherits(self) -> int:
+        """Emit non-C++ INHERITS/IMPLEMENTS edges now that every class is registered.
+
+        A parent in a file parsed later resolves against the full registry; a
+        parent that resolves nowhere (java.lang.Exception, Rust Send/Sync)
+        emits no edge, because the module-anchored guess is a phantom endpoint
+        the database silently drops anyway. Resolved base qns replace the
+        guesses in class_inheritance in place so Pass-3 method resolution and
+        override detection walk the real hierarchy.
+        """
+        deferred = self._deferred_inherits
+        if not deferred:
+            return 0
+        self._deferred_inherits = []
+        emitted = 0
+        for entry in deferred:
+            child_type = self.function_registry.get(entry.child_qn)
+            if child_type is None:
+                continue
+            parent_qn = self._resolve_deferred_parent_qn(entry)
+            if parent_qn is None:
+                continue
+            if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
+                rel.create_implements_relationship(
+                    str(child_type), entry.child_qn, parent_qn, self.ingestor
+                )
+                self.interface_implementers.setdefault(parent_qn, set()).add(
+                    entry.child_qn
+                )
+            else:
+                bases = self.class_inheritance.get(entry.child_qn)
+                if bases is not None and entry.base_index < len(bases):
+                    bases[entry.base_index] = parent_qn
+                rel.create_inheritance_relationship(
+                    str(child_type),
+                    entry.child_qn,
+                    parent_qn,
+                    self.function_registry,
+                    self.ingestor,
+                    entry.base_index,
+                )
+            emitted += 1
+        return emitted
+
+    def _resolve_deferred_parent_qn(self, entry: DeferredInherit) -> str | None:
+        if self.function_registry.get(entry.parent_qn) is not None:
+            return entry.parent_qn
+        # (H) Only the module-anchored fallback shape is re-resolvable: its raw
+        # (H) written name is the remainder after the module qn. Anything else
+        # (H) (an import-mapped external qn) has no first-party node to target.
+        prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+        if not entry.parent_qn.startswith(prefix):
+            return None
+        raw_name = entry.parent_qn[len(prefix) :]
+        resolved = self._resolve_class_name(raw_name, entry.module_qn)
+        if (
+            resolved is None
+            # (H) A simple-name sweep can land on the child itself; a
+            # (H) self-INHERITS is never real.
+            or resolved == entry.child_qn
+            or self.function_registry.get(resolved) is None
+        ):
+            return None
+        return resolved
+
     def _process_class_node(
         self,
         class_node: Node,
@@ -511,6 +578,7 @@ class ClassIngestMixin:
             self.function_registry,
             self.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
+            defer_inherits=self._deferred_inherits,
         )
         if language == cs.SupportedLanguage.CPP:
             # (H) Record this class's member-field types now (from the class body,
@@ -575,17 +643,19 @@ class ClassIngestMixin:
         # (H) node label may be Class/Enum/Type, so match the relationship source
         # (H) to its registered label (else the IMPLEMENTS edge never resolves).
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            owner_type = self.function_registry.get(class_qn)
-            owner_label = (
-                cs.NodeLabel(owner_type.value)
-                if owner_type is not None
-                else cs.NodeLabel.CLASS
-            )
             trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
-            self.ingestor.ensure_relationship_batch(
-                (owner_label, cs.KEY_QUALIFIED_NAME, class_qn),
-                cs.RelationshipType.IMPLEMENTS,
-                (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, trait_qn),
+            # (H) The trait (or the impl target) may live in a file not yet
+            # (H) parsed; hold the IMPLEMENTS edge back for
+            # (H) resolve_deferred_inherits so an unresolvable trait
+            # (H) (std::fmt::Display) emits no phantom edge.
+            self._deferred_inherits.append(
+                DeferredInherit(
+                    rel_type=cs.RelationshipType.IMPLEMENTS,
+                    child_qn=class_qn,
+                    parent_qn=trait_qn,
+                    module_qn=owner_module_qn,
+                    base_index=0,
+                )
             )
             # (H) Record the implementer so a Rust trait call to the sole concrete
             # (H) impl redirects, matching the class-declaration IMPLEMENTS path.

@@ -13,6 +13,7 @@ from ..types_defs import (
     ASTNode,
     CppFunctionLocation,
     DeferredCppInherit,
+    DeferredInherit,
     FunctionRegistryTrieProtocol,
     SimpleNameLookup,
 )
@@ -106,6 +107,9 @@ class DefinitionProcessor(
         # (H) (the walks diverge on preprocessor-distorted class bodies).
         self.cpp_function_locations: dict[tuple[str, int], CppFunctionLocation] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
+        # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
+        # (H) registered; resolve_deferred_inherits re-resolves the guesses.
+        self._deferred_inherits: list[DeferredInherit] = []
         # (H) {qn: file path} for definitions rehydrated from the graph on an
         # (H) incremental run, whose modules are absent from module_qn_to_file_path
         # (H) (only re-parsed files populate it). _is_cpp_defined falls back to
