@@ -232,15 +232,7 @@ UNWIND (
 OPTIONAL MATCH (cr)-[:{traversal}*BFS]->(cr_reached)
 WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
 WITH live_set + closure_roots + cr_reached_set AS live_set
-OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES*]->(base)
-WHERE base IN live_set AND NOT ov IN live_set
-WITH live_set, collect(DISTINCT ov) AS override_roots
-UNWIND (
-  CASE WHEN size(override_roots) = 0 THEN [null] ELSE override_roots END
-) AS orr
-OPTIONAL MATCH (orr)-[:{traversal}*BFS]->(or_reached)
-WITH live_set, override_roots, collect(DISTINCT or_reached) AS or_reached_set
-WITH live_set + override_roots + or_reached_set AS live_set
+{override_stages}
 MATCH (n:{labels})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND NOT n IN live_set{candidate_clause}
@@ -248,6 +240,26 @@ RETURN labels(n)[0] AS label, n.name AS name,
        n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line
 ORDER BY qualified_name"""
+
+
+# (H) One override-reachability stage: revive every (transitive) override of a method
+# (H) already in live_set, plus its callee closure. Emitted several times (see
+# (H) _OVERRIDE_EXPANSION_ROUNDS) because a base can go live via a revived override's
+# (H) callee (depth-2+ interleaving), whose own overrides then need reviving; a single
+# (H) stage misses those. Repeating the block matches the offline eval's round loop.
+_DEAD_CODE_OVERRIDE_STAGE = """OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES*]->(base)
+WHERE base IN live_set AND NOT ov IN live_set
+WITH live_set, collect(DISTINCT ov) AS override_roots
+UNWIND (
+  CASE WHEN size(override_roots) = 0 THEN [null] ELSE override_roots END
+) AS orr
+OPTIONAL MATCH (orr)-[:{traversal}*BFS]->(or_reached)
+WITH live_set, override_roots, collect(DISTINCT or_reached) AS or_reached_set
+WITH live_set + override_roots + or_reached_set AS live_set"""
+
+# (H) Must equal evals.dead_code._OVERRIDE_EXPANSION_ROUNDS so the offline eval and this
+# (H) query compute the same live set for deep override/callee interleaving.
+_OVERRIDE_EXPANSION_ROUNDS = 3
 
 
 def build_dead_code_query(include_tests: bool, include_classes: bool = False) -> str:
@@ -272,6 +284,10 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
     rust_root_names = _cypher_str_list(RUST_ROOT_FUNCTION_NAMES)
     rust_trait_methods = _cypher_str_list(RUST_TRAIT_METHOD_NAMES)
     java_serialization_methods = _cypher_str_list(JAVA_SERIALIZATION_METHOD_NAMES)
+    override_stages = "\n".join(
+        _DEAD_CODE_OVERRIDE_STAGE.format(traversal=traversal)
+        for _ in range(_OVERRIDE_EXPANSION_ROUNDS)
+    )
     return _DEAD_CODE_QUERY_TEMPLATE.format(
         labels=labels,
         traversal=traversal,
@@ -282,6 +298,7 @@ def build_dead_code_query(include_tests: bool, include_classes: bool = False) ->
         rust_root_names=rust_root_names,
         rust_trait_methods=rust_trait_methods,
         java_serialization_methods=java_serialization_methods,
+        override_stages=override_stages,
         cpp_operator_clause=_cpp_operator_root_clause(),
         protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
             protocol_bases=protocol_bases

@@ -37,6 +37,11 @@ _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
+# (H) Rounds of override-reachability expansion; must equal the number of OVERRIDES
+# (H) stages the Cypher dead-code query emits so eval and query agree. Covers depth-N
+# (H) override/callee interleaving (a base revived via an override's callee, whose own
+# (H) overrides then need reviving).
+_OVERRIDE_EXPANSION_ROUNDS = 3
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 _NodeId = tuple[str, PropertyValue]
@@ -283,21 +288,28 @@ def dead_code_from_graph(
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
 
-    # (H) Third expansion, mirroring the query's OVERRIDES* stage: a call to a base or
-    # (H) interface method dispatches at runtime to any override, so every (transitive)
-    # (H) override of a LIVE method is a reachable dispatch target, as is its callee
-    # (H) closure. `override_rev` is walked to a fixpoint so multi-level hierarchies
-    # (H) (Base <- Sub <- SubSub) are all revived; an override of a DEAD base stays
-    # (H) dead. Bounded like the closure round: one callee-walk after the expansion.
-    override_roots: set[str] = set()
-    stack = list(live)
-    while stack:
-        for overrider in override_rev.get(stack.pop(), ()):
-            if overrider not in live and overrider not in override_roots:
-                override_roots.add(overrider)
-                stack.append(overrider)
-    live |= override_roots
-    _walk(override_roots, adjacency, live)
+    # (H) Override expansion, mirroring the query's OVERRIDES* stage: a call to a base
+    # (H) or interface method dispatches at runtime to any override, so every
+    # (H) (transitive) override of a LIVE method is a reachable dispatch target, as is
+    # (H) its callee closure. `override_rev` walks all multi-level overriders
+    # (H) (Base<-Sub<-SubSub); an override of a DEAD base stays dead. Run several rounds
+    # (H) because a base can go live only via a revived override's CALLEE (depth-2+
+    # (H) interleaving: FieldReflectionAdapter.readField -> BoundField.readIntoField ->
+    # (H) its anon overrides); one pass would miss those. `_OVERRIDE_EXPANSION_ROUNDS`
+    # (H) matches the number of OVERRIDES stages the Cypher query emits, so the offline
+    # (H) eval and the production query agree; a round that adds nothing is a no-op.
+    for _ in range(_OVERRIDE_EXPANSION_ROUNDS):
+        override_roots: set[str] = set()
+        stack = list(live)
+        while stack:
+            for overrider in override_rev.get(stack.pop(), ()):
+                if overrider not in live and overrider not in override_roots:
+                    override_roots.add(overrider)
+                    stack.append(overrider)
+        if not override_roots:
+            break
+        live |= override_roots
+        _walk(override_roots, adjacency, live)
 
     dead = candidates - live
     # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
