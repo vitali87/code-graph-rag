@@ -117,6 +117,11 @@ _FLOW_ARG_REF_TYPES = frozenset(
 # (H) Qualified-name prefix marking a resolved callee as a builtin rather than a
 # (H) first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# (H) Transparent wrappers a bound arrow may sit behind in its declarator:
+# (H) parens and TS casts (`const f = ((x) => ...) as T`). Climbed when
+# (H) recovering the arrow's binding name so the wrapped form is not treated
+# (H) as anonymous.
+_TS_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
 # (H) Assignment node type -> RHS field, per language family: Python `assignment`
 # (H) and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
 # (H) `right`; a JS/TS `variable_declarator` (const cb = handler) carries it in
@@ -730,8 +735,20 @@ class CallProcessor:
                 func_node_starts=func_node_starts,
             )
             if sorted_func_nodes and call_starts is not None:
+                # (H) JS/TS: exclude only calls owned by ATTRIBUTABLE functions, so a
+                # (H) call nested purely in anonymous scopes (`create((set) => ({
+                # (H) inc: () => set((state) => ...) }))`, zustand's store shape) is
+                # (H) processed at module scope instead of by nobody -- an anon arrow
+                # (H) gets no caller pass, and a call inside a NAMED function is
+                # (H) still excluded here because that function's flat filter owns
+                # (H) it (no double-processing).
+                exclusion_nodes = (
+                    self._attributable_func_nodes(sorted_func_nodes, language)
+                    if language in _JS_TS_LANGUAGES
+                    else sorted_func_nodes
+                )
                 module_calls = self._filter_top_level_calls(
-                    all_call_nodes, call_starts, sorted_func_nodes
+                    all_call_nodes, call_starts, exclusion_nodes
                 )
             else:
                 module_calls = all_call_nodes
@@ -1536,6 +1553,18 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+            # (H) A DEFAULT PARAMETER value naming a function (`useStore(api,
+            # (H) selector = identity as any)`, zustand) references it: the default
+            # (H) is invoked through the parameter when the caller omits the
+            # (H) argument, never by a visible call.
+            self._ingest_default_param_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+            )
         # (H) A function handed back bare (`return defaultUsageFunc`) is a first-class
         # (H) value invoked by whoever receives it, never by a visible call -- Go leans
         # (H) on this for factories/getters (cobra's getUsageFunc). Reference it so the
@@ -1631,6 +1660,17 @@ class CallProcessor:
                 call_name = get_target(call_node, language)
                 if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
+            # (H) An inline function ARGUMENT is handed to the callee regardless of
+            # (H) whether the callee resolves -- an external/param callee
+            # (H) (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
+            # (H) cast-wrapped one (`;(set as NamedSet)((state) => reducer(...))`)
+            # (H) still consumes it. Reference each inline arg from this scope, BEFORE
+            # (H) the no-name bail (a cast-wrapped callee yields no call name).
+            # (H) Registry-guarded and idempotent with the callable-params path.
+            if is_js_ts and call_node.type == cs.TS_CALL_EXPRESSION:
+                self._ingest_inline_call_arg_references(
+                    call_node, caller_spec, ensure_rel, caller_qn
+                )
             if not call_name:
                 continue
 
@@ -2106,7 +2146,12 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types:
+            # (H) Continue THROUGH an unowned anonymous arrow (zustand's curried
+            # (H) middleware body `(config) => (set, get, api) => { api.setState =
+            # (H) ... }`): it gets no caller pass of its own, so its assignments
+            # (H) would otherwise be scanned by nobody and the stored functions
+            # (H) report dead. Named nested scopes still own their own pass.
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
@@ -2123,9 +2168,11 @@ class CallProcessor:
                     if value is None:
                         continue
                     # (H) `export const persist = persistImpl as unknown as Persist`
-                    # (H) wraps the aliased impl in TS casts; unwrap them so the bare
-                    # (H) name/arrow underneath is what we reference.
-                    value = self._unwrap_ts_cast(value)
+                    # (H) wraps the aliased impl in TS casts -- and devtools' shape
+                    # (H) interleaves parens (`api.setState = ((s, r) => {...}) as
+                    # (H) SetState`); peel both so the bare name/arrow underneath is
+                    # (H) what we reference.
+                    value = self._unwrap_ts_value(value)
                     # (H) A bare-name RHS names a callable; an inline arrow/function-expr
                     # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
                     # (H) function on the target for later invocation --
@@ -2147,7 +2194,56 @@ class CallProcessor:
                             caller_qn,
                             cs.RelationshipType.REFERENCES,
                         )
+                        # (H) A member-assigned inline function (`api.setState =
+                        # (H) (s, r) => {...}`) is ALSO registered by the def pass
+                        # (H) under the PROPERTY name (scope.setState), which the
+                        # (H) by-position anonymous candidate above never matches;
+                        # (H) reference that registration too or it reports dead.
+                        if value.type in _INLINE_FUNC_VALUE_TYPES:
+                            self._emit_assigned_name_ref(
+                                node, caller_spec, ensure_rel, caller_qn
+                            )
             stack.extend(node.children)
+
+    def _emit_assigned_name_ref(
+        self,
+        assign_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+    ) -> None:
+        # (H) Resolve the assignment target's simple name (`api.setState` ->
+        # (H) setState, `listener` -> listener) to a def-pass registration in the
+        # (H) enclosing scope. Registry-guarded: emits only when such a node exists,
+        # (H) so a plain data assignment adds nothing.
+        if assign_node.type != cs.TS_ASSIGNMENT_EXPRESSION:
+            return
+        left = assign_node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return
+        name_node = (
+            left.child_by_field_name(cs.FIELD_PROPERTY)
+            if left.type == cs.TS_MEMBER_EXPRESSION
+            else left
+        )
+        if name_node is None or name_node.type not in (
+            cs.TS_IDENTIFIER,
+            cs.TS_PROPERTY_IDENTIFIER,
+        ):
+            return
+        if not (name := safe_decode_text(name_node)):
+            return
+        registry = self._resolver.function_registry
+        scope_qn = caller_qn or caller_spec[2]
+        candidate = f"{scope_qn}{cs.SEPARATOR_DOT}{name}"
+        for target_qn in registry.variants(candidate):
+            if registry.get(target_qn) is None:
+                continue
+            ensure_rel(
+                caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _ingest_jsx_component_references(
         self,
@@ -2237,11 +2333,23 @@ class CallProcessor:
         # (H) nested functions, which own their returns.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
+        # (H) An expression-bodied arrow (`const persistImpl = (config) =>
+        # (H) (set, get, api) => {...}`, zustand's curried middleware shape) has NO
+        # (H) return_statement -- its body IS the implicit return. Reference the inner
+        # (H) function directly, both on the caller itself and on any unowned anon
+        # (H) arrow the walk continues through (deeper currying bubbles here too).
+        self._emit_expression_body_return(
+            caller_node, caller_spec, ensure_rel, caller_qn
+        )
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
-                continue
+            if node.type in boundary_types:
+                if not self._is_unowned_js_scope(node):
+                    continue
+                self._emit_expression_body_return(
+                    node, caller_spec, ensure_rel, caller_qn
+                )
             if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
                     self._emit_callback_edge(
@@ -2256,6 +2364,23 @@ class CallProcessor:
                         rel_type=cs.RelationshipType.REFERENCES,
                     )
             stack.extend(node.children)
+
+    def _emit_expression_body_return(
+        self,
+        func_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+    ) -> None:
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        if body is not None and body.type in _INLINE_FUNC_VALUE_TYPES:
+            self._emit_inline_arg_function_ref(
+                body,
+                caller_spec,
+                ensure_rel,
+                caller_qn,
+                cs.RelationshipType.REFERENCES,
+            )
 
     def _ingest_collection_function_references(
         self,
@@ -2286,6 +2411,17 @@ class CallProcessor:
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
+                    # (H) An object-literal SHORTHAND METHOD (`return { then(x)
+                    # (H) {...}, catch(x) {...} }`, persist's thenable) is a stored
+                    # (H) callable exactly like a pair value, but it is a
+                    # (H) method_definition node, not a pair -- reference it by name
+                    # (H) so it is not dead unless the repo never calls it AND never
+                    # (H) hands the object out (it cannot know the consumer).
+                    if pair.type == cs.TS_METHOD_DEFINITION:
+                        self._emit_shorthand_method_ref(
+                            pair, caller_spec, module_qn, ensure_rel
+                        )
+                        continue
                     if (
                         pair.type == cs.TS_PY_PAIR
                         and (value := pair.child_by_field_name(cs.FIELD_VALUE))
@@ -2399,6 +2535,17 @@ class CallProcessor:
             ensure_rel,
         )
 
+    def _unwrap_ts_value(self, node: Node) -> Node:
+        # (H) Peel TS casts AND parens, interleaved (`((s) => {...}) as SetState`),
+        # (H) down to the wrapped value.
+        current = node
+        while current.type in _TS_BINDING_WRAPPER_TYPES:
+            inner = current.named_child(0)
+            if inner is None:
+                break
+            current = inner
+        return current
+
     def _unwrap_ts_cast(self, node: Node) -> Node:
         # (H) Peel TS cast wrappers (`x as T`, `x satisfies T`, `x!`) to the wrapped
         # (H) value; they are transparent for reference resolution. The wrapped value
@@ -2455,6 +2602,14 @@ class CallProcessor:
             and (key := safe_decode_text(key_node))
         ):
             candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{key}")
+            # (H) A value nested under ANOTHER pair-arrow (`{ onCreated: (s) => {
+            # (H) s.setEvents({ compute: ... }) } }`) registers under the pair-key
+            # (H) PATH (scope.onCreated.compute); prefix the ancestor pair keys so
+            # (H) the candidate matches the def pass's qn.
+            if pair_path := self._ancestor_pair_key_path(pair):
+                candidates.add(
+                    f"{scope_qn}{cs.SEPARATOR_DOT}{pair_path}{cs.SEPARATOR_DOT}{key}"
+                )
         for candidate in candidates:
             for target_qn in registry.variants(candidate):
                 if registry.get(target_qn) is None:
@@ -2463,6 +2618,115 @@ class CallProcessor:
                     caller_spec,
                     cs.RelationshipType.REFERENCES,
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _ancestor_pair_key_path(self, pair: Node) -> str | None:
+        # (H) Dotted key path of the ENCLOSING pairs above this one (`compute` inside
+        # (H) `onCreated: (s) => ...` -> "onCreated"), outermost first; None when the
+        # (H) pair has no pair ancestors. Registry-guarded by the caller, so an
+        # (H) over-collected path (ancestors above the scanning scope) just misses.
+        keys: list[str] = []
+        current = pair.parent
+        while current is not None:
+            if current.type == cs.TS_PY_PAIR:
+                key_node = current.child_by_field_name(cs.FIELD_KEY)
+                if (
+                    key_node is not None
+                    and key_node.type in (cs.TS_PROPERTY_IDENTIFIER, cs.TS_IDENTIFIER)
+                    and (key := safe_decode_text(key_node))
+                ):
+                    keys.append(key)
+            current = current.parent
+        if not keys:
+            return None
+        keys.reverse()
+        return cs.SEPARATOR_DOT.join(keys)
+
+    def _emit_shorthand_method_ref(
+        self,
+        method_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        ensure_rel,
+    ) -> None:
+        # (H) The def pass registers a shorthand method by NAME at MODULE scope
+        # (H) (persist's thenable `catch` -> `...middleware.persist.catch`), while
+        # (H) this scan runs per enclosing caller; try both scopes, plus the
+        # (H) position form used when the name is taken.
+        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+        registry = self._resolver.function_registry
+        scope_qn = caller_spec[2]
+        candidates = {
+            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+            f"{method_node.start_point[0]}_{method_node.start_point[1]}"
+        }
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{name}")
+            candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+        for candidate in candidates:
+            for target_qn in registry.variants(candidate):
+                if registry.get(target_qn) is None:
+                    continue
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _ingest_default_param_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+    ) -> None:
+        params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            return
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for param in params.named_children:
+            value = param.child_by_field_name(cs.FIELD_VALUE)
+            if value is None:
+                continue
+            value = self._unwrap_ts_value(value)
+            if (
+                value.type in _ASSIGNMENT_RHS_REF_TYPES
+                or value.type in _INLINE_FUNC_VALUE_TYPES
+            ):
+                self._emit_callback_edge(
+                    caller_spec,
+                    value,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                    caller_qn,
+                    cs.RelationshipType.REFERENCES,
+                )
+
+    def _ingest_inline_call_arg_references(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+    ) -> None:
+        args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if args is None:
+            return
+        for arg in args.named_children:
+            value = self._unwrap_ts_value(arg)
+            if value.type in _INLINE_FUNC_VALUE_TYPES:
+                self._emit_inline_arg_function_ref(
+                    value,
+                    caller_spec,
+                    ensure_rel,
+                    caller_qn,
+                    cs.RelationshipType.REFERENCES,
                 )
 
     def _emit_inline_arg_function_ref(
@@ -2750,6 +3014,12 @@ class CallProcessor:
                 return
             res_type = cs.NodeLabel.METHOD
             res_qn = init_qn
+        # (H) Only callables are meaningful callback/reference targets: a value can
+        # (H) resolve to an Interface/Type node (`selector = identity as Selector`
+        # (H) resolves the cast's TYPE name in some paths), and emitting that
+        # (H) produces schema-invalid edges.
+        if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+            return
         for target_qn in registry.variants(res_qn):
             ensure_rel(
                 source_spec,
@@ -3272,14 +3542,23 @@ class CallProcessor:
         # (H) destructured arrows stay unnamed (skipped), as before.
         if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return None
-        parent = func_node.parent
+        # (H) The arrow may be bound THROUGH transparent wrappers -- parens and TS
+        # (H) casts (`export const createStore = ((s) => ...) as CreateStore`,
+        # (H) zustand's public-API shape). The def pass unwraps these when naming the
+        # (H) function, so the call pass must climb them too or the arrow looks
+        # (H) anonymous and its body's calls drop at module scope.
+        node = func_node
+        parent = node.parent
+        while parent is not None and parent.type in _TS_BINDING_WRAPPER_TYPES:
+            node = parent
+            parent = node.parent
         if parent is None:
             return None
-        # (H) func_node must be the parent's value/initializer for both forms
+        # (H) node must be the parent's value/initializer for both forms
         # (H) (variable_declarator and public_field_definition), so one value check
         # (H) covers both. `==` not `is`: py-tree-sitter returns a fresh Node wrapper
         # (H) per access, so identity comparison always fails (Node `==` compares id).
-        if parent.child_by_field_name(cs.FIELD_VALUE) != func_node:
+        if parent.child_by_field_name(cs.FIELD_VALUE) != node:
             return None
         name_node = parent.child_by_field_name(cs.FIELD_NAME)
         if name_node is None or name_node.type not in (
