@@ -41,6 +41,20 @@ def resolve_class_name(
             return potential_qn
 
     matches = function_registry.find_ending_with(class_name)
+    # (H) Among same-named candidates in different files (gson's per-factory nested
+    # (H) `Adapter`), prefer one nested in the CURRENT module: a sibling/enclosing
+    # (H) nested class shadows a same-named class elsewhere, so `class Sub extends
+    # (H) Adapter` binds to its own file's Adapter, not another file's that merely
+    # (H) sorts first. Fall back to the first full-segment match otherwise.
+    module_prefix = f"{module_qn}{SEPARATOR_DOT}"
+    same_module = [
+        match
+        for match in matches
+        if match.startswith(module_prefix) and class_name in match.split(SEPARATOR_DOT)
+    ]
+    if same_module:
+        return str(min(same_module, key=len))
+
     for match in matches:
         match_parts = match.split(SEPARATOR_DOT)
         if class_name in match_parts:
