@@ -75,30 +75,29 @@ def mock_language_queries() -> dict[cs.SupportedLanguage, MagicMock]:
 
 
 class TestProcessCommonjsImport:
-    def test_creates_external_module_node_and_relationship(
+    # (H) The CommonJS fallback no longer emits IMPORTS edges directly; every
+    # (H) edge is deferred to the import processor so internal targets verify
+    # (H) against the real module qns before emission (issue #652).
+
+    def test_defers_external_import_edge(
         self,
         mixin: ConcreteModuleSystemMixin,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor._resolve_js_module_path.return_value = "fs"
-        mock_import_processor._module_label.return_value = cs.NodeLabel.EXTERNAL_MODULE
 
-        mixin._process_commonjs_import("readFile", "fs", "my_module")
+        mixin._process_commonjs_import(
+            "readFile", "fs", "my_module", cs.SupportedLanguage.JS
+        )
 
-        # (H) #498: external require() targets get the dedicated ExternalModule
-        # (H) node via the import processor, never a prop-less bare Module.
-        mock_import_processor._ensure_external_module_node.assert_called_once_with(
-            "fs", "fs"
+        mock_import_processor.defer_import_edge.assert_called_once_with(
+            "my_module", "fs", cs.SupportedLanguage.JS
         )
         mock_ingestor.ensure_node_batch.assert_not_called()
+        mock_ingestor.ensure_relationship_batch.assert_not_called()
 
-        mock_ingestor.ensure_relationship_batch.assert_called_once()
-        rel_args = mock_ingestor.ensure_relationship_batch.call_args
-        assert rel_args[0][1] == cs.RelationshipType.IMPORTS
-        assert rel_args[0][2][0] == cs.NodeLabel.EXTERNAL_MODULE
-
-    def test_local_import_emits_relationship_without_node(
+    def test_defers_local_import_edge(
         self,
         mixin: ConcreteModuleSystemMixin,
         mock_ingestor: MagicMock,
@@ -107,17 +106,16 @@ class TestProcessCommonjsImport:
         mock_import_processor._resolve_js_module_path.return_value = (
             "test_project.src.utils"
         )
-        mock_import_processor._module_label.return_value = cs.NodeLabel.MODULE
 
-        mixin._process_commonjs_import("helper", "./src/utils", "my_module")
+        mixin._process_commonjs_import(
+            "helper", "./src/utils", "my_module", cs.SupportedLanguage.JS
+        )
 
-        # (H) The local module's own file pass creates its node; a rel to a
-        # (H) never-indexed module is a no-op instead of a phantom node.
-        mock_import_processor._ensure_external_module_node.assert_not_called()
+        mock_import_processor.defer_import_edge.assert_called_once_with(
+            "my_module", "test_project.src.utils", cs.SupportedLanguage.JS
+        )
         mock_ingestor.ensure_node_batch.assert_not_called()
-        mock_ingestor.ensure_relationship_batch.assert_called_once()
-        rel_args = mock_ingestor.ensure_relationship_batch.call_args
-        assert rel_args[0][2][0] == cs.NodeLabel.MODULE
+        mock_ingestor.ensure_relationship_batch.assert_not_called()
 
     def test_skips_duplicate_imports(
         self,
@@ -126,12 +124,15 @@ class TestProcessCommonjsImport:
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor._resolve_js_module_path.return_value = "fs"
-        mock_import_processor._module_label.return_value = cs.NodeLabel.EXTERNAL_MODULE
 
-        mixin._process_commonjs_import("readFile", "fs", "my_module")
-        mixin._process_commonjs_import("writeFile", "fs", "my_module")
+        mixin._process_commonjs_import(
+            "readFile", "fs", "my_module", cs.SupportedLanguage.JS
+        )
+        mixin._process_commonjs_import(
+            "writeFile", "fs", "my_module", cs.SupportedLanguage.JS
+        )
 
-        assert mock_import_processor._ensure_external_module_node.call_count == 1
+        assert mock_import_processor.defer_import_edge.call_count == 1
 
     def test_handles_resolution_error_gracefully(
         self,
@@ -143,9 +144,12 @@ class TestProcessCommonjsImport:
             "Resolution failed"
         )
 
-        mixin._process_commonjs_import("readFile", "fs", "my_module")
+        mixin._process_commonjs_import(
+            "readFile", "fs", "my_module", cs.SupportedLanguage.JS
+        )
 
         mock_ingestor.ensure_node_batch.assert_not_called()
+        mock_import_processor.defer_import_edge.assert_not_called()
 
 
 class TestProcessVariableDeclaratorForCommonjs:
@@ -180,7 +184,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_called_once()
 
@@ -221,7 +227,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_called_once()
 
@@ -240,7 +248,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -263,7 +273,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -293,7 +305,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -384,7 +398,9 @@ class TestEdgeCases:
             fields={cs.FIELD_VALUE: call_expr},
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -399,7 +415,9 @@ class TestEdgeCases:
             fields={cs.FIELD_NAME: object_pattern},
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -418,7 +436,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -441,7 +461,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -474,7 +496,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -515,6 +539,8 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            declarator, "test_module", cs.SupportedLanguage.JS
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()

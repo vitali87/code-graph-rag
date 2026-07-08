@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, call
 import pytest
 from loguru import logger
 
-from codebase_rag import constants as cs
 from codebase_rag import graph_audit
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -185,8 +184,10 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
     """Structural integrity audit of the recorded batches (issue #646).
 
     Every test that indexes a fixture also asserts the resulting graph is
-    schema-conformant and orphan-free. CGR_AUDIT_SWEEP=<file> switches to
-    collect mode, appending violations as JSON lines instead of failing.
+    schema-conformant, orphan-free, and free of dangling relationships (issue
+    #652: an edge with a phantom endpoint is silently dropped by the
+    database). CGR_AUDIT_SWEEP=<file> switches to collect mode, appending
+    violations as JSON lines instead of failing.
     """
     nodes = [
         GraphNodeRecord(str(c.args[0]), c.args[1])
@@ -196,21 +197,14 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
         GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
     ]
-    violations = [
-        v
-        # (H) Dangling relationships are a pervasive pre-existing debt class
-        # (H) (302 fixture tests emit them across every language; issue #652).
-        # (H) Gate on them once that campaign lands; orphan detection already
-        # (H) uses live-faithful connectivity.
-        for v in graph_audit.collect_violations(nodes, rels)
-        if v.check != cs.AuditCheck.DANGLING_RELATIONSHIP
-    ]
+    violations = graph_audit.collect_violations(nodes, rels)
     if sweep_path := os.environ.get("CGR_AUDIT_SWEEP"):
         import json
 
+        test_id = os.environ.get("PYTEST_CURRENT_TEST", "")
         with open(sweep_path, "a") as f:
             for v in violations:
-                f.write(json.dumps([str(v.check), v.detail]) + "\n")
+                f.write(json.dumps([str(v.check), v.detail, test_id]) + "\n")
         return
     assert not violations, "\n".join(v.detail for v in violations)
 

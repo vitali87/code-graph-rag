@@ -12,9 +12,9 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
-    CppFunctionLocation,
     DeferredCppInherit,
     DeferredParentLink,
+    FunctionLocation,
     FunctionRegistryTrieProtocol,
     NodeType,
     PropertyDict,
@@ -139,7 +139,7 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
+    function_locations: dict[tuple[str, int], FunctionLocation]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -382,7 +382,7 @@ class FunctionIngestMixin:
                 bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
                 location = (module_qn, func_node.start_point[0] + 1)
                 self.cpp_out_of_class_methods[location] = (bound_qn, class_qn)
-                self.cpp_function_locations[location] = CppFunctionLocation(
+                self.function_locations[location] = FunctionLocation(
                     label=cs.NodeLabel.METHOD.value,
                     qualified_name=bound_qn,
                     container_qn=class_qn,
@@ -464,8 +464,8 @@ class FunctionIngestMixin:
                 method_qn,
                 class_qn,
             )
-            self.cpp_function_locations[(entry.module_qn, entry.start_line)] = (
-                CppFunctionLocation(
+            self.function_locations[(entry.module_qn, entry.start_line)] = (
+                FunctionLocation(
                     label=cs.NodeLabel.METHOD.value,
                     qualified_name=method_qn,
                     container_qn=class_qn,
@@ -671,24 +671,24 @@ class FunctionIngestMixin:
         )
         if resolution.name:
             self.simple_name_lookup[resolution.name].add(resolution.qualified_name)
+        # (H) Record where this function landed so Pass-3 call attribution
+        # (H) reuses the registered qn/label instead of re-deriving them (for
+        # (H) every language: C++ preprocessor distortion, TS declaration
+        # (H) merging, and duplicate-suffixed qns all make the walks diverge).
+        location = FunctionLocation(
+            label=cs.NodeLabel.FUNCTION.value,
+            qualified_name=resolution.qualified_name,
+            container_qn=None,
+        )
+        self.function_locations[(module_qn, func_node.start_point[0] + 1)] = location
         if language == cs.SupportedLanguage.CPP:
-            # (H) Record where this function landed so Pass-3 call attribution
-            # (H) reuses the registered qn/label instead of re-deriving them.
-            location = CppFunctionLocation(
-                label=cs.NodeLabel.FUNCTION.value,
-                qualified_name=resolution.qualified_name,
-                container_qn=None,
-            )
-            self.cpp_function_locations[(module_qn, func_node.start_point[0] + 1)] = (
-                location
-            )
             # (H) A template wrapper's body walk in Pass 3 visits the INNER
             # (H) definition (it starts on its own line), so record that line
             # (H) against the wrapper's node too.
             if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
                 for child in func_node.children:
                     if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                        self.cpp_function_locations[
+                        self.function_locations[
                             (module_qn, child.start_point[0] + 1)
                         ] = location
                         break

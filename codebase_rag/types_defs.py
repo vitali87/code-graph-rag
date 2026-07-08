@@ -509,7 +509,7 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
 
 
-class CppFunctionLocation(NamedTuple):
+class FunctionLocation(NamedTuple):
     """Where the definition pass put a C++ function/method node.
 
     Keyed by (module_qn, start_line) so Pass-3 call attribution reuses the
@@ -538,6 +538,36 @@ class DeferredCppInherit(NamedTuple):
     guess_qn: str
     namespace_path: str
     base_index: int
+
+
+class DeferredInherit(NamedTuple):
+    """Non-C++ INHERITS/IMPLEMENTS edge held back until every class is registered.
+
+    A parent that does not resolve at parse time is anchored to the child's
+    own module qn as a guess; the edge is emitted after Pass 2 with the guess
+    re-resolved against the full registry. An unresolvable parent emits no
+    edge rather than a phantom the database would drop.
+    """
+
+    rel_type: RelationshipType
+    child_qn: str
+    parent_qn: str
+    module_qn: str
+    base_index: int
+    language: SupportedLanguage
+
+
+class DeferredImportEdge(NamedTuple):
+    """IMPORTS edge held back until every file is parsed.
+
+    An internal-looking target is only real if some file (or inline module)
+    actually yields that module qn; verification happens against the full
+    module registry, and a target that resolves nowhere emits no edge.
+    """
+
+    module_qn: str
+    full_name: str
+    language: SupportedLanguage
 
 
 class RelationshipSchema(NamedTuple):
@@ -674,12 +704,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
+        # (H) ExternalModule: a positively-external base (typing.Protocol,
+        # (H) js builtin.Error) keeps its edge by targeting the same external
+        # (H) node the import pass mints, mirroring Module IMPORTS.
+        (
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.FUNCTION,
+            NodeLabel.EXTERNAL_MODULE,
+        ),
     ),
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        (NodeLabel.INTERFACE,),
+        (NodeLabel.INTERFACE, NodeLabel.EXTERNAL_MODULE),
     ),
     RelationshipSchema(
         # (H) A method-body anonymous-class override is registered as a Function node,

@@ -469,6 +469,9 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # (H) Module qns read back from the graph on incremental runs; deferred
+        # (H) import verification counts them as real internal targets.
+        self._rehydrated_module_qns: set[str] = set()
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -581,6 +584,36 @@ class GraphUpdater:
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
+        # (H) Same reasoning for every other language: parents resolve against
+        # (H) the full registry (including rehydrated definitions), and an
+        # (H) unresolvable parent emits no edge instead of a phantom.
+        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
+        if generic_inherits:
+            logger.info(
+                "Resolved {} deferred inheritance/implements parents",
+                generic_inherits,
+            )
+
+        module_impls = (
+            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
+        )
+        if module_impls:
+            logger.info("Resolved {} C++20 module implementation links", module_impls)
+
+        # (H) IMPORTS edges verify against every module qn this run produced
+        # (H) (files, inline modules, rehydrated unchanged files); an internal
+        # (H) target that resolves nowhere emits no edge.
+        known_module_qns = (
+            {str(qn) for qn in self.factory.definition_processor.module_qn_to_file_path}
+            | self.factory.definition_processor.declared_module_qns
+            | self._rehydrated_module_qns
+        )
+        imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
+            known_module_qns
+        )
+        if imports_emitted:
+            logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
+
         # (H) Last containment step: every node-registering pass above (deferred
         # (H) C++ methods, Go receivers, kept forward declarations) must finish
         # (H) before parent qns are verified against the registry.
@@ -636,6 +669,18 @@ class GraphUpdater:
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)
+        # (H) Module qns from unchanged files: deferred import verification and
+        # (H) C++20 module-impl resolution must count them as real targets, or
+        # (H) an incremental run would drop edges a clean index emits.
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(label, str):
+                continue
+            if label == cs.NodeLabel.MODULE_INTERFACE.value:
+                self.factory.definition_processor.cpp_module_interfaces.add(qn)
+            else:
+                self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
     def _rehydrate_class_inheritance_from_graph(self) -> None:

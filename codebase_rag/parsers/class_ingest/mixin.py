@@ -14,8 +14,9 @@ from ...config import settings
 from ...language_spec import LanguageSpec
 from ...types_defs import (
     ASTNode,
-    CppFunctionLocation,
     DeferredCppInherit,
+    DeferredInherit,
+    FunctionLocation,
     NodeType,
     PropertyDict,
 )
@@ -138,10 +139,14 @@ class ClassIngestMixin:
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
-    cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
+    function_locations: dict[tuple[str, int], FunctionLocation]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
+    _deferred_inherits: list[DeferredInherit]
+    cpp_module_interfaces: set[str]
+    _deferred_cpp_module_impls: list[tuple[str, str]]
+    declared_module_qns: set[str]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -212,7 +217,32 @@ class ClassIngestMixin:
             self.repo_path,
             self.project_name,
             self.ingestor,
+            self.cpp_module_interfaces,
+            self._deferred_cpp_module_impls,
         )
+
+    def resolve_deferred_cpp_module_impls(self) -> int:
+        """Emit ModuleImplementation IMPLEMENTS edges for interfaces that exist.
+
+        An implementation unit (`module X;`) whose interface (`export module
+        X;`) lives in no parsed file has nothing real to point at; emitting
+        the edge anyway would mint a phantom the database drops.
+        """
+        deferred = self._deferred_cpp_module_impls
+        if not deferred:
+            return 0
+        self._deferred_cpp_module_impls = []
+        emitted = 0
+        for impl_qn, interface_qn in deferred:
+            if interface_qn not in self.cpp_module_interfaces:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
+            )
+            emitted += 1
+        return emitted
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
         return cpp_modules.find_cpp_exported_classes(root_node)
@@ -355,6 +385,108 @@ class ClassIngestMixin:
             and self.function_registry.get(entry.guess_qn) is not None
         ):
             return entry.guess_qn
+        return None
+
+    def resolve_deferred_inherits(self) -> int:
+        """Emit non-C++ INHERITS/IMPLEMENTS edges now that every class is registered.
+
+        A parent in a file parsed later resolves against the full registry; a
+        parent that resolves nowhere (java.lang.Exception, Rust Send/Sync)
+        emits no edge, because the module-anchored guess is a phantom endpoint
+        the database silently drops anyway. Resolved base qns replace the
+        guesses in class_inheritance in place so Pass-3 method resolution and
+        override detection walk the real hierarchy.
+        """
+        deferred = self._deferred_inherits
+        if not deferred:
+            return 0
+        self._deferred_inherits = []
+        emitted = 0
+        for entry in deferred:
+            child_type = self.function_registry.get(entry.child_qn)
+            if child_type is None:
+                continue
+            resolved = self._resolve_deferred_parent_qn(entry)
+            if resolved is None:
+                continue
+            parent_qn, is_external = resolved
+            external_label: str | None = None
+            if is_external:
+                # (H) The import pass mints the same node for IMPORTS edges, so
+                # (H) this MERGEs idempotently when the base was imported.
+                self.import_processor.ensure_external_module_node(parent_qn)
+                external_label = cs.NodeLabel.EXTERNAL_MODULE.value
+            if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
+                rel.create_implements_relationship(
+                    str(child_type),
+                    entry.child_qn,
+                    parent_qn,
+                    self.ingestor,
+                    interface_label=external_label,
+                )
+                self.interface_implementers.setdefault(parent_qn, set()).add(
+                    entry.child_qn
+                )
+            else:
+                bases = self.class_inheritance.get(entry.child_qn)
+                if bases is not None and entry.base_index < len(bases):
+                    bases[entry.base_index] = parent_qn
+                rel.create_inheritance_relationship(
+                    str(child_type),
+                    entry.child_qn,
+                    parent_qn,
+                    self.function_registry,
+                    self.ingestor,
+                    entry.base_index,
+                    parent_label=external_label,
+                )
+            emitted += 1
+        return emitted
+
+    def _resolve_deferred_parent_qn(
+        self, entry: DeferredInherit
+    ) -> tuple[str, bool] | None:
+        """Resolve a deferred parent to (qn, is_external), or None for no edge.
+
+        First-party wins; a qn outside the project prefix is positive external
+        knowledge (import-mapped or ::-qualified) and keeps its edge onto an
+        ExternalModule node; a module-anchored GUESS that re-resolves nowhere
+        emits nothing, except a JS/TS global (Error) which is externalized.
+        """
+        if (
+            # (H) Parse-time resolution of a nested external base (`Entry
+            # (H) implements Map.Entry`) can land on the child ITSELF (the only
+            # (H) registered qn ending in Entry); a self-edge is never real.
+            entry.parent_qn != entry.child_qn
+            and self.function_registry.get(entry.parent_qn) is not None
+        ):
+            return entry.parent_qn, False
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not entry.parent_qn.startswith(project_prefix):
+            external = entry.parent_qn.replace(
+                cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+            )
+            return external, True
+        # (H) The module-anchored fallback shape is re-resolvable: its raw
+        # (H) written name is the remainder after the module qn.
+        prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+        if not entry.parent_qn.startswith(prefix):
+            return None
+        raw_name = entry.parent_qn[len(prefix) :]
+        resolved = self._resolve_class_name(raw_name, entry.module_qn)
+        if (
+            resolved is not None
+            # (H) A simple-name sweep can land on the child itself; a
+            # (H) self-INHERITS is never real.
+            and resolved != entry.child_qn
+            and self.function_registry.get(resolved) is not None
+        ):
+            return resolved, False
+        if (
+            entry.language in cs.JS_TS_LANGUAGES
+            and raw_name in cs.JS_GLOBAL_CLASS_NAMES
+        ):
+            return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
         return None
 
     def _process_class_node(
@@ -511,6 +643,7 @@ class ClassIngestMixin:
             self.function_registry,
             self.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
+            defer_inherits=self._deferred_inherits,
         )
         if language == cs.SupportedLanguage.CPP:
             # (H) Record this class's member-field types now (from the class body,
@@ -575,17 +708,20 @@ class ClassIngestMixin:
         # (H) node label may be Class/Enum/Type, so match the relationship source
         # (H) to its registered label (else the IMPLEMENTS edge never resolves).
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            owner_type = self.function_registry.get(class_qn)
-            owner_label = (
-                cs.NodeLabel(owner_type.value)
-                if owner_type is not None
-                else cs.NodeLabel.CLASS
-            )
             trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
-            self.ingestor.ensure_relationship_batch(
-                (owner_label, cs.KEY_QUALIFIED_NAME, class_qn),
-                cs.RelationshipType.IMPLEMENTS,
-                (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, trait_qn),
+            # (H) The trait (or the impl target) may live in a file not yet
+            # (H) parsed; hold the IMPLEMENTS edge back for
+            # (H) resolve_deferred_inherits so an unresolvable trait
+            # (H) (std::fmt::Display) emits no phantom edge.
+            self._deferred_inherits.append(
+                DeferredInherit(
+                    rel_type=cs.RelationshipType.IMPLEMENTS,
+                    child_qn=class_qn,
+                    parent_qn=trait_qn,
+                    module_qn=owner_module_qn,
+                    base_index=0,
+                    language=cs.SupportedLanguage.RUST,
+                )
             )
             # (H) Record the implementer so a Rust trait call to the sole concrete
             # (H) impl redirects, matching the class-declaration IMPLEMENTS path.
@@ -728,18 +864,20 @@ class ClassIngestMixin:
                 self.java_anon_overrides.append(
                     (ingested_qn, method_name, base, module_qn)
                 )
-            if language == cs.SupportedLanguage.CPP:
-                # (H) Record where this method landed so Pass-3 call attribution
-                # (H) reuses the registered qn/label instead of re-deriving them
-                # (H) (the walks diverge on preprocessor-distorted class bodies).
-                if ingested_qn is not None and module_qn is not None:
-                    self.cpp_function_locations[
-                        (module_qn, method_node.start_point[0] + 1)
-                    ] = CppFunctionLocation(
+            # (H) Record where this method landed so Pass-3 call attribution
+            # (H) reuses the registered qn/label instead of re-deriving them.
+            # (H) The walks diverge on preprocessor-distorted C++ class bodies
+            # (H) and on TS declaration merging, where the member registers
+            # (H) under the namespace's duplicate-suffixed qn (issue #652).
+            if ingested_qn is not None and module_qn is not None:
+                self.function_locations[(module_qn, method_node.start_point[0] + 1)] = (
+                    FunctionLocation(
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
                     )
+                )
+            if language == cs.SupportedLanguage.CPP:
                 # (H) Record a C++ method's return type so a chained call off a
                 # (H) static factory method (`parser(...).parse(...)`, nlohmann's
                 # (H) basic_json) can type the receiver and resolve the next hop.
@@ -799,6 +937,9 @@ class ClassIngestMixin:
                 )
             )
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
+            # (H) Record the inline module qn so deferred import verification
+            # (H) counts it as a real internal target.
+            self.declared_module_qns.add(inline_module_qn)
 
             # (H) Link the inline module into the containment tree: its enclosing
             # (H) module (file module, or an outer mod) DEFINES it. Without this the

@@ -71,7 +71,7 @@ class JsTsModuleSystemMixin:
 
                 for declarator in variable_declarators:
                     self._process_variable_declarator_for_commonjs(
-                        declarator, module_qn
+                        declarator, module_qn, language
                     )
 
             except Exception as e:
@@ -113,11 +113,15 @@ class JsTsModuleSystemMixin:
         return safe_decode_with_fallback(module_string_node).strip("'\"")
 
     def _process_destructured_child(
-        self, child: ASTNode, module_name: str, module_qn: str
+        self,
+        child: ASTNode,
+        module_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if child.text is not None and (name := safe_decode_text(child)):
-                self._process_commonjs_import(name, module_name, module_qn)
+                self._process_commonjs_import(name, module_name, module_qn, language)
             return
 
         if child.type != cs.TS_PAIR_PATTERN:
@@ -134,10 +138,10 @@ class JsTsModuleSystemMixin:
             return
 
         if alias_name := safe_decode_text(value_node):
-            self._process_commonjs_import(alias_name, module_name, module_qn)
+            self._process_commonjs_import(alias_name, module_name, module_qn, language)
 
     def _process_variable_declarator_for_commonjs(
-        self, declarator: ASTNode, module_qn: str
+        self, declarator: ASTNode, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
         try:
             module_name = self._extract_require_module_name(declarator)
@@ -149,13 +153,19 @@ class JsTsModuleSystemMixin:
                 return
 
             for child in name_node.children:
-                self._process_destructured_child(child, module_name, module_qn)
+                self._process_destructured_child(
+                    child, module_name, module_qn, language
+                )
 
         except Exception as e:
             logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED, error=e)
 
     def _process_commonjs_import(
-        self, imported_name: str, module_name: str, module_qn: str
+        self,
+        imported_name: str,
+        module_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         try:
             resolved_source_module = self.import_processor._resolve_js_module_path(
@@ -164,26 +174,13 @@ class JsTsModuleSystemMixin:
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:
-                # (H) #498: a require() target outside the project (Node builtin,
-                # (H) npm package) is an ExternalModule, not a prop-less Module.
-                # (H) Local targets get no node here: the module's own file pass
-                # (H) creates it, and a rel to a never-indexed module is a no-op.
-                target_label = self.import_processor._module_label(
-                    resolved_source_module
-                )
-                if target_label == cs.NodeLabel.EXTERNAL_MODULE:
-                    self.import_processor._ensure_external_module_node(
-                        resolved_source_module, module_name
-                    )
-
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                    cs.RelationshipType.IMPORTS,
-                    (
-                        target_label,
-                        cs.KEY_QUALIFIED_NAME,
-                        resolved_source_module,
-                    ),
+                # (H) Route through the same deferred verification as every
+                # (H) other IMPORTS edge: an internal target must be a real
+                # (H) module, an external one gets its ExternalModule node at
+                # (H) flush (issue #652: this path emitted directly and was the
+                # (H) last source of phantom import targets).
+                self.import_processor.defer_import_edge(
+                    module_qn, resolved_source_module, language
                 )
 
                 logger.debug(

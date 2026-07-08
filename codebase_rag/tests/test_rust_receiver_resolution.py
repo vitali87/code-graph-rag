@@ -190,9 +190,11 @@ def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
 
 def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
     # (H) A NAMED nested `fn inner()` gets its own caller node and must OWN its body's
-    # (H) calls: `inner`'s `w.work()` belongs to crate.lib.outer.inner only, NOT also
-    # (H) to the enclosing `outer` (a spurious duplicate edge). Anonymous closures still
-    # (H) bubble; named nested fns do not.
+    # (H) calls: `inner`'s `w.work()` belongs to inner only, NOT also to the enclosing
+    # (H) `outer` (a spurious duplicate edge). Anonymous closures still bubble; named
+    # (H) nested fns do not. The caller qn is the one the definition pass REGISTERED
+    # (H) (crate.lib.inner is the actual Function node); the old crate.lib.outer.inner
+    # (H) attribution was a phantom FROM endpoint the database dropped (issue #652).
     _make_crate(
         tmp_path,
         "pub struct Worker {}\n"
@@ -203,7 +205,7 @@ def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
         "}\n",
     )
     calls = _calls(tmp_path)
-    assert ("crate.lib.outer.inner", "crate.lib.Worker.work") in calls
+    assert ("crate.lib.inner", "crate.lib.Worker.work") in calls
     assert ("crate.lib.outer", "crate.lib.Worker.work") not in calls
 
 
