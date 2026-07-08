@@ -50,3 +50,26 @@ def test_nested_class_typed_field_receiver_resolves(
         f.endswith(".M.ok(int)") and t.endswith(".M.Helper.check(int)")
         for f, t in calls
     ), calls
+
+
+def test_nested_enum_typed_field_receiver_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A nested ENUM is also a type declaration; a field typed by it must resolve
+    # (H) its method calls too (the nested-type search must not be class/interface-only).
+    _project(
+        temp_repo,
+        "public class M {\n"
+        "  private static final Mode MODE = Mode.FAST;\n"
+        "  public static int ok() { return MODE.weight(); }\n"
+        "  private enum Mode {\n"
+        "    FAST, SLOW;\n"
+        "    int weight() { return 1; }\n"
+        "  }\n"
+        "}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    assert any(
+        f.endswith(".M.ok()") and t.endswith(".M.Mode.weight()") for f, t in calls
+    ), calls

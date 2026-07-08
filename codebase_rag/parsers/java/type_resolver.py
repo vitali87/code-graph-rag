@@ -154,25 +154,25 @@ class JavaTypeResolverMixin:
                 return self._imported_class_qn(import_map[type_name], type_name)
 
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
-        if same_package_qn in self.function_registry and self.function_registry[
-            same_package_qn
-        ] in [NodeType.CLASS, NodeType.INTERFACE]:
+        if (
+            same_package_qn in self.function_registry
+            and self.function_registry[same_package_qn] in _JAVA_TYPE_DECL_NODE_TYPES
+        ):
             return same_package_qn
 
-        # (H) A nested class referenced by its simple name from within the same file
+        # (H) A nested type referenced by its simple name from within the same file
         # (H) (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
         # (H) `module.Outer.Nested`, not `module.Nested`, so the direct check above
         # (H) misses it. Search only this module's trie subtree (bounded, not a
-        # (H) whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
-        # (H) name, and use it only when unambiguous so a same-named nested type elsewhere
-        # (H) cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
-        # (H) already excludes character-level prefix collisions.
+        # (H) whole-registry scan) for a type declaration (class/interface/enum) whose
+        # (H) last segment is the simple name, and use it only when unambiguous so a
+        # (H) same-named nested type elsewhere cannot mis-resolve. The trie indexes by
+        # (H) dot segment, so find_with_prefix already excludes prefix collisions.
         suffix = f"{cs.SEPARATOR_DOT}{type_name}"
         nested = [
             qn
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
-            if qn.endswith(suffix)
-            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
+            if qn.endswith(suffix) and entity_type in _JAVA_TYPE_DECL_NODE_TYPES
         ]
         if len(nested) == 1:
             return nested[0]
