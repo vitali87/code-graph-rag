@@ -2276,6 +2276,11 @@ TS_GO_TYPE_ALIAS = "type_alias"
 TS_GO_STRUCT_TYPE = "struct_type"
 TS_GO_SELECTOR_EXPRESSION = "selector_expression"
 TS_GO_TYPE_ASSERTION_EXPRESSION = "type_assertion_expression"
+# (H) A Go source file whose name ends in `_test.go` is compiled only under `go test`;
+# (H) its file segment in a module qn ends with this suffix. Such a file may declare an
+# (H) EXTERNAL test package (`package p_test`) that shares a directory with `package p`
+# (H) but is a distinct package, so it must be excluded from same-directory fan-out.
+GO_TEST_FILE_SUFFIX = "_test"
 TS_GO_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_GO_FIELD_DECLARATION = "field_declaration"
 TS_GO_FIELD_IDENTIFIER = "field_identifier"

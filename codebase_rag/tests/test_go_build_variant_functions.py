@@ -54,3 +54,26 @@ def test_different_package_same_name_is_not_fanned_out(tmp_path: Path) -> None:
     }
     assert ("proj.a.caller", "proj.a.validate") in calls
     assert ("proj.a.caller", "proj.sub.s.validate") not in calls
+
+
+def test_external_test_package_sibling_is_not_fanned_out(tmp_path: Path) -> None:
+    # (H) Guard: Go allows an external test package `package p_test` in the SAME
+    # (H) directory as `package p` (both compile from the same dir but are distinct
+    # (H) packages). Production code can never call a function defined in a `_test.go`
+    # (H) file, so a same-directory `_test.go` sibling must NOT receive a fan-out edge
+    # (H) -- otherwise a genuinely test-only dead function is masked as live.
+    (tmp_path / "a.go").write_text(
+        "package p\nfunc validate(x int) int { return x }\n"
+        "func caller() int { return validate(1) }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a_test.go").write_text(
+        "package p_test\nfunc validate(x int) int { return x }\n",
+        encoding="utf-8",
+    )
+    ingestor = _capture(tmp_path, "proj")
+    calls = {
+        (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
+    }
+    assert ("proj.a.caller", "proj.a.validate") in calls
+    assert ("proj.a.caller", "proj.a_test.validate") not in calls

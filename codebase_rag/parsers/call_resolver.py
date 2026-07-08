@@ -419,8 +419,17 @@ class CallResolver:
             other_module, d, other_name = qn.rpartition(cs.SEPARATOR_DOT)
             if not d or other_name != name or other_module == file_module_qn:
                 continue
-            other_pkg, d2, _f = other_module.rpartition(cs.SEPARATOR_DOT)
-            if d2 and other_pkg == pkg_dir:
+            other_pkg, d2, other_file = other_module.rpartition(cs.SEPARATOR_DOT)
+            # (H) Same directory is necessary but not sufficient for same-package: Go
+            # (H) permits an external test package (`package p_test`) in a `_test.go` file
+            # (H) sharing the directory. Production code can never call a function defined
+            # (H) in a `_test.go` file, so exclude such siblings -- else a genuinely
+            # (H) test-only dead function would be masked as live.
+            if (
+                d2
+                and other_pkg == pkg_dir
+                and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
+            ):
                 targets.add((label, qn))
         return targets
 
