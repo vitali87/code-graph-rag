@@ -40,6 +40,28 @@ def test_default_param_function_value_is_referenced(
     )
 
 
+def test_js_default_param_function_value_is_referenced(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Plain-JS grammar wraps a defaulted parameter in an assignment_pattern
+    # (H) whose default sits under `right`, unlike TS's required_parameter `value`;
+    # (H) both forms must be scanned.
+    root = temp_repo / "zdefjs"
+    root.mkdir(parents=True)
+    (root / "react.js").write_text(
+        "const identity = (arg) => arg\n"
+        "export function useStore(api, selector = identity) {\n"
+        "  return selector(api.getState())\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    refs = _refs(mock_ingestor)
+    assert any(f.endswith(".useStore") and t.endswith(".identity") for f, t in refs), (
+        sorted(t for _, t in refs if "identity" in t)
+    )
+
+
 def test_object_literal_shorthand_method_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

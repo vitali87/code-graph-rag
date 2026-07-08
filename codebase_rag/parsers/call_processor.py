@@ -2688,7 +2688,12 @@ class CallProcessor:
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         for param in params.named_children:
-            value = param.child_by_field_name(cs.FIELD_VALUE)
+            # (H) TS carries a param default in required_parameter's `value` field;
+            # (H) plain JS wraps the param in an assignment_pattern whose default
+            # (H) sits under `right`. Scan both forms.
+            value = param.child_by_field_name(
+                cs.FIELD_VALUE
+            ) or param.child_by_field_name(cs.FIELD_RIGHT)
             if value is None:
                 continue
             value = self._unwrap_ts_value(value)
