@@ -38,6 +38,32 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
 
 
+def _java_anon_base_for_function(
+    func_node: Node, class_node_types: frozenset[str]
+) -> str | None:
+    # (H) A Java method declared inside a method-body anonymous class
+    # (H) (`createBoundField(){ return new BoundField(){ @Override write(){} } }`) is
+    # (H) captured here as a FUNCTION (the class-method pass skips method-nested defs),
+    # (H) so it needs its base-type override link too. Walk to the nearest enclosing
+    # (H) type: an anon `class_body` (parent is object_creation) before any NAMED class
+    # (H) means it overrides that base; return the base type name (generics stripped).
+    current = func_node.parent
+    while current is not None:
+        if current.type in class_node_types:
+            return None
+        if current.type == cs.TS_CLASS_BODY:
+            parent = current.parent
+            if parent is not None and parent.type == cs.TS_OBJECT_CREATION_EXPRESSION:
+                type_node = parent.child_by_field_name(cs.FIELD_TYPE)
+                if type_node is not None and type_node.text is not None:
+                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
+            return None
+        current = current.parent
+    return None
+
+
 class FunctionResolution(NamedTuple):
     qualified_name: str
     name: str
@@ -103,6 +129,7 @@ class FunctionIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    java_anon_overrides: list[tuple[str, str, str, str]]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
@@ -607,6 +634,24 @@ class FunctionIngestMixin:
         )
         if resolution.name:
             self.simple_name_lookup[resolution.name].add(resolution.qualified_name)
+
+        # (H) A method-body anonymous-class override (`new Base(){ @Override m(){} }`
+        # (H) inside a method) is captured as a function here; record it so the deferred
+        # (H) pass emits an OVERRIDES edge to Base.m, keeping the dispatch-only override
+        # (H) live (field-initializer anon overrides are recorded in the class-method
+        # (H) pass instead).
+        if (
+            language == cs.SupportedLanguage.JAVA
+            and resolution.name
+            and (
+                base := _java_anon_base_for_function(
+                    func_node, frozenset(lang_config.class_node_types)
+                )
+            )
+        ):
+            self.java_anon_overrides.append(
+                (resolution.qualified_name, resolution.name, base, module_qn)
+            )
 
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
