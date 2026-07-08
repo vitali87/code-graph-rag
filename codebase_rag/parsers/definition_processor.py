@@ -100,6 +100,11 @@ class DefinitionProcessor(
         # (H) (the walks diverge on preprocessor-distorted class bodies).
         self.cpp_function_locations: dict[tuple[str, int], CppFunctionLocation] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
+        # (H) {qn: file path} for definitions rehydrated from the graph on an
+        # (H) incremental run, whose modules are absent from module_qn_to_file_path
+        # (H) (only re-parsed files populate it). _is_cpp_defined falls back to
+        # (H) this so cross-file resolution into UNCHANGED headers still works.
+        self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 

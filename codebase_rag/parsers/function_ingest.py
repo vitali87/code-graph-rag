@@ -115,6 +115,7 @@ class FunctionIngestMixin:
     cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
+    rehydrated_definition_paths: dict[str, str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -296,6 +297,12 @@ class FunctionIngestMixin:
                     path.suffix in cs.CPP_EXTENSIONS or path.suffix in cs.C_EXTENSIONS
                 )
             parts = parts[:-1]
+        # (H) An incremental run only populates module_qn_to_file_path for
+        # (H) re-parsed files; a definition rehydrated from the graph resolves
+        # (H) through its node's recorded file path instead.
+        if rehydrated := self.rehydrated_definition_paths.get(qn):
+            suffix = Path(rehydrated).suffix
+            return suffix in cs.CPP_EXTENSIONS or suffix in cs.C_EXTENSIONS
         return False
 
     def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:

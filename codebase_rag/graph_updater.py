@@ -628,6 +628,11 @@ class GraphUpdater:
             # (H) @property defined elsewhere would otherwise drop vs a clean index.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
+            # (H) Record the defining file so _is_cpp_defined can language-check
+            # (H) rehydrated candidates (deferred C++ INHERITS resolution runs
+            # (H) after this and must reach bases in UNCHANGED headers).
+            if isinstance(path := row.get(cs.KEY_PATH), str):
+                self.factory.definition_processor.rehydrated_definition_paths[qn] = path
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)

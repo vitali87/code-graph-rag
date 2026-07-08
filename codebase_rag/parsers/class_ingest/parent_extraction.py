@@ -125,7 +125,9 @@ def parse_cpp_base_classes(
 
         if base_child.type in base_type_nodes and base_child.text:
             if parent_name := safe_decode_text(base_child):
-                written_name = parent_name.split(cs.CHAR_ANGLE_OPEN)[0]
+                # (H) strip(): `public Base <T>` would otherwise keep a
+                # (H) trailing space that can never match the registry.
+                written_name = parent_name.split(cs.CHAR_ANGLE_OPEN)[0].strip()
                 base_name = extract_cpp_base_class_name(parent_name)
                 parent_qn = cpp_utils.build_qualified_name(
                     class_node, module_qn, base_name
@@ -147,7 +149,8 @@ def extract_cpp_base_class_name(parent_text: str) -> str:
     if cs.SEPARATOR_DOUBLE_COLON in parent_text:
         parent_text = parent_text.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
 
-    return parent_text
+    # (H) `public Base <T>` leaves a trailing space after the angle split.
+    return parent_text.strip()
 
 
 def java_base_type_identifier(type_node: Node) -> Node | None:

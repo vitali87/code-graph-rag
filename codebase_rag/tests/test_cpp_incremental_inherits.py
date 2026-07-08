@@ -37,9 +37,9 @@ public:
 
 def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
-    GraphUpdater(
-        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
-    ).run(force=force)
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=force
+    )
 
 
 def _inherits_edges(store: _StatefulIngestor) -> set[tuple[str, str]]:
