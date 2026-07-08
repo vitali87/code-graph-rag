@@ -25,6 +25,15 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
 
         return cs.SEPARATOR_DOT.join([project_name, filename, name])
 
+    path_parts = extract_namespace_path(node)
+
+    if path_parts:
+        return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
+    return cs.SEPARATOR_DOT.join([module_qn, name])
+
+
+def extract_namespace_path(node: Node) -> list[str]:
+    """Names of the namespace blocks enclosing *node*, outermost first."""
     path_parts: list[str] = []
     current = node.parent
 
@@ -51,10 +60,7 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
         current = current.parent
 
     path_parts.reverse()
-
-    if path_parts:
-        return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
-    return cs.SEPARATOR_DOT.join([module_qn, name])
+    return path_parts
 
 
 _EXPORT_CANDIDATE_TYPES = frozenset(

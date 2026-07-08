@@ -5,6 +5,8 @@
 # (H) schema in types_defs.NODE_SCHEMAS / RELATIONSHIP_SCHEMAS.
 from __future__ import annotations
 
+import collections
+
 from codebase_rag import constants as cs
 from codebase_rag import graph_audit as ga
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
@@ -149,6 +151,32 @@ class TestPropertyMerging:
         )
         nodes.insert(0, partial)
         assert ga.collect_violations(nodes, rels) == []
+
+
+class TestDanglingRelationships:
+    def test_edge_to_missing_node_is_flagged_and_not_connectivity(self) -> None:
+        # (H) Live Memgraph silently drops an edge whose endpoint has no node,
+        # (H) so the mock audit must flag the dangling edge AND still report
+        # (H) the emitted node as an orphan.
+        nodes, rels = _clean_graph()
+        nodes.append(_function("proj.mod.lam"))
+        rels.append(
+            _rel(
+                cs.NodeLabel.FUNCTION.value,
+                "proj.mod.GHOST",
+                cs.RelationshipType.DEFINES.value,
+                cs.NodeLabel.FUNCTION.value,
+                "proj.mod.lam",
+            )
+        )
+        violations = ga.collect_violations(nodes, rels)
+        checks = collections.Counter(v.check for v in violations)
+        assert checks[cs.AuditCheck.DANGLING_RELATIONSHIP] == 1
+        assert checks[cs.AuditCheck.ORPHAN_NODE] == 1
+        dangling = next(
+            v for v in violations if v.check == cs.AuditCheck.DANGLING_RELATIONSHIP
+        )
+        assert "proj.mod.GHOST" in dangling.detail
 
 
 class TestRelationshipConformance:

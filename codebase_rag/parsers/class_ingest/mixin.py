@@ -31,6 +31,7 @@ from . import relationships as rel
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import (
+        DeferredParentLink,
         FunctionRegistryTrieProtocol,
         LanguageQueries,
         SimpleNameLookup,
@@ -111,6 +112,7 @@ class ClassIngestMixin:
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
+    _deferred_parent_links: list[DeferredParentLink]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -139,6 +141,16 @@ class ClassIngestMixin:
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
+
+    @abstractmethod
+    def _emit_or_defer_defines(
+        self,
+        parent_label: str,
+        parent_qn: str,
+        child_label: str,
+        child_qn: str,
+        module_qn: str,
+    ) -> None: ...
 
     @abstractmethod
     def _determine_function_parent(
@@ -368,9 +380,20 @@ class ClassIngestMixin:
         self.function_registry[class_qn] = node_type
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)
+            # (H) An out-of-class nested definition (`class Outer::Inner {}`)
+            # (H) carries the qualifier in its extracted name. Index the leaf
+            # (H) too, or an out-of-line method (`bool Inner::m()`, often via a
+            # (H) `using Inner = Outer::Inner;` alias) can never resolve the
+            # (H) class and binds to a phantom fallback qn.
+            if cs.SEPARATOR_DOUBLE_COLON in class_name:
+                leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+                self.simple_name_lookup[leaf].add(class_qn)
 
         parent_label, parent_qn = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
+        )
+        self._emit_or_defer_defines(
+            parent_label, parent_qn, node_type, class_qn, module_qn
         )
         # (H) For a templated class the canonical node is the template_declaration
         # (H) wrapper, which has no `body` field. Its members -- base clause, fields,
@@ -383,8 +406,6 @@ class ClassIngestMixin:
             member_node,
             class_qn,
             module_qn,
-            parent_label,
-            parent_qn,
             node_type,
             is_exported,
             language,
@@ -511,6 +532,12 @@ class ClassIngestMixin:
                 language,
                 file_path=file_path,
                 repo_path=self.repo_path,
+                # (H) The impl target may be a primitive (`impl From<Foo> for u8`)
+                # (H) or a type registered later in the pass; defer the containment
+                # (H) edge so it verifies against the registry (module fallback for
+                # (H) primitives) instead of dangling on a phantom Class qn.
+                defer_containment=self._deferred_parent_links,
+                module_qn=owner_module_qn,
             )
             # (H) Record the method's return type (Self -> impl target) so a chained
             # (H) call (`Ping::new(msg).into_frame()`) and a call-bound local

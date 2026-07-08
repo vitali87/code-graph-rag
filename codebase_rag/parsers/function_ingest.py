@@ -12,6 +12,7 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
+    DeferredParentLink,
     FunctionRegistryTrieProtocol,
     NodeType,
     PropertyDict,
@@ -51,6 +52,7 @@ class _DeferredMethod(NamedTuple):
     fallback_class_qn: str
     method_props: PropertyDict
     return_type: str | None
+    module_qn: str
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -60,6 +62,24 @@ class _DeferredGoMethod(NamedTuple):
     module_qn: str
     receiver_type: str
     file_path: Path | None
+
+
+class _DeferredCppContainment(NamedTuple):
+    """DEFINES from an out-of-class C++ method to a function nested in its body.
+
+    The parent method's final qn is only known after the deferred method
+    resolution binds it to its class (declared in a possibly later-parsed
+    header), so the containment edge must wait for that pass. namespace_path
+    carries the definition site's enclosing namespaces: the written qualifier
+    inside `namespace beta { void Widget::print() ... }` is just `Widget`, and
+    without the namespace two same-leaf classes are indistinguishable.
+    """
+
+    child_qn: str
+    class_name: str
+    method_name: str
+    module_qn: str
+    namespace_path: str
 
 
 # (H) Go node labels a receiver type can resolve to (struct -> Class, defined
@@ -79,6 +99,8 @@ class FunctionIngestMixin:
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
+    _deferred_cpp_containment: list[_DeferredCppContainment]
+    _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
 
     @abstractmethod
@@ -221,7 +243,13 @@ class FunctionIngestMixin:
             for candidate_qn in self.simple_name_lookup[leaf_name]:
                 node_type = self.function_registry.get(candidate_qn)
                 if node_type in {NodeType.CLASS, NodeType.TYPE}:
-                    if candidate_qn.endswith(
+                    # (H) An out-of-class nested definition keeps `Outer::Inner`
+                    # (H) as one qn segment; normalize before the suffix check or
+                    # (H) `::Inner` never matches `.Inner`.
+                    normalized_candidate = candidate_qn.replace(
+                        cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+                    )
+                    if normalized_candidate.endswith(
                         f".{class_name_normalized}"
                     ) and self._is_cpp_defined(candidate_qn):
                         return candidate_qn, True
@@ -305,6 +333,7 @@ class FunctionIngestMixin:
                     fallback_class_qn=class_qn,
                     method_props=props,
                     return_type=return_type,
+                    module_qn=module_qn,
                 )
             )
 
@@ -337,11 +366,22 @@ class FunctionIngestMixin:
             if entry.return_type:
                 self.method_return_types[method_qn] = entry.return_type
 
-            self.ingestor.ensure_relationship_batch(
-                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
-                cs.RelationshipType.DEFINES_METHOD,
-                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
-            )
+            if resolved or class_qn in self.function_registry:
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
+                    cs.RelationshipType.DEFINES_METHOD,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+                )
+            else:
+                # (H) The class never resolved (not parsed, or its declaration is
+                # (H) macro-corrupted); a DEFINES_METHOD to the phantom fallback qn
+                # (H) would be dropped by the database and orphan the method, so
+                # (H) anchor it to its module instead.
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.DEFINES,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+                )
             ingested += 1
 
         self._deferred_cpp_methods = []
@@ -548,13 +588,25 @@ class FunctionIngestMixin:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
+        # (H) A function nested in an out-of-class C++ method body (a lambda
+        # (H) passed as a call argument) cannot bind its parent yet: the method's
+        # (H) final qn is class-anchored and the class may live in a header not
+        # (H) parsed until later, so the walk would emit a phantom free-fn parent
+        # (H) that the database drops, orphaning the lambda (issue #650).
+        if language == cs.SupportedLanguage.CPP and self._defer_cpp_containment(
+            func_node, resolution.qualified_name, module_qn, lang_config
+        ):
+            return
+
         parent_type, parent_qn = self._determine_function_parent(
             func_node, resolution.qualified_name, module_qn, lang_config, language
         )
-        self.ingestor.ensure_relationship_batch(
-            (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
-            cs.RelationshipType.DEFINES,
-            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, resolution.qualified_name),
+        self._emit_or_defer_defines(
+            parent_type,
+            parent_qn,
+            cs.NodeLabel.FUNCTION,
+            resolution.qualified_name,
+            module_qn,
         )
 
         # (H) A Rust closure is a value constructed at its definition site (a `.map`
@@ -783,6 +835,162 @@ class FunctionIngestMixin:
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
+
+    def _find_enclosing_function_node(
+        self, func_node: Node, lang_config: LanguageSpec
+    ) -> Node | None:
+        # (H) Mirrors _determine_function_parent's walk: first ancestor that is a
+        # (H) function-like node, stopping at the module boundary.
+        current = func_node.parent
+        while current is not None and current.type not in lang_config.module_node_types:
+            if current.type in lang_config.function_node_types:
+                return current
+            current = current.parent
+        return None
+
+    def _defer_cpp_containment(
+        self,
+        func_node: Node,
+        child_qn: str,
+        module_qn: str,
+        lang_config: LanguageSpec,
+    ) -> bool:
+        enclosing = self._find_enclosing_function_node(func_node, lang_config)
+        if enclosing is None or not cpp_utils.is_out_of_class_method_definition(
+            enclosing
+        ):
+            return False
+        class_name = cpp_utils.extract_class_name_from_out_of_class_method(enclosing)
+        method_name = cpp_utils.extract_function_name(enclosing)
+        if not class_name or not method_name:
+            return False
+        # (H) Keep the FULL written qualifier (ns::Widget): _resolve_cpp_class_qn
+        # (H) splits the leaf itself and its endswith guard needs the qualifier to
+        # (H) tell same-leaf classes in different namespaces apart.
+        self._deferred_cpp_containment.append(
+            _DeferredCppContainment(
+                child_qn=child_qn,
+                class_name=class_name,
+                method_name=method_name,
+                module_qn=module_qn,
+                namespace_path=cs.SEPARATOR_DOT.join(
+                    cpp_utils.extract_namespace_path(enclosing)
+                ),
+            )
+        )
+        return True
+
+    def _emit_or_defer_defines(
+        self,
+        parent_label: str,
+        parent_qn: str,
+        child_label: str,
+        child_qn: str,
+        module_qn: str,
+    ) -> None:
+        # (H) Module nodes always exist, so module-parented edges emit directly.
+        # (H) Any other parent may be registered by a later pass (methods land
+        # (H) after functions) or may be a phantom recomputed qn the database
+        # (H) would drop; both resolve in resolve_deferred_parent_links.
+        if parent_label == cs.NodeLabel.MODULE:
+            self.ingestor.ensure_relationship_batch(
+                (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
+                cs.RelationshipType.DEFINES,
+                (child_label, cs.KEY_QUALIFIED_NAME, child_qn),
+            )
+            return
+        self._deferred_parent_links.append(
+            DeferredParentLink(
+                parent_label_guess=parent_label,
+                parent_qn=parent_qn,
+                child_label=child_label,
+                child_qn=child_qn,
+                module_qn=module_qn,
+            )
+        )
+
+    def resolve_deferred_parent_links(self) -> int:
+        """Emit deferred non-module DEFINES once every pass has registered.
+
+        A registered parent gets the edge under its real label; an
+        unregistered parent qn is a phantom, so the child anchors to its
+        module rather than losing the edge at the database MERGE.
+        """
+        deferred = getattr(self, "_deferred_parent_links", None)
+        if not deferred:
+            return 0
+        emitted = 0
+        for entry in deferred:
+            if registered := self.function_registry.get(entry.parent_qn):
+                parent_spec = (
+                    cs.NodeLabel(registered.value),
+                    cs.KEY_QUALIFIED_NAME,
+                    entry.parent_qn,
+                )
+                rel_type = entry.rel_type
+            else:
+                # (H) A method whose container never registered (impl on a
+                # (H) primitive, macro-corrupted class) anchors to its module
+                # (H) with DEFINES; DEFINES_METHOD from a Module is not a
+                # (H) documented shape.
+                parent_spec = (
+                    cs.NodeLabel.MODULE,
+                    cs.KEY_QUALIFIED_NAME,
+                    entry.module_qn,
+                )
+                rel_type = cs.RelationshipType.DEFINES.value
+            self.ingestor.ensure_relationship_batch(
+                parent_spec,
+                rel_type,
+                (entry.child_label, cs.KEY_QUALIFIED_NAME, entry.child_qn),
+            )
+            emitted += 1
+        self._deferred_parent_links = []
+        return emitted
+
+    def resolve_deferred_cpp_containment(self) -> int:
+        """Emit DEFINES for functions nested in out-of-class C++ method bodies.
+
+        Runs after resolve_deferred_cpp_methods so the parent method nodes
+        exist under their final class-anchored qns. Falls back to the file
+        module rather than ever emitting a phantom parent.
+        """
+        deferred = getattr(self, "_deferred_cpp_containment", None)
+        if not deferred:
+            return 0
+        emitted = 0
+        for entry in deferred:
+            # (H) Try the namespace-scoped name first (alpha.Widget beats a
+            # (H) same-leaf beta.Widget via the endswith guard), then the raw
+            # (H) written qualifier for classes matched through other scopes.
+            candidates = [entry.class_name]
+            if entry.namespace_path:
+                candidates.insert(
+                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
+                )
+            parent_spec = (
+                cs.NodeLabel.MODULE,
+                cs.KEY_QUALIFIED_NAME,
+                entry.module_qn,
+            )
+            for candidate in candidates:
+                class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+                parent_qn = f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
+                if resolved and parent_qn in self.function_registry:
+                    parent_spec = (
+                        cs.NodeLabel.METHOD,
+                        cs.KEY_QUALIFIED_NAME,
+                        parent_qn,
+                    )
+                    break
+            self.ingestor.ensure_relationship_batch(
+                parent_spec,
+                cs.RelationshipType.DEFINES,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, entry.child_qn),
+            )
+            emitted += 1
+        self._deferred_cpp_containment = []
+        return emitted
 
     def _determine_function_parent(
         self,

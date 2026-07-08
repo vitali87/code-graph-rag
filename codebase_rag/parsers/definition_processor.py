@@ -81,6 +81,8 @@ class DefinitionProcessor(
         self._type_alias_conflicts: set[str] = set()
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
+        self._deferred_cpp_containment: list = []
+        self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache

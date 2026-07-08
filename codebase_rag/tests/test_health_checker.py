@@ -19,6 +19,14 @@ def test_check_memgraph_connection_returns_failure_when_down(
     assert result.passed is False
 
 
+class _FakeColumn:
+    # (H) Mirrors mgclient.Column: exposes .name and is NOT subscriptable.
+    __slots__ = ("name",)
+
+    def __init__(self, name: str):
+        self.name = name
+
+
 class _FakeCursor:
     def __init__(self, rows_by_marker: dict[str, list[tuple]], columns: list[str]):
         self._rows_by_marker = rows_by_marker
@@ -34,8 +42,8 @@ class _FakeCursor:
                 return
 
     @property
-    def description(self) -> list[tuple]:
-        return [(name,) for name in self._columns]
+    def description(self) -> list[_FakeColumn]:
+        return [_FakeColumn(name) for name in self._columns]
 
     def fetchall(self) -> list[tuple]:
         return self._rows
