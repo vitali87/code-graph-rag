@@ -24,7 +24,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     # (H) single xdist_group serializes these tests on one worker with one
     # (H) container (scheduled by the --dist=loadgroup in pyproject addopts).
     for item in items:
-        if _INTEGRATION_DIR in item.path.parents:
+        # (H) Third-party plugins can collect virtual items with no path.
+        if item.path and _INTEGRATION_DIR in item.path.parents:
             item.add_marker(pytest.mark.xdist_group("memgraph-integration"))
 
 
