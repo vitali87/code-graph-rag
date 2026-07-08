@@ -343,16 +343,21 @@ def _java_cast_target_type(object_node: ASTNode) -> str | None:
     # (H) names); stripping it would collapse it onto a same-package/imported same-leaf
     # (H) type. None when there is no cast type.
     cast = object_node
-    if cast.type == cs.TS_PARENTHESIZED_EXPRESSION:
+    while cast.type == cs.TS_PARENTHESIZED_EXPRESSION:
         cast = next(
-            (c for c in cast.children if c.type == cs.TS_JAVA_CAST_EXPRESSION), None
+            (c for c in cast.children if c.type not in cs.DELIMITER_TOKENS), None
         )
-    if cast is None or cast.type != cs.TS_JAVA_CAST_EXPRESSION:
+        if cast is None:
+            return None
+    if cast.type != cs.TS_JAVA_CAST_EXPRESSION:
         return None
     type_node = cast.child_by_field_name(cs.FIELD_TYPE)
-    if type_node is None or type_node.text is None:
+    if type_node is None:
         return None
-    base = type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+    type_text = safe_decode_text(type_node)
+    if not type_text:
+        return None
+    base = type_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
     return base.strip() or None
 
 

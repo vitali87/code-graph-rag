@@ -47,6 +47,36 @@ def test_cast_receiver_resolves_cross_file(
     ), "cast receiver wrongly bound to the decoy"
 
 
+def test_nested_parenthesized_cast_receiver_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A cast wrapped in multiple parentheses `(((Reader) in)).m()` must still yield
+    # (H) the cast target type: parenthesized wrappers are unwrapped to the innermost
+    # (H) cast, not just one layer.
+    root = temp_repo / "jncast"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "Reader.java").write_text(
+        "package com.example;\n"
+        "public class Reader { public int nextX() { return 1; } }\n",
+        encoding="utf-8",
+    )
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  int use(Object in) { return (((Reader) in)).nextX(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        f.endswith(".M.use(Object)") and t.endswith(".Reader.nextX()") for f, t in calls
+    ), sorted(t for f, t in calls if "nextX" in t)
+
+
 def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
