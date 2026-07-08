@@ -255,17 +255,14 @@ def dead_code_from_graph(
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
+    # (H) OVERRIDES is recorded overrider -> overridden; keep the REVERSE mapping
+    # (H) (overridden -> overriders) to expand virtual-dispatch targets below.
+    override_rev: dict[str, set[str]] = defaultdict(set)
     for from_label, from_val, rel_type, _to_label, to_val in rels:
         if rel_type in traversal:
             adjacency[str(from_val)].add(str(to_val))
         elif rel_type == _OVERRIDES:
-            # (H) OVERRIDES is recorded overrider -> overridden. A call to the base
-            # (H) method dispatches at runtime to any override, so an override of a
-            # (H) REACHABLE method is itself reachable. Add the REVERSE edge
-            # (H) (overridden -> overrider) so the walk reaches every override -- and
-            # (H) transitively its callees -- of any live base; an override of a dead
-            # (H) base stays dead. Sound virtual dispatch, mirroring self-dispatch.
-            adjacency[str(to_val)].add(str(from_val))
+            override_rev[str(to_val)].add(str(from_val))
 
     live = set(roots)
     _walk(roots, adjacency, live)
@@ -285,6 +282,22 @@ def dead_code_from_graph(
     }
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
+
+    # (H) Third expansion, mirroring the query's OVERRIDES* stage: a call to a base or
+    # (H) interface method dispatches at runtime to any override, so every (transitive)
+    # (H) override of a LIVE method is a reachable dispatch target, as is its callee
+    # (H) closure. `override_rev` is walked to a fixpoint so multi-level hierarchies
+    # (H) (Base <- Sub <- SubSub) are all revived; an override of a DEAD base stays
+    # (H) dead. Bounded like the closure round: one callee-walk after the expansion.
+    override_roots: set[str] = set()
+    stack = list(live)
+    while stack:
+        for overrider in override_rev.get(stack.pop(), ()):
+            if overrider not in live and overrider not in override_roots:
+                override_roots.add(overrider)
+                stack.append(overrider)
+    live |= override_roots
+    _walk(override_roots, adjacency, live)
 
     dead = candidates - live
     # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from

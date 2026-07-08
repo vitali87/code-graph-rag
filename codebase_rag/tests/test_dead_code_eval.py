@@ -210,39 +210,26 @@ def test_override_of_reachable_method_is_reachable() -> None:
             _fn("proj.m.entry", path="m.java"),
             _method("proj.m.Base.run(int)", "m.java"),
             _method("proj.m.Sub.run(int)", "m.java"),
+            _method("proj.m.SubSub.run(int)", "m.java"),
             _method("proj.m.DeadBase.gone()", "m.java"),
             _method("proj.m.DeadSub.gone()", "m.java"),
         ]
     )
+    _MTD = cs.NodeLabel.METHOD.value
     nodes[(_FUNCTION, "proj.m.entry")][cs.KEY_IS_EXPORTED] = True
     rels = [
-        (
-            _FUNCTION,
-            "proj.m.entry",
-            _CALLS,
-            cs.NodeLabel.METHOD.value,
-            "proj.m.Base.run(int)",
-        ),
-        (
-            cs.NodeLabel.METHOD.value,
-            "proj.m.Sub.run(int)",
-            _OVERRIDES,
-            cs.NodeLabel.METHOD.value,
-            "proj.m.Base.run(int)",
-        ),
-        (
-            cs.NodeLabel.METHOD.value,
-            "proj.m.DeadSub.gone()",
-            _OVERRIDES,
-            cs.NodeLabel.METHOD.value,
-            "proj.m.DeadBase.gone()",
-        ),
+        (_FUNCTION, "proj.m.entry", _CALLS, _MTD, "proj.m.Base.run(int)"),
+        (_MTD, "proj.m.Sub.run(int)", _OVERRIDES, _MTD, "proj.m.Base.run(int)"),
+        # (H) multi-level: SubSub overrides Sub overrides Base -- all must revive.
+        (_MTD, "proj.m.SubSub.run(int)", _OVERRIDES, _MTD, "proj.m.Sub.run(int)"),
+        (_MTD, "proj.m.DeadSub.gone()", _OVERRIDES, _MTD, "proj.m.DeadBase.gone()"),
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
-    # (H) Base is called (via exported entry) -> live; its override is a dispatch
-    # (H) target -> revived.
+    # (H) Base is called (via exported entry) -> live; its overrides (direct and
+    # (H) transitive) are dispatch targets -> revived.
     assert "proj.m.Base.run(int)" not in dead
     assert "proj.m.Sub.run(int)" not in dead
+    assert "proj.m.SubSub.run(int)" not in dead
     # (H) DeadBase is never called, so neither it nor its override is reachable.
     assert "proj.m.DeadBase.gone()" in dead
     assert "proj.m.DeadSub.gone()" in dead
