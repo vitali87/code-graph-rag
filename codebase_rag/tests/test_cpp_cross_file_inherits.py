@@ -113,6 +113,30 @@ public:
     assert (f"{project}.spaced.Widget", f"{project}.spaced.Base") in pairs, pairs
 
 
+def test_unresolvable_qualified_base_never_self_inherits(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `class Type : public other::Type` with other::Type unindexed: the
+    # (H) module-scoped guess strips the qualifier to the leaf, which equals
+    # (H) the child's own qn -- the fallback must not emit a self-edge.
+    (temp_repo / "shadow.h").write_text(
+        """
+#pragma once
+namespace ns {
+class Type : public other::Type {
+public:
+    int kind() const { return 1; }
+};
+}
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
+    for call in inherits:
+        assert call.args[0][2] != call.args[2][2], call.args
+
+
 def test_same_file_base_still_emits_inherits(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
