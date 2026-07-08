@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
@@ -418,23 +419,24 @@ console.log(result2); // [15, 20]
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    call_relationships = get_relationships(mock_ingestor, "CALLS")
-
-    bind_call_apply_calls = [
-        call
-        for call in call_relationships
+    # (H) bind/call/apply resolve to synthetic builtin Function.prototype qns
+    # (H) whose CALLS edges the database always dropped (issue #652); the
+    # (H) durable contract is that every first-party function handed to them
+    # (H) stays reachable through CALLS or REFERENCES edges.
+    reachable_targets = {
+        str(call.args[2][2])
+        for rel in ("CALLS", "REFERENCES")
+        for call in get_relationships(mock_ingestor, rel)
         if "bind_call_apply" in call.args[0][2]
-        and any(
-            method in str(call.args[2][2]) for method in [".bind", ".call", ".apply"]
+    }
+    project_name = javascript_this_project.name
+    for bound_fn in ("greet", "sum", "multiply"):
+        assert f"{project_name}.bind_call_apply.{bound_fn}" in reachable_targets, (
+            bound_fn,
+            reachable_targets,
         )
-    ]
-
-    assert len(bind_call_apply_calls) >= 5, (
-        f"Expected at least 5 bind/call/apply calls, found {len(bind_call_apply_calls)}"
-    )
 
     created_functions = get_node_names(mock_ingestor, "Function")
-    project_name = javascript_this_project.name
 
     expected_functions = [
         f"{project_name}.bind_call_apply.greet",
@@ -1147,14 +1149,12 @@ outer.call({ context: 'custom' });
         f"Expected at least 5 comprehensive this-related calls, found {len(comprehensive_calls)}"
     )
 
-    binding_calls = [
+    # (H) bind/call/apply resolve to synthetic builtin qns whose edges the
+    # (H) database always dropped (issue #652); no CALLS edge may carry a
+    # (H) builtin.* target anymore.
+    builtin_targets = [
         call
         for call in comprehensive_calls
-        if any(
-            method in str(call.args[2][2]) for method in [".bind", ".call", ".apply"]
-        )
+        if str(call.args[2][2]).startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}")
     ]
-
-    assert len(binding_calls) >= 2, (
-        f"Expected at least 2 bind/call/apply calls, found {len(binding_calls)}"
-    )
+    assert not builtin_targets, builtin_targets

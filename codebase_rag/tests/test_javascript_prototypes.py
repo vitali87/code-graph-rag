@@ -438,13 +438,14 @@ myTask.outputTaskDetails();
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
+    # (H) Object.create resolves to a synthetic builtin.* qn with no node, so
+    # (H) its CALLS edge was always dropped by the database (issue #652); no
+    # (H) edge may be emitted for it at all.
     object_create_calls = [
         call for call in call_relationships if "Object.create" in str(call.args[2][2])
     ]
 
-    assert len(object_create_calls) >= 3, (
-        f"Expected at least 3 Object.create calls, found {len(object_create_calls)}"
-    )
+    assert not object_create_calls, object_create_calls
 
 
 def test_prototype_chain_and_method_resolution(
@@ -645,11 +646,19 @@ square.scale(2);
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
+    # (H) A prototype method call resolves to the method's first-party qn
+    # (H) (Constructor.method); the old `.prototype.` matches were synthetic
+    # (H) builtin Function.prototype.call/apply qns whose edges the database
+    # (H) always dropped (issue #652) and which are no longer emitted.
     prototype_calls = [
         call
         for call in call_relationships
         if "prototype_chain" in call.args[0][2]
-        and ".prototype." in str(call.args[2][2])
+        and any(
+            str(call.args[2][2]).endswith(f".{ctor}.{method}")
+            for ctor in ("Shape", "Rectangle", "Square", "ColoredSquare")
+            for method in ("getPosition", "getArea", "setSize", "setColor", "move")
+        )
     ]
 
     assert len(prototype_calls) >= 2, (

@@ -317,9 +317,12 @@ function process(data) {
             if c.args[1] == cs.RelationshipType.CALLS
         ]
 
+        # (H) A synthetic builtin.* qn never has a node, so its CALLS edge was
+        # (H) always dropped by the database (issue #652); builtin resolution
+        # (H) must therefore emit NO edge, mirroring the C++ operator rule.
         call_targets = [c.args[2][2] for c in calls]
         builtin_calls = [t for t in call_targets if cs.BUILTIN_PREFIX in t]
-        assert len(builtin_calls) >= 1
+        assert not builtin_calls, builtin_calls
 
 
 class TestProcessCallsInFileJava:

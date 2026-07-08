@@ -85,6 +85,7 @@ def create_class_relationships(
                     parent_qn=parent_class_qn,
                     module_qn=module_qn,
                     base_index=base_index,
+                    language=language,
                 )
             )
     else:
@@ -112,6 +113,7 @@ def create_class_relationships(
                         parent_qn=interface_qn,
                         module_qn=module_qn,
                         base_index=0,
+                        language=language,
                     )
                 )
             else:
@@ -139,8 +141,11 @@ def create_inheritance_relationship(
     function_registry: FunctionRegistryTrieProtocol,
     ingestor: IngestorProtocol,
     base_index: int = 0,
+    parent_label: str | None = None,
 ) -> None:
-    parent_type = get_node_type_for_inheritance(parent_qn, function_registry)
+    parent_type = parent_label or get_node_type_for_inheritance(
+        parent_qn, function_registry
+    )
     # (H) Persist the base's position in the child's base list. An incremental run
     # (H) rehydrates class_inheritance from these edges; ordering by base_index
     # (H) restores the original source order, which method resolution (Pass 3) and
@@ -158,9 +163,14 @@ def create_implements_relationship(
     class_qn: str,
     interface_qn: str,
     ingestor: IngestorProtocol,
+    interface_label: str | None = None,
 ) -> None:
     ingestor.ensure_relationship_batch(
         (class_type, cs.KEY_QUALIFIED_NAME, class_qn),
         cs.RelationshipType.IMPLEMENTS,
-        (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
+        (
+            interface_label or cs.NodeLabel.INTERFACE,
+            cs.KEY_QUALIFIED_NAME,
+            interface_qn,
+        ),
     )

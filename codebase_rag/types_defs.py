@@ -554,6 +554,7 @@ class DeferredInherit(NamedTuple):
     parent_qn: str
     module_qn: str
     base_index: int
+    language: SupportedLanguage
 
 
 class DeferredImportEdge(NamedTuple):
@@ -703,12 +704,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
+        # (H) ExternalModule: a positively-external base (typing.Protocol,
+        # (H) js builtin.Error) keeps its edge by targeting the same external
+        # (H) node the import pass mints, mirroring Module IMPORTS.
+        (
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.FUNCTION,
+            NodeLabel.EXTERNAL_MODULE,
+        ),
     ),
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        (NodeLabel.INTERFACE,),
+        (NodeLabel.INTERFACE, NodeLabel.EXTERNAL_MODULE),
     ),
     RelationshipSchema(
         # (H) A method-body anonymous-class override is registered as a Function node,

@@ -406,12 +406,23 @@ class ClassIngestMixin:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
                 continue
-            parent_qn = self._resolve_deferred_parent_qn(entry)
-            if parent_qn is None:
+            resolved = self._resolve_deferred_parent_qn(entry)
+            if resolved is None:
                 continue
+            parent_qn, is_external = resolved
+            external_label: str | None = None
+            if is_external:
+                # (H) The import pass mints the same node for IMPORTS edges, so
+                # (H) this MERGEs idempotently when the base was imported.
+                self.import_processor.ensure_external_module_node(parent_qn)
+                external_label = cs.NodeLabel.EXTERNAL_MODULE.value
             if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
                 rel.create_implements_relationship(
-                    str(child_type), entry.child_qn, parent_qn, self.ingestor
+                    str(child_type),
+                    entry.child_qn,
+                    parent_qn,
+                    self.ingestor,
+                    interface_label=external_label,
                 )
                 self.interface_implementers.setdefault(parent_qn, set()).add(
                     entry.child_qn
@@ -427,30 +438,50 @@ class ClassIngestMixin:
                     self.function_registry,
                     self.ingestor,
                     entry.base_index,
+                    parent_label=external_label,
                 )
             emitted += 1
         return emitted
 
-    def _resolve_deferred_parent_qn(self, entry: DeferredInherit) -> str | None:
+    def _resolve_deferred_parent_qn(
+        self, entry: DeferredInherit
+    ) -> tuple[str, bool] | None:
+        """Resolve a deferred parent to (qn, is_external), or None for no edge.
+
+        First-party wins; a qn outside the project prefix is positive external
+        knowledge (import-mapped or ::-qualified) and keeps its edge onto an
+        ExternalModule node; a module-anchored GUESS that re-resolves nowhere
+        emits nothing, except a JS/TS global (Error) which is externalized.
+        """
         if self.function_registry.get(entry.parent_qn) is not None:
-            return entry.parent_qn
-        # (H) Only the module-anchored fallback shape is re-resolvable: its raw
-        # (H) written name is the remainder after the module qn. Anything else
-        # (H) (an import-mapped external qn) has no first-party node to target.
+            return entry.parent_qn, False
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not entry.parent_qn.startswith(project_prefix):
+            external = entry.parent_qn.replace(
+                cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+            )
+            return external, True
+        # (H) The module-anchored fallback shape is re-resolvable: its raw
+        # (H) written name is the remainder after the module qn.
         prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(prefix):
             return None
         raw_name = entry.parent_qn[len(prefix) :]
         resolved = self._resolve_class_name(raw_name, entry.module_qn)
         if (
-            resolved is None
+            resolved is not None
             # (H) A simple-name sweep can land on the child itself; a
             # (H) self-INHERITS is never real.
-            or resolved == entry.child_qn
-            or self.function_registry.get(resolved) is None
+            and resolved != entry.child_qn
+            and self.function_registry.get(resolved) is not None
         ):
-            return None
-        return resolved
+            return resolved, False
+        if (
+            entry.language in cs.JS_TS_LANGUAGES
+            and raw_name in cs.JS_GLOBAL_CLASS_NAMES
+        ):
+            return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
+        return None
 
     def _process_class_node(
         self,
@@ -683,6 +714,7 @@ class ClassIngestMixin:
                     parent_qn=trait_qn,
                     module_qn=owner_module_qn,
                     base_index=0,
+                    language=cs.SupportedLanguage.RUST,
                 )
             )
             # (H) Record the implementer so a Rust trait call to the sole concrete

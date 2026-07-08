@@ -1772,6 +1772,38 @@ JS_BUILTIN_TYPES: frozenset[str] = frozenset(
 )
 
 # (H) JavaScript built-in function patterns
+# (H) JS/TS runtime global classes usable as `extends` bases with no import.
+# (H) A base matching one of these that resolves to no first-party class is
+# (H) positively external (builtin.<Name>), not an unresolvable guess.
+JS_GLOBAL_CLASS_NAMES: frozenset[str] = frozenset(
+    {
+        "Error",
+        "TypeError",
+        "RangeError",
+        "SyntaxError",
+        "ReferenceError",
+        "EvalError",
+        "URIError",
+        "AggregateError",
+        "Object",
+        "Array",
+        "Function",
+        "Promise",
+        "Map",
+        "Set",
+        "WeakMap",
+        "WeakSet",
+        "Date",
+        "RegExp",
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "DataView",
+        "EventTarget",
+        "Event",
+        "HTMLElement",
+    }
+)
+
 JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
     {
         "Object.create",

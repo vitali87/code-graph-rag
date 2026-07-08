@@ -604,6 +604,12 @@ class ImportProcessor:
             return cs.NodeLabel.MODULE
         return cs.NodeLabel.EXTERNAL_MODULE
 
+    def ensure_external_module_node(self, module_path: str) -> None:
+        # (H) Public entry for non-import callers (deferred inheritance): an
+        # (H) external base keeps its edge by targeting the same ExternalModule
+        # (H) node an import of it would mint.
+        self._ensure_external_module_node(module_path, module_path)
+
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
         if not self.ingestor or not module_path:
             return
