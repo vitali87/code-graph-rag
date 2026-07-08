@@ -830,6 +830,16 @@ class ClassIngestMixin:
         # (H) live when the base is reachable.
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
         for anon_qn, method_name, base_type, _module_qn in self.java_anon_overrides:
+            # (H) A method-body anonymous override is registered as a FUNCTION (via the
+            # (H) function-ingest path), a field-initializer one as a METHOD. The graph
+            # (H) matches an edge endpoint by LABEL + qn, so emit the source with the qn's
+            # (H) ACTUAL registered label -- a hard-coded Method label drops the edge for
+            # (H) the Function-labelled overrides (the eval matches by qn and would hide
+            # (H) this, but the production Cypher would not).
+            anon_type = self.function_registry.get(anon_qn)
+            if anon_type is None:
+                continue
+            anon_label = cs.NodeLabel(anon_type.value)
             base_candidates = [
                 qn
                 for qn in self.function_registry.find_ending_with(base_type)
@@ -849,7 +859,7 @@ class ClassIngestMixin:
                     == method_name
                 ):
                     self.ingestor.ensure_relationship_batch(
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, anon_qn),
+                        (anon_label, cs.KEY_QUALIFIED_NAME, anon_qn),
                         cs.RelationshipType.OVERRIDES,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, qn),
                     )
