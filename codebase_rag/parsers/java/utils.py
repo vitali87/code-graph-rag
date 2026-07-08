@@ -361,6 +361,24 @@ def _java_cast_target_type(object_node: ASTNode) -> str | None:
     return base.strip() or None
 
 
+def _java_paren_receiver(object_node: ASTNode) -> str | None:
+    # (H) A parenthesized NON-cast receiver `(reader).m()` (or nested `((reader))`):
+    # (H) unwrap the parentheses and return the inner identifier/field-access text so the
+    # (H) call resolves through that variable's type, instead of falling to the
+    # (H) unqualified resolver and binding a same-named decoy. None when the inner
+    # (H) expression is neither an identifier nor a field access.
+    node = object_node
+    while node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(
+            (c for c in node.children if c.type not in cs.DELIMITER_TOKENS), None
+        )
+        if node is None:
+            return None
+    if node.type in (cs.TS_IDENTIFIER, cs.TS_FIELD_ACCESS):
+        return safe_decode_text(node)
+    return None
+
+
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     if call_node.type != cs.TS_METHOD_INVOCATION:
         return None
@@ -380,9 +398,13 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
                 obj = safe_decode_text(object_node)
             case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
                 # (H) A cast receiver `((T) x).m()`: the cast's target type is the
-                # (H) receiver type, so m resolves on T. Without this the call falls to
-                # (H) the unqualified path and never finds a cross-file/sibling T.
-                obj = _java_cast_target_type(object_node)
+                # (H) receiver type, so m resolves on T. A parenthesized non-cast receiver
+                # (H) `(reader).m()` keeps its inner identifier/field-access receiver.
+                # (H) Without this the call falls to the unqualified path and never finds
+                # (H) a cross-file/sibling T or the variable's type.
+                obj = _java_cast_target_type(object_node) or _java_paren_receiver(
+                    object_node
+                )
 
     arguments = 0
     if args_node := call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS):

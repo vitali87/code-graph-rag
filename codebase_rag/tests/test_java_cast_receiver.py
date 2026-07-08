@@ -77,6 +77,41 @@ def test_nested_parenthesized_cast_receiver_resolves(
     ), sorted(t for f, t in calls if "nextX" in t)
 
 
+def test_parenthesized_identifier_receiver_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A parenthesized non-cast receiver `(reader).nextX()` must resolve through the
+    # (H) `reader` variable's type (Reader), not fall to the unqualified resolver and bind
+    # (H) a same-named decoy method on the enclosing class.
+    root = temp_repo / "jpid"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "Reader.java").write_text(
+        "package com.example;\n"
+        "public class Reader { public int nextX() { return 1; } }\n",
+        encoding="utf-8",
+    )
+    # (H) M declares a decoy nextX(): without a receiver the call mis-binds to it.
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  int nextX() { return 9; }\n"
+        "  int use(Reader reader) { return (reader).nextX(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        f.endswith(".M.use(Reader)") and t.endswith(".Reader.nextX()") for f, t in calls
+    ), sorted(t for f, t in calls if "nextX" in t)
+    assert not any(
+        f.endswith(".M.use(Reader)") and t.endswith(".M.nextX()") for f, t in calls
+    ), "parenthesized identifier receiver wrongly bound to the enclosing-class decoy"
+
+
 def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
