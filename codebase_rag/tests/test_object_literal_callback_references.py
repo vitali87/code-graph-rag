@@ -345,6 +345,84 @@ def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
     )
 
 
+def test_inline_arrow_new_expression_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) A Promise executor (`new Promise((resolve, reject) => {...})`) is an inline
+    # (H) arrow handed to a constructor. JS/TS never treated `new X(...)` as a call
+    # (H) node, so the executor got no incoming edge and reported as dead (the
+    # (H) openapi-ts CancelablePromise/request plumbing is built on this pattern).
+    # (H) Constructing must reference the inline callback the same way a call does.
+    files = {
+        "make.ts": (
+            "export function make() {\n"
+            "  return new Promise((resolve, reject) => { resolve(go()) })\n"
+            "}\n\n\n"
+            "function go() { return 1 }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) A DEFINES edge always exists; the executor must gain a CALLS/REFERENCES edge.
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {b for a, r, b in rels if a.endswith("make.make") and r != defines}
+    assert any(".make.make.anonymous_" in b for b in edges), (
+        f"inline new-expression executor arrow not referenced; edges={edges}"
+    )
+
+
+def test_new_first_party_class_records_instantiation(tmp_path: Path) -> None:
+    # (H) Adding new_expression to the JS/TS call query also wires the previously
+    # (H) missing INSTANTIATES edge for `new Foo()` to a first-party class.
+    files = {
+        "app.ts": (
+            "class Widget {\n"
+            "  constructor() {}\n"
+            "}\n\n\n"
+            "export function build() {\n"
+            "  return new Widget()\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    instantiates = cs.RelationshipType.INSTANTIATES.value
+    assert _has(rels, "app.build", instantiates, "app.Widget"), (
+        f"new Widget() did not record INSTANTIATES; rels={rels}"
+    )
+
+
+def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> None:
+    # (H) An inline `.forEach(v => ...)` inside a NESTED arrow-const (encodePair inside
+    # (H) getQueryString) reported as dead: the call pass built the caller qn from the
+    # (H) ancestor arrow-const's missing `name` field, dropping the outer segment
+    # (H) (request.encodePair instead of request.getQueryString.encodePair), so the
+    # (H) inline-arg candidate never matched the registered node. The whole openapi-ts
+    # (H) query-string encoder is this shape.
+    files = {
+        "request.ts": (
+            "export const getQueryString = (params) => {\n"
+            "  const encodePair = (key, value) => {\n"
+            "    if (Array.isArray(value)) {\n"
+            "      value.forEach(v => encodePair(key, v))\n"
+            "    }\n"
+            "  }\n"
+            "  Object.entries(params).forEach(([key, value]) => encodePair(key, value))\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) A DEFINES edge always exists; require a CALLS/REFERENCES edge to the inner
+    # (H) arrow nested under the fully-qualified encodePair (request.getQueryString.
+    # (H) encodePair.anonymous_*), which only matches once the caller qn keeps the
+    # (H) outer getQueryString segment.
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {
+        b
+        for a, r, b in rels
+        if a.endswith("getQueryString.encodePair") and r != defines
+    }
+    assert any(".getQueryString.encodePair.anonymous_" in b for b in edges), (
+        f"inline forEach arrow in nested arrow-const not referenced; edges={edges}"
+    )
+
+
 def test_inline_arrow_call_argument_function_expr_is_referenced(
     tmp_path: Path,
 ) -> None:

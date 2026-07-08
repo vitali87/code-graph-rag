@@ -1280,6 +1280,16 @@ class CallProcessor:
                     return self._get_iife_target_name(func_child)
 
         match call_node.type:
+            case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
+                # (H) JS/TS `new Foo(...)` names the class via the `constructor` field
+                # (H) (there is no `function` field). Returning the constructor name
+                # (H) routes construction through the normal resolve loop: a first-party
+                # (H) class gets INSTANTIATES (+ CALLS to its constructor), and an inline
+                # (H) callback argument (a Promise executor, `new CancelablePromise(cb)`)
+                # (H) is referenced so it is not reported as dead.
+                ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+                if ctor is not None and ctor.text is not None:
+                    return ctor.text.decode(cs.ENCODING_UTF8)
             case (
                 cs.TS_CPP_BINARY_EXPRESSION
                 | cs.TS_CPP_UNARY_EXPRESSION
@@ -3084,10 +3094,19 @@ class CallProcessor:
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode(cs.ENCODING_UTF8))
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                if name_node is not None and name_node.text is not None:
+                    path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+                # (H) A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has
+                # (H) no `name` field -- the name lives on the parent declarator -- so it
+                # (H) would be dropped, flattening a nested callee's qn (request.encodePair
+                # (H) instead of request.getQueryString.encodePair). Recover the binding
+                # (H) name the definition pass used so caller and node qns agree; else the
+                # (H) callee's own inline-arg/object callbacks never match and report dead.
+                elif lang_config.language in _JS_TS_LANGUAGES and (
+                    binding := self._js_ts_arrow_binding_name(current)
+                ):
+                    path_parts.append(binding)
             elif current.type in lang_config.class_node_types:
                 return None
 
