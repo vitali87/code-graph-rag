@@ -78,6 +78,23 @@ def test_js_explicit_extension_resolves_to_module(
     assert (f"{project}.a.runA", f"{project}.b.createB") in calls, calls
 
 
+def test_js_bare_package_named_like_extension_keeps_its_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A bare npm package can legitimately END in .js (p5.js, highlight.js);
+    # (H) extension stripping applies to relative file paths only, or the
+    # (H) external package qn silently loses its real name.
+    (temp_repo / "sketch.js").write_text(
+        "import p5 from 'p5.js';\nexport const sketch = new p5();\n"
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.sketch")
+    assert "p5.js" in targets, targets
+    assert "p5" not in targets, targets
+
+
 def test_js_directory_import_resolves_to_index_module(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
