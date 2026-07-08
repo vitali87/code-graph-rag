@@ -335,6 +335,24 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
     )
 
 
+def _java_cast_target_type(object_node: ASTNode) -> str | None:
+    # (H) The simple target type of a cast receiver: unwrap a parenthesized wrapper to
+    # (H) the cast_expression, read its `type` field, strip generic args and any scope
+    # (H) so `((a.b.Reader<T>) x)` -> `Reader`. None when there is no cast type.
+    cast = object_node
+    if cast.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        cast = next(
+            (c for c in cast.children if c.type == cs.TS_JAVA_CAST_EXPRESSION), None
+        )
+    if cast is None or cast.type != cs.TS_JAVA_CAST_EXPRESSION:
+        return None
+    type_node = cast.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.text is None:
+        return None
+    base = type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+    return base.rsplit(cs.SEPARATOR_DOT, 1)[-1].strip() or None
+
+
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     if call_node.type != cs.TS_METHOD_INVOCATION:
         return None
@@ -352,6 +370,11 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
                 obj = cs.TS_SUPER
             case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
                 obj = safe_decode_text(object_node)
+            case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
+                # (H) A cast receiver `((T) x).m()`: the cast's target type is the
+                # (H) receiver type, so m resolves on T. Without this the call falls to
+                # (H) the unqualified path and never finds a cross-file/sibling T.
+                obj = _java_cast_target_type(object_node)
 
     arguments = 0
     if args_node := call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS):

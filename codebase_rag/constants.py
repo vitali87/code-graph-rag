@@ -2417,6 +2417,7 @@ TS_ERROR = "ERROR"
 TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_JAVA_CAST_EXPRESSION = "cast_expression"
 TS_ATTRIBUTE = "attribute"
 
 FIELD_OPERATOR = "operator"
