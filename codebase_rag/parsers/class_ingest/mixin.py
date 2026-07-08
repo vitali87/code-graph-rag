@@ -451,7 +451,8 @@ class ClassIngestMixin:
         First-party wins; a qn outside the project prefix is positive external
         knowledge (import-mapped or ::-qualified) and keeps its edge onto an
         ExternalModule node; a module-anchored GUESS that re-resolves nowhere
-        emits nothing, except a JS/TS global (Error) which is externalized.
+        emits nothing, except a JS/TS global (Error) or an implicitly imported
+        java.lang type (Exception, Runnable), which are externalized.
         """
         if (
             # (H) Parse-time resolution of a nested external base (`Entry
@@ -487,6 +488,13 @@ class ClassIngestMixin:
             and raw_name in cs.JS_GLOBAL_CLASS_NAMES
         ):
             return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
+        # (H) java.lang is implicitly imported: a bare base in its table is
+        # (H) positive external knowledge, not a guess.
+        if (
+            entry.language == cs.SupportedLanguage.JAVA
+            and raw_name in cs.JAVA_LANG_CLASS_NAMES
+        ):
+            return f"{cs.JAVA_LANG_PREFIX}{raw_name}", True
         return None
 
     def _process_class_node(
