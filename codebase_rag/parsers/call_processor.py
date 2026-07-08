@@ -3095,8 +3095,9 @@ class CallProcessor:
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
                 name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node is not None and name_node.text is not None:
-                    path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+                if name_node is not None:
+                    if name_node.text is not None:
+                        path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
                 # (H) A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has
                 # (H) no `name` field -- the name lives on the parent declarator -- so it
                 # (H) would be dropped, flattening a nested callee's qn (request.encodePair
