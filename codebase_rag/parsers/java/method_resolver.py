@@ -24,6 +24,29 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def _java_signature_arity(qn_or_member: str) -> int | None:
+    # (H) Top-level parameter count of a signatured Java method name
+    # (H) (`resolve(A,B,Map<K, V>)` -> 3, `create()` -> 0); None if unsignatured.
+    # (H) Generic commas (`Map<K, V>`) are nested, so only depth-0 commas separate
+    # (H) parameters. Used to pick the arity-matching overload for a call.
+    open_idx = qn_or_member.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return None
+    inner = qn_or_member[open_idx + 1 : qn_or_member.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return 0
+    depth = 0
+    count = 1
+    for ch in inner:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            count += 1
+    return count
+
+
 class JavaMethodResolverMixin:
     __slots__ = ()
     import_processor: ImportProcessor
@@ -203,29 +226,38 @@ class JavaMethodResolverMixin:
         return None
 
     def _resolve_static_or_local_method(
-        self, method_name: str, module_qn: str
+        self, method_name: str, module_qn: str, arg_count: int | None = None
     ) -> tuple[str, str] | None:
-        return next(
-            (
-                (entity_type, qn)
-                for qn, entity_type in self.function_registry.find_with_prefix(
-                    module_qn
-                )
-                if entity_type in cs.JAVA_CALLABLE_ENTITY_TYPES
-                and qn.split(cs.CHAR_PAREN_OPEN)[0].endswith(
-                    f"{cs.SEPARATOR_DOT}{method_name}"
-                )
-            ),
-            None,
-        )
+        matches = [
+            (entity_type, qn)
+            for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
+            if entity_type in cs.JAVA_CALLABLE_ENTITY_TYPES
+            and qn.split(cs.CHAR_PAREN_OPEN)[0].endswith(
+                f"{cs.SEPARATOR_DOT}{method_name}"
+            )
+        ]
+        if not matches:
+            return None
+        # (H) Prefer the overload whose parameter count matches the call's argument
+        # (H) count, so a same-named overload of a different arity is not left unmatched
+        # (H) (dead). Fall back to the first match when arity is unknown or none match.
+        if arg_count is not None and len(matches) > 1:
+            for entity_type, qn in matches:
+                if _java_signature_arity(qn) == arg_count:
+                    return entity_type, qn
+        return matches[0]
 
     def _resolve_instance_method(
-        self, object_type: str, method_name: str, module_qn: str
+        self,
+        object_type: str,
+        method_name: str,
+        module_qn: str,
+        arg_count: int | None = None,
     ) -> tuple[str, str] | None:
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
         if method_result := self._find_method_with_any_signature(
-            resolved_type, method_name, module_qn
+            resolved_type, method_name, module_qn, arg_count
         ):
             return method_result
 
@@ -237,10 +269,14 @@ class JavaMethodResolverMixin:
         return self._find_interface_method(resolved_type, method_name, module_qn)
 
     def _find_method_with_any_signature(
-        self, class_qn: str, method_name: str, current_module_qn: str | None = None
+        self,
+        class_qn: str,
+        method_name: str,
+        current_module_qn: str | None = None,
+        arg_count: int | None = None,
     ) -> tuple[str, str] | None:
         if class_qn:
-            if result := self._search_method_in_class(class_qn, method_name):
+            if result := self._search_method_in_class(class_qn, method_name, arg_count):
                 return result
 
         if class_qn and not class_qn.startswith(self.project_name):
@@ -251,8 +287,9 @@ class JavaMethodResolverMixin:
         return None
 
     def _search_method_in_class(
-        self, class_qn: str, method_name: str
+        self, class_qn: str, method_name: str, arg_count: int | None = None
     ) -> tuple[str, str] | None:
+        matches: list[tuple[str, str]] = []
         for qn, method_type in self._find_registry_entries_under(class_qn):
             if qn == class_qn:
                 continue
@@ -261,7 +298,17 @@ class JavaMethodResolverMixin:
                 continue
             member = suffix[1:]
             if self._is_matching_method(member, method_name):
-                return method_type, qn
+                matches.append((method_type, qn))
+        if not matches:
+            return None
+        # (H) Prefer the arity-matching overload so a same-named overload of a
+        # (H) different parameter count is not left unmatched (dead) -- gson's recursive
+        # (H) `resolve(3-arg)`/`resolve(4-arg)`. Fall back to the first match otherwise.
+        if arg_count is not None and len(matches) > 1:
+            for method_type, qn in matches:
+                if _java_signature_arity(qn) == arg_count:
+                    return method_type, qn
+        return matches[0]
         return None
 
     def _search_method_in_alternate_modules(
@@ -453,6 +500,7 @@ class JavaMethodResolverMixin:
 
         method_name = call_info[cs.FIELD_NAME]
         object_ref = call_info[cs.FIELD_OBJECT]
+        arg_count = call_info[cs.FIELD_ARGUMENTS]
 
         if not method_name:
             logger.debug(ls.JAVA_NO_METHOD_NAME)
@@ -470,12 +518,14 @@ class JavaMethodResolverMixin:
             # (H) enclosing class hierarchy before falling back.
             if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
                 result := self._resolve_instance_method(
-                    enclosing_qn, str(method_name), module_qn
+                    enclosing_qn, str(method_name), module_qn, arg_count
                 )
             ):
                 logger.debug(ls.JAVA_FOUND_STATIC, result=result)
                 return result
-            result = self._resolve_static_or_local_method(str(method_name), module_qn)
+            result = self._resolve_static_or_local_method(
+                str(method_name), module_qn, arg_count
+            )
             if result:
                 logger.debug(ls.JAVA_FOUND_STATIC, result=result)
             else:
@@ -492,7 +542,9 @@ class JavaMethodResolverMixin:
             return None
 
         logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED, type=object_type)
-        result = self._resolve_instance_method(object_type, str(method_name), module_qn)
+        result = self._resolve_instance_method(
+            object_type, str(method_name), module_qn, arg_count
+        )
         if result:
             logger.debug(ls.JAVA_FOUND_INSTANCE, result=result)
         else:
