@@ -161,6 +161,61 @@ def test_cpp_operator_overloads_are_roots() -> None:
     assert "proj.mod.operator_equal" in dead
 
 
+def test_override_of_reachable_method_is_reachable() -> None:
+    # (H) A call to a base/interface method dispatches at runtime to any override, so
+    # (H) an override of a REACHABLE method is itself reachable (sound virtual dispatch).
+    # (H) The graph records OVERRIDES (overrider -> overridden) but the reachability walk
+    # (H) follows CALLS/REFERENCES only, so overrides reached solely by dispatch looked
+    # (H) dead (gson's RecordHelper strategy subclasses). A call reaches the base; the
+    # (H) override must be revived; an override of a DEAD base stays dead.
+    _OVERRIDES = cs.RelationshipType.OVERRIDES.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.java"},
+            ),
+            _fn("proj.m.entry", path="m.java"),
+            _method("proj.m.Base.run(int)", "m.java"),
+            _method("proj.m.Sub.run(int)", "m.java"),
+            _method("proj.m.DeadBase.gone()", "m.java"),
+            _method("proj.m.DeadSub.gone()", "m.java"),
+        ]
+    )
+    nodes[(_FUNCTION, "proj.m.entry")][cs.KEY_IS_EXPORTED] = True
+    rels = [
+        (
+            _FUNCTION,
+            "proj.m.entry",
+            _CALLS,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Base.run(int)",
+        ),
+        (
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Sub.run(int)",
+            _OVERRIDES,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Base.run(int)",
+        ),
+        (
+            cs.NodeLabel.METHOD.value,
+            "proj.m.DeadSub.gone()",
+            _OVERRIDES,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.DeadBase.gone()",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    # (H) Base is called (via exported entry) -> live; its override is a dispatch
+    # (H) target -> revived.
+    assert "proj.m.Base.run(int)" not in dead
+    assert "proj.m.Sub.run(int)" not in dead
+    # (H) DeadBase is never called, so neither it nor its override is reachable.
+    assert "proj.m.DeadBase.gone()" in dead
+    assert "proj.m.DeadSub.gone()" in dead
+
+
 def test_root_level_tests_dir_is_excluded() -> None:
     # (H) A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
     # (H) `tests/` folder) is test infrastructure. The `/tests/` pattern needs a
