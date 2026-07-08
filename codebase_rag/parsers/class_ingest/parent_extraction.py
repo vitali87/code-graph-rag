@@ -90,9 +90,7 @@ def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
     return [guess for _, guess in extract_cpp_parent_bases(class_node, module_qn)]
 
 
-def extract_cpp_parent_bases(
-    class_node: Node, module_qn: str
-) -> list[tuple[str, str]]:
+def extract_cpp_parent_bases(class_node: Node, module_qn: str) -> list[tuple[str, str]]:
     """Return (written base name, parse-time guess qn) per base, in source order.
 
     The written name keeps its ``::`` qualifiers (template arguments stripped)

@@ -387,6 +387,10 @@ void demonstrateConceptComposition() {
         if "concept_composition" in call.args[0][2]
     ]
 
-    assert len(composition_definitions) >= 5, (
-        f"Expected at least 5 concept composition definitions, found {len(composition_definitions)}"
+    # (H) 4 real definitions: Calculator, square_root_estimate,
+    # (H) process_elements, demonstrateConceptComposition. The old floor of 5
+    # (H) counted a DEFINES onto a `qn@line` duplicate node that template
+    # (H) functions no longer mint (wrapper is the canonical node, issue #652).
+    assert len(composition_definitions) >= 4, (
+        f"Expected at least 4 concept composition definitions, found {len(composition_definitions)}"
     )

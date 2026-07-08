@@ -942,9 +942,7 @@ class CallProcessor:
     ) -> CppFunctionLocation | None:
         # (H) The registry membership check guards incremental runs, where an
         # (H) unchanged file's locations were not re-recorded this run.
-        loc = self.cpp_function_locations.get(
-            (module_qn, func_node.start_point[0] + 1)
-        )
+        loc = self.cpp_function_locations.get((module_qn, func_node.start_point[0] + 1))
         if loc is not None and loc.qualified_name in self._resolver.function_registry:
             return loc
         return None

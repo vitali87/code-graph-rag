@@ -645,9 +645,9 @@ class FunctionIngestMixin:
                 qualified_name=resolution.qualified_name,
                 container_qn=None,
             )
-            self.cpp_function_locations[
-                (module_qn, func_node.start_point[0] + 1)
-            ] = location
+            self.cpp_function_locations[(module_qn, func_node.start_point[0] + 1)] = (
+                location
+            )
             # (H) A template wrapper's body walk in Pass 3 visits the INNER
             # (H) definition (it starts on its own line), so record that line
             # (H) against the wrapper's node too.
