@@ -509,7 +509,7 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
 
 
-class CppFunctionLocation(NamedTuple):
+class FunctionLocation(NamedTuple):
     """Where the definition pass put a C++ function/method node.
 
     Keyed by (module_qn, start_line) so Pass-3 call attribution reuses the

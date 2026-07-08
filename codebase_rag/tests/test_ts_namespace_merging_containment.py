@@ -71,14 +71,13 @@ def test_merged_namespace_member_calls_attribute_to_registered_qn(
     }
     # (H) info() calls the sibling namespace function log(); both live under
     # (H) the namespace's registered (duplicate-suffixed) qn.
-    log_edges = [
-        (f, t) for f, t in calls if f.endswith(".info") and t.endswith(".log")
-    ]
+    log_edges = [(f, t) for f, t in calls if f.endswith(".info") and t.endswith(".log")]
     assert log_edges, calls
     for from_qn, to_qn in log_edges:
-        assert from_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] == to_qn.rsplit(
-            cs.SEPARATOR_DOT, 1
-        )[0], (from_qn, to_qn)
+        assert (
+            from_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            == to_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        ), (from_qn, to_qn)
     # (H) The module-level Logger("hi") call still reaches the merged function.
     assert (f"{project}.namespace_merging", f"{project}.namespace_merging.Logger") in (
         calls

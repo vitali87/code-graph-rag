@@ -11,9 +11,9 @@ from .. import logs as ls
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
-    CppFunctionLocation,
     DeferredCppInherit,
     DeferredInherit,
+    FunctionLocation,
     FunctionRegistryTrieProtocol,
     SimpleNameLookup,
 )
@@ -105,7 +105,7 @@ class DefinitionProcessor(
         # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
         # (H) the registered label/qn instead of re-deriving them structurally
         # (H) (the walks diverge on preprocessor-distorted class bodies).
-        self.cpp_function_locations: dict[tuple[str, int], CppFunctionLocation] = {}
+        self.function_locations: dict[tuple[str, int], FunctionLocation] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
         # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # (H) registered; resolve_deferred_inherits re-resolves the guesses.

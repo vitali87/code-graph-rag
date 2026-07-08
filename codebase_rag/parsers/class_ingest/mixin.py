@@ -14,9 +14,9 @@ from ...config import settings
 from ...language_spec import LanguageSpec
 from ...types_defs import (
     ASTNode,
-    CppFunctionLocation,
     DeferredCppInherit,
     DeferredInherit,
+    FunctionLocation,
     NodeType,
     PropertyDict,
 )
@@ -139,7 +139,7 @@ class ClassIngestMixin:
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
-    cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
+    function_locations: dict[tuple[str, int], FunctionLocation]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
@@ -858,18 +858,20 @@ class ClassIngestMixin:
                 self.java_anon_overrides.append(
                     (ingested_qn, method_name, base, module_qn)
                 )
-            if language == cs.SupportedLanguage.CPP:
-                # (H) Record where this method landed so Pass-3 call attribution
-                # (H) reuses the registered qn/label instead of re-deriving them
-                # (H) (the walks diverge on preprocessor-distorted class bodies).
-                if ingested_qn is not None and module_qn is not None:
-                    self.cpp_function_locations[
-                        (module_qn, method_node.start_point[0] + 1)
-                    ] = CppFunctionLocation(
+            # (H) Record where this method landed so Pass-3 call attribution
+            # (H) reuses the registered qn/label instead of re-deriving them.
+            # (H) The walks diverge on preprocessor-distorted C++ class bodies
+            # (H) and on TS declaration merging, where the member registers
+            # (H) under the namespace's duplicate-suffixed qn (issue #652).
+            if ingested_qn is not None and module_qn is not None:
+                self.function_locations[(module_qn, method_node.start_point[0] + 1)] = (
+                    FunctionLocation(
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
                     )
+                )
+            if language == cs.SupportedLanguage.CPP:
                 # (H) Record a C++ method's return type so a chained call off a
                 # (H) static factory method (`parser(...).parse(...)`, nlohmann's
                 # (H) basic_json) can type the receiver and resolve the next hop.
