@@ -85,3 +85,40 @@ def test_anon_override_unqualified_call_binds_to_base(
     assert not any(
         f.endswith(".read") and t.endswith(".M.helper()") for f, t in calls
     ), "anon override call wrongly bound to the enclosing class's decoy helper"
+
+
+def test_anon_override_explicit_this_call_binds_to_base(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `this.helper()` inside a method-body anonymous override dispatches on the anon
+    # (H) (its base), not the enclosing named class -- same as the bare-call case but via
+    # (H) the explicit-`this` receiver path.
+    root = temp_repo / "janonthis"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "class Base {\n"
+        "  int helper() { return 1; }\n"
+        "  int read() { return 0; }\n"
+        "}\n"
+        "public class M {\n"
+        "  int helper() { return 99; }\n"
+        "  Base make() {\n"
+        "    return new Base() {\n"
+        "      @Override int read() { return this.helper(); }\n"
+        "    };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        f.endswith(".read") and t.endswith(".Base.helper()") for f, t in calls
+    ), sorted(t for f, t in calls if "helper" in t)
+    assert not any(
+        f.endswith(".read") and t.endswith(".M.helper()") for f, t in calls
+    ), "explicit this.helper() in anon wrongly bound to enclosing class"

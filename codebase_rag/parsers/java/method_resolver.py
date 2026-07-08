@@ -103,9 +103,13 @@ class JavaMethodResolverMixin:
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # (H) Check for 'this' reference - prefer the lexical containing class (precise in
-        # (H) multi-class files); fall back to the first class under the module otherwise.
+        # (H) Check for 'this' reference - inside a method-body anonymous class `this`
+        # (H) is the anon (its base type), which the lexical named-class walk misses;
+        # (H) prefer that, then the lexical containing class (precise in multi-class
+        # (H) files); fall back to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
+            if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
+                return anon_base
             if lexical := self._lexical_class_qn(context_node, module_qn):
                 return lexical
             return next(
