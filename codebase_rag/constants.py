@@ -565,6 +565,21 @@ RUST_TRAIT_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# (H) Java serialization hooks the java.io runtime invokes reflectively during
+# (H) (de)serialization -- never through a call the graph can see -- so they are
+# (H) reachability roots (like Python dunders / Rust trait methods), gated by the .java
+# (H) extension. These names are reserved by the Serializable contract, so rooting them
+# (H) by name under-reports a same-named genuinely-dead method rather than mis-reporting.
+JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "readObject",
+        "writeObject",
+        "readObjectNoData",
+        "readResolve",
+        "writeReplace",
+    }
+)
+
 # (H) Base classes that mark a class as a structural interface: its method stubs
 # (H) are never call targets themselves (callers resolve to the implementations),
 # (H) so dead-code analysis roots every method the class defines.
