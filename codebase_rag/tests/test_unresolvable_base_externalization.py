@@ -125,3 +125,51 @@ class AppError extends Exception
         "Exception",
     )
     assert expected in inherits, inherits
+
+
+def test_rust_shadowed_std_trait_externalizes(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) thrift's errors.rs: `pub enum Error` implements the std trait ALSO
+    # (H) written `Error`; parse-time resolution lands on the enum itself and
+    # (H) a self-edge is never real, but the WRITTEN bare name is still a
+    # (H) syntactic fact and must externalize (the reference is to the
+    # (H) shadowed outer name, not the child).
+    (temp_repo / "errors.rs").write_text(
+        """
+use std::fmt;
+
+pub enum Error {
+    Transport(u32),
+}
+
+impl Error for Error {
+    fn description(&self) -> &str {
+        "err"
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "err")
+    }
+}
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    implements = {
+        (call.args[0][2], str(call.args[2][0]), call.args[2][2])
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
+        )
+    }
+    expected = (
+        f"{project}.errors.Error",
+        cs.NodeLabel.EXTERNAL_MODULE.value,
+        "Error",
+    )
+    assert expected in implements, implements
+    for frm, _, to in implements:
+        assert frm != to, implements
