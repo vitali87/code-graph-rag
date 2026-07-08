@@ -195,4 +195,10 @@ class GoTypeInferenceEngine:
             # (H) `&T{}` wraps the composite literal in its operand.
             operand = value.child_by_field_name(cs.FIELD_OPERAND)
             return self._infer_value_type(operand) if operand else None
+        if value.type == cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
+            # (H) `x := y.(T)` / `y.(*T)` (gin's `c := pool.Get().(*Context)`): the
+            # (H) asserted type is x's type, so a later field-hop / method call on x
+            # (H) resolves. type_identifier_text unwraps the `*T` pointer.
+            type_node = value.child_by_field_name(cs.FIELD_TYPE)
+            return type_identifier_text(type_node) if type_node else None
         return None

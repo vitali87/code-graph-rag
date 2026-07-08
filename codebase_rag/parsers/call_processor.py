@@ -1798,6 +1798,24 @@ class CallProcessor:
                     (callee_type, qn_key, target_qn),
                 )
 
+            if (
+                language == cs.SupportedLanguage.GO
+                and callee_type == cs.NodeLabel.FUNCTION
+            ):
+                # (H) A bare Go call resolves to one file's copy of a package-level
+                # (H) function; same-package same-name siblings are mutually-exclusive
+                # (H) build-tag variants (gin's `validate`), so emit an edge to each so
+                # (H) no build variant is reported dead. sorted(): the target label is a
+                # (H) StrEnum whose set iteration order is hash-randomized, so sort for
+                # (H) deterministic output (mirrors cpp_dispatch_targets).
+                for sibling_type, sibling_qn in sorted(
+                    resolver.go_package_sibling_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(sibling_qn):
+                        ensure_rel(
+                            caller_spec, calls_rel, (sibling_type, qn_key, variant)
+                        )
+
     def _ingest_operator_dispatch_calls(
         self,
         caller_node: Node,
