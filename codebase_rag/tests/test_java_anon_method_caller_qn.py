@@ -122,3 +122,34 @@ def test_anon_override_explicit_this_call_binds_to_base(
     assert not any(
         f.endswith(".read") and t.endswith(".M.helper()") for f, t in calls
     ), "explicit this.helper() in anon wrongly bound to enclosing class"
+
+
+def test_anon_own_method_unqualified_call_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An unqualified call to the anonymous class's OWN (non-inherited) method
+    # (H) (gson's `delegate().read()` where `delegate()` is defined in the same anon)
+    # (H) must resolve; the anon's own methods register as Function nodes, which the
+    # (H) module-wide fallback previously skipped.
+    root = temp_repo / "janonown"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "public class M {\n"
+        "  Object make() {\n"
+        "    return new Object() {\n"
+        "      int helper() { return 1; }\n"
+        "      int read() { return helper(); }\n"
+        "    };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        f.endswith(".read") and t.endswith(".helper") for f, t in calls
+    ), sorted(t for f, t in calls if "helper" in t)
