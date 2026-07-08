@@ -115,3 +115,40 @@ def test_local_from_field_method_chain_resolves(tmp_path: Path) -> None:
     # (H) the false self-edge from mis-resolving root.addRoute to the enclosing
     # (H) type's same-named method must not appear.
     assert ("proj.m.Engine.addRoute", "proj.m.Engine.addRoute") not in calls
+
+
+def test_direct_field_hop_method_call_resolves(tmp_path: Path) -> None:
+    # (H) The gin `ServeHTTP` shape: `c := pool.Get().(*Context)` binds c via a TYPE
+    # (H) ASSERTION, then `c.writermem.reset(w)` is a field-hop receiver called INLINE
+    # (H) with no intermediate local. Two gaps compose: (1) the assertion must type c
+    # (H) as Context; (2) `writermem` is a struct field of type responseWriter, so
+    # (H) `.reset` must resolve to responseWriter.reset via the field-type map. A
+    # (H) same-named decoy `Context.reset` (gin has one) defeats the trie coincidence:
+    # (H) the bare-method fallback mis-binds to Context.reset and orphans
+    # (H) responseWriter.reset unless both the assertion and the field hop resolve.
+    (tmp_path / "m.go").write_text(
+        "package p\n"
+        "type responseWriter struct{}\n"
+        "func (w *responseWriter) reset(x int) {}\n"
+        "type Context struct { writermem responseWriter }\n"
+        "func (c *Context) reset() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "gin.go").write_text(
+        "package p\n"
+        "type pool struct{}\n"
+        "func (p *pool) Get() any { return nil }\n"
+        "type Engine struct { pool pool }\n"
+        "func (e *Engine) serve() {\n"
+        "  c := e.pool.Get().(*Context)\n"
+        "  c.writermem.reset(1)\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ingestor = _capture(tmp_path, "proj")
+    calls = {
+        (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
+    }
+    assert ("proj.gin.Engine.serve", "proj.m.responseWriter.reset") in calls
+    # (H) must not mis-resolve the field hop to the same-named enclosing-type method.
+    assert ("proj.gin.Engine.serve", "proj.m.Context.reset") not in calls

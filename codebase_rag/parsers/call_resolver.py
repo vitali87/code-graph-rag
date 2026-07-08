@@ -394,6 +394,38 @@ class CallResolver:
                 targets.add((self.function_registry[override_qn], override_qn))
         return targets
 
+    def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) Go package-level functions are package-scoped, but cgr keys each file as
+        # (H) its own module (`pkgdir.file.name`). Two same-package functions with the
+        # (H) same name can ONLY be mutually-exclusive build-tag variants (gin's
+        # (H) `validate` under `//go:build !nomsgpack` vs `nomsgpack`) -- the compiler
+        # (H) rejects duplicate top-level identifiers in a package otherwise. A bare call
+        # (H) resolves to just one file's copy, orphaning the other build's copy; return
+        # (H) every same-package same-name package-level sibling so no build variant is
+        # (H) reported dead. Revive-only and precise: a same-name function in a DIFFERENT
+        # (H) package (different directory) is a distinct function, never a variant, so
+        # (H) the package-dir equality guard excludes it.
+        file_module_qn, sep, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        pkg_dir, dsep, _file = file_module_qn.rpartition(cs.SEPARATOR_DOT)
+        if not dsep:
+            return set()
+        targets: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(name):
+            if (
+                qn == callee_qn
+                or self.function_registry.get(qn) != cs.NodeLabel.FUNCTION
+            ):
+                continue
+            other_module, d, other_name = qn.rpartition(cs.SEPARATOR_DOT)
+            if not d or other_name != name or other_module == file_module_qn:
+                continue
+            other_pkg, d2, _f = other_module.rpartition(cs.SEPARATOR_DOT)
+            if d2 and other_pkg == pkg_dir:
+                targets.add((self.function_registry[qn], qn))
+        return targets
+
     def cpp_dispatch_targets(
         self,
         call_name: str,
@@ -1179,7 +1211,55 @@ class CallResolver:
                     )
                     return inherited_method
 
-        return None
+        return self._resolve_field_hop_method(
+            parts, call_name, import_map, module_qn, local_var_types
+        )
+
+    def _resolve_field_hop_method(
+        self,
+        parts: list[str],
+        call_name: str,
+        import_map: dict[str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # (H) A paren-free field-hop receiver called inline (gin's `c.writermem.reset`):
+        # (H) `c` is a typed local (Context), each middle segment is a struct FIELD whose
+        # (H) recorded type advances the receiver (writermem -> responseWriter), and the
+        # (H) final segment is a method on the last field's type. Resolves ONLY when every
+        # (H) middle segment is a known field and the method exists -- never a name-only
+        # (H) fallback -- so it can revive a dropped edge but never mis-bind. Distinct
+        # (H) from the stored-local field-hop (`root := e.field.get(); root.m()`) which is
+        # (H) already typed via _enrich_go_call_locals; this is the no-local direct form.
+        if len(parts) < 3 or not local_var_types:
+            return None
+        current_type = local_var_types.get(parts[0])
+        if not current_type:
+            return None
+        class_qn = self._resolve_class_qn_from_type(current_type, import_map, module_qn)
+        for field in parts[1:-1]:
+            if not class_qn:
+                return None
+            field_type = self.type_inference.class_field_types.get(class_qn, {}).get(
+                field
+            )
+            if not field_type:
+                return None
+            class_qn = self._chain_class_qn(field_type, module_qn)
+        if not class_qn:
+            return None
+        method_name = parts[-1]
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=parts[0],
+                var_type=current_type,
+            )
+            return self.function_registry[method_qn], method_qn
+        return self._resolve_inherited_method(class_qn, method_name)
 
     def operator_dunder_targets(
         self,
