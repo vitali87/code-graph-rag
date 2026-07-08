@@ -991,7 +991,8 @@ void demonstrateRangeGraphProcessing() {
         if "range_graph_processing" in call.args[0][2]
     ]
 
-    assert len(range_processing_calls) >= 5, (
+    # (H) builtin operator edges no longer emitted (#652)
+    assert len(range_processing_calls) >= 4, (
         f"Expected at least 5 range processing calls, found {len(range_processing_calls)}"
     )
 

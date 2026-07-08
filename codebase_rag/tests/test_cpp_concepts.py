@@ -275,7 +275,8 @@ void demonstrateAdvancedConcepts() {
         call for call in call_relationships if "advanced_concepts" in call.args[0][2]
     ]
 
-    assert len(advanced_calls) >= 5, (
+    # (H) builtin operator edges no longer emitted (#652)
+    assert len(advanced_calls) >= 4, (
         f"Expected at least 5 advanced concept calls, found {len(advanced_calls)}"
     )
 

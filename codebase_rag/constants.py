@@ -1804,40 +1804,6 @@ JS_FUNCTION_PROTOTYPE_METHODS = frozenset(
     {JS_METHOD_BIND, JS_METHOD_CALL, JS_METHOD_APPLY}
 )
 
-# (H) C++ operator mappings
-CPP_OPERATORS: dict[str, str] = {
-    "operator_plus": "builtin.cpp.operator_plus",
-    "operator_minus": "builtin.cpp.operator_minus",
-    "operator_multiply": "builtin.cpp.operator_multiply",
-    "operator_divide": "builtin.cpp.operator_divide",
-    "operator_modulo": "builtin.cpp.operator_modulo",
-    "operator_equal": "builtin.cpp.operator_equal",
-    "operator_not_equal": "builtin.cpp.operator_not_equal",
-    "operator_less": "builtin.cpp.operator_less",
-    "operator_greater": "builtin.cpp.operator_greater",
-    "operator_less_equal": "builtin.cpp.operator_less_equal",
-    "operator_greater_equal": "builtin.cpp.operator_greater_equal",
-    "operator_assign": "builtin.cpp.operator_assign",
-    "operator_plus_assign": "builtin.cpp.operator_plus_assign",
-    "operator_minus_assign": "builtin.cpp.operator_minus_assign",
-    "operator_multiply_assign": "builtin.cpp.operator_multiply_assign",
-    "operator_divide_assign": "builtin.cpp.operator_divide_assign",
-    "operator_modulo_assign": "builtin.cpp.operator_modulo_assign",
-    "operator_increment": "builtin.cpp.operator_increment",
-    "operator_decrement": "builtin.cpp.operator_decrement",
-    "operator_left_shift": "builtin.cpp.operator_left_shift",
-    "operator_right_shift": "builtin.cpp.operator_right_shift",
-    "operator_bitwise_and": "builtin.cpp.operator_bitwise_and",
-    "operator_bitwise_or": "builtin.cpp.operator_bitwise_or",
-    "operator_bitwise_xor": "builtin.cpp.operator_bitwise_xor",
-    "operator_bitwise_not": "builtin.cpp.operator_bitwise_not",
-    "operator_logical_and": "builtin.cpp.operator_logical_and",
-    "operator_logical_or": "builtin.cpp.operator_logical_or",
-    "operator_logical_not": "builtin.cpp.operator_logical_not",
-    "operator_subscript": "builtin.cpp.operator_subscript",
-    "operator_call": "builtin.cpp.operator_call",
-}
-
 # (H) Language CLI paths and patterns
 LANG_GRAMMARS_DIR = "grammars"
 LANG_CONFIG_FILE = "codebase_rag/language_spec.py"

@@ -33,7 +33,13 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
 
 
 def extract_namespace_path(node: Node) -> list[str]:
-    """Names of the namespace blocks enclosing *node*, outermost first."""
+    """Names of the namespace blocks enclosing *node*, outermost first.
+
+    C++17 nested syntax (`namespace a::b {`) parses as ONE namespace node
+    named `a::b`; split it so both spellings of the same namespaces yield
+    identical qn segments (`a.b`), matching classic nesting and the libclang
+    frontend's nested cursors.
+    """
     path_parts: list[str] = []
     current = node.parent
 
@@ -56,7 +62,9 @@ def extract_namespace_path(node: Node) -> list[str]:
                         namespace_name = safe_decode_text(child)
                         break
             if namespace_name:
-                path_parts.append(namespace_name)
+                path_parts.extend(
+                    reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON))
+                )
         current = current.parent
 
     path_parts.reverse()

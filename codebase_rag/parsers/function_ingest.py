@@ -45,7 +45,12 @@ class FunctionResolution(NamedTuple):
 
 
 class _DeferredMethod(NamedTuple):
-    """Out-of-class C++ method whose class hasn't been parsed yet."""
+    """Out-of-class C++ method whose class hasn't been parsed yet.
+
+    namespace_path carries the definition site's enclosing namespaces so the
+    class resolves scope-first: two same-leaf classes (ast::Type and
+    ast::analysis::Type) are otherwise indistinguishable by leaf lookup.
+    """
 
     method_name: str
     class_name: str
@@ -53,6 +58,8 @@ class _DeferredMethod(NamedTuple):
     method_props: PropertyDict
     return_type: str | None
     module_qn: str
+    namespace_path: str
+    start_line: int
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -102,6 +109,7 @@ class FunctionIngestMixin:
     _deferred_cpp_containment: list[_DeferredCppContainment]
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
+    cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -240,7 +248,9 @@ class FunctionIngestMixin:
         leaf_name = class_name_normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
         if leaf_name in self.simple_name_lookup:
-            for candidate_qn in self.simple_name_lookup[leaf_name]:
+            # (H) Sorted: the lookup is a set, and same-leaf classes in
+            # (H) different namespaces would otherwise bind nondeterministically.
+            for candidate_qn in sorted(self.simple_name_lookup[leaf_name]):
                 node_type = self.function_registry.get(candidate_qn)
                 if node_type in {NodeType.CLASS, NodeType.TYPE}:
                     # (H) An out-of-class nested definition keeps `Outer::Inner`
@@ -278,7 +288,20 @@ class FunctionIngestMixin:
         if not class_name:
             return False
 
-        class_qn, resolved = self._resolve_cpp_class_qn(class_name, module_qn)
+        # (H) Scope-first (see resolve_deferred_cpp_methods): the enclosing
+        # (H) namespaces distinguish same-leaf classes.
+        namespace_path = cs.SEPARATOR_DOT.join(
+            cpp_utils.extract_namespace_path(func_node)
+        )
+        candidates = [class_name]
+        if namespace_path:
+            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
+        resolved = False
+        class_qn = ""
+        for candidate in candidates:
+            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
+            if resolved:
+                break
         file_path = self.module_qn_to_file_path.get(module_qn)
         # (H) The out-of-class DEFINITION carries the return type; record it here (keyed
         # (H) by the method qn) so a factory chain `parser(1).parse()` can type the
@@ -301,6 +324,12 @@ class FunctionIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
+            if bound_name := cpp_utils.extract_function_name(func_node):
+                # (H) Record the binding so Pass-3 call attribution reuses this
+                # (H) exact decision instead of re-resolving (and diverging).
+                self.cpp_out_of_class_methods[
+                    (module_qn, func_node.start_point[0] + 1)
+                ] = (f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}", class_qn)
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
             ):
@@ -334,6 +363,10 @@ class FunctionIngestMixin:
                     method_props=props,
                     return_type=return_type,
                     module_qn=module_qn,
+                    namespace_path=cs.SEPARATOR_DOT.join(
+                        cpp_utils.extract_namespace_path(func_node)
+                    ),
+                    start_line=func_node.start_point[0] + 1,
                 )
             )
 
@@ -352,9 +385,28 @@ class FunctionIngestMixin:
 
         ingested = 0
         for entry in deferred:
-            real_class_qn, resolved = self._resolve_cpp_class_qn(entry.class_name, "")
+            # (H) Scope-first: the namespace-qualified name distinguishes
+            # (H) same-leaf classes (ast::Type vs ast::analysis::Type); the raw
+            # (H) written qualifier is the fallback for other scopes.
+            candidates = [entry.class_name]
+            if entry.namespace_path:
+                candidates.insert(
+                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
+                )
+            resolved = False
+            real_class_qn = entry.fallback_class_qn
+            for candidate in candidates:
+                real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+                if resolved:
+                    break
             class_qn = real_class_qn if resolved else entry.fallback_class_qn
             method_qn = f"{class_qn}.{entry.method_name}"
+            # (H) Record the binding so Pass-3 call attribution reuses this
+            # (H) exact decision instead of re-resolving (and diverging).
+            self.cpp_out_of_class_methods[(entry.module_qn, entry.start_line)] = (
+                method_qn,
+                class_qn,
+            )
 
             props = dict(entry.method_props)
             props[cs.KEY_QUALIFIED_NAME] = method_qn
