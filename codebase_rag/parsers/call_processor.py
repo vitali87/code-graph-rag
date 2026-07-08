@@ -13,7 +13,11 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
-from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from ..types_defs import (
+    CppFunctionLocation,
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+)
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -158,6 +162,7 @@ class CallProcessor:
         "module_qn_to_file_path",
         "_path_to_module_qn",
         "cpp_out_of_class_methods",
+        "cpp_function_locations",
         "_resolver",
         "_flow_param_names",
         "_flow_args",
@@ -178,6 +183,8 @@ class CallProcessor:
         interface_implementers: dict[str, set[str]] | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
+        cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
+        | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -185,6 +192,7 @@ class CallProcessor:
         self.module_qn_to_file_path = module_qn_to_file_path or {}
         self._path_to_module_qn: dict[Path, str] | None = None
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
+        self.cpp_function_locations = cpp_function_locations or {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -794,6 +802,30 @@ class CallProcessor:
                 )
             if not func_name:
                 continue
+            # (H) The definition pass records where every C++ function/method node
+            # (H) landed; reuse that qn/label instead of re-deriving them from the
+            # (H) AST -- the two walks diverge on preprocessor-distorted class
+            # (H) bodies and every divergence is a phantom caller (issue #652).
+            if language == cs.SupportedLanguage.CPP and (
+                loc := self._cpp_recorded_caller(func_node, module_qn)
+            ):
+                filtered = (
+                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+                    if all_call_nodes is not None and call_starts is not None
+                    else None
+                )
+                self._ingest_function_calls(
+                    func_node,
+                    loc.qualified_name,
+                    loc.label,
+                    module_qn,
+                    language,
+                    queries,
+                    loc.container_qn,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
+                continue
             # (H) An out-of-line C++ method definition (`Ret Class::method() {...}`
             # (H) at namespace/file scope) is bound by the definition pass to its
             # (H) class node (qn `class_qn.method`). Attribute its body's calls to
@@ -905,6 +937,16 @@ class CallProcessor:
             return caller_qn, container_qn
         return None
 
+    def _cpp_recorded_caller(
+        self, func_node: Node, module_qn: str
+    ) -> CppFunctionLocation | None:
+        # (H) The registry membership check guards incremental runs, where an
+        # (H) unchanged file's locations were not re-recorded this run.
+        loc = self.cpp_function_locations.get((module_qn, func_node.start_point[0] + 1))
+        if loc is not None and loc.qualified_name in self._resolver.function_registry:
+            return loc
+        return None
+
     def _cpp_out_of_class_method_caller(
         self, func_node: Node, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -1008,9 +1050,19 @@ class CallProcessor:
             # (H) qn through the enclosing-function chain (Class.method.nested, not
             # (H) the method-dropping Class.nested) and label a nested function
             # (H) FUNCTION, so the CALLS edge joins the real node.
-            caller_qn, caller_label = self._class_member_qn_and_label(
-                method_node, class_qn, method_name, lang_config, language
-            )
+            class_context = class_qn
+            if language == cs.SupportedLanguage.CPP and (
+                loc := self._cpp_recorded_caller(method_node, module_qn)
+            ):
+                # (H) Reuse the definition pass's recorded qn/label; the class
+                # (H) walk's structural derivation diverges from it on
+                # (H) preprocessor-distorted class bodies (issue #652).
+                caller_qn, caller_label = loc.qualified_name, loc.label
+                class_context = loc.container_qn or class_qn
+            else:
+                caller_qn, caller_label = self._class_member_qn_and_label(
+                    method_node, class_qn, method_name, lang_config, language
+                )
             filtered = (
                 self._calls_owned_by(
                     method_node, owned_func_nodes, all_call_nodes, call_starts
@@ -1025,7 +1077,7 @@ class CallProcessor:
                 module_qn,
                 language,
                 queries,
-                class_qn,
+                class_context,
                 call_nodes=filtered,
                 call_name_cache=call_name_cache,
             )

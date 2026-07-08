@@ -139,5 +139,6 @@ class ProcessorFactory:
                 interface_implementers=self.definition_processor.interface_implementers,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
+                cpp_function_locations=self.definition_processor.cpp_function_locations,
             )
         return self._call_processor

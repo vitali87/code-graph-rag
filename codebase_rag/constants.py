@@ -1320,7 +1320,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property"
+    "n.is_property AS is_property, n.path AS path"
 )
 
 # (H) Inbound reference edges (from unchanged files) into symbols defined in one

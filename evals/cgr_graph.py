@@ -162,6 +162,7 @@ class _StatefulIngestor:
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                     }
                     defs.append(row)
                 return defs

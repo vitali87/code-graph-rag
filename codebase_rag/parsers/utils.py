@@ -559,21 +559,21 @@ def ingest_method(
     repo_path: Path | None = None,
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
-) -> None:
+) -> str | None:
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
-            return
+            return None
     elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # (H) field on the function node; take the binding name from the enclosing
         # (H) field definition so it is modelled as a member instead of dropped.
         if not (method_name := _js_ts_field_member_name(method_node, language)):
-            return
+            return None
     elif (text := method_name_node.text) is None:
-        return
+        return None
     else:
         method_name = text.decode(cs.ENCODING_UTF8)
 
@@ -641,7 +641,7 @@ def ingest_method(
                 rel_type=cs.RelationshipType.DEFINES_METHOD.value,
             )
         )
-        return
+        return method_qn
 
     # (H) The DEFINES_METHOD parent is matched in the graph by LABEL +
     # (H) qualified_name, so it must carry the container's real node label. Callers
@@ -658,6 +658,7 @@ def ingest_method(
         cs.RelationshipType.DEFINES_METHOD,
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
     )
+    return method_qn
 
 
 def module_function_props(

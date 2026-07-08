@@ -9,7 +9,13 @@ from tree_sitter import QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
-from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from ..types_defs import (
+    ASTNode,
+    CppFunctionLocation,
+    DeferredCppInherit,
+    FunctionRegistryTrieProtocol,
+    SimpleNameLookup,
+)
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
@@ -88,6 +94,17 @@ class DefinitionProcessor(
         # (H) out-of-class C++ method the definition pass bound; Pass-3 call
         # (H) attribution reuses these decisions instead of re-resolving.
         self.cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] = {}
+        # (H) (module_qn, def start_line) -> location of EVERY C++ function or
+        # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
+        # (H) the registered label/qn instead of re-deriving them structurally
+        # (H) (the walks diverge on preprocessor-distorted class bodies).
+        self.cpp_function_locations: dict[tuple[str, int], CppFunctionLocation] = {}
+        self._deferred_cpp_inherits: list[DeferredCppInherit] = []
+        # (H) {qn: file path} for definitions rehydrated from the graph on an
+        # (H) incremental run, whose modules are absent from module_qn_to_file_path
+        # (H) (only re-parsed files populate it). _is_cpp_defined falls back to
+        # (H) this so cross-file resolution into UNCHANGED headers still works.
+        self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 

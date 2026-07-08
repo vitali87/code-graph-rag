@@ -12,7 +12,12 @@ from ... import constants as cs
 from ... import logs
 from ...config import settings
 from ...language_spec import LanguageSpec
-from ...types_defs import ASTNode, PropertyDict
+from ...types_defs import (
+    ASTNode,
+    CppFunctionLocation,
+    DeferredCppInherit,
+    PropertyDict,
+)
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
@@ -111,8 +116,10 @@ class ClassIngestMixin:
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
+    cpp_function_locations: dict[tuple[str, int], CppFunctionLocation]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
+    _deferred_cpp_inherits: list[DeferredCppInherit]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -161,6 +168,11 @@ class ClassIngestMixin:
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str]: ...
+
+    @abstractmethod
+    def _resolve_cpp_class_qn(
+        self, class_name: str, module_qn: str, exclude_qn: str | None = None
+    ) -> tuple[str, bool]: ...
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
@@ -261,6 +273,67 @@ class ClassIngestMixin:
             )
             registered += 1
         return registered
+
+    def resolve_deferred_cpp_inherits(self) -> int:
+        """Emit C++ INHERITS edges now that every class is registered.
+
+        A base written in another header resolves scope-first across all
+        parsed files (the same lookup out-of-class methods use); a base that
+        resolves nowhere emits no edge, because the module-anchored guess is a
+        phantom endpoint the database silently drops anyway. Resolved qns
+        replace the guesses in class_inheritance in place so Pass-3 method
+        resolution and override detection walk the real hierarchy.
+        """
+        deferred = self._deferred_cpp_inherits
+        if not deferred:
+            return 0
+        self._deferred_cpp_inherits = []
+        emitted = 0
+        for entry in deferred:
+            parent_qn = self._resolve_cpp_base_qn(entry)
+            if parent_qn is None:
+                continue
+            bases = self.class_inheritance.get(entry.child_qn)
+            if bases is not None and entry.base_index < len(bases):
+                bases[entry.base_index] = parent_qn
+            rel.create_inheritance_relationship(
+                entry.child_label,
+                entry.child_qn,
+                parent_qn,
+                self.function_registry,
+                self.ingestor,
+                entry.base_index,
+            )
+            emitted += 1
+        return emitted
+
+    def _resolve_cpp_base_qn(self, entry: DeferredCppInherit) -> str | None:
+        normalized = entry.base_name.replace(
+            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+        )
+        # (H) Scope-first (see resolve_deferred_cpp_methods): the enclosing
+        # (H) namespaces distinguish same-leaf classes. The child itself is
+        # (H) excluded so `class Type : public other::Type` never self-inherits.
+        candidates = [normalized]
+        if entry.namespace_path:
+            candidates.insert(
+                0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{normalized}"
+            )
+        for candidate in candidates:
+            parent_qn, resolved = self._resolve_cpp_class_qn(
+                candidate, "", exclude_qn=entry.child_qn
+            )
+            if resolved:
+                return parent_qn
+        # (H) The guess strips a qualified base (`other::Type`) to its leaf, so
+        # (H) it can collide with the CHILD's own qn when the base is
+        # (H) unresolvable; a self-INHERITS is never real.
+        if (
+            entry.guess_qn != entry.child_qn
+            and self.function_registry.get(entry.guess_qn) is not None
+        ):
+            return entry.guess_qn
+        return None
 
     def _process_class_node(
         self,
@@ -415,6 +488,7 @@ class ClassIngestMixin:
             self._resolve_to_qn,
             self.function_registry,
             self.interface_implementers,
+            defer_cpp_inherits=self._deferred_cpp_inherits,
         )
         if language == cs.SupportedLanguage.CPP:
             # (H) Record this class's member-field types now (from the class body,
@@ -448,6 +522,7 @@ class ClassIngestMixin:
             file_path,
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
+            module_qn=module_qn,
         )
 
     def _ingest_rust_impl_methods(
@@ -562,6 +637,7 @@ class ClassIngestMixin:
         file_path: Path | None = None,
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
+        module_qn: str | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         if not body_node:
@@ -599,7 +675,7 @@ class ClassIngestMixin:
                     )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
 
-            ingest_method(
+            ingested_qn = ingest_method(
                 method_node,
                 class_qn,
                 cs.NodeLabel.CLASS,
@@ -613,10 +689,21 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
-            # (H) Record a C++ method's return type so a chained call off a static
-            # (H) factory method (`parser(...).parse(...)`, nlohmann's basic_json)
-            # (H) can type the receiver and resolve the next hop.
             if language == cs.SupportedLanguage.CPP:
+                # (H) Record where this method landed so Pass-3 call attribution
+                # (H) reuses the registered qn/label instead of re-deriving them
+                # (H) (the walks diverge on preprocessor-distorted class bodies).
+                if ingested_qn is not None and module_qn is not None:
+                    self.cpp_function_locations[
+                        (module_qn, method_node.start_point[0] + 1)
+                    ] = CppFunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=ingested_qn,
+                        container_qn=class_qn,
+                    )
+                # (H) Record a C++ method's return type so a chained call off a
+                # (H) static factory method (`parser(...).parse(...)`, nlohmann's
+                # (H) basic_json) can type the receiver and resolve the next hop.
                 method_name = cpp_utils.extract_function_name(method_node)
                 if method_name and (
                     return_type := cpp_utils.extract_return_type_name(method_node)

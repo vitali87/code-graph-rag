@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import NodeType
+from ...types_defs import DeferredCppInherit, NodeType
+from ..cpp import utils as cpp_utils
 from . import parent_extraction as pe
 
 if TYPE_CHECKING:
@@ -28,10 +29,16 @@ def create_class_relationships(
     resolve_to_qn: Callable[[str, str], str],
     function_registry: FunctionRegistryTrieProtocol,
     interface_implementers: dict[str, set[str]] | None = None,
+    defer_cpp_inherits: list[DeferredCppInherit] | None = None,
 ) -> None:
-    parent_classes = pe.extract_parent_classes(
-        class_node, module_qn, import_processor, resolve_to_qn
-    )
+    cpp_bases: list[tuple[str, str]] | None = None
+    if class_node.type in cs.CPP_CLASS_TYPES:
+        cpp_bases = pe.extract_cpp_parent_bases(class_node, module_qn)
+        parent_classes = [guess for _, guess in cpp_bases]
+    else:
+        parent_classes = pe.extract_parent_classes(
+            class_node, module_qn, import_processor, resolve_to_qn
+        )
     class_inheritance[class_qn] = parent_classes
 
     # (H) The DEFINES containment edge is emitted by the caller via
@@ -45,15 +52,35 @@ def create_class_relationships(
             (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
-    for base_index, parent_class_qn in enumerate(parent_classes):
-        create_inheritance_relationship(
-            node_type,
-            class_qn,
-            parent_class_qn,
-            function_registry,
-            ingestor,
-            base_index,
+    if cpp_bases is not None and defer_cpp_inherits is not None:
+        # (H) A C++ base often lives in another header, so its qn cannot resolve
+        # (H) until every class is registered; hold the INHERITS edge back for
+        # (H) resolve_deferred_cpp_inherits instead of emitting the module-anchored
+        # (H) guess (a phantom the database drops for every cross-file base).
+        namespace_path = cs.SEPARATOR_DOT.join(
+            cpp_utils.extract_namespace_path(class_node)
         )
+        for base_index, (written_name, guess_qn) in enumerate(cpp_bases):
+            defer_cpp_inherits.append(
+                DeferredCppInherit(
+                    child_label=str(node_type),
+                    child_qn=class_qn,
+                    base_name=written_name,
+                    guess_qn=guess_qn,
+                    namespace_path=namespace_path,
+                    base_index=base_index,
+                )
+            )
+    else:
+        for base_index, parent_class_qn in enumerate(parent_classes):
+            create_inheritance_relationship(
+                node_type,
+                class_qn,
+                parent_class_qn,
+                function_registry,
+                ingestor,
+                base_index,
+            )
 
     # (H) A class OR an enum can `implements` interfaces; both expose them via the
     # (H) `interfaces` field (a super_interfaces clause), so handle both.
