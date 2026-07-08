@@ -229,7 +229,7 @@ UNWIND (
 OPTIONAL MATCH (cr)-[:{traversal}*BFS]->(cr_reached)
 WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
 WITH live_set + closure_roots + cr_reached_set AS live_set
-OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES]->(base)
+OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES*]->(base)
 WHERE base IN live_set AND NOT ov IN live_set
 WITH live_set, collect(DISTINCT ov) AS override_roots
 UNWIND (
