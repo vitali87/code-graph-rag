@@ -162,15 +162,17 @@ class JavaTypeResolverMixin:
         # (H) A nested class referenced by its simple name from within the same file
         # (H) (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
         # (H) `module.Outer.Nested`, not `module.Nested`, so the direct check above
-        # (H) misses it. Search this module for a CLASS/INTERFACE whose last segment is
-        # (H) the simple name, and use it only when unambiguous so a same-named nested
-        # (H) type elsewhere cannot mis-resolve.
-        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        # (H) misses it. Search only this module's trie subtree (bounded, not a
+        # (H) whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
+        # (H) name, and use it only when unambiguous so a same-named nested type elsewhere
+        # (H) cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
+        # (H) already excludes character-level prefix collisions.
+        suffix = f"{cs.SEPARATOR_DOT}{type_name}"
         nested = [
             qn
-            for qn in self.function_registry.find_ending_with(type_name)
-            if qn.startswith(prefix)
-            and self.function_registry[qn] in [NodeType.CLASS, NodeType.INTERFACE]
+            for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
+            if qn.endswith(suffix)
+            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
         ]
         if len(nested) == 1:
             return nested[0]
