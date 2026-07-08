@@ -261,20 +261,23 @@ def test_lua_require_of_missing_module_emits_no_phantom(
 def test_python_from_package_import_submodule_targets_the_submodule(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `from pkg.transport import TTransport` imports the SUBMODULE
-    # (H) TTransport.py; the stdlib extractor treats the trailing name as an
-    # (H) item and strips it, anchoring the edge at the package __init__
-    # (H) instead of the real module file (thrift lib/py: 17 such edges).
-    # (H) The flush must verify the FULL dotted name as a module first.
-    pkg = temp_repo / "pkg"
-    transport = pkg / "transport"
+    # (H) `from thrift.transport import TTransport` under a src-root layout
+    # (H) imports the SUBMODULE TTransport.py; the stdlib extractor treats
+    # (H) the trailing name as an item and strips it, so suffix verification
+    # (H) anchored the edge at the package __init__ instead of the real
+    # (H) module file (thrift lib/py: 17 such edges). The flush must verify
+    # (H) the FULL dotted name as a module first.
+    src = temp_repo / "src"
+    transport = src / "transport"
     transport.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
     (transport / "__init__.py").write_text("")
     (transport / "TTransport.py").write_text("class TTransportBase(object):\n    pass\n")
-    (pkg / "user.py").write_text("from pkg.transport import TTransport\n")
+    (src / "user.py").write_text(
+        "from " + temp_repo.name + ".transport import TTransport\n"
+    )
     run_updater(temp_repo, mock_ingestor)
 
     project = temp_repo.name
-    targets = _import_targets(mock_ingestor, f"{project}.pkg.user")
-    assert f"{project}.pkg.transport.TTransport" in targets, targets
+    targets = _import_targets(mock_ingestor, f"{project}.src.user")
+    assert f"{project}.src.transport.TTransport" in targets, targets
+    assert f"{project}.src.transport.__init__" not in targets, targets
