@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from ...constants import SEPARATOR_DOT
@@ -10,13 +12,22 @@ if TYPE_CHECKING:
 def resolve_class_name(
     class_name: str,
     module_qn: str,
-    import_processor: "ImportProcessor",
+    import_processor: ImportProcessor,
     function_registry: FunctionRegistryTrieProtocol,
+    require_registered: bool = False,
 ) -> str | None:
     if module_qn in import_processor.import_mapping:
         import_map = import_processor.import_mapping[module_qn]
         if class_name in import_map:
-            return import_map[class_name]
+            mapped = import_map[class_name]
+            # (H) C++ include entries map header STEMS to MODULE qns; when the
+            # (H) stem coincides with a class name (Directive.h defining class
+            # (H) Directive, the dominant C++ layout) the map answer is a module,
+            # (H) not a class. Callers that need a real registered node (call
+            # (H) attribution in Pass 3) must fall through to the registry-backed
+            # (H) steps below (issue #652: 11k phantom callers on souffle).
+            if not require_registered or function_registry.get(mapped) is not None:
+                return mapped
 
     same_module_qn = f"{module_qn}.{class_name}"
     if same_module_qn in function_registry:

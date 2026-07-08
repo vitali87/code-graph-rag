@@ -84,6 +84,10 @@ class DefinitionProcessor(
         self._deferred_cpp_containment: list = []
         self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
+        # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
+        # (H) out-of-class C++ method the definition pass bound; Pass-3 call
+        # (H) attribution reuses these decisions instead of re-resolving.
+        self.cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 

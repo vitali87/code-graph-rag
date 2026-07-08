@@ -155,6 +155,9 @@ class CallProcessor:
         "ingestor",
         "repo_path",
         "project_name",
+        "module_qn_to_file_path",
+        "_path_to_module_qn",
+        "cpp_out_of_class_methods",
         "_resolver",
         "_flow_param_names",
         "_flow_args",
@@ -173,10 +176,15 @@ class CallProcessor:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
+        cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
+        self.module_qn_to_file_path = module_qn_to_file_path or {}
+        self._path_to_module_qn: dict[Path, str] | None = None
+        self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -323,7 +331,19 @@ class CallProcessor:
                         (callee[0], qn_key, callee[1]),
                     )
 
-    def _module_qn(self, relative_path: Path, file_name: str) -> str:
+    def _module_qn(self, file_path: Path, relative_path: Path) -> str:
+        # (H) The definition pass is the single source of truth for module qns:
+        # (H) same-stem siblings (Aggregator.cpp / Aggregator.h) get a
+        # (H) collision-disambiguated qn there, and recomputing from the path
+        # (H) here attributed every caller inside such a header to a module qn
+        # (H) with no node, silently dropping its CALLS (issue #652).
+        if self._path_to_module_qn is None:
+            self._path_to_module_qn = {
+                path: qn for qn, path in self.module_qn_to_file_path.items()
+            }
+        if registered := self._path_to_module_qn.get(file_path):
+            return registered
+        file_name = file_path.name
         if file_name in (cs.INIT_PY, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.parent.parts)
@@ -351,7 +371,7 @@ class CallProcessor:
             return
         try:
             module_qn = self._module_qn(
-                cached_relative_path(file_path, self.repo_path), file_path.name
+                file_path, cached_relative_path(file_path, self.repo_path)
             )
             resolver = self._resolver
             self._collect_ctor_field_metadata(root_node, module_qn)
@@ -561,7 +581,7 @@ class CallProcessor:
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
-            module_qn = self._module_qn(relative_path, file_path.name)
+            module_qn = self._module_qn(file_path, relative_path)
 
             call_name_cache: dict[int, str | None] = {}
 
@@ -896,6 +916,16 @@ class CallProcessor:
         # (H) actually exists before overriding the default attribution.
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return None
+        # (H) The definition pass already bound this exact definition (keyed by
+        # (H) module + start line); reuse its decision so the caller qn matches
+        # (H) the registered Method node by construction.
+        recorded = self.cpp_out_of_class_methods.get(
+            (module_qn, func_node.start_point[0] + 1)
+        )
+        if recorded is not None:
+            method_qn, class_qn = recorded
+            if method_qn in self._resolver.function_registry:
+                return method_qn, class_qn
         class_name = cpp_utils.extract_class_name_from_out_of_class_method(func_node)
         if not class_name:
             return None

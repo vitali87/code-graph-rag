@@ -597,7 +597,10 @@ class TestCppImportsRelationships:
 
         project_name = cpp_imports_project.name
         main_module = f"{project_name}.main"
-        utils_header = f"{project_name}.utils"
+        # (H) utils.cpp claims the base qn in walk order, so the header's real
+        # (H) module qn carries the disambiguating extension; the include edge
+        # (H) must target the header, not the same-stem source module.
+        utils_header = f"{project_name}.utils.h"
 
         assert main_module in modules, f"Main module not found. Modules: {modules}"
         assert utils_header in modules, f"Utils header not found. Modules: {modules}"

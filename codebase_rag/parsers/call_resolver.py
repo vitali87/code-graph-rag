@@ -1370,9 +1370,11 @@ class CallResolver:
         if not call_name.startswith(cs.OPERATOR_PREFIX):
             return None
 
-        if call_name in cs.CPP_OPERATORS:
-            return (cs.NodeLabel.FUNCTION, cs.CPP_OPERATORS[call_name])
-
+        # (H) A user-defined overload always beats the builtin: the old table
+        # (H) of synthetic `builtin.cpp.operator_*` qns shadowed real overloads
+        # (H) and produced edges to nodes that never exist (dropped by the
+        # (H) database). A primitive builtin operator is not a first-party
+        # (H) callee, so with no registered overload there is no edge at all.
         if possible_matches := self.function_registry.find_ending_with(call_name):
             same_module_ops = [
                 qn
@@ -1808,11 +1810,16 @@ class CallResolver:
         return type_name
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
+        # (H) Call resolution runs in Pass 3, after every definition pass, so a
+        # (H) class qn missing from the registry can never be a real node;
+        # (H) require registration so an import-map module entry (a C++ header
+        # (H) stem shadowing its class name) cannot mask the real class.
         return resolve_class_name(
             self._dealias_type(class_name),
             module_qn,
             self.import_processor,
             self.function_registry,
+            require_registered=True,
         )
 
     def resolve_java_method_call(

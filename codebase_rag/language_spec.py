@@ -138,6 +138,14 @@ def _c_get_name(node: Node) -> str | None:
 
 
 def _cpp_get_name(node: Node) -> str | None:
+    # (H) C++17 `namespace a::b {` is ONE node named `a::b`; render it as
+    # (H) dotted segments so both nesting spellings, the namespace walk in
+    # (H) cpp/utils, and the libclang frontend agree on qns.
+    if node.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+        name = _generic_get_name(node)
+        if name:
+            return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        return name
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:

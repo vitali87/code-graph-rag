@@ -1,4 +1,5 @@
 import json
+import os
 import posixpath
 import re
 from functools import lru_cache
@@ -12,6 +13,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from .cpp_frontend.qn import build_module_qn_map
 from .go import discover_go_module_paths, resolve_go_import_path
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -181,6 +183,8 @@ class ImportProcessor:
         "_is_local_java_import_cached",
         "_map_py_source_root",
         "_map_go_import_path",
+        "_cpp_module_qn_map",
+        "_cpp_qn_to_rel",
     )
 
     def __init__(
@@ -195,6 +199,10 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # (H) Lazy: replayed walk of every eligible repo file, built on the first
+        # (H) C++ include so non-C++ projects never pay for it.
+        self._cpp_module_qn_map: dict[str, str] | None = None
+        self._cpp_qn_to_rel: dict[str, str] = {}
         # (H) Local names brought in by a PHP `use function A\B\c` import, keyed by
         # (H) module. A PHP namespace path never matches cgr's file-path qualified
         # (H) name (a global helper declares `namespace Illuminate\Support` from
@@ -354,6 +362,12 @@ class ImportProcessor:
                         full_name, module_qn, language
                     )
 
+                    target_label = self._module_label(module_path)
+                    # (H) An external import target has no file pass to create its
+                    # (H) node; without one here the IMPORTS edge MERGEs against
+                    # (H) nothing and is silently dropped (issue #652).
+                    if target_label == cs.NodeLabel.EXTERNAL_MODULE:
+                        self._ensure_external_module_node(module_path, full_name)
                     self.ingestor.ensure_relationship_batch(
                         (
                             cs.NodeLabel.MODULE,
@@ -362,7 +376,7 @@ class ImportProcessor:
                         ),
                         cs.RelationshipType.IMPORTS,
                         (
-                            self._module_label(module_path),
+                            target_label,
                             cs.KEY_QUALIFIED_NAME,
                             module_path,
                         ),
@@ -1010,6 +1024,52 @@ class ImportProcessor:
             elif import_node.type == cs.TS_DECLARATION:
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
+    def _resolve_cpp_include_target(
+        self, include_path: str, module_qn: str
+    ) -> str | None:
+        """Resolve a quoted #include to the module qn of a real repo file.
+
+        Tries the includer's directory, then the repo root, then a unique
+        path-suffix match (covers -I style includes written relative to a
+        source root). Returns None for headers outside the repo.
+        """
+        if self._cpp_module_qn_map is None:
+            self._cpp_module_qn_map = build_module_qn_map(
+                self.repo_path, self.project_name
+            )
+            self._cpp_qn_to_rel = {
+                qn: rel for rel, qn in self._cpp_module_qn_map.items()
+            }
+        normalized = os.path.normpath(include_path).replace(os.sep, cs.SEPARATOR_SLASH)
+
+        includer_rel = self._cpp_qn_to_rel.get(module_qn)
+        if includer_rel is not None:
+            candidate = os.path.normpath(
+                str(Path(includer_rel).parent / normalized)
+            ).replace(os.sep, cs.SEPARATOR_SLASH)
+            if qn := self._cpp_module_qn_map.get(candidate):
+                return qn
+
+        if qn := self._cpp_module_qn_map.get(normalized):
+            return qn
+
+        suffix = f"{cs.SEPARATOR_SLASH}{normalized}"
+        matches = sorted(rel for rel in self._cpp_module_qn_map if rel.endswith(suffix))
+        if not matches:
+            return None
+        if len(matches) > 1 and includer_rel is not None:
+            # (H) Prefer the header sharing the longest path prefix with the
+            # (H) includer (the same source tree), deterministically. commonpath
+            # (H) (not commonprefix) so sibling dirs with a shared name prefix
+            # (H) (src/ast vs src/ast_new) rank by whole components.
+            matches.sort(
+                key=lambda rel: (
+                    -len(os.path.commonpath([rel, includer_rel])),
+                    rel,
+                )
+            )
+        return self._cpp_module_qn_map[matches[0]]
+
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
         include_path = None
         is_system_include = False
@@ -1035,13 +1095,19 @@ class ImportProcessor:
                     if include_path.startswith(cs.CPP_STD_PREFIX)
                     else f"{cs.IMPORT_STD_PREFIX}{include_path}"
                 )
+            elif resolved := self._resolve_cpp_include_target(include_path, module_qn):
+                # (H) The include resolves to a real repo file; use that file's
+                # (H) actual (collision-disambiguated) module qn. The old
+                # (H) project-rooted, extension-stripped guess produced phantom
+                # (H) module qns (self-imports for same-stem header/source pairs,
+                # (H) wrong roots for -I style includes), which poisoned both the
+                # (H) IMPORTS edges and class resolution via the import map
+                # (H) (issue #652).
+                full_name = resolved
             else:
-                path_parts = (
-                    include_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                    .replace(cs.EXT_H, "")
-                    .replace(cs.EXT_HPP, "")
-                )
-                full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{path_parts}"
+                # (H) A quoted include that matches no repo file is a third-party
+                # (H) header; a project-rooted qn would be a phantom.
+                full_name = f"{cs.IMPORT_STD_PREFIX}{include_path}"
 
             self.import_mapping[module_qn][local_name] = full_name
             logger.debug(
