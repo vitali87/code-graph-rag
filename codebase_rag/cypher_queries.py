@@ -10,6 +10,27 @@ from .constants import (
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
+# (H) Graph structural integrity audit (issue #646). A zero-degree Project is a
+# (H) valid empty-repo graph, so the orphan scan exempts it.
+CYPHER_AUDIT_ORPHANS = (
+    "MATCH (n) WHERE NOT (n)--() AND NOT n:Project "
+    "RETURN labels(n)[0] AS label, count(n) AS orphans"
+)
+CYPHER_AUDIT_LABELS = "MATCH (n) UNWIND labels(n) AS label RETURN DISTINCT label"
+CYPHER_AUDIT_REL_TRIPLES = (
+    "MATCH (a)-[r]->(b) "
+    "RETURN DISTINCT labels(a)[0] AS src, type(r) AS rel, labels(b)[0] AS dst"
+)
+CYPHER_AUDIT_LABEL_PROPS = (
+    "MATCH (n) UNWIND labels(n) AS label UNWIND keys(n) AS key "
+    "RETURN DISTINCT label AS label, key AS key"
+)
+CYPHER_AUDIT_MISSING_REQUIRED = (
+    "MATCH (n:{label}) WHERE {conditions} RETURN count(n) AS missing"
+)
+CYPHER_AUDIT_IS_NULL = "n.{prop} IS NULL"
+CYPHER_AUDIT_OR = " OR "
+
 CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
 
 CYPHER_DELETE_PROJECT = """

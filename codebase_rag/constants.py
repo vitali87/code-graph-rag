@@ -654,6 +654,40 @@ class RelationshipType(StrEnum):
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
 
 
+class AuditCheck(StrEnum):
+    ORPHAN_NODE = "orphan_node"
+    UNDOCUMENTED_LABEL = "undocumented_label"
+    UNDOCUMENTED_PROPERTY = "undocumented_property"
+    MISSING_REQUIRED_PROPERTY = "missing_required_property"
+    UNDOCUMENTED_RELATIONSHIP = "undocumented_relationship"
+
+
+# (H) Graph audit violation details (issue #646)
+AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
+AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
+AUDIT_DETAIL_UNDOCUMENTED_PROPERTY = (
+    "{label} '{key}' has undocumented property '{prop}'"
+)
+AUDIT_DETAIL_MISSING_REQUIRED = "{label} '{key}' is missing required property '{prop}'"
+AUDIT_DETAIL_UNDOCUMENTED_RELATIONSHIP = (
+    "({from_label})-[:{rel_type}]->({to_label}) is not documented"
+    " in RELATIONSHIP_SCHEMAS"
+)
+
+# (H) Live-graph audit details (doctor)
+AUDIT_DETAIL_ORPHAN_COUNT = "{count} {label} node(s) have no relationships"
+AUDIT_DETAIL_UNDOCUMENTED_PROPERTY_LIVE = (
+    "{label} nodes carry undocumented property '{prop}'"
+)
+AUDIT_DETAIL_MISSING_REQUIRED_LIVE = (
+    "{count} {label} node(s) are missing required properties"
+)
+
+# (H) Node schema property-string tokens ("{name: string, extension: string?}")
+SCHEMA_PROPS_BRACES = "{}"
+SCHEMA_OPTIONAL_SUFFIX = "?"
+SEPARATOR_COMMA = ","
+
 NODE_PROJECT = NodeLabel.PROJECT
 
 EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
@@ -3661,6 +3695,13 @@ HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
 HEALTH_CHECK_MEMGRAPH_ERROR = "Memgraph error: {error}"
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
+
+HEALTH_CHECK_GRAPH_INTEGRITY_OK = "Graph structural integrity verified"
+HEALTH_CHECK_GRAPH_INTEGRITY_FAILED = "Graph structural integrity violations"
+HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG = "No orphans or schema violations"
+HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG = "{count} violation(s) found"
+HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG = "Audit queries failed"
+HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
 
 HEALTH_CHECK_API_KEY_SET = "{display_name} API key is set"
 HEALTH_CHECK_API_KEY_NOT_SET = "{display_name} API key is not set"

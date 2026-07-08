@@ -641,6 +641,29 @@ def ingest_method(
     )
 
 
+def module_function_props(
+    function_qn: str,
+    function_name: str,
+    function_node: ASTNode,
+    docstring: str | None,
+    file_path: Path | None,
+    repo_path: Path | None,
+) -> PropertyDict:
+    """Standard Function node properties for module-scoped JS/TS functions."""
+    props: PropertyDict = {
+        cs.KEY_QUALIFIED_NAME: function_qn,
+        cs.KEY_NAME: function_name,
+        cs.KEY_DECORATORS: [],
+        cs.KEY_START_LINE: function_node.start_point[0] + 1,
+        cs.KEY_END_LINE: function_node.end_point[0] + 1,
+        cs.KEY_DOCSTRING: docstring,
+    }
+    if file_path is not None and repo_path is not None:
+        props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
+        props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    return props
+
+
 def ingest_exported_function(
     function_node: ASTNode,
     function_name: str,
@@ -651,6 +674,8 @@ def ingest_exported_function(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     is_export_inside_function_func: Callable[[ASTNode], bool],
+    file_path: Path | None,
+    repo_path: Path | None,
 ) -> None:
     if is_export_inside_function_func(function_node):
         return
@@ -662,17 +687,30 @@ def ingest_exported_function(
     # (H) the callee qn). If the natural qn already exists, the node is done.
     if function_qn in function_registry:
         return
+    # (H) Same for a nested export (TS namespace / module block): the main pass
+    # (H) already ingested it under its nested qn (e.g. lib.geo.helper), so a
+    # (H) module-level re-ingest would mint a phantom duplicate node plus a
+    # (H) spurious Module-DEFINES edge. Walk ancestors instead of matching
+    # (H) simple names so a top-level export may share a name with an
+    # (H) unrelated method elsewhere in the module.
+    current = function_node.parent
+    while current is not None:
+        if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+            return
+        current = current.parent
     function_qn = function_registry.register_unique_qn(
         function_qn, function_node.start_point[0] + 1
     )
 
-    function_props = {
-        cs.KEY_QUALIFIED_NAME: function_qn,
-        cs.KEY_NAME: function_name,
-        cs.KEY_START_LINE: function_node.start_point[0] + 1,
-        cs.KEY_END_LINE: function_node.end_point[0] + 1,
-        cs.KEY_DOCSTRING: get_docstring_func(function_node),
-    }
+    function_props = module_function_props(
+        function_qn,
+        function_name,
+        function_node,
+        get_docstring_func(function_node),
+        file_path,
+        repo_path,
+    )
+    function_props[cs.KEY_IS_EXPORTED] = True
 
     logger.info(
         logs.EXPORT_FOUND.format(
@@ -682,6 +720,11 @@ def ingest_exported_function(
     ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
     function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
+    ingestor.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+        cs.RelationshipType.DEFINES,
+        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
+    )
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:

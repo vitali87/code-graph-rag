@@ -37,6 +37,7 @@ class JsTsModuleSystemMixin:
     project_name: str
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
+    module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     _processed_imports: set[str]
 
@@ -163,19 +164,23 @@ class JsTsModuleSystemMixin:
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.MODULE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: resolved_source_module,
-                        cs.KEY_NAME: resolved_source_module,
-                    },
+                # (H) #498: a require() target outside the project (Node builtin,
+                # (H) npm package) is an ExternalModule, not a prop-less Module.
+                # (H) Local targets get no node here: the module's own file pass
+                # (H) creates it, and a rel to a never-indexed module is a no-op.
+                target_label = self.import_processor._module_label(
+                    resolved_source_module
                 )
+                if target_label == cs.NodeLabel.EXTERNAL_MODULE:
+                    self.import_processor._ensure_external_module_node(
+                        resolved_source_module, module_name
+                    )
 
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     cs.RelationshipType.IMPORTS,
                     (
-                        cs.NodeLabel.MODULE,
+                        target_label,
                         cs.KEY_QUALIFIED_NAME,
                         resolved_source_module,
                     ),
@@ -212,6 +217,8 @@ class JsTsModuleSystemMixin:
             self.simple_name_lookup,
             self._get_docstring,
             self._is_export_inside_function,
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
         )
 
     def _process_exports_pattern(
@@ -341,6 +348,8 @@ class JsTsModuleSystemMixin:
                                     self.simple_name_lookup,
                                     self._get_docstring,
                                     self._is_export_inside_function,
+                                    self.module_qn_to_file_path.get(module_qn),
+                                    self.repo_path,
                                 )
 
                     if not export_names:
@@ -361,6 +370,10 @@ class JsTsModuleSystemMixin:
                                                 self.simple_name_lookup,
                                                 self._get_docstring,
                                                 self._is_export_inside_function,
+                                                self.module_qn_to_file_path.get(
+                                                    module_qn
+                                                ),
+                                                self.repo_path,
                                             )
 
                 except Exception as e:

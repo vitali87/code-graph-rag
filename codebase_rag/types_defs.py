@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
-from .constants import NodeLabel, RelationshipType, SupportedLanguage
+from .constants import AuditCheck, NodeLabel, RelationshipType, SupportedLanguage
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
@@ -472,6 +472,25 @@ class NodeSchema(NamedTuple):
     properties: str
 
 
+class GraphNodeRecord(NamedTuple):
+    label: str
+    properties: PropertyDict
+
+
+type RelEndpointSpec = tuple[str, str, PropertyValue]
+
+
+class GraphRelRecord(NamedTuple):
+    from_spec: RelEndpointSpec
+    rel_type: str
+    to_spec: RelEndpointSpec
+
+
+class AuditViolation(NamedTuple):
+    check: AuditCheck
+    detail: str
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType
@@ -487,43 +506,49 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.FOLDER, "{path: string, name: string, absolute_path: string}"),
     NodeSchema(
         NodeLabel.FILE,
-        "{path: string, name: string, extension: string, absolute_path: string}",
+        "{path: string, name: string, extension: string?, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
-    NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.TYPE,
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+    ),
+    NodeSchema(
+        NodeLabel.UNION,
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+    ),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE_IMPLEMENTATION,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}",
     ),
-    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
+    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string}"),
     NodeSchema(
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
@@ -553,12 +578,26 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE,),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.DEFINES,
-        (NodeLabel.CLASS, NodeLabel.FUNCTION),
+        (
+            NodeLabel.CLASS,
+            NodeLabel.FUNCTION,
+            NodeLabel.ENUM,
+            NodeLabel.INTERFACE,
+            NodeLabel.TYPE,
+            NodeLabel.UNION,
+            NodeLabel.MODULE,
+        ),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.ENUM,
+            NodeLabel.TYPE,
+            NodeLabel.UNION,
+        ),
         RelationshipType.DEFINES_METHOD,
         (NodeLabel.METHOD,),
     ),
@@ -583,12 +622,12 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE_IMPLEMENTATION,),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        (NodeLabel.CLASS,),
+        (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
         (NodeLabel.INTERFACE,),
     ),
@@ -608,9 +647,9 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     RelationshipSchema(
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.CALLS,
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.ENUM, NodeLabel.TYPE),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
