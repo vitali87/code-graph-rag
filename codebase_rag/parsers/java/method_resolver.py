@@ -144,6 +144,18 @@ class JavaMethodResolverMixin:
         ):
             return simple_class_qn
 
+        # (H) A nested class referenced by its simple name as a static receiver base
+        # (H) (`Checker.INSTANCE...`, gson's `AccessChecker.INSTANCE`) has qn
+        # (H) `module.Outer.Nested`, which the direct check above misses; use the
+        # (H) nested-aware type resolver so the static-field access chain resolves.
+        nested_qn = self._resolve_java_type_name(object_ref, module_qn)
+        if nested_qn != object_ref and self.function_registry.get(nested_qn) in (
+            NodeType.CLASS,
+            NodeType.INTERFACE,
+            NodeType.ENUM,
+        ):
+            return nested_qn
+
         # (H) An unqualified class-name receiver for a static call (`T.make()`)
         # (H) defined in a sibling file: imports and the current module were checked
         # (H) above, so the remaining unqualified case is a same-package class.
