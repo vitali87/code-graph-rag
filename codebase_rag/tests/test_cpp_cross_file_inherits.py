@@ -86,6 +86,33 @@ def test_unresolvable_external_base_emits_no_phantom_edge(
         assert (str(to_label), to_qn) in node_keys, call.args
 
 
+def test_spaced_template_base_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `public Base <int>` (space before the angle bracket) must strip to
+    # (H) `Base`, not `Base ` -- a trailing space can never match the registry.
+    (temp_repo / "spaced.h").write_text(
+        """
+#pragma once
+template <typename T>
+class Base {
+public:
+    T get() const { return T{}; }
+};
+class Widget : public Base <int> {
+public:
+    int id() const { return 7; }
+};
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
+    pairs = {(call.args[0][2], call.args[2][2]) for call in inherits}
+    assert (f"{project}.spaced.Widget", f"{project}.spaced.Base") in pairs, pairs
+
+
 def test_same_file_base_still_emits_inherits(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
