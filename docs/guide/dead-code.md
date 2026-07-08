@@ -91,7 +91,9 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
    decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
    `--decorator-root` you add.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
-   from every root.
+   from every root. With `--classes` the walk also follows `INSTANTIATES` and
+   `INHERITS`, so a class counts as reachable when a reachable class
+   instantiates or subclasses it.
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
