@@ -45,3 +45,43 @@ def test_anon_method_call_edge_joins_a_real_node(
             f"caller {caller_qn} is a phantom (no node); "
             f"def-pass and call-pass disagree on the anon method qn"
         )
+
+
+def test_anon_override_unqualified_call_binds_to_base(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An unqualified call inside a method-body anonymous override targets the anon's
+    # (H) own/inherited method, not the enclosing named class. `helper()` inside
+    # (H) `new Base(){ read(){ return helper(); } }` must resolve to Base.helper (the
+    # (H) anon's inherited method), not drop or bind to an outer class.
+    root = temp_repo / "janonbase"
+    pkg = root / "com" / "example"
+    pkg.mkdir(parents=True)
+    # (H) M also declares helper() as a decoy: without anon-base scoping the call would
+    # (H) mis-bind to the enclosing M.helper via lexical-class resolution.
+    (pkg / "M.java").write_text(
+        "package com.example;\n"
+        "class Base {\n"
+        "  int helper() { return 1; }\n"
+        "  int read() { return 0; }\n"
+        "}\n"
+        "public class M {\n"
+        "  int helper() { return 99; }\n"
+        "  Base make() {\n"
+        "    return new Base() {\n"
+        "      @Override int read() { return helper(); }\n"
+        "    };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        f.endswith(".read") and t.endswith(".Base.helper()") for f, t in calls
+    ), sorted(t for f, t in calls if "helper" in t)
+    assert not any(
+        f.endswith(".read") and t.endswith(".M.helper()") for f, t in calls
+    ), "anon override call wrongly bound to the enclosing class's decoy helper"

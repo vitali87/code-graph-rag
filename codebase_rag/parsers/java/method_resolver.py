@@ -183,6 +183,42 @@ class JavaMethodResolverMixin:
             return None
         return self._resolve_java_type_name(class_name, module_qn)
 
+    def _enclosing_anon_base_qn(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # (H) If `context_node` sits inside a method-body anonymous class
+        # (H) (`new Base(){ ... }`) before any named class, return the anon's base type
+        # (H) qn -- an unqualified call inside the anon is `this.m()`, dispatched on the
+        # (H) anon (i.e. its base), not the enclosing named class. None otherwise.
+        if context_node is None:
+            return None
+        named = (
+            cs.TS_CLASS_DECLARATION,
+            cs.TS_INTERFACE_DECLARATION,
+            cs.TS_ENUM_DECLARATION,
+            cs.TS_RECORD_DECLARATION,
+        )
+        current = context_node.parent
+        while current is not None:
+            if current.type in named:
+                return None
+            if current.type == cs.TS_CLASS_BODY:
+                parent = current.parent
+                if (
+                    parent is not None
+                    and parent.type == cs.TS_OBJECT_CREATION_EXPRESSION
+                    and (type_node := parent.child_by_field_name(cs.FIELD_TYPE))
+                    is not None
+                    and type_node.text is not None
+                ):
+                    base = type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
+                    return self._resolve_java_type_name(base, module_qn)
+                return None
+            current = current.parent
+        return None
+
     def _resolve_field_access_chain_type(
         self,
         object_ref: str,
@@ -540,12 +576,21 @@ class JavaMethodResolverMixin:
 
         if not object_ref:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
-            # (H) An unqualified call `m(...)` is `this.m(...)`: it binds to the
-            # (H) ENCLOSING class's own (or inherited/interface) method first. The bare
-            # (H) module-wide scan below ignores lexical scope and would return an
-            # (H) unrelated same-named method in a sibling/outer class (a nested class's
-            # (H) `create()` mis-binding to the outer class's `create`), so try the
-            # (H) enclosing class hierarchy before falling back.
+            # (H) An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
+            # (H) anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
+            # (H) so bind against the anon's base type FIRST -- `_lexical_class_qn` only
+            # (H) sees the enclosing NAMED class and would mis-bind an inherited call to
+            # (H) a same-named method there. Then the enclosing class hierarchy; the bare
+            # (H) module-wide scan is the last resort (it ignores lexical scope).
+            if (
+                anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)
+            ) and (
+                result := self._resolve_instance_method(
+                    anon_base_qn, str(method_name), module_qn, arg_count
+                )
+            ):
+                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+                return result
             if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
                 result := self._resolve_instance_method(
                     enclosing_qn, str(method_name), module_qn, arg_count
