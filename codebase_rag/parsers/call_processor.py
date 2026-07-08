@@ -1786,6 +1786,19 @@ class CallProcessor:
                     caller_qn,
                 )
 
+            if (
+                language == cs.SupportedLanguage.JAVA
+                and call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
+                and callee_type != class_label
+            ):
+                # (H) `new X(...)` where X resolves to a non-class -- an interface or
+                # (H) annotation implemented by an anonymous class (`new Comparator<T>(){
+                # (H) ...}`). There is no first-party constructor to call, and a bare CALLS
+                # (H) edge to a non-callable node (Interface) is not a valid relationship.
+                # (H) The anonymous class body's own methods are ingested separately, so
+                # (H) drop the edge here rather than emit an invalid one.
+                continue
+
             if callee_type == class_label:
                 # (H) Record construction as INSTANTIATES -> the class node (keeps
                 # (H) CALLS function/method-only). When the class defines __init__,

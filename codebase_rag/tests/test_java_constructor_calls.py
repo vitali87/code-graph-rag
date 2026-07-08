@@ -71,3 +71,50 @@ def test_new_expression_reaches_overloaded_constructors(
     assert any(
         f.endswith(".User.build()") and t.endswith(".Box.Box(int)") for f, t in calls
     )
+
+
+def test_generic_new_expression_reaches_constructor(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `new MyList<String>()`: the type field is a `generic_type`, not a plain
+    # (H) `type_identifier`, so the creation query must still capture it (generic args
+    # (H) are stripped to the base name) or the constructor looks dead.
+    _project(
+        temp_repo,
+        "class MyList<T> {\n"
+        "  MyList() { }\n"
+        "}\n"
+        "class User {\n"
+        "  MyList<String> build() { return new MyList<String>(); }\n"
+        "}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+    calls = _edges(mock_ingestor, "CALLS")
+    insts = _edges(mock_ingestor, "INSTANTIATES")
+    assert any(
+        f.endswith(".User.build()") and t.endswith(".MyList.MyList()") for f, t in calls
+    ), calls
+    assert any(f.endswith(".User.build()") and t.endswith(".MyList") for f, t in insts)
+
+
+def test_scoped_new_expression_reaches_nested_constructor(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `new Outer.Inner()`: the type field is a `scoped_type_identifier`, which the
+    # (H) creation query must capture so the nested class's constructor is reached.
+    _project(
+        temp_repo,
+        "class Outer {\n"
+        "  static class Inner {\n"
+        "    Inner() { }\n"
+        "  }\n"
+        "}\n"
+        "class User {\n"
+        "  Outer.Inner build() { return new Outer.Inner(); }\n"
+        "}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+    insts = _edges(mock_ingestor, "INSTANTIATES")
+    assert any(
+        f.endswith(".User.build()") and t.endswith(".Outer.Inner") for f, t in insts
+    ), insts
