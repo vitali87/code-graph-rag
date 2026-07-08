@@ -141,6 +141,13 @@ exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# (H) loadgroup honors the xdist_group marker that pins the integration dir to
+# (H) one worker; for unmarked tests it schedules identically to the default.
+# (H) xdist workers decide their grouping flag from the parsed args/ini before
+# (H) any conftest hook fires (xdist remote.py setup_config), so this must be
+# (H) an ini-level option; every dependency set that carries pytest also
+# (H) carries pytest-xdist, so the flag always parses.
+addopts = "--dist=loadgroup"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
@@ -160,6 +167,7 @@ dev = [
     "pyinstaller>=6.14.1",
     "pylint>=4.0.4",
     "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
