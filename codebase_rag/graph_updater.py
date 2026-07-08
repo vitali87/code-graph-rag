@@ -575,6 +575,12 @@ class GraphUpdater:
                 kept_forwards,
             )
 
+        # (H) After forward declarations so a base whose only representation is
+        # (H) a kept forward declaration still resolves to a real node.
+        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
+        if inherits:
+            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+
         # (H) Last containment step: every node-registering pass above (deferred
         # (H) C++ methods, Go receivers, kept forward declarations) must finish
         # (H) before parent qns are verified against the registry.
