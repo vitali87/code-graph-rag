@@ -26,6 +26,7 @@ def _write_src_layout(root: Path) -> None:
     (src / "TMultiplexedProcessor.py").write_text(
         "from thrift.Thrift import TProcessor\n"
         "from thrift.protocol.TProtocol import TProtocolBase\n"
+        "import thrift.protocol.fastbinary\n"
         "import struct\n\n\n"
         "class TMultiplexedProcessor(TProcessor):\n    pass\n"
     )
@@ -42,5 +43,8 @@ def test_distribution_name_imports_resolve_via_unique_suffix(tmp_path: Path) -> 
     }
     assert "src/Thrift.py" in import_targets, import_targets
     assert "src/protocol/TProtocol.py" in import_targets, import_targets
+    # (H) `import a.b.c` of a C extension still imports the deepest importable
+    # (H) parent package.
+    assert "src/protocol/__init__.py" in import_targets, import_targets
     # (H) `import struct` has a foreign top level; it must stay external.
-    assert len(import_targets) == 2, import_targets
+    assert len(import_targets) == 3, import_targets

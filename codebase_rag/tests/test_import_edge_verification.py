@@ -271,7 +271,9 @@ def test_python_from_package_import_submodule_targets_the_submodule(
     transport = src / "transport"
     transport.mkdir(parents=True)
     (transport / "__init__.py").write_text("")
-    (transport / "TTransport.py").write_text("class TTransportBase(object):\n    pass\n")
+    (transport / "TTransport.py").write_text(
+        "class TTransportBase(object):\n    pass\n"
+    )
     (src / "user.py").write_text(
         "from " + temp_repo.name + ".transport import TTransport\n"
     )

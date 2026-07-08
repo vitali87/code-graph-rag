@@ -603,13 +603,18 @@ class GraphUpdater:
         # (H) IMPORTS edges verify against every module qn this run produced
         # (H) (files, inline modules, rehydrated unchanged files); an internal
         # (H) target that resolves nowhere emits no edge.
-        known_module_qns = (
-            {str(qn) for qn in self.factory.definition_processor.module_qn_to_file_path}
-            | self.factory.definition_processor.declared_module_qns
-            | self._rehydrated_module_qns
-        )
+        known_module_paths: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known_module_paths.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known_module_paths.setdefault(qn, "")
         imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
-            known_module_qns
+            known_module_paths
         )
         if imports_emitted:
             logger.info("Emitted {} verified IMPORTS edges", imports_emitted)

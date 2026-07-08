@@ -165,8 +165,17 @@ def _import_targets(
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if target := _lookup_module(alias.name, module_index, project_name):
-                    targets.add(target)
+                # (H) `import a.b.c` imports a AND a.b AND a.b.c; when the full
+                # (H) dotted name maps to no module (a C extension like
+                # (H) thrift.protocol.fastbinary), the deepest importable
+                # (H) parent package is still imported.
+                parts = alias.name.split(cs.SEPARATOR_DOT)
+                while parts:
+                    dotted = cs.SEPARATOR_DOT.join(parts)
+                    if target := _lookup_module(dotted, module_index, project_name):
+                        targets.add(target)
+                        break
+                    parts = parts[:-1]
         elif isinstance(node, ast.ImportFrom):
             base_parts = _from_base_parts(node, pkg_parts)
             if base_parts is None:
