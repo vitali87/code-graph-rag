@@ -225,7 +225,9 @@ def test_external_import_does_not_misbind_to_local_same_name(tmp_path: Path) -> 
 
 def test_local_import_edge_targets_project_qn(tmp_path: Path) -> None:
     # (H) The IMPORTS edge for a first-party Go import must target a
-    # (H) project-prefixed qn, not the dangling raw module path.
+    # (H) project-prefixed qn of a REAL module node, not the dangling raw
+    # (H) module path and not the package directory (which has no Module
+    # (H) node); deferred verification resolves the dir qn to its file.
     files = {
         "go.mod": GO_MOD,
         "main.go": (
@@ -239,5 +241,5 @@ def test_local_import_edge_targets_project_qn(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files)
     import_targets = {b for a, r, b in rels if r == "IMPORTS" and a.endswith("main")}
-    assert "mytool.util" in import_targets
+    assert "mytool.util.util" in import_targets
     assert not any(t.startswith("github.com/") for t in import_targets)
