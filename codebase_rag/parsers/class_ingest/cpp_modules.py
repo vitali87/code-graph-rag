@@ -23,19 +23,33 @@ def ingest_cpp_module_declarations(
     repo_path: Path,
     project_name: str,
     ingestor: IngestorProtocol,
+    module_interfaces: set[str],
+    deferred_impls: list[tuple[str, str]],
 ) -> None:
     module_declarations = _find_module_declarations(root_node)
 
     for _, decl_text in module_declarations:
         if decl_text.startswith(cs.CPP_EXPORT_MODULE_PREFIX):
             _process_export_module(
-                decl_text, module_qn, file_path, repo_path, project_name, ingestor
+                decl_text,
+                module_qn,
+                file_path,
+                repo_path,
+                project_name,
+                ingestor,
+                module_interfaces,
             )
         elif decl_text.startswith(cs.CPP_MODULE_PREFIX) and not decl_text.startswith(
             cs.CPP_MODULE_PRIVATE_PREFIX
         ):
             _process_module_implementation(
-                decl_text, module_qn, file_path, repo_path, project_name, ingestor
+                decl_text,
+                module_qn,
+                file_path,
+                repo_path,
+                project_name,
+                ingestor,
+                deferred_impls,
             )
 
 
@@ -67,6 +81,7 @@ def _process_export_module(
     repo_path: Path,
     project_name: str,
     ingestor: IngestorProtocol,
+    module_interfaces: set[str],
 ) -> None:
     parts = decl_text.split()
     if len(parts) < 3:
@@ -74,6 +89,7 @@ def _process_export_module(
 
     module_name = parts[2].rstrip(cs.CHAR_SEMICOLON)
     interface_qn = f"{project_name}.{module_name}"
+    module_interfaces.add(interface_qn)
 
     ingestor.ensure_node_batch(
         cs.NodeLabel.MODULE_INTERFACE,
@@ -102,6 +118,7 @@ def _process_module_implementation(
     repo_path: Path,
     project_name: str,
     ingestor: IngestorProtocol,
+    deferred_impls: list[tuple[str, str]],
 ) -> None:
     parts = decl_text.split()
     if len(parts) < 2:
@@ -128,12 +145,11 @@ def _process_module_implementation(
         (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
     )
 
+    # (H) The exporting file may not be parsed yet (or may not exist at all);
+    # (H) hold the IMPLEMENTS edge back until every ModuleInterface is known,
+    # (H) so an implementation unit of an absent interface emits no phantom.
     interface_qn = f"{project_name}.{module_name}"
-    ingestor.ensure_relationship_batch(
-        (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
-        cs.RelationshipType.IMPLEMENTS,
-        (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
-    )
+    deferred_impls.append((impl_qn, interface_qn))
 
     logger.info(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
 

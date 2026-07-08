@@ -344,8 +344,22 @@ def test_relative_path_resolution(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test relative import path resolution (./ and ../)."""
+    # (H) Every imported path must reference a real fixture file: an IMPORTS
+    # (H) edge to a module no file yields is a phantom the database drops, so
+    # (H) the old miscounted `../` paths only ever produced dropped edges.
     nested_dir = javascript_imports_project / "src" / "components" / "forms"
     nested_dir.mkdir()
+    (nested_dir / "Button.js").write_text(
+        encoding="utf-8", data="export default class Button {}"
+    )
+    (nested_dir / "Modal.js").write_text(
+        encoding="utf-8", data="export default class Modal {}"
+    )
+    deep_dir = javascript_imports_project / "lib" / "deep"
+    deep_dir.mkdir()
+    (deep_dir / "util.js").write_text(
+        encoding="utf-8", data="export const deepUtil = () => {};"
+    )
     test_file = nested_dir / "Input.js"
     test_file.write_text(
         encoding="utf-8",
@@ -359,8 +373,8 @@ import utils from '../../utils/helpers';
 import constants from '../../utils/constants';
 
 // Multiple levels up
-import config from '../../lib/config';
-import shared from '../../shared';
+import config from '../../../lib/config';
+import shared from '../../../shared';
 
 // Complex relative paths
 import deepUtil from '../../../lib/deep/util';
@@ -392,8 +406,9 @@ const url = constants.API_URL;
         f"{project_name}.src.components.forms.Button",
         f"{project_name}.src.utils.helpers",
         f"{project_name}.src.utils.constants",
-        f"{project_name}.src.lib.config",
-        f"{project_name}.src.shared",
+        f"{project_name}.lib.config",
+        f"{project_name}.shared",
+        f"{project_name}.lib.deep.util",
     ]
 
     for pattern in expected_patterns:

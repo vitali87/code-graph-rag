@@ -462,6 +462,10 @@ IMP_CREATED_RELATIONSHIP = (
     "  Created IMPORTS relationship: {from_module} -> {to_module} (from {full_name})"
 )
 IMP_PARSE_FAILED = "Failed to parse imports in {module}: {error}"
+IMP_DROPPED_PHANTOM_TARGET = (
+    "  Dropped IMPORTS edge to unverifiable internal target: "
+    "{from_module} -> {to_module}"
+)
 IMP_IMPORT = "  Import: {local} -> {full}"
 IMP_ALIASED_IMPORT = "  Aliased import: {alias} -> {full}"
 IMP_WILDCARD_IMPORT = "  Wildcard import: * -> {module}"

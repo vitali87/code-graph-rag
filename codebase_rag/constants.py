@@ -103,6 +103,7 @@ PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX)
 TS_EXTENSIONS = (EXT_TS,)
 TSX_EXTENSIONS = (EXT_TSX,)
+JS_TS_ALL_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_TS, EXT_TSX)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -914,6 +915,13 @@ CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
 INDEX_INIT = "__init__"
 INDEX_INDEX = "index"
 INDEX_MOD = "mod"
+INDEX_LUA_INIT = "init"
+
+# (H) File stems whose module is importable through the CONTAINING directory's
+# (H) name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
+MODULE_INDEX_FILE_STEMS = frozenset(
+    {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
+)
 
 # (H) AST field names for name extraction
 NAME_FIELDS = ("identifier", "name", "id")
@@ -1321,6 +1329,14 @@ CYPHER_ALL_DEFINITION_QNS = (
     "OR n:Enum OR n:Type OR n:Union "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.path AS path"
+)
+
+# (H) Module-level qns (plus C++20 module interfaces) for incremental runs:
+# (H) deferred import verification must count modules in UNCHANGED files as
+# (H) real targets, or editing one file would drop cross-file IMPORTS edges.
+CYPHER_ALL_MODULE_QNS = (
+    "MATCH (n) WHERE n:Module OR n:ModuleInterface "
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
 )
 
 # (H) Inbound reference edges (from unchanged files) into symbols defined in one

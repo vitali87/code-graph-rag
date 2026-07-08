@@ -144,6 +144,9 @@ class ClassIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     _deferred_inherits: list[DeferredInherit]
+    cpp_module_interfaces: set[str]
+    _deferred_cpp_module_impls: list[tuple[str, str]]
+    declared_module_qns: set[str]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # (H) Strip the module-file prefix so two nodes for the same C++ type in
@@ -214,7 +217,32 @@ class ClassIngestMixin:
             self.repo_path,
             self.project_name,
             self.ingestor,
+            self.cpp_module_interfaces,
+            self._deferred_cpp_module_impls,
         )
+
+    def resolve_deferred_cpp_module_impls(self) -> int:
+        """Emit ModuleImplementation IMPLEMENTS edges for interfaces that exist.
+
+        An implementation unit (`module X;`) whose interface (`export module
+        X;`) lives in no parsed file has nothing real to point at; emitting
+        the edge anyway would mint a phantom the database drops.
+        """
+        deferred = self._deferred_cpp_module_impls
+        if not deferred:
+            return 0
+        self._deferred_cpp_module_impls = []
+        emitted = 0
+        for impl_qn, interface_qn in deferred:
+            if interface_qn not in self.cpp_module_interfaces:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
+            )
+            emitted += 1
+        return emitted
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
         return cpp_modules.find_cpp_exported_classes(root_node)
@@ -869,6 +897,9 @@ class ClassIngestMixin:
                 )
             )
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
+            # (H) Record the inline module qn so deferred import verification
+            # (H) counts it as a real internal target.
+            self.declared_module_qns.add(inline_module_qn)
 
             # (H) Link the inline module into the containment tree: its enclosing
             # (H) module (file module, or an outer mod) DEFINES it. Without this the

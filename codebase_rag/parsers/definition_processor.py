@@ -110,6 +110,14 @@ class DefinitionProcessor(
         # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # (H) registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
+        # (H) C++20 module interfaces declared this run (export module X), and
+        # (H) implementation units whose IMPLEMENTS edge waits for its
+        # (H) interface to be known.
+        self.cpp_module_interfaces: set[str] = set()
+        self._deferred_cpp_module_impls: list[tuple[str, str]] = []
+        # (H) Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
+        # (H) import verification counts them as real internal targets.
+        self.declared_module_qns: set[str] = set()
         # (H) {qn: file path} for definitions rehydrated from the graph on an
         # (H) incremental run, whose modules are absent from module_qn_to_file_path
         # (H) (only re-parsed files populate it). _is_cpp_defined falls back to

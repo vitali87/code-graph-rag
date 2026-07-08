@@ -556,6 +556,19 @@ class DeferredInherit(NamedTuple):
     base_index: int
 
 
+class DeferredImportEdge(NamedTuple):
+    """IMPORTS edge held back until every file is parsed.
+
+    An internal-looking target is only real if some file (or inline module)
+    actually yields that module qn; verification happens against the full
+    module registry, and a target that resolves nowhere emits no edge.
+    """
+
+    module_qn: str
+    full_name: str
+    language: SupportedLanguage
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType
