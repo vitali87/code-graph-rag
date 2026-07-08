@@ -433,6 +433,23 @@ class CallResolver:
                 targets.add((label, qn))
         return targets
 
+    def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
+        # (H) A Java constructor is registered as a method directly under its class whose
+        # (H) simple name equals the class's simple name (`Foo.Foo(int)`). `new Foo(...)`
+        # (H) resolves to the CLASS, so redirect a CALLS edge to each declared constructor
+        # (H) (all overloads) -- argument-type overload selection is not attempted, which
+        # (H) is unnecessary for reachability and never fabricates a call to a
+        # (H) non-constructor. Only constructors DIRECTLY on the class match (a nested
+        # (H) class's constructor has an extra qn segment and is excluded).
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        targets: set[tuple[str, str]] = set()
+        for qn, node_type in self.function_registry.find_with_prefix(class_qn):
+            head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            parent, dot, mname = head.rpartition(cs.SEPARATOR_DOT)
+            if dot and parent == class_qn and mname == simple:
+                targets.add((node_type, qn))
+        return targets
+
     def cpp_dispatch_targets(
         self,
         call_name: str,

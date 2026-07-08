@@ -404,7 +404,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (method_invocation
             name: (identifier) @name) @call
         (object_creation_expression
-            type: (type_identifier) @name) @call
+            type: (_) @name) @call
         """,
     ),
     cs.SupportedLanguage.C: LanguageSpec(

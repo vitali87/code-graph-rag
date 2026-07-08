@@ -1290,6 +1290,19 @@ class CallProcessor:
                 ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
                 if ctor is not None and ctor.text is not None:
                     return ctor.text.decode(cs.ENCODING_UTF8)
+            case cs.TS_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.JAVA
+            ):
+                # (H) Java `new Foo(...)` names the class via the `type` field (no
+                # (H) `function` field). Returning the base type name routes construction
+                # (H) through the normal resolve loop: the class gets INSTANTIATES and its
+                # (H) constructor(s) get CALLS. Strip generic args (`new ArrayList<T>()`
+                # (H) -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
+                type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
+                if type_node is not None and type_node.text is not None:
+                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
             case (
                 cs.TS_CPP_BINARY_EXPRESSION
                 | cs.TS_CPP_UNARY_EXPRESSION
@@ -1773,6 +1786,19 @@ class CallProcessor:
                     caller_qn,
                 )
 
+            if (
+                language == cs.SupportedLanguage.JAVA
+                and call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
+                and callee_type != class_label
+            ):
+                # (H) `new X(...)` where X resolves to a non-class -- an interface or
+                # (H) annotation implemented by an anonymous class (`new Comparator<T>(){
+                # (H) ...}`). There is no first-party constructor to call, and a bare CALLS
+                # (H) edge to a non-callable node (Interface) is not a valid relationship.
+                # (H) The anonymous class body's own methods are ingested separately, so
+                # (H) drop the edge here rather than emit an invalid one.
+                continue
+
             if callee_type == class_label:
                 # (H) Record construction as INSTANTIATES -> the class node (keeps
                 # (H) CALLS function/method-only). When the class defines __init__,
@@ -1785,6 +1811,20 @@ class CallProcessor:
                         cs.RelationshipType.INSTANTIATES,
                         (class_label, qn_key, class_variant),
                     )
+                if language == cs.SupportedLanguage.JAVA:
+                    # (H) A Java constructor is a method named like its class (`Foo.Foo`),
+                    # (H) not `__init__`; `new Foo(...)` runs one, so redirect a CALLS edge
+                    # (H) to every declared constructor (overload selection is unneeded for
+                    # (H) reachability). sorted(): the target label is a hash-randomized
+                    # (H) StrEnum, so sort for deterministic output.
+                    for ctor_type, ctor_qn in sorted(
+                        resolver.java_constructor_targets(callee_qn)
+                    ):
+                        for variant in resolver.function_registry.variants(ctor_qn):
+                            ensure_rel(
+                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
+                            )
+                    continue
                 init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
                 if init_qn not in resolver.function_registry:
                     continue
