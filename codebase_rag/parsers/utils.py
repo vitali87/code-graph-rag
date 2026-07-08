@@ -559,7 +559,11 @@ def ingest_method(
     repo_path: Path | None = None,
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
-) -> None:
+) -> str | None:
+    # (H) Returns the registered method qn (post register_unique_qn, so with any
+    # (H) @line dedup suffix) so a caller can wire further edges to the exact node --
+    # (H) e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
+    # (H) None only when the method has no resolvable name and nothing was registered.
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
@@ -641,7 +645,7 @@ def ingest_method(
                 rel_type=cs.RelationshipType.DEFINES_METHOD.value,
             )
         )
-        return
+        return method_qn
 
     # (H) The DEFINES_METHOD parent is matched in the graph by LABEL +
     # (H) qualified_name, so it must carry the container's real node label. Callers
@@ -658,6 +662,7 @@ def ingest_method(
         cs.RelationshipType.DEFINES_METHOD,
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
     )
+    return method_qn
 
 
 def module_function_props(

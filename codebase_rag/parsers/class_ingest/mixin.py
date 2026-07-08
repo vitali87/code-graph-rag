@@ -12,7 +12,7 @@ from ... import constants as cs
 from ... import logs
 from ...config import settings
 from ...language_spec import LanguageSpec
-from ...types_defs import ASTNode, PropertyDict
+from ...types_defs import ASTNode, NodeType, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
@@ -37,6 +37,26 @@ if TYPE_CHECKING:
         SimpleNameLookup,
     )
     from ..import_processor import ImportProcessor
+
+
+def _java_anonymous_base_type(method_node: Node, class_node: Node) -> str | None:
+    # (H) If `method_node` sits inside an anonymous class body between it and
+    # (H) `class_node` (`new Base(){ ... m() ... }`), return the anon class's base type
+    # (H) name (the object_creation's `type` field, generic args stripped). None when the
+    # (H) method belongs directly to the enclosing class, not an anonymous subclass.
+    current = method_node.parent
+    while current is not None and current is not class_node:
+        if current.type == cs.TS_CLASS_BODY:
+            parent = current.parent
+            if parent is not None and parent.type == cs.TS_OBJECT_CREATION_EXPRESSION:
+                type_node = parent.child_by_field_name(cs.FIELD_TYPE)
+                if type_node is not None and type_node.text is not None:
+                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
+                return None
+        current = current.parent
+    return None
 
 
 def _is_nested_inside_function(
@@ -108,6 +128,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
+    java_anon_overrides: list[tuple[str, str, str, str]]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -448,6 +469,7 @@ class ClassIngestMixin:
             file_path,
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
+            module_qn=module_qn,
         )
 
     def _ingest_rust_impl_methods(
@@ -562,6 +584,7 @@ class ClassIngestMixin:
         file_path: Path | None = None,
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
+        module_qn: str | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         if not body_node:
@@ -599,7 +622,7 @@ class ClassIngestMixin:
                     )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
 
-            ingest_method(
+            registered_qn = ingest_method(
                 method_node,
                 class_qn,
                 cs.NodeLabel.CLASS,
@@ -613,6 +636,23 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
+            # (H) A Java method declared inside an anonymous class body
+            # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
+            # (H) class but really overrides the anon class's base type. Record it so a
+            # (H) deferred pass emits the OVERRIDES edge once the base is registered;
+            # (H) with override-reachability that keeps the dispatch-only override live.
+            if (
+                language == cs.SupportedLanguage.JAVA
+                and registered_qn is not None
+                and module_qn is not None
+                and (base := _java_anonymous_base_type(method_node, class_node))
+            ):
+                method_name = registered_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
+                    cs.CHAR_PAREN_OPEN, 1
+                )[0]
+                self.java_anon_overrides.append(
+                    (registered_qn, method_name, base, module_qn)
+                )
             # (H) Record a C++ method's return type so a chained call off a static
             # (H) factory method (`parser(...).parse(...)`, nlohmann's basic_json)
             # (H) can type the receiver and resolve the next hop.
@@ -691,6 +731,42 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
         )
+        self._resolve_java_anon_overrides()
+
+    def _resolve_java_anon_overrides(self) -> None:
+        # (H) Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion
+        # (H) (`new Base(){ @Override m(){} }`). The base type is resolved by UNIQUE
+        # (H) global simple-name match among type declarations (the base is usually in
+        # (H) another file; a full import resolve is unnecessary and this stays
+        # (H) revive-only -- an ambiguous or unfound base is skipped). Each base method
+        # (H) directly on the base whose simple name matches gets an OVERRIDES edge from
+        # (H) the anon override, so override-reachability keeps the dispatch-only method
+        # (H) live when the base is reachable.
+        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        for anon_qn, method_name, base_type, _module_qn in self.java_anon_overrides:
+            base_candidates = [
+                qn
+                for qn in self.function_registry.find_ending_with(base_type)
+                if self.function_registry.get(qn) in type_decls
+            ]
+            if len(base_candidates) != 1:
+                continue
+            base_qn = base_candidates[0]
+            base_prefix = f"{base_qn}{cs.SEPARATOR_DOT}"
+            for qn, node_type in self.function_registry.find_with_prefix(base_qn):
+                if (
+                    node_type == NodeType.METHOD
+                    and qn.startswith(base_prefix)
+                    and cs.SEPARATOR_DOT
+                    not in qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
+                    and qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
+                    == method_name
+                ):
+                    self.ingestor.ensure_relationship_batch(
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, anon_qn),
+                        cs.RelationshipType.OVERRIDES,
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, qn),
+                    )
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         return resolve_class_name(
