@@ -462,6 +462,19 @@ class JavaMethodResolverMixin:
 
         if not object_ref:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
+            # (H) An unqualified call `m(...)` is `this.m(...)`: it binds to the
+            # (H) ENCLOSING class's own (or inherited/interface) method first. The bare
+            # (H) module-wide scan below ignores lexical scope and would return an
+            # (H) unrelated same-named method in a sibling/outer class (a nested class's
+            # (H) `create()` mis-binding to the outer class's `create`), so try the
+            # (H) enclosing class hierarchy before falling back.
+            if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
+                result := self._resolve_instance_method(
+                    enclosing_qn, str(method_name), module_qn
+                )
+            ):
+                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+                return result
             result = self._resolve_static_or_local_method(str(method_name), module_qn)
             if result:
                 logger.debug(ls.JAVA_FOUND_STATIC, result=result)
