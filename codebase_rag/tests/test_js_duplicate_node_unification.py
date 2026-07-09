@@ -91,6 +91,10 @@ exports.receiver = function (callback) {
 };
 """
 
+SAME_LINE_EXPORTS_JS = (
+    "exports.a = function () { return 1; }; exports.b = function () { return 2; };\n"
+)
+
 
 def _function_nodes_by_location(
     mock_ingestor: MagicMock,
@@ -277,3 +281,24 @@ def test_calls_from_exported_function_attribute_to_named_node(
         if str(call.args[2][2]) == f"{project}.word.shift"
     }
     assert f"{project}.word.readWord" in callers, callers
+
+
+def test_same_line_named_functions_each_keep_one_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Two named functions on ONE line must each claim their own span: a
+    # (H) line-only claim record lets the first claim block the second, so the
+    # (H) second function's named passes collide into a `b@line` twin AND its
+    # (H) deferred anonymous registration flushes as an `anonymous_row_col`
+    # (H) twin (minified/one-line code).
+    (temp_repo / "same_line.js").write_text(SAME_LINE_EXPORTS_JS)
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
+
+    project = temp_repo.name
+    qns = _all_function_qns(mock_ingestor)
+    assert f"{project}.same_line.a" in qns, qns
+    assert f"{project}.same_line.b" in qns, qns
+    assert not any(cs.DUP_QN_MARKER in qn for qn in qns), qns
+    assert not any(
+        qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(cs.PREFIX_ANONYMOUS) for qn in qns
+    ), qns
