@@ -903,7 +903,10 @@ class ImportProcessor:
                             child, source_module, module_qn, is_aliased_scheme
                         )
 
-            elif import_node.type == cs.TS_LEXICAL_DECLARATION:
+            elif import_node.type in (
+                cs.TS_LEXICAL_DECLARATION,
+                cs.TS_VARIABLE_DECLARATION,
+            ):
                 self._parse_js_require(import_node, module_qn)
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:

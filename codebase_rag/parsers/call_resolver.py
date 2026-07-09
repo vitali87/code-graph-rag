@@ -410,6 +410,34 @@ class CallResolver:
                 targets.add((self.function_registry[override_qn], override_qn))
         return targets
 
+    def js_member_twin_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) `View.prototype.lookup = function lookup(...)` registers TWO nodes for
+        # (H) one method: the prototype path's `View.lookup` and the fn-expr's
+        # (H) own-name module-flat `view.lookup`. A call binds one twin and the
+        # (H) other reports dead. Return the same-name twin(s) whose parent chain
+        # (H) extends (or is extended by) the callee's parent -- i.e. the same
+        # (H) module's flat/member pair -- so the caller can edge both (the
+        # (H) duplicate-QN keep-both design). Never crosses modules.
+        parent_qn, sep, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        twins: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(leaf):
+            if qn == callee_qn:
+                continue
+            other_parent, d, other_leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if not d or other_leaf != leaf:
+                continue
+            if not (
+                other_parent.startswith(f"{parent_qn}{cs.SEPARATOR_DOT}")
+                or parent_qn.startswith(f"{other_parent}{cs.SEPARATOR_DOT}")
+            ):
+                continue
+            label = self.function_registry.get(qn)
+            if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+                twins.add((label, qn))
+        return twins
+
     def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # (H) Go package-level functions are package-scoped, but cgr keys each file as
         # (H) its own module (`pkgdir.file.name`). Two same-package functions with the
@@ -587,7 +615,7 @@ class CallResolver:
             )
 
         if result := self._try_resolve_via_imports(
-            call_name, module_qn, local_var_types
+            call_name, module_qn, local_var_types, language
         ):
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
@@ -638,10 +666,64 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = None
             return None
 
+        # (H) A JS/TS member call on an UNTYPED receiver (`view.render(...)` where
+        # (H) `view` is a param constructed in the caller) targets a MEMBER: the
+        # (H) bare-name trie would rebind it to a free function of the same name
+        # (H) (express's application.render), a false edge that also kills the real
+        # (H) prototype method. Bind the UNIQUE member-like candidate (parent qn
+        # (H) itself registered) or drop.
+        if language in cs.JS_TS_LANGUAGES and cs.SEPARATOR_DOT in call_name:
+            result = self._resolve_js_member_call_unique(call_name, module_qn)
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
+            return result
+
         result = self._try_resolve_via_trie(call_name, module_qn)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _resolve_js_member_call_unique(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        method_name = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        candidates: list[str] = []
+        for qn in self.function_registry.find_ending_with(method_name):
+            parent_qn, sep, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if not sep or leaf != method_name:
+                continue
+            # (H) Member-like: the parent is itself a registered node (a class, a
+            # (H) prototype constructor Function, an object scope) -- a free
+            # (H) function's parent is a module, which is never in the registry.
+            if parent_qn in self.function_registry:
+                candidates.append(qn)
+        if len(candidates) > 1:
+            # (H) Prefer candidates VISIBLE to the calling module: parent imported
+            # (H) here or defined here (express's tryRender imports ./view, so
+            # (H) View.render wins over an unrelated example's GithubView.render).
+            import_map = self.import_processor.import_mapping.get(module_qn) or {}
+            imported = set(import_map.values())
+            # (H) A JS require maps the MODULE (`require('./view')` ->
+            # (H) express.lib.view), so a visible candidate's parent may equal an
+            # (H) import or sit anywhere under one; same-module candidates are
+            # (H) visible too.
+            visible = [
+                qn
+                for qn in candidates
+                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                or any(
+                    qn.rpartition(cs.SEPARATOR_DOT)[0] == imp
+                    or qn.rpartition(cs.SEPARATOR_DOT)[0].startswith(
+                        f"{imp}{cs.SEPARATOR_DOT}"
+                    )
+                    for imp in imported
+                )
+            ]
+            if visible:
+                candidates = visible
+        if len(candidates) == 1:
+            return self.function_registry[candidates[0]], candidates[0]
+        return None
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # (H) True when the dotted call's object segment is imported from a target
@@ -779,6 +861,7 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is None:
@@ -796,7 +879,7 @@ class CallResolver:
             return result
 
         if result := self._try_resolve_qualified_call(
-            call_name, import_map, module_qn, local_var_types
+            call_name, import_map, module_qn, local_var_types, language
         ):
             return result
 
@@ -819,6 +902,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
@@ -833,7 +917,13 @@ class CallResolver:
 
         if len(parts) == 2:
             if result := self._resolve_two_part_call(
-                parts, call_name, separator, import_map, module_qn, local_var_types
+                parts,
+                call_name,
+                separator,
+                import_map,
+                module_qn,
+                local_var_types,
+                language,
             ):
                 return result
 
@@ -949,6 +1039,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         object_name, method_name = parts
 
@@ -979,6 +1070,18 @@ class CallResolver:
         ):
             return result
 
+        # (H) A JS/TS dotted call binds to a same-module free function ONLY through
+        # (H) a module-ish receiver (`exports.render()`, `this.render()` in the
+        # (H) CommonJS/prototype pattern). An ordinary identifier receiver
+        # (H) (`view.render()`) is an instance call: binding it to the free
+        # (H) function is a false edge that also kills the real prototype method
+        # (H) (express's View.render); let it fall to the unique-member gate.
+        if (
+            language in cs.JS_TS_LANGUAGES
+            and separator == cs.SEPARATOR_DOT
+            and object_name not in cs.JS_MODULE_RECEIVERS
+        ):
+            return None
         return self._try_resolve_module_method(method_name, call_name, module_qn)
 
     def _try_resolve_static_type_method(

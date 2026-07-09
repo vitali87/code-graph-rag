@@ -844,3 +844,24 @@ def test_external_override_property_is_root() -> None:
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
     assert "proj.tw.TextWrapper._wrap_chunks" not in dead
     assert "proj.tw.TextWrapper.unused" in dead
+
+
+def test_singular_test_dir_is_excluded() -> None:
+    # (H) The Node.js/mocha convention keeps tests under a singular `test/` dir
+    # (H) (express: 34 of 49 dead-code reports were test helpers). With tests
+    # (H) excluded, such symbols are unconditional noise. `contest/` and
+    # (H) `latest/` must NOT match (the pattern is segment-anchored by the
+    # (H) leading-slash normalization).
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.test.helper", path="test/helper.js"),
+            _fn("proj.contest.helper", path="contest/helper.js"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.test.helper" not in dead
+    assert "proj.contest.helper" in dead
