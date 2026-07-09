@@ -1,3 +1,5 @@
+# (H) Supported languages, file extensions, metadata, and grammar modules.
+
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -46,6 +48,7 @@ PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX)
 TS_EXTENSIONS = (EXT_TS,)
 TSX_EXTENSIONS = (EXT_TSX,)
+JS_TS_ALL_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_TS, EXT_TSX)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -65,6 +68,28 @@ CPP_EXTENSIONS = (
 )
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
+
+# (H) Package indicator files
+PKG_INIT_PY = "__init__.py"
+PKG_CARGO_TOML = "Cargo.toml"
+PKG_CMAKE_LISTS = "CMakeLists.txt"
+PKG_MAKEFILE = "Makefile"
+PKG_VCXPROJ_GLOB = "*.vcxproj"
+PKG_CONANFILE = "conanfile.txt"
+
+
+class CppFrontend(StrEnum):
+    TREESITTER = "treesitter"
+    LIBCLANG = "libclang"
+
+
+# (H) JS/TS import specifier schemes that name genuinely external code (node
+# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
+# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
+# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
+JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
+    {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
+)
 # (H) Module file extensions stripped when turning a tsconfig `paths` target into a
 # (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
 # (H) compound suffixes are handled before the bare `.ts`.
@@ -77,6 +102,25 @@ JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".cjs",
     ".js",
 )
+TSCONFIG_FILENAMES: tuple[str, ...] = (
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "jsconfig.json",
+)
+# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
+# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
+# (H) unrelated aliases and there can be thousands of them under node_modules.
+TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
+    {"node_modules", "dist", "build", "out", ".git"}
+)
+JS_INDEX_STEM = "index"
+TS_COMPILER_OPTIONS_KEY = "compilerOptions"
+TS_PATHS_KEY = "paths"
+TS_BASE_URL_KEY = "baseUrl"
+PATH_RELATIVE_PREFIX = "./"
+PATH_PARENT_PREFIX = "../"
+CPP_IMPORT_PARTITION_PREFIX = "import :"
+CPP_PARTITION_PREFIX = "partition_"
 
 
 class SupportedLanguage(StrEnum):
@@ -168,14 +212,97 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
 }
 
-# (H) Image file extensions for chat image handling
-MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
-MIME_TYPE_PDF = "application/pdf"
-MIME_TYPE_FALLBACK = "application/octet-stream"
-LANG_PROMPT_EXTENSIONS = (
-    "What file extensions should be associated with this language? (comma-separated)"
+# (H) Index file names
+INDEX_INIT = "__init__"
+INDEX_INDEX = "index"
+INDEX_MOD = "mod"
+INDEX_LUA_INIT = "init"
+
+# (H) File stems whose module is importable through the CONTAINING directory's
+# (H) name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
+MODULE_INDEX_FILE_STEMS = frozenset(
+    {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
-LANG_TABLE_COL_EXTENSIONS = "Extensions"
+
+# (H) Parser loader paths and args
+GRAMMARS_DIR = "grammars"
+TREE_SITTER_PREFIX = "tree-sitter-"
+TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
+BINDINGS_DIR = "bindings"
+SETUP_PY = "setup.py"
+BUILD_EXT_CMD = "build_ext"
+INPLACE_FLAG = "--inplace"
+LANG_ATTR_PREFIX = "language_"
+LANG_ATTR_TYPESCRIPT = "language_typescript"
+LANG_ATTR_TSX = "language_tsx"
+LANG_ATTR_PHP = "language_php"
 
 
-CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
+class TreeSitterModule(StrEnum):
+    PYTHON = "tree_sitter_python"
+    JS = "tree_sitter_javascript"
+    TS = "tree_sitter_typescript"
+    RUST = "tree_sitter_rust"
+    GO = "tree_sitter_go"
+    SCALA = "tree_sitter_scala"
+    JAVA = "tree_sitter_java"
+    C = "tree_sitter_c"
+    CPP = "tree_sitter_cpp"
+    LUA = "tree_sitter_lua"
+    PHP = "tree_sitter_php"
+
+
+# (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
+IGNORE_PATTERNS = frozenset(
+    {
+        ".cache",
+        ".claude",
+        ".eclipse",
+        ".eggs",
+        ".env",
+        ".git",
+        ".gradle",
+        ".hg",
+        ".idea",
+        ".maven",
+        ".mypy_cache",
+        ".nox",
+        ".npm",
+        ".nyc_output",
+        ".pnpm-store",
+        ".pytest_cache",
+        ".qdrant_code_embeddings",
+        ".ruff_cache",
+        ".svn",
+        ".tmp",
+        ".tox",
+        ".venv",
+        ".vs",
+        ".vscode",
+        ".yarn",
+        "__pycache__",
+        "bin",
+        "bower_components",
+        "build",
+        "coverage",
+        "dist",
+        "env",
+        "htmlcov",
+        "node_modules",
+        "obj",
+        "out",
+        "Pods",
+        "site-packages",
+        "target",
+        "temp",
+        "tmp",
+        "vendor",
+        "venv",
+    }
+)
+IGNORE_SUFFIXES = frozenset(
+    {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
+)
+
+# (H) pathspec style for .cgrignore / --exclude patterns (#495).
+GITWILDMATCH_STYLE = "gitignore"

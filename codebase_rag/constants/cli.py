@@ -1,18 +1,6 @@
+# (H) CLI/TUI messages, styles, prompts, and interactive display constants.
+
 from enum import StrEnum
-
-
-class ModelRole(StrEnum):
-    ORCHESTRATOR = "orchestrator"
-    CYPHER = "cypher"
-
-
-class Provider(StrEnum):
-    OLLAMA = "ollama"
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    GOOGLE = "google"
-    AZURE = "azure"
-    LITELLM_PROXY = "litellm_proxy"
 
 
 class Color(StrEnum):
@@ -22,6 +10,14 @@ class Color(StrEnum):
     RED = "red"
     MAGENTA = "magenta"
     BLUE = "blue"
+
+
+class KeyBinding(StrEnum):
+    CTRL_J = "c-j"
+    CTRL_E = "c-e"
+    ENTER = "enter"
+    CTRL_C = "c-c"
+    SHIFT_TAB = "s-tab"
 
 
 class PermissionMode(StrEnum):
@@ -40,26 +36,7 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
-DEFAULT_MODEL_ROLE = "model"
-
-DEFAULT_REGION = "us-central1"
-DEFAULT_MODEL = "llama3.2"
-DEFAULT_API_KEY = "ollama"
-
-ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
-ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
-ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
-ENV_AZURE_API_KEY = "AZURE_API_KEY"
-ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
-ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
-
 HELP_ARG = "help"
-
-
-class GoogleProviderType(StrEnum):
-    GLA = "gla"
-    VERTEX = "vertex"
-
 
 # (H) CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -119,6 +96,7 @@ CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
 CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
+PACKAGE_NAME = "code-graph-rag"
 CLI_MSG_VERSION = "{package} version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
@@ -130,6 +108,7 @@ CLI_STATS_REL_TITLE = "Relationship Statistics"
 CLI_STATS_COL_NODE_TYPE = "Node Type"
 CLI_STATS_COL_REL_TYPE = "Relationship Type"
 CLI_STATS_COL_COUNT = "Count"
+CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
@@ -189,10 +168,29 @@ UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
 UI_INPUT_PROMPT_HTML = (
     "<ansigreen><b>{prompt}</b></ansigreen> <ansiyellow>{hint}</ansiyellow>: "
 )
+
+
+class DeadCodeFormat(StrEnum):
+    TABLE = "table"
+    JSON = "json"
+
+
+class QueryFormat(StrEnum):
+    TABLE = "table"
+    JSON = "json"
+
+
+# (H) Image file extensions for chat image handling
+MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
+MIME_TYPE_PDF = "application/pdf"
+MIME_TYPE_FALLBACK = "application/octet-stream"
 YES_ANSWER = "y"
 YES_ANSWERS = frozenset({"y", "yes", ""})
 NO_ANSWERS = frozenset({"n", "no"})
+SHIFT_TAB_ESCAPE = b"\x1b[Z"
 DIFF_GIT_HEADER = "diff --git "
+MARKDOWN_FENCE = "```"
+MARKDOWN_FENCE_DIFF = "```diff"
 DIFF_CONTINUATION_PREFIXES = (
     "diff --git ",
     "index ",
@@ -357,21 +355,6 @@ INTERACTIVE_EXPAND_SUFFIX = "e"
 INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
-WATCHER_SLEEP_INTERVAL = 1
-LOG_LEVEL_INFO = "INFO"
-LOG_LEVEL_ERROR = "ERROR"
-
-# (H) Debounce settings for realtime watcher
-DEFAULT_DEBOUNCE_SECONDS = 5
-DEFAULT_MAX_WAIT_SECONDS = 30
-
 # (H) Tool success messages
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
 MSG_SURGICAL_FAILED = (
@@ -382,135 +365,24 @@ MSG_SURGICAL_FAILED = (
 # (H) Grep suggestion
 GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 
-# (H) Shell command constants
-SHELL_CMD_GREP = "grep"
-SHELL_CMD_GIT = "git"
-SHELL_CMD_RM = "rm"
-SHELL_RM_RF_FLAG = "-rf"
-SHELL_RETURN_CODE_ERROR = -1
-SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
-SHELL_SUBSHELL_PATTERNS = ("$(", "`")
-SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
-
-# (H) Dangerous commands - absolutely blocked
-SHELL_DANGEROUS_COMMANDS = frozenset(
-    {
-        "dd",
-        "mkfs",
-        "mkfs.ext4",
-        "mkfs.ext3",
-        "mkfs.xfs",
-        "mkfs.btrfs",
-        "mkfs.vfat",
-        "fdisk",
-        "parted",
-        "shred",
-        "wipefs",
-        "mkswap",
-        "swapon",
-        "swapoff",
-        "mount",
-        "umount",
-        "insmod",
-        "rmmod",
-        "modprobe",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
-        "init",
-        "telinit",
-        "systemctl",
-        "service",
-        "chroot",
-        "nohup",
-        "disown",
-        "crontab",
-        "at",
-        "batch",
-    }
+# (H) Query tool messages
+QUERY_NOT_AVAILABLE = "N/A"
+DICT_KEY_RESULTS = "results"
+TIKTOKEN_ENCODING = "cl100k_base"
+QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRUNCATED = (
+    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
+    "Refine your query for more specific results."
 )
-
-# (H) Dangerous rm flags
-SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
-SHELL_RM_FORCE_FLAG = "-f"
-
-# (H) System directories to protect from rm -rf
-SHELL_SYSTEM_DIRECTORIES = frozenset(
-    {
-        "bin",
-        "boot",
-        "dev",
-        "etc",
-        "home",
-        "lib",
-        "lib64",
-        "media",
-        "mnt",
-        "opt",
-        "proc",
-        "root",
-        "run",
-        "sbin",
-        "srv",
-        "sys",
-        "tmp",
-        "usr",
-        "var",
-    }
+QUERY_SUMMARY_TRANSLATION_FAILED = (
+    "I couldn't translate your request into a database query. Error: {error}"
 )
-
-# (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
-SHELL_DANGEROUS_PATTERNS_PIPELINE = (
-    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
-    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
-    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
+QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
+QUERY_SUMMARY_TIMEOUT = (
+    "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
+    "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
 )
-
-# (H) Build system directory regex pattern dynamically
-_SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
-
-# (H) Dangerous patterns for individual segments (per-command patterns)
-SHELL_DANGEROUS_PATTERNS_SEGMENT = (
-    (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
-    (rf"rm\s+.*-[rf]+\s+/({_SYSTEM_DIRS_PATTERN})($|/|\s)", "rm with system directory"),
-    (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
-    (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
-    (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),
-    (r"dd\s+.*of=/dev/", "dd writing to device"),
-    (r">\s*/dev/sd[a-z]", "redirect to disk device"),
-    (r">\s*/dev/nvme", "redirect to nvme device"),
-    (r">\s*/dev/null.*<", "null device manipulation"),
-    (r"chmod\s+.*-R\s+777\s+/", "recursive 777 on root"),
-    (r"chmod\s+.*777\s+/($|\s)", "777 on root"),
-    (r"chown\s+.*-R\s+.*\s+/($|\s)", "recursive chown on root"),
-    (r":\(\)\s*\{.*:\s*\|", "fork bomb pattern"),
-    (r"mv\s+.*\s+/dev/null", "move to /dev/null"),
-    (r"ln\s+-[sf]+\s+/dev/null", "symlink to /dev/null"),
-    (r"cat\s+.*/dev/zero", "cat /dev/zero"),
-    (r"cat\s+.*/dev/random", "cat /dev/random"),
-    (r">\s*/etc/passwd", "overwrite passwd"),
-    (r">\s*/etc/shadow", "overwrite shadow"),
-    (r">\s*/etc/sudoers", "overwrite sudoers"),
-    (r"echo\s+.*>\s*/etc/", "write to /etc"),
-    (
-        r"python.*-c.*(import\s+os|__import__\s*\(\s*['\"]os['\"]\s*\))",
-        "python os import in command",
-    ),
-    (r"perl\s+-e", "perl one-liner"),
-    (r"ruby\s+-e", "ruby one-liner"),
-    (r"nc\s+-[el]", "netcat listener"),
-    (r"ncat\s+-[el]", "ncat listener"),
-    (r"/dev/tcp/", "bash tcp device"),
-    (r"eval\s+", "eval command"),
-    (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
-    (r"awk\s+.*system\s*\(", "awk system() call"),
-    (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
-    (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
-    (r"xargs\s+-I.*sh", "xargs shell execution"),
-    (r"xargs\s+.*bash", "xargs bash execution"),
-)
+QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
 
 # (H) Semantic search constants
 MSG_SEMANTIC_NO_RESULTS = (
@@ -526,10 +398,13 @@ MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
 MSG_SEMANTIC_SOURCE_FORMAT = "Source code for node ID {id}:\n\n```\n{code}\n```"
 MSG_SEMANTIC_RESULT_HEADER = "Found {count} semantic matches for '{query}':\n\n"
 MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools to get more details or source code."
+SEMANTIC_BATCH_SIZE = 100
+SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
 # (H) Document analyzer constants
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
-
-SHELL_CMD_WHERE = "where"
-SHELL_CMD_WHICH = "which"
+MIME_TYPE_DEFAULT = "application/octet-stream"
+DOC_PROMPT_PREFIX = (
+    "Based on the document provided, please answer the following question: {question}"
+)

@@ -1,36 +1,11 @@
+# (H) Dead-code reachability roots: entry points and framework hooks.
+
 # (H) A C++ operator overload / user-defined literal is defined with the reserved
 # (H) `operator` keyword heading the name (`operator==`, `operator[]`, `operator""_json`).
 # (H) It is invoked by operator/literal syntax, not a named call, so it is a dead-code
 # (H) reachability root; the keyword can only head such definitions, so this prefix on a
 # (H) C++ file uniquely identifies them (member or free function).
 CPP_OPERATOR_PREFIX = "operator"
-# (H) JS/TS import specifier schemes that name genuinely external code (node
-# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
-# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
-JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
-    {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
-)
-TSCONFIG_FILENAMES: tuple[str, ...] = (
-    "tsconfig.json",
-    "tsconfig.base.json",
-    "jsconfig.json",
-)
-# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
-# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# (H) unrelated aliases and there can be thousands of them under node_modules.
-TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
-    {"node_modules", "dist", "build", "out", ".git"}
-)
-JS_INDEX_STEM = "index"
-TS_COMPILER_OPTIONS_KEY = "compilerOptions"
-TS_PATHS_KEY = "paths"
-TS_BASE_URL_KEY = "baseUrl"
-PATH_RELATIVE_PREFIX = "./"
-PATH_PARENT_PREFIX = "../"
-CPP_IMPORT_PARTITION_PREFIX = "import :"
-CPP_PARTITION_PREFIX = "partition_"
-
 
 # (H) Decorators whose presence marks a function/method as an implicit entry point
 # (H) (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
@@ -138,18 +113,27 @@ RUST_TRAIT_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# (H) Java serialization hooks the java.io runtime invokes reflectively during
+# (H) (de)serialization -- never through a call the graph can see -- so they are
+# (H) reachability roots (like Python dunders / Rust trait methods), gated by the .java
+# (H) extension. These names are reserved by the Serializable contract, so rooting them
+# (H) by name under-reports a same-named genuinely-dead method rather than mis-reporting.
+JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "readObject",
+        "writeObject",
+        "readObjectNoData",
+        "readResolve",
+        "writeReplace",
+    }
+)
+
 # (H) Base classes that mark a class as a structural interface: its method stubs
 # (H) are never call targets themselves (callers resolve to the implementations),
 # (H) so dead-code analysis roots every method the class defines.
 # (H) ponytail: direct bases only; transitive Protocol subclassing is not chased.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
-# (H) Substrings in a node's file path that mark it as test code. Covers Python
-# (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (H) (foo.test.ts, foo.spec.tsx), and the Jest __tests__/ directory so those
-# (H) files are not reported as dead. Singular /test/ and /spec/ directories are
-# (H) intentionally excluded: they collide with product code (a domain "spec"
-# (H) module), which would misclassify live code as test.
 # (H) Substrings in a node's file path that mark it as test code. Covers Python
 # (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
 # (H) (foo.test.ts, foo.spec.tsx), the Jest __tests__/ directory, and the

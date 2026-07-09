@@ -1,11 +1,8 @@
+# (H) Graph schema: node labels, relationships, keys, and Cypher queries.
+
 from enum import StrEnum
 
-_CYPHER_EMBEDDING_BASE = """
-MATCH (m:Module)-[:DEFINES]->(n)
-WHERE (n:Function OR n:Method)
-  AND m.qualified_name STARTS WITH ($project_name + '.')
-"""
-
+KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
 KEY_NODE_ID = "node_id"
 KEY_LABELS = "labels"
@@ -15,6 +12,7 @@ KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
 KEY_METADATA = "metadata"
+KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
 KEY_RELATIONSHIP_TYPES = "relationship_types"
@@ -23,6 +21,7 @@ KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
@@ -39,6 +38,14 @@ KEY_TO_VAL = "to_val"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+
+ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+ERR_SUBSTR_CONSTRAINT = "constraint"
+
+# (H) Protobuf file names
+PROTOBUF_INDEX_FILE = "index.bin"
+PROTOBUF_NODES_FILE = "nodes.bin"
+PROTOBUF_RELS_FILE = "relationships.bin"
 
 # (H) Protobuf oneof field names
 ONEOF_PROJECT = "project"
@@ -57,11 +64,6 @@ ONEOF_INTERFACE = "interface_node"
 ONEOF_ENUM = "enum_node"
 ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
-
-# (H) Trie internal keys
-TRIE_TYPE_KEY = "__type__"
-TRIE_QN_KEY = "__qn__"
-TRIE_INTERNAL_PREFIX = "__"
 
 
 class UniqueKeyType(StrEnum):
@@ -136,6 +138,44 @@ class RelationshipType(StrEnum):
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
 
 
+class AuditCheck(StrEnum):
+    ORPHAN_NODE = "orphan_node"
+    UNDOCUMENTED_LABEL = "undocumented_label"
+    UNDOCUMENTED_PROPERTY = "undocumented_property"
+    MISSING_REQUIRED_PROPERTY = "missing_required_property"
+    UNDOCUMENTED_RELATIONSHIP = "undocumented_relationship"
+    DANGLING_RELATIONSHIP = "dangling_relationship"
+
+
+# (H) Graph audit violation details (issue #646)
+AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
+AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
+AUDIT_DETAIL_UNDOCUMENTED_PROPERTY = (
+    "{label} '{key}' has undocumented property '{prop}'"
+)
+AUDIT_DETAIL_MISSING_REQUIRED = "{label} '{key}' is missing required property '{prop}'"
+AUDIT_DETAIL_UNDOCUMENTED_RELATIONSHIP = (
+    "({from_label})-[:{rel_type}]->({to_label}) is not documented"
+    " in RELATIONSHIP_SCHEMAS"
+)
+AUDIT_DETAIL_DANGLING = (
+    "({from_label} '{from_key}')-[:{rel_type}]->({to_label} '{to_key}')"
+    " references a nonexistent node and would be dropped by the database"
+)
+
+# (H) Live-graph audit details (doctor)
+AUDIT_DETAIL_ORPHAN_COUNT = "{count} {label} node(s) have no relationships"
+AUDIT_DETAIL_UNDOCUMENTED_PROPERTY_LIVE = (
+    "{label} nodes carry undocumented property '{prop}'"
+)
+AUDIT_DETAIL_MISSING_REQUIRED_LIVE = (
+    "{count} {label} node(s) are missing required properties"
+)
+
+# (H) Node schema property-string tokens ("{name: string, extension: string?}")
+SCHEMA_PROPS_BRACES = "{}"
+SCHEMA_OPTIONAL_SUFFIX = "?"
+
 NODE_PROJECT = NodeLabel.PROJECT
 
 # (H) Property keys
@@ -143,9 +183,19 @@ KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
+# (H) Marks a method that overrides a method of an EXTERNAL stdlib base class
+# (H) (click's textwrap.TextWrapper subclass): invoked by the base's machinery,
+# (H) never by first-party code, so dead-code reachability roots it.
+KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 # (H) Cypher queries
 CYPHER_DEFAULT_LIMIT = 50
+
+_CYPHER_EMBEDDING_BASE = """
+MATCH (m:Module)-[:DEFINES]->(n)
+WHERE (n:Function OR n:Method)
+  AND m.qualified_name STARTS WITH ($project_name + '.')
+"""
 
 CYPHER_QUERY_EMBEDDINGS = (
     _CYPHER_EMBEDDING_BASE
@@ -159,7 +209,6 @@ CYPHER_QUERY_PROJECT_NODE_IDS = _CYPHER_EMBEDDING_BASE + "RETURN id(n) AS node_i
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
-
 
 CYPHER_DELETE_MODULE = (
     "MATCH (m:Module {path: $path}) "
@@ -189,14 +238,19 @@ CYPHER_ALL_FOLDER_PATHS = (
 # (H) Rehydrate the in-memory function registry on an incremental run: returns
 # (H) every definition node's qualified name and label so call/instantiation
 # (H) resolution can see symbols defined in files that were not re-parsed.
-# (H) Rehydrate the in-memory function registry on an incremental run: returns
-# (H) every definition node's qualified name and label so call/instantiation
-# (H) resolution can see symbols defined in files that were not re-parsed.
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path"
+)
+
+# (H) Module-level qns (plus C++20 module interfaces) for incremental runs:
+# (H) deferred import verification must count modules in UNCHANGED files as
+# (H) real targets, or editing one file would drop cross-file IMPORTS edges.
+CYPHER_ALL_MODULE_QNS = (
+    "MATCH (n) WHERE n:Module OR n:ModuleInterface "
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
 )
 
 # (H) Inbound reference edges (from unchanged files) into symbols defined in one
@@ -245,50 +299,5 @@ NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
 
-# (H) Cypher response cleaning
-CYPHER_PREFIX = "cypher"
-CYPHER_SEMICOLON = ";"
-CYPHER_BACKTICK = "`"
-CYPHER_MATCH_KEYWORD = "MATCH"
-CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
-    {
-        "DELETE",
-        "DETACH",
-        "DROP",
-        "CREATE INDEX",
-        "CREATE CONSTRAINT",
-        "REMOVE",
-        "SET",
-        "MERGE",
-        "CREATE",
-        "LOAD CSV",
-        "FOREACH",
-    }
-)
-
-CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
-    {
-        "algo.",
-        "betweenness_centrality.",
-        "biconnected_components.",
-        "bridges.",
-        "community_detection.",
-        "cycles.",
-        "degree_centrality.",
-        "graph_analyzer.",
-        "graph_util.",
-        "igraphalg.",
-        "katz_centrality.",
-        "leiden_community_detection.",
-        "neighbors.",
-        "node_similarity.",
-        "nxalg.",
-        "pagerank.",
-        "path.",
-        "schema.",
-        "weakly_connected_components.",
-        "wcc.",
-    }
-)
 CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
 CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"

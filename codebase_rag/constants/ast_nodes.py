@@ -1,14 +1,53 @@
-from enum import StrEnum
+# (H) Shared tree-sitter node types, field names, and query captures.
 
-KEY_NODES = "nodes"
-KEY_TOTAL_NODES = "total_nodes"
-CLI_STATS_TOTAL_NODES = "Total Nodes"
+from .languages import SupportedLanguage
 
-# (H) ModelConfig field names
-FIELD_PROVIDER = "provider"
-FIELD_MODEL_ID = "model_id"
-FIELD_API_KEY = "api_key"
-FIELD_ENDPOINT = "endpoint"
+# (H) Tree-sitter AST node type constants
+FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
+FUNCTION_NODES_LAMBDA = (
+    "lambda_expression",
+    "arrow_function",
+    "anonymous_function",
+    "closure_expression",
+)
+FUNCTION_NODES_METHOD = (
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+)
+FUNCTION_NODES_TEMPLATE = (
+    "template_declaration",
+    "function_signature_item",
+    "function_signature",
+)
+FUNCTION_NODES_GENERATOR = ("generator_function_declaration", "function_expression")
+
+CLASS_NODES_BASIC = ("class_declaration", "class_definition")
+CLASS_NODES_STRUCT = ("struct_declaration", "struct_specifier", "struct_item")
+CLASS_NODES_INTERFACE = ("interface_declaration", "trait_declaration", "trait_item")
+CLASS_NODES_ENUM = ("enum_declaration", "enum_item", "enum_specifier")
+CLASS_NODES_TYPE_ALIAS = ("type_alias_declaration", "type_item")
+CLASS_NODES_UNION = ("union_specifier", "union_item")
+
+CALL_NODES_BASIC = ("call_expression", "function_call")
+CALL_NODES_METHOD = (
+    "method_invocation",
+    "member_call_expression",
+    "field_expression",
+)
+CALL_NODES_OPERATOR = ("binary_expression", "unary_expression", "update_expression")
+CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
+
+IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
+IMPORT_NODES_FROM = ("import_from_statement",)
+# (H) variable_declaration: CommonJS `var X = require(...)` (express) binds
+# (H) imports exactly like const/let lexical_declarations.
+IMPORT_NODES_MODULE = (
+    "lexical_declaration",
+    "variable_declaration",
+    "export_statement",
+)
+IMPORT_NODES_INCLUDE = ("preproc_include",)
 
 # (H) JS/TS specific node types
 JS_TS_FUNCTION_NODES = (
@@ -25,14 +64,12 @@ JS_TS_IMPORT_NODES = (
     "variable_declaration",
     "export_statement",
 )
+JS_TS_LANGUAGES = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
 
 # (H) C++ import node types
 CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
-
-# (H) Index file names
-INDEX_INIT = "__init__"
-INDEX_INDEX = "index"
-INDEX_MOD = "mod"
 
 # (H) AST field names for name extraction
 NAME_FIELDS = ("identifier", "name", "id")
@@ -67,38 +104,6 @@ FIELD_SUPERCLASS = "superclass"
 FIELD_SUPERCLASSES = "superclasses"
 FIELD_INTERFACES = "interfaces"
 
-# (H) Method name constants for getattr/hasattr
-METHOD_FIND_WITH_PREFIX = "find_with_prefix"
-METHOD_ITEMS = "items"
-
-# (H) Parser loader paths and args
-GRAMMARS_DIR = "grammars"
-TREE_SITTER_PREFIX = "tree-sitter-"
-TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
-BINDINGS_DIR = "bindings"
-SETUP_PY = "setup.py"
-BUILD_EXT_CMD = "build_ext"
-INPLACE_FLAG = "--inplace"
-LANG_ATTR_PREFIX = "language_"
-LANG_ATTR_TYPESCRIPT = "language_typescript"
-LANG_ATTR_TSX = "language_tsx"
-LANG_ATTR_PHP = "language_php"
-
-
-class TreeSitterModule(StrEnum):
-    PYTHON = "tree_sitter_python"
-    JS = "tree_sitter_javascript"
-    TS = "tree_sitter_typescript"
-    RUST = "tree_sitter_rust"
-    GO = "tree_sitter_go"
-    SCALA = "tree_sitter_scala"
-    JAVA = "tree_sitter_java"
-    C = "tree_sitter_c"
-    CPP = "tree_sitter_cpp"
-    LUA = "tree_sitter_lua"
-    PHP = "tree_sitter_php"
-
-
 # (H) Query dict keys
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
@@ -115,86 +120,103 @@ CAPTURE_CALL = "call"
 CAPTURE_IMPORT = "import"
 CAPTURE_IMPORT_FROM = "import_from"
 
-# (H) Locals query patterns for JS/TS
-JS_LOCALS_PATTERN = """
-; Variable definitions
-(variable_declarator name: (identifier) @local.definition)
-(function_declaration name: (identifier) @local.definition)
-(class_declaration name: (identifier) @local.definition)
+# (H) Tree-sitter Python import node types
+TS_IMPORT_STATEMENT = "import_statement"
+TS_IMPORT_FROM_STATEMENT = "import_from_statement"
+TS_DOTTED_NAME = "dotted_name"
+TS_ALIASED_IMPORT = "aliased_import"
+TS_RELATIVE_IMPORT = "relative_import"
+TS_IMPORT_PREFIX = "import_prefix"
+TS_WILDCARD_IMPORT = "wildcard_import"
 
-; Variable references
-(identifier) @local.reference
-"""
+# (H) Tree-sitter JS/TS import node types
+TS_STRING = "string"
+TS_IMPORT_CLAUSE = "import_clause"
+TS_LEXICAL_DECLARATION = "lexical_declaration"
+TS_VARIABLE_DECLARATION = "variable_declaration"
+TS_EXPORT_STATEMENT = "export_statement"
+TS_NAMED_IMPORTS = "named_imports"
+TS_IMPORT_SPECIFIER = "import_specifier"
+TS_NAMESPACE_IMPORT = "namespace_import"
+TS_IDENTIFIER = "identifier"
+TS_VARIABLE_DECLARATOR = "variable_declarator"
+TS_CALL_EXPRESSION = "call_expression"
+TS_EXPORT_CLAUSE = "export_clause"
+TS_EXPORT_SPECIFIER = "export_specifier"
+TS_EXPORT_DEFAULT = "default"
+TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
+TS_PRIVATE = "private"
+TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
-TS_LOCALS_PATTERN = """
-; Variable definitions (TypeScript has multiple declaration types)
-(variable_declarator name: (identifier) @local.definition)
-(lexical_declaration (variable_declarator name: (identifier) @local.definition))
-(variable_declaration (variable_declarator name: (identifier) @local.definition))
+# (H) Tree-sitter Java import node types
+TS_IMPORT_DECLARATION = "import_declaration"
+TS_STATIC = "static"
+TS_SCOPED_IDENTIFIER = "scoped_identifier"
+TS_ASTERISK = "asterisk"
 
-; Function definitions
-(function_declaration name: (identifier) @local.definition)
+# (H) Tree-sitter Rust import node types
+TS_USE_DECLARATION = "use_declaration"
 
-; Class definitions (uses type_identifier for class names)
-(class_declaration name: (type_identifier) @local.definition)
+# (H) Tree-sitter Go import node types
+TS_IMPORT_SPEC = "import_spec"
+TS_IMPORT_SPEC_LIST = "import_spec_list"
+TS_PACKAGE_IDENTIFIER = "package_identifier"
+TS_INTERPRETED_STRING_LITERAL = "interpreted_string_literal"
 
-; Variable references
-(identifier) @local.reference
-"""
+# (H) Tree-sitter C++ import node types
+TS_PREPROC_INCLUDE = "preproc_include"
+TS_TEMPLATE_FUNCTION = "template_function"
+TS_DECLARATION = "declaration"
+TS_STRING_LITERAL = "string_literal"
+TS_SYSTEM_LIB_STRING = "system_lib_string"
+TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
+TS_TYPE_DESCRIPTOR = "type_descriptor"
+TS_TYPE_IDENTIFIER = "type_identifier"
 
-# (H) Query tool messages
-QUERY_NOT_AVAILABLE = "N/A"
-QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
-QUERY_SUMMARY_TRUNCATED = (
-    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
-    "Refine your query for more specific results."
-)
-QUERY_SUMMARY_TRANSLATION_FAILED = (
-    "I couldn't translate your request into a database query. Error: {error}"
-)
-QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
-QUERY_SUMMARY_TIMEOUT = (
-    "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
-    "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
-)
-QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
+# (H) Tree-sitter JS/TS utility node types
+TS_RETURN_STATEMENT = "return_statement"
+TS_RETURN = "return"
+TS_NEW_EXPRESSION = "new_expression"
 
-# (H) Language CLI default node types
-LANG_DEFAULT_FUNCTION_NODES = ("function_definition", "method_definition")
-LANG_DEFAULT_CLASS_NODES = ("class_declaration",)
-LANG_DEFAULT_MODULE_NODES = ("compilation_unit",)
-LANG_DEFAULT_CALL_NODES = ("invocation_expression",)
+# (H) Tree-sitter class/module node types for class_ingest
+TS_MODULE_DECLARATION = "module_declaration"
+TS_IMPL_ITEM = "impl_item"
+TS_INTERFACE_DECLARATION = "interface_declaration"
+TS_ENUM_DECLARATION = "enum_declaration"
+TS_ENUM_SPECIFIER = "enum_specifier"
+TS_ENUM_CLASS_SPECIFIER = "enum_class_specifier"
+TS_TYPE_ALIAS_DECLARATION = "type_alias_declaration"
+TS_STRUCT_SPECIFIER = "struct_specifier"
+TS_UNION_SPECIFIER = "union_specifier"
+TS_CLASS_DECLARATION = "class_declaration"
+TS_NAMESPACE_DEFINITION = "namespace_definition"
+TS_ABSTRACT_CLASS_DECLARATION = "abstract_class_declaration"
+TS_INTERNAL_MODULE = "internal_module"
 
-LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
-FIELD_OPERAND = "operand"
+TS_BASE_CLASS_CLAUSE = "base_class_clause"
+TS_TEMPLATE_TYPE = "template_type"
+TS_ACCESS_SPECIFIER = "access_specifier"
+TS_VIRTUAL = "virtual"
+TS_TYPE_LIST = "type_list"
+TS_CLASS_HERITAGE = "class_heritage"
+# (H) TS class `implements I, J` clause (a child of class_heritage).
+TS_IMPLEMENTS_CLAUSE = "implements_clause"
+TS_EXTENDS_CLAUSE = "extends_clause"
+TS_MEMBER_EXPRESSION = "member_expression"
+TS_SELECTOR_EXPRESSION = "selector_expression"
+TS_EXTENDS = "extends"
+TS_ARGUMENTS = "arguments"
+TS_EXTENDS_TYPE_CLAUSE = "extends_type_clause"
 
-FIELD_OPERATOR = "operator"
+TS_METHOD_DEFINITION = "method_definition"
+TS_DECORATOR = "decorator"
+TS_ERROR = "ERROR"
+TS_EXPRESSION_STATEMENT = "expression_statement"
+TS_STATEMENT_BLOCK = "statement_block"
+TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_BINARY_EXPRESSION = "binary_expression"
 
-QUERY_CAPTURE_CLASS = "class"
-QUERY_CAPTURE_FUNCTION = "function"
-QUERY_KEY_CLASSES = "classes"
-QUERY_KEY_FUNCTIONS = "functions"
+TS_ATTRIBUTE = "attribute"
 
-# (H) JS/TS ingest query capture names
-CAPTURE_CHILD_CLASS = "child_class"
-CAPTURE_PARENT_CLASS = "parent_class"
-CAPTURE_CONSTRUCTOR_NAME = "constructor_name"
-CAPTURE_PROTOTYPE_KEYWORD = "prototype_keyword"
-CAPTURE_METHOD_NAME = "method_name"
-CAPTURE_METHOD_FUNCTION = "method_function"
-CAPTURE_MEMBER_EXPR = "member_expr"
-CAPTURE_FUNCTION_EXPR = "function_expr"
-CAPTURE_ARROW_FUNCTION = "arrow_function"
-
-# (H) Tree-sitter field names for module system
-FIELD_FUNCTION = "function"
-FIELD_KEY = "key"
-
-# (H) Query capture names for module system
-CAPTURE_FUNC = "func"
-CAPTURE_VARIABLE_DECLARATOR = "variable_declarator"
-CAPTURE_EXPORTS_OBJ = "exports_obj"
-CAPTURE_MODULE_OBJ = "module_obj"
-CAPTURE_EXPORTS_PROP = "exports_prop"
-CAPTURE_EXPORT_NAME = "export_name"
-CAPTURE_EXPORT_FUNCTION = "export_function"
+# (H) TS-specific node types
+TS_FUNCTION_SIGNATURE = "function_signature"
