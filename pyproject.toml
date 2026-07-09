@@ -70,6 +70,13 @@ cgr = "codebase_rag.cli:app"
 [tool.uv]
 package = true
 
+# (H) Patched grammars: upstream tree-sitter-c drops declarations after a
+# (H) #define whose value embeds a block comment (issue #555). Our forks carry
+# (H) the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
+[tool.uv.sources]
+tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
+tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
+
 [tool.setuptools.packages.find]
 include = ["codebase_rag*", "codec*", "cgr*"]
 exclude = ["*.tests", "*.tests.*"]
