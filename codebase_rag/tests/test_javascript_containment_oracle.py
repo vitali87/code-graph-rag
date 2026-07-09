@@ -52,6 +52,26 @@ function install() {
         this.name = "";
     };
 }
+
+var Conn = (exports.Conn = function (stream) {
+    this.stream = stream;
+});
+
+Conn.prototype.close = function () {
+    this.stream = null;
+};
+
+function wrap(base) {
+    function Inner(x) {
+        base.call(this, x);
+    }
+
+    Inner.prototype.run = function () {
+        return this.x;
+    };
+
+    return Inner;
+}
 """
 
 
