@@ -216,9 +216,9 @@ def test_hybrid_macro_body_reference_emits_macro_to_macro_call(
     _write_nested(root)
     ingestor = _run_hybrid(root, monkeypatch)
     calls = _calls(ingestor)
-    assert ("hybnest.nested.QUAD", "hybnest.nested.SQUARE") in calls, sorted(calls)
+    assert ("hybnest.nested.h.QUAD", "hybnest.nested.h.SQUARE") in calls, sorted(calls)
     # (H) a macro does not call itself
-    assert ("hybnest.nested.SQUARE", "hybnest.nested.SQUARE") not in calls
+    assert ("hybnest.nested.h.SQUARE", "hybnest.nested.h.SQUARE") not in calls
 
 
 def test_run_hybrid_emits_only_macros_and_returns_pending_calls(

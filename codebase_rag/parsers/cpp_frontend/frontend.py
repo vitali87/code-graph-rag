@@ -104,6 +104,12 @@ class _Collector:
         # (H) enclosing caller is only recoverable by span once ALL definitions
         # (H) are collected -- resolved at flush.
         self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
+        # (H) {macro qn: identifier tokens in its definition body}: a macro
+        # (H) expanded only inside another macro's body is a NESTED expansion
+        # (H) the preprocessing record never reports, so the body reference is
+        # (H) the only evidence of use -- resolved to macro -> macro CALLS at
+        # (H) flush, once every macro node is known.
+        self._macro_body_refs: dict[str, set[str]] = {}
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -340,6 +346,16 @@ class _Collector:
             fc.LABEL_FUNCTION,
             qn,
         )
+        # (H) Body tokens after the macro's own name; parameters and keywords
+        # (H) also pass isidentifier but can never match a macro node's name
+        # (H) at flush, so no further filtering is needed here.
+        refs = {
+            t.spelling
+            for t in list(cursor.get_tokens())[1:]
+            if t.spelling.isidentifier() and t.spelling != cursor.spelling
+        }
+        if refs:
+            self._macro_body_refs.setdefault(qn, set()).update(refs)
 
     def _queue_macro_call(self, cursor: Cursor) -> None:
         # (H) MACRO_INSTANTIATION.referenced is the exact MACRO_DEFINITION
@@ -484,6 +500,33 @@ class _Collector:
         if self.simple_name_lookup is not None and isinstance(name, str):
             self.simple_name_lookup[name].add(qn)
 
+    def _resolve_macro_body_refs(self) -> None:
+        # (H) Macros share one global, unscoped namespace, so match body
+        # (H) identifiers by simple name; a name defined in several files gets
+        # (H) an edge to each candidate (the duplicate-qn CALLS-to-both rule).
+        macros_by_name: dict[str, list[str]] = {}
+        for label, props, _ in self.nodes.values():
+            name = props.get(cs.KEY_NAME)
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            if (
+                props.get(cs.KEY_IS_MACRO)
+                and isinstance(name, str)
+                and isinstance(qn, str)
+            ):
+                macros_by_name.setdefault(name, []).append(qn)
+        for macro_qn, refs in self._macro_body_refs.items():
+            for name in refs:
+                for target_qn in macros_by_name.get(name, ()):
+                    if target_qn == macro_qn:
+                        continue
+                    self._add_edge(
+                        cs.RelationshipType.CALLS,
+                        fc.LABEL_FUNCTION,
+                        macro_qn,
+                        fc.LABEL_FUNCTION,
+                        target_qn,
+                    )
+
     def pending_macro_calls(self) -> list[PendingMacroCall]:
         # (H) Hybrid: callers are unknowable until the tree-sitter pass has
         # (H) recorded its definition spans, so hand the uses back with the
@@ -498,6 +541,7 @@ class _Collector:
         return pending
 
     def flush(self, ingestor: IngestorProtocol) -> None:
+        self._resolve_macro_body_refs()
         if not self.hybrid:
             self._resolve_macro_calls()
         for module_qn, props in self.modules.items():
