@@ -783,17 +783,11 @@ class FunctionIngestMixin:
             is_named=not resolution.is_anonymous,
         )
         self.function_locations[function_span_key(module_qn, func_node)] = location
-        if language == cs.SupportedLanguage.CPP:
-            # (H) A template wrapper's body walk in Pass 3 visits the INNER
-            # (H) definition (it starts on its own line), so record the entry
-            # (H) under the child's span too (the walk matches on that node).
-            if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
-                for child in func_node.children:
-                    if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                        self.function_locations[function_span_key(module_qn, child)] = (
-                            location
-                        )
-                        break
+        if (
+            language == cs.SupportedLanguage.CPP
+            and func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION
+        ):
+            self._record_cpp_template_child_location(func_node, module_qn, location)
 
         # (H) A method-body anonymous-class override (`new Base(){ @Override m(){} }`
         # (H) inside a method) is captured as a function here; record it so the deferred
@@ -816,6 +810,17 @@ class FunctionIngestMixin:
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
+
+    def _record_cpp_template_child_location(
+        self, func_node: Node, module_qn: str, location: FunctionLocation
+    ) -> None:
+        # (H) A template wrapper's body walk in Pass 3 visits the INNER
+        # (H) definition (it starts on its own line), so record the entry
+        # (H) under the child's span too (the walk matches on that node).
+        for child in func_node.children:
+            if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                self.function_locations[function_span_key(module_qn, child)] = location
+                break
 
     def _build_function_props(
         self, func_node: Node, resolution: FunctionResolution, module_qn: str

@@ -301,13 +301,19 @@ class _Collector:
         return self.resolver.function_qn(cursor)
 
     def _process_macro_definition(self, cursor: Cursor) -> None:
-        qn = self._macro_function_qn(cursor)
-        if qn is None:
+        # (H) Guard order matters for reachability: builtins/command-line
+        # (H) macros (no file) first, system-header macros (outside the repo)
+        # (H) second, THEN the shared eligibility check (whose remaining filter
+        # (H) here is the empty-body one -- include guards, feature flags).
+        if cursor.location.file is None:
             return
         file_name = cursor.location.file.name
         rel = self.resolver.rel_path(file_name)
         module_qn = self.resolver.module_qn(file_name)
         if rel is None or module_qn is None:
+            return
+        qn = self._macro_function_qn(cursor)
+        if qn is None:
             return
         self.covered.add(rel)
         self._add_module(module_qn, rel, file_name)
