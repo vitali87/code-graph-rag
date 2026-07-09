@@ -4,6 +4,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .utils import tuple_group_inner
 
 
 class RustTypeInferenceEngine:
@@ -282,6 +283,23 @@ class RustTypeInferenceEngine:
         return found
 
 
+def _rust_bare_generic_name(type_node: Node) -> str | None:
+    outer = type_node.child_by_field_name(cs.FIELD_TYPE)
+    outer_name = _rust_bare_type_name(outer) if outer else None
+    # (H) A receiver type strips only transparent deref pointers (Arc<Shared>
+    # (H) -> Shared); Option/Result/Vec are kept (a call dispatches to them).
+    if outer_name not in cs.RS_DEREF_WRAPPERS:
+        return outer_name
+    args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+    if args is None:
+        return outer_name
+    inner = next(
+        (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES),
+        None,
+    )
+    return _rust_bare_type_name(inner) if inner else outer_name
+
+
 def _rust_bare_type_name(type_node: Node) -> str | None:
     # (H) Bare type name, stripping references/generics/wrappers down to the leaf
     # (H) identifier: `&'a mut Shutdown` -> Shutdown, `Result<Command>` -> Command.
@@ -289,25 +307,17 @@ def _rust_bare_type_name(type_node: Node) -> str | None:
         case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
             return safe_decode_text(type_node)
         case cs.TS_GENERIC_TYPE:
-            outer = type_node.child_by_field_name(cs.FIELD_TYPE)
-            outer_name = _rust_bare_type_name(outer) if outer else None
-            # (H) A receiver type strips only transparent deref pointers (Arc<Shared>
-            # (H) -> Shared); Option/Result/Vec are kept (a call dispatches to them).
-            if outer_name not in cs.RS_DEREF_WRAPPERS:
-                return outer_name
-            args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
-            if args is None:
-                return outer_name
-            inner = next(
-                (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES),
-                None,
-            )
-            return _rust_bare_type_name(inner) if inner else outer_name
+            return _rust_bare_generic_name(type_node)
         case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
             name = type_node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name) if name else None
+        case cs.TS_RS_TUPLE_TYPE:
+            inner = tuple_group_inner(type_node)
+            return _rust_bare_type_name(inner) if inner else None
         case _:
-            # (H) reference_type / other wrappers: descend to the first typed child.
+            # (H) reference_type / dyn / impl / bounded / other wrappers: descend
+            # (H) to the first typed child (a bounded type's first bound is the
+            # (H) principal trait; the rest are auto-trait markers).
             for child in type_node.children:
                 if child.type in cs.RS_RETURN_TYPE_NODE_TYPES:
                     return _rust_bare_type_name(child)
