@@ -121,6 +121,35 @@ def _write_widget(root: Path) -> None:
     )
 
 
+# (H) WRAP's parameter shadows the SQUARE macro: the body's SQUARE token is
+# (H) substituted by the caller's argument, never an expansion of the macro,
+# (H) so WRAP -> SQUARE must not exist. ALIAS is the positive control: an
+# (H) object-like macro whose parenthesized body genuinely references SQUARE.
+_PARAM_H = """\
+#ifndef PARAM_H
+#define PARAM_H
+#define SQUARE(x) ((x)*(x))
+#define WRAP(SQUARE) (SQUARE + 1)
+#define ALIAS (SQUARE(2))
+int compute(int v);
+#endif
+"""
+
+_PARAM_SRC = """\
+#include "param.h"
+int compute(int v) { return WRAP(v) + ALIAS; }
+"""
+
+
+def _write_param(root: Path) -> None:
+    root.mkdir()
+    (root / "param.h").write_text(_PARAM_H, encoding="utf-8")
+    (root / "param.cpp").write_text(_PARAM_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "param.cpp")]), encoding="utf-8"
+    )
+
+
 def _calls(ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
         (c.args[0][2], c.args[2][2])
@@ -221,6 +250,19 @@ def test_hybrid_macro_body_reference_emits_macro_to_macro_call(
     assert ("hybnest.nested.h.QUAD", "hybnest.nested.h.SQUARE") in calls, sorted(calls)
     # (H) a macro does not call itself
     assert ("hybnest.nested.h.SQUARE", "hybnest.nested.h.SQUARE") not in calls
+
+
+def test_hybrid_macro_parameter_shadowing_a_macro_is_not_a_call(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybparam"
+    _write_param(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    calls = _calls(ingestor)
+    assert ("hybparam.param.h.WRAP", "hybparam.param.h.SQUARE") not in calls, sorted(
+        calls
+    )
+    assert ("hybparam.param.h.ALIAS", "hybparam.param.h.SQUARE") in calls, sorted(calls)
 
 
 def test_hybrid_incremental_run_keeps_macro_callers_for_unchanged_files(
