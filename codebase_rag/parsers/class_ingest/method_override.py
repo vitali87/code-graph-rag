@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from itertools import chain
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -18,9 +19,11 @@ def process_all_method_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    interface_implementers: dict[str, set[str]] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
+    implemented_interfaces = _invert_implementers(interface_implementers or {})
     for method_qn in function_registry.keys():
         if (
             function_registry[method_qn] == NodeType.METHOD
@@ -36,7 +39,25 @@ def process_all_method_overrides(
                     function_registry,
                     class_inheritance,
                     ingestor,
+                    implemented_interfaces,
                 )
+
+
+def _invert_implementers(
+    interface_implementers: dict[str, set[str]],
+) -> dict[str, list[str]]:
+    # (H) class_inheritance holds only superclasses (an `implements` clause or a
+    # (H) Rust `impl Trait for Type` never enters it), so the override walk needs
+    # (H) the implementer -> interfaces direction too, or no interface/trait
+    # (H) implementation ever gets an OVERRIDES edge. Both loops sorted: the
+    # (H) map and its sets are hash-ordered and edge emission must be
+    # (H) deterministic (each implementer's interface list follows the outer
+    # (H) sort; the inner sort makes the dict order deterministic too).
+    inverted: dict[str, list[str]] = {}
+    for interface_qn, implementer_qns in sorted(interface_implementers.items()):
+        for implementer_qn in sorted(implementer_qns):
+            inverted.setdefault(implementer_qn, []).append(interface_qn)
+    return inverted
 
 
 def _signature_arity(method_name: str) -> int | None:
@@ -98,8 +119,10 @@ def check_method_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    implemented_interfaces: dict[str, list[str]] | None = None,
 ) -> None:
-    if class_qn not in class_inheritance:
+    implemented = implemented_interfaces or {}
+    if class_qn not in class_inheritance and class_qn not in implemented:
         return
 
     queue = deque([class_qn])
@@ -137,8 +160,13 @@ def check_method_overrides(
                 )
                 return
 
-        if current_class in class_inheritance:
-            for parent_class_qn in class_inheritance[current_class]:
-                if parent_class_qn not in visited:
-                    visited.add(parent_class_qn)
-                    queue.append(parent_class_qn)
+        # (H) Superclasses first: when both a base class and an interface declare
+        # (H) the method, the edge lands on the base, matching Java resolution.
+        # (H) chain() instead of list concat: this runs per BFS node per method.
+        for parent_class_qn in chain(
+            class_inheritance.get(current_class, ()),
+            implemented.get(current_class, ()),
+        ):
+            if parent_class_qn not in visited:
+                visited.add(parent_class_qn)
+                queue.append(parent_class_qn)

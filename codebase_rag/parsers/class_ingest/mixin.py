@@ -1025,6 +1025,7 @@ class ClassIngestMixin:
             self.function_registry,
             self.class_inheritance,
             self.ingestor,
+            self.interface_implementers,
         )
         self._resolve_java_anon_overrides()
 
