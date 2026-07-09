@@ -178,7 +178,8 @@ def test_hybrid_emits_no_libclang_scheme_definitions(
     assert not any(q.endswith(".ui.helper") for q in functions | methods), sorted(
         functions | methods
     )
-    assert "hybns.ns.h.NS_BEGIN" in functions, sorted(functions)
+    # (H) no ns.cpp in this fixture, so ns.h claims the plain module qn
+    assert "hybns.ns.NS_BEGIN" in functions, sorted(functions)
 
 
 def test_run_hybrid_emits_only_macros_and_returns_pending_calls(

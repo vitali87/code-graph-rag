@@ -539,6 +539,35 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+class CppDefinitionSpan(NamedTuple):
+    """Full line span of a C/C++ function or method the tree-sitter pass ingested.
+
+    Recorded per relative file path so the hybrid C++ frontend can attribute a
+    macro use (a TU-level preprocessing entity with only a location) to the
+    tightest enclosing TREE-SITTER definition after Pass 2; libclang's own
+    spans carry wrong-scheme qns wherever macros hide namespaces.
+    """
+
+    start_line: int
+    end_line: int
+    label: str
+    qualified_name: str
+
+
+class PendingMacroCall(NamedTuple):
+    """A macro use the hybrid C++ frontend saw but cannot attribute yet.
+
+    The caller is resolvable only after the tree-sitter pass has recorded its
+    definition spans; a use outside every span attributes to the fallback
+    Module, mirroring the module-caller rule for ordinary calls.
+    """
+
+    rel_path: str
+    line: int
+    callee_qn: str
+    fallback_module_qn: str
+
+
 class DeferredCppInherit(NamedTuple):
     """C++ INHERITS edge held back until every class is registered.
 

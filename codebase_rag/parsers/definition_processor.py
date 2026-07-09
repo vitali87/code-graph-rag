@@ -11,6 +11,7 @@ from .. import logs as ls
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
+    CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
@@ -110,6 +111,10 @@ class DefinitionProcessor(
         # (H) the registered label/qn instead of re-deriving them structurally
         # (H) (the walks diverge on preprocessor-distorted class bodies).
         self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
+        # (H) {rel path: [full line spans]} of every C/C++ function/method the
+        # (H) tree-sitter pass ingested; the hybrid C++ frontend's macro-use
+        # (H) CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
+        self.cpp_definition_spans: dict[str, list[CppDefinitionSpan]] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
         # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # (H) registered; resolve_deferred_inherits re-resolves the guesses.

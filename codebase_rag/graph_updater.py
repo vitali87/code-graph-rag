@@ -19,6 +19,7 @@ from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
     run_cpp_frontend,
+    run_cpp_frontend_hybrid,
 )
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
@@ -28,6 +29,7 @@ from .types_defs import (
     FunctionRegistry,
     LanguageQueries,
     NodeType,
+    PendingMacroCall,
     QualifiedName,
     ResultRow,
     SimpleNameLookup,
@@ -469,6 +471,9 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # (H) Hybrid-mode macro uses awaiting a caller: attribution needs the
+        # (H) tree-sitter definition spans, which exist only after Pass 2.
+        self._pending_cpp_macro_calls: list[PendingMacroCall] = []
         # (H) Module qns read back from the graph on incremental runs; deferred
         # (H) import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
@@ -486,13 +491,20 @@ class GraphUpdater:
         )
 
     def _run_cpp_frontend(self) -> None:
-        # (H) Optional libclang C++ pre-pass: when CPP_FRONTEND=libclang and a
-        # (H) compile_commands.json is discoverable, emit macro-accurate C/C++
-        # (H) nodes/edges directly (tree-sitter cannot expand macros). Covered
-        # (H) files are then skipped by the tree-sitter definition pass. Missing
-        # (H) either condition falls back to tree-sitter with no change.
+        # (H) Optional libclang C++ pre-pass when a compile_commands.json is
+        # (H) discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
+        # (H) directly (tree-sitter cannot expand macros) and skip covered
+        # (H) files in the tree-sitter definition pass. HYBRID: tree-sitter
+        # (H) stays the backbone (nothing is skipped); libclang layers on only
+        # (H) macro Function nodes and #include IMPORTS, whose qns are
+        # (H) scheme-identical, and hands back macro uses for span attribution
+        # (H) after Pass 2. Missing either condition falls back to tree-sitter.
         self._cpp_frontend_covered = frozenset()
-        if settings.CPP_FRONTEND != cs.CppFrontend.LIBCLANG:
+        self._pending_cpp_macro_calls = []
+        if settings.CPP_FRONTEND not in (
+            cs.CppFrontend.LIBCLANG,
+            cs.CppFrontend.HYBRID,
+        ):
             return
         if not cpp_frontend_available():
             logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
@@ -502,6 +514,24 @@ class GraphUpdater:
             logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._pending_cpp_macro_calls = run_cpp_frontend_hybrid(
+                self.ingestor,
+                self.repo_path,
+                self.project_name,
+                compdb_dir,
+                function_registry=self.function_registry,
+                simple_name_lookup=self.simple_name_lookup,
+                structural_elements=(
+                    self.factory.structure_processor.structural_elements
+                ),
+            )
+            logger.info(
+                ls.CPP_FRONTEND_HYBRID_PENDING.format(
+                    count=len(self._pending_cpp_macro_calls)
+                )
+            )
+            return
         self._cpp_frontend_covered = run_cpp_frontend(
             self.ingestor,
             self.repo_path,
@@ -514,6 +544,37 @@ class GraphUpdater:
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
+
+    def _resolve_hybrid_macro_calls(self) -> None:
+        # (H) Attribute each hybrid macro use to the tightest enclosing
+        # (H) TREE-SITTER definition span (recorded during Pass 2), falling
+        # (H) back to the use site's Module -- the mirror of the libclang
+        # (H) frontend's own span resolution, but against the qn scheme the
+        # (H) rest of the graph actually uses.
+        if not self._pending_cpp_macro_calls:
+            return
+        spans = self.factory.definition_processor.cpp_definition_spans
+        emitted = 0
+        for call in self._pending_cpp_macro_calls:
+            containing = [
+                s
+                for s in spans.get(call.rel_path, ())
+                if s.start_line <= call.line <= s.end_line
+                and s.qualified_name != call.callee_qn
+            ]
+            if containing:
+                tightest = min(containing, key=lambda s: s.end_line - s.start_line)
+                caller_label, caller_qn = tightest.label, tightest.qualified_name
+            else:
+                caller_label = cs.NodeLabel.MODULE.value
+                caller_qn = call.fallback_module_qn
+            self.ingestor.ensure_relationship_batch(
+                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
+            )
+            emitted += 1
+        logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
@@ -557,6 +618,11 @@ class GraphUpdater:
         contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
         if contained:
             logger.info("Resolved {} deferred C++ nested containments", contained)
+
+        # (H) After resolve_deferred_cpp_methods: an out-of-class method's span
+        # (H) is recorded only once its class binding resolves, and a macro use
+        # (H) inside such a method must attribute to it, not the Module.
+        self._resolve_hybrid_macro_calls()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
