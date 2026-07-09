@@ -255,6 +255,33 @@ def test_hybrid_incremental_run_keeps_macro_callers_for_unchanged_files(
     assert ("hybinc.calc.compute", "hybinc.calc.h.SQUARE") in calls, sorted(calls)
 
 
+def test_hybrid_incremental_header_edit_keeps_macro_nodes(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybedit"
+    _write_calc(root)
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+    macro_node = (cs.NodeLabel.FUNCTION.value, "hybedit.calc.h.SQUARE")
+    assert macro_node in store.nodes
+
+    # (H) Editing the header makes it a changed file: Pass 2 deletes its
+    # (H) Module subtree before re-parsing, so macro nodes emitted BEFORE the
+    # (H) delete would vanish until a forced rebuild -- the frontend must run
+    # (H) after the deletes.
+    (root / "calc.h").write_text(_CALC_H + "// touched\n", encoding="utf-8")
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+    assert macro_node in store.nodes, sorted(
+        uid for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION.value
+    )
+
+
 def test_hybrid_drops_macro_uses_in_ignored_directories(temp_repo: Path) -> None:
     root = temp_repo / "hybskip"
     _write_calc(root)
