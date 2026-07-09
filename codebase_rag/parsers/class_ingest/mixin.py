@@ -17,6 +17,7 @@ from ...types_defs import (
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
+    FunctionSpanKey,
     NodeType,
     PropertyDict,
 )
@@ -28,7 +29,12 @@ from ..java import utils as java_utils
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
-from ..utils import ingest_method, safe_decode_text, sorted_captures
+from ..utils import (
+    function_span_key,
+    ingest_method,
+    safe_decode_text,
+    sorted_captures,
+)
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -139,7 +145,7 @@ class ClassIngestMixin:
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
-    function_locations: dict[tuple[str, int], FunctionLocation]
+    function_locations: dict[FunctionSpanKey, FunctionLocation]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
@@ -932,12 +938,11 @@ class ClassIngestMixin:
             # (H) and on TS declaration merging, where the member registers
             # (H) under the namespace's duplicate-suffixed qn (issue #652).
             if ingested_qn is not None and module_qn is not None:
-                self.function_locations[(module_qn, method_node.start_point[0] + 1)] = (
+                self.function_locations[function_span_key(module_qn, method_node)] = (
                     FunctionLocation(
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
-                        start_col=method_node.start_point[1],
                     )
                 )
             if language == cs.SupportedLanguage.CPP:

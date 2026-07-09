@@ -674,18 +674,24 @@ directions:
   and bison's `api.prefix {jq_yy}` rename (`libclang` records `jq_yylex` after the
   `#define`; cgr resolves the same call under the textual name `yylex`).
 
-**The rest is a genuine cgr limitation, not the preprocessor:** in the
-bison-generated `parser.c`, tree-sitter produces 20 `ERROR` nodes, and the normal
-`yyerror` definition (a plain `void yyerror(...)` at `parser.c:406`) falls inside
-one. cgr therefore never registers `yyerror` as a function, so every call to it is
-unresolved. cgr silently drops real definitions that land inside a tree-sitter
-parse-error region on machine-generated code. The trigger was reduced to a
-`tree-sitter-c` grammar bug (a block comment inside a `#define` body breaks the
-parse and drops the following declaration, present through the latest 0.24.2);
-tracked in issue #555 and upstream as
-[tree-sitter-c #319](https://github.com/tree-sitter/tree-sitter-c/issues/319).
-It is rooted in the grammar, not in cgr's resolution logic, so it is reported
-here, not hidden.
+**The rest was a `tree-sitter-c` grammar bug, now fixed in cgr via patched
+forks:** in the bison-generated `parser.c`, tree-sitter produced 20 `ERROR`
+nodes, and the normal `yyerror` definition (a plain `void yyerror(...)` at
+`parser.c:406`) fell inside one, so cgr never registered `yyerror` as a function
+and every call to it was unresolved. The trigger was reduced to a block comment
+between two tokens of a `#define` value: `preproc_arg` is a single token whose
+regex stops before `/*`, but the grammar allowed only one value token, so the
+text after the comment had no rule to attach to. Tracked in issue #555 and
+upstream as
+[tree-sitter-c #319](https://github.com/tree-sitter/tree-sitter-c/issues/319)
+(open, unreviewed). Because upstream review is slow, cgr sources its grammars
+from patched forks ([tree-sitter-c](https://github.com/vitali87/tree-sitter-c)
+and [tree-sitter-cpp](https://github.com/vitali87/tree-sitter-cpp), pinned via
+`[tool.uv.sources]`) that change the value to `repeat($.preproc_arg)` so comment
+`extras` can sit between segments. With the patched grammar, `yyerror` is
+captured (`parser.c` ERROR count drops from 20 to 12; the remainder are
+attribute-macro constructs that only preprocessing can resolve). Drop the
+overrides once the fix lands upstream.
 
 ## Multi-language retrieval (C++) — C++ CALLS vs `libclang`
 

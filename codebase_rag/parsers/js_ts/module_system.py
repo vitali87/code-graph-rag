@@ -47,6 +47,20 @@ class JsTsModuleSystemMixin:
     @abstractmethod
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
+    # (H) Span-claim protocol (implemented by FunctionIngestMixin): one source
+    # (H) function must mint exactly one node PER NAME, so every JS/TS
+    # (H) registration path checks the claim before registering and claims
+    # (H) after (deliberate different-name twins still register).
+    @abstractmethod
+    def _span_claimed_for_qn(
+        self, module_qn: str, func_node: ASTNode, candidate_qn: str
+    ) -> bool: ...
+
+    @abstractmethod
+    def _claim_function_span(
+        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
+    ) -> None: ...
+
     def __init__(self) -> None:
         self._processed_imports = set()
 
@@ -204,7 +218,13 @@ class JsTsModuleSystemMixin:
         module_qn: str,
         export_type: str,
     ) -> None:
-        ingest_exported_function(
+        if self._span_claimed_for_qn(
+            module_qn,
+            export_function,
+            f"{module_qn}{cs.SEPARATOR_DOT}{function_name}",
+        ):
+            return
+        function_qn = ingest_exported_function(
             export_function,
             function_name,
             module_qn,
@@ -217,6 +237,13 @@ class JsTsModuleSystemMixin:
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
+        if function_qn is not None:
+            self._claim_function_span(
+                module_qn,
+                export_function,
+                cs.NodeLabel.FUNCTION.value,
+                function_qn,
+            )
 
     def _process_exports_pattern(
         self,
@@ -335,18 +362,11 @@ class JsTsModuleSystemMixin:
                     ):
                         if export_name.text and export_function:
                             if function_name := safe_decode_text(export_name):
-                                ingest_exported_function(
+                                self._ingest_export_function(
                                     export_function,
                                     function_name,
                                     module_qn,
                                     cs.JS_EXPORT_TYPE_ES6_FUNCTION,
-                                    self.ingestor,
-                                    self.function_registry,
-                                    self.simple_name_lookup,
-                                    self._get_docstring,
-                                    self._is_export_inside_function,
-                                    self.module_qn_to_file_path.get(module_qn),
-                                    self.repo_path,
                                 )
 
                     if not export_names:
@@ -357,20 +377,11 @@ class JsTsModuleSystemMixin:
                                 ):
                                     if name_node.text:
                                         if function_name := safe_decode_text(name_node):
-                                            ingest_exported_function(
+                                            self._ingest_export_function(
                                                 export_function,
                                                 function_name,
                                                 module_qn,
                                                 cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
-                                                self.ingestor,
-                                                self.function_registry,
-                                                self.simple_name_lookup,
-                                                self._get_docstring,
-                                                self._is_export_inside_function,
-                                                self.module_qn_to_file_path.get(
-                                                    module_qn
-                                                ),
-                                                self.repo_path,
                                             )
 
                 except Exception as e:

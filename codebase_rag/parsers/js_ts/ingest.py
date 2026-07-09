@@ -225,6 +225,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             if constructor_name and method_name:
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
                 method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
+                if self._span_claimed_for_qn(module_qn, func_node, method_qn):
+                    continue
                 method_qn = self.function_registry.register_unique_qn(
                     method_qn, func_node.start_point[0] + 1
                 )
@@ -246,6 +248,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
                 self.function_registry[method_qn] = NodeType.FUNCTION
                 self.simple_name_lookup[method_name].add(method_qn)
+                self._claim_function_span(
+                    module_qn, func_node, cs.NodeLabel.FUNCTION.value, method_qn
+                )
 
                 # (H) The assignment target is not always a registered constructor
                 # (H) function: `target.prototype.render = ...` inside a decorator
@@ -393,6 +398,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
     ) -> None:
+        if self._span_claimed_for_qn(module_qn, method_func_node, method_qn):
+            return
         method_qn = self.function_registry.register_unique_qn(
             method_qn, method_func_node.start_point[0] + 1
         )
@@ -411,6 +418,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
         self.function_registry[method_qn] = NodeType.FUNCTION
         self.simple_name_lookup[method_name].add(method_qn)
+        self._claim_function_span(
+            module_qn, method_func_node, cs.NodeLabel.FUNCTION.value, method_qn
+        )
 
         # (H) An object-literal function nested inside another function takes
         # (H) its lexical parent, not the module (issue: module-parented
@@ -629,6 +639,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
     ) -> None:
+        if self._span_claimed_for_qn(module_qn, function_node, function_qn):
+            return
         function_qn = self.function_registry.register_unique_qn(
             function_qn, function_node.start_point[0] + 1
         )
@@ -645,6 +657,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
         self.function_registry[function_qn] = NodeType.FUNCTION
         self.simple_name_lookup[function_name].add(function_qn)
+        self._claim_function_span(
+            module_qn, function_node, cs.NodeLabel.FUNCTION.value, function_qn
+        )
         # (H) An assignment function nested inside another function takes its
         # (H) lexical parent, not the module (issue: module-parented
         # (H) duplicates of correctly-parented nodes on thrift lib/js).

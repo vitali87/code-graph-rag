@@ -15,6 +15,7 @@ from ..types_defs import (
     DeferredInherit,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -97,6 +98,9 @@ class DefinitionProcessor(
         self._deferred_cpp_containment: list = []
         self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
+        # (H) Unnamed JS/TS function expressions held back until the named
+        # (H) JS passes have claimed their spans (one node per source function).
+        self._deferred_js_anonymous: list = []
         # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
         # (H) out-of-class C++ method the definition pass bound; Pass-3 call
         # (H) attribution reuses these decisions instead of re-resolving.
@@ -105,7 +109,7 @@ class DefinitionProcessor(
         # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
         # (H) the registered label/qn instead of re-deriving them structurally
         # (H) (the walks diverge on preprocessor-distorted class bodies).
-        self.function_locations: dict[tuple[str, int], FunctionLocation] = {}
+        self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
         # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # (H) registered; resolve_deferred_inherits re-resolves the guesses.
@@ -279,6 +283,10 @@ class DefinitionProcessor(
                 self._ingest_prototype_inheritance(
                     root_node, module_qn, language, queries
                 )
+                # (H) Named passes above have claimed their function nodes;
+                # (H) only genuinely anonymous spans (callbacks, IIFEs) still
+                # (H) need their held-back registration.
+                self._flush_deferred_js_anonymous()
 
             return (root_node, language)
 
