@@ -8,11 +8,13 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp_frontend import (
     cpp_frontend_available,
     run_cpp_frontend_hybrid,
 )
 from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from evals.cgr_graph import _StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -219,6 +221,38 @@ def test_hybrid_macro_body_reference_emits_macro_to_macro_call(
     assert ("hybnest.nested.h.QUAD", "hybnest.nested.h.SQUARE") in calls, sorted(calls)
     # (H) a macro does not call itself
     assert ("hybnest.nested.h.SQUARE", "hybnest.nested.h.SQUARE") not in calls
+
+
+def test_hybrid_incremental_run_keeps_macro_callers_for_unchanged_files(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybinc"
+    _write_calc(root)
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+
+    # (H) A new unrelated file makes the second run incremental-but-dirty
+    # (H) while calc.cpp itself stays unchanged, so Pass 2 records no spans
+    # (H) for it; the frontend still queues its macro uses (libclang parses
+    # (H) every TU each run).
+    (root / "other.cpp").write_text("int other_fn() { return 0; }\n", encoding="utf-8")
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+
+    calls = {
+        (str(from_val), str(to_val))
+        for _fl, from_val, rel_type, _tl, to_val in store.edges
+        if rel_type == cs.RelationshipType.CALLS.value
+    }
+    # (H) SQUARE's only use is inside compute(); span-less resolution on the
+    # (H) incremental run would wrongly re-attribute it to the Module
+    assert ("hybinc.calc", "hybinc.calc.h.SQUARE") not in calls, sorted(calls)
+    assert ("hybinc.calc.compute", "hybinc.calc.h.SQUARE") in calls, sorted(calls)
 
 
 def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
