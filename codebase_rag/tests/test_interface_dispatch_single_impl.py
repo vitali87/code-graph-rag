@@ -1,5 +1,9 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from codebase_rag.graph_updater import FunctionRegistryTrie
+from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import _capture
 
 
@@ -59,6 +63,24 @@ def test_rust_single_trait_impl_dispatches_to_concrete(tmp_path: Path) -> None:
     )
     assert ("proj.m.use_it", "proj.m.SvcImpl.run") in calls
     assert ("proj.m.use_it", "proj.m.Svc.run") in calls
+
+
+def test_sole_impl_targets_guard_branches() -> None:
+    # (H) Contract guards of interface_sole_impl_targets: a dot-less callee qn
+    # (H) has no interface component, and a mapped sole implementer that neither
+    # (H) defines nor inherits the method offers no concrete target -- both
+    # (H) return empty rather than fabricating an edge.
+    registry = FunctionRegistryTrie()
+    registry["m.Svc.run"] = NodeType.METHOD
+    resolver = CallResolver(
+        registry,
+        MagicMock(),
+        MagicMock(),
+        {},
+        interface_implementers={"m.Svc": {"m.Impl"}},
+    )
+    assert resolver.interface_sole_impl_targets("bare") == set()
+    assert resolver.interface_sole_impl_targets("m.Svc.run") == set()
 
 
 def test_cross_file_interface_field_keeps_interface_edge(tmp_path: Path) -> None:
