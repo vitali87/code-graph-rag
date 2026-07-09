@@ -504,6 +504,8 @@ class _Collector:
         # (H) Macros share one global, unscoped namespace, so match body
         # (H) identifiers by simple name; a name defined in several files gets
         # (H) an edge to each candidate (the duplicate-qn CALLS-to-both rule).
+        # (H) No self-loop is possible: a macro's collected refs exclude its
+        # (H) own spelling, and qn equality would imply name equality.
         macros_by_name: dict[str, list[str]] = {}
         for label, props, _ in self.nodes.values():
             name = props.get(cs.KEY_NAME)
@@ -517,8 +519,6 @@ class _Collector:
         for macro_qn, refs in self._macro_body_refs.items():
             for name in refs:
                 for target_qn in macros_by_name.get(name, ()):
-                    if target_qn == macro_qn:
-                        continue
                     self._add_edge(
                         cs.RelationshipType.CALLS,
                         fc.LABEL_FUNCTION,

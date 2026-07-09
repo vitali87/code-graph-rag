@@ -255,6 +255,23 @@ def test_hybrid_incremental_run_keeps_macro_callers_for_unchanged_files(
     assert ("hybinc.calc.compute", "hybinc.calc.h.SQUARE") in calls, sorted(calls)
 
 
+def test_hybrid_drops_macro_uses_in_ignored_directories(temp_repo: Path) -> None:
+    root = temp_repo / "hybskip"
+    _write_calc(root)
+    (root / "build").mkdir()
+    (root / "build" / "gen.h").write_text(
+        '#include "calc.h"\nstatic int cap = MAX_SIZE;\n', encoding="utf-8"
+    )
+    (root / "calc.cpp").write_text(
+        '#include "build/gen.h"\n' + _CALC_SRC, encoding="utf-8"
+    )
+    pending = run_cpp_frontend_hybrid(MagicMock(), root, root.name, root)
+    # (H) build/ is an ignored directory: its files carry no module qn, so a
+    # (H) macro use there has no possible Module fallback and must be dropped
+    assert all(p.rel_path != "build/gen.h" for p in pending), pending
+    assert any(p.rel_path == "calc.cpp" for p in pending), pending
+
+
 def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
     temp_repo: Path,
 ) -> None:
