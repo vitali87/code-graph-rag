@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from itertools import chain
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -48,11 +49,13 @@ def _invert_implementers(
     # (H) class_inheritance holds only superclasses (an `implements` clause or a
     # (H) Rust `impl Trait for Type` never enters it), so the override walk needs
     # (H) the implementer -> interfaces direction too, or no interface/trait
-    # (H) implementation ever gets an OVERRIDES edge. Sorted outer iteration:
-    # (H) the map's sets are hash-ordered and edge emission must be deterministic.
+    # (H) implementation ever gets an OVERRIDES edge. Both loops sorted: the
+    # (H) map and its sets are hash-ordered and edge emission must be
+    # (H) deterministic (each implementer's interface list follows the outer
+    # (H) sort; the inner sort makes the dict order deterministic too).
     inverted: dict[str, list[str]] = {}
     for interface_qn, implementer_qns in sorted(interface_implementers.items()):
-        for implementer_qn in implementer_qns:
+        for implementer_qn in sorted(implementer_qns):
             inverted.setdefault(implementer_qn, []).append(interface_qn)
     return inverted
 
@@ -159,10 +162,11 @@ def check_method_overrides(
 
         # (H) Superclasses first: when both a base class and an interface declare
         # (H) the method, the edge lands on the base, matching Java resolution.
-        parents = class_inheritance.get(current_class, []) + implemented.get(
-            current_class, []
-        )
-        for parent_class_qn in parents:
+        # (H) chain() instead of list concat: this runs per BFS node per method.
+        for parent_class_qn in chain(
+            class_inheritance.get(current_class, ()),
+            implemented.get(current_class, ()),
+        ):
             if parent_class_qn not in visited:
                 visited.add(parent_class_qn)
                 queue.append(parent_class_qn)
