@@ -474,6 +474,9 @@ class GraphUpdater:
         # (H) Hybrid-mode macro uses awaiting a caller: attribution needs the
         # (H) tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
+        # (H) Files (re)parsed by Pass 2 this run: the only files whose
+        # (H) definition spans exist for hybrid macro-call attribution.
+        self._reparsed_file_keys: set[str] = set()
         # (H) Module qns read back from the graph on incremental runs; deferred
         # (H) import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
@@ -556,6 +559,13 @@ class GraphUpdater:
         spans = self.factory.definition_processor.cpp_definition_spans
         emitted = 0
         for call in self._pending_cpp_macro_calls:
+            # (H) The frontend parses every TU each run, but an incremental
+            # (H) run records spans only for re-parsed files. An unchanged
+            # (H) file has no spans here AND already carries its caller->macro
+            # (H) edges in the graph, so resolving it would re-attribute
+            # (H) in-function uses to the Module.
+            if call.rel_path not in self._reparsed_file_keys:
+                continue
             containing = [
                 s
                 for s in spans.get(call.rel_path, ())
@@ -1164,6 +1174,9 @@ class GraphUpdater:
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
         captured_inbound = self._capture_inbound_edges(reindexed_keys)
+        self._reparsed_file_keys = {
+            file_key for _fp, file_key, _new, _b in changed_entries
+        }
 
         pre_parsed = self._pre_parse_changed_files(changed_entries)
 
