@@ -538,11 +538,11 @@ class CallResolver:
 
     def _interface_impl_map(self) -> dict[str, str]:
         # (H) Map an interface to its SOLE first-party implementer. A call typed to an
-        # (H) interface resolves to the interface's own method declaration; when the
-        # (H) interface has exactly one implementer the concrete method is the one that
-        # (H) runs, so redirect to it (call-graph accuracy). >1 implementer is
-        # (H) ambiguous -> not mapped -> the call stays on the interface method (no
-        # (H) precision risk, recall preserved).
+        # (H) interface resolves to the interface's own method declaration (the static
+        # (H) callee); when the interface has exactly one implementer the concrete
+        # (H) method is the one that runs, so ALSO edge it (call-graph accuracy).
+        # (H) >1 implementer is ambiguous -> not mapped -> the call stays on the
+        # (H) interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
             self._interface_impl_cache = {
                 interface_qn: next(iter(implementers))
@@ -551,17 +551,38 @@ class CallResolver:
             }
         return self._interface_impl_cache
 
+    def interface_sole_impl_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) A callee that IS an interface/trait method (the receiver was typed to
+        # (H) the interface -- a concrete receiver dispatches to the impl directly)
+        # (H) with exactly one implementer also runs the concrete method, so return
+        # (H) it for an additional CALLS edge. REPLACING the interface edge instead
+        # (H) (the pre-#665-era redirect) orphaned the interface stub: OVERRIDES
+        # (H) expansion only walks interface -> impl, so the stub's declaration
+        # (H) (gson's FieldNamingStrategy.translateName) reported dead.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        impl_qn = self._interface_impl_map().get(class_qn)
+        if impl_qn is None:
+            return set()
+        if result := self._try_resolve_method(impl_qn, method_name):
+            return {result}
+        return set()
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:
+        # (H) Only Python Protocol stubs REPLACE the resolved target: a Protocol
+        # (H) method body never runs (it is `...`), so the concrete method is the
+        # (H) sole real callee. An interface/trait method is a live declaration the
+        # (H) call depends on, so its sole-impl companion edge is ADDITIVE
+        # (H) (interface_sole_impl_targets), never a replacement.
         if result is None:
             return result
         class_qn, sep, method_name = result[1].rpartition(cs.SEPARATOR_DOT)
         if not sep:
             return result
-        impl_qn = self._protocol_impl_map().get(
-            class_qn
-        ) or self._interface_impl_map().get(class_qn)
+        impl_qn = self._protocol_impl_map().get(class_qn)
         if impl_qn is None:
             return result
         redirected = f"{impl_qn}{cs.SEPARATOR_DOT}{method_name}"
