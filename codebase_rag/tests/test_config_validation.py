@@ -53,6 +53,11 @@ class TestValidateApiKey:
         with pytest.raises(ValueError, match="cypher"):
             cfg.validate_api_key(role="cypher")
 
+    def test_minimax_provider_env_key_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(cs.ENV_MINIMAX_API_KEY, "minimax-key")
+        cfg = ModelConfig(provider=cs.Provider.MINIMAX, model_id="MiniMax-M3")
+        cfg.validate_api_key()
+
 
 class TestFormatMissingApiKeyErrors:
     def test_known_provider_openai(self) -> None:
