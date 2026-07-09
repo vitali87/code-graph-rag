@@ -1694,7 +1694,7 @@ class CallProcessor:
             # (H) Registry-guarded and idempotent with the callable-params path.
             if is_js_ts and call_node.type == cs.TS_CALL_EXPRESSION:
                 self._ingest_inline_call_arg_references(
-                    call_node, caller_spec, ensure_rel, caller_qn
+                    call_node, caller_spec, ensure_rel, caller_qn, module_qn
                 )
             if not call_name:
                 continue
@@ -2028,6 +2028,21 @@ class CallProcessor:
                         )
 
             if (
+                is_js_ts
+                and cs.SEPARATOR_DOT in call_name
+                and callee_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            ):
+                # (H) A JS member call that bound one twin of a double-registered
+                # (H) prototype method (`this.lookup()` -> module-flat `view.lookup`,
+                # (H) leaving `View.lookup` dead) edges the same-module same-name
+                # (H) member twin too (duplicate-QN keep-both design; revive-only).
+                for twin_type, twin_qn in sorted(
+                    resolver.js_member_twin_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(twin_qn):
+                        ensure_rel(caller_spec, calls_rel, (twin_type, qn_key, variant))
+
+            if (
                 is_python
                 and callee_type == cs.NodeLabel.FUNCTION
                 and cs.SEPARATOR_DOT not in call_name
@@ -2255,6 +2270,25 @@ class CallProcessor:
                     # (H) _emit_callback_edge references it by position. A named
                     # (H) arrow-const RHS is registered by its name, so the by-position
                     # (H) lookup simply finds nothing.
+                    # (H) A LOGICAL DEFAULT RHS (`done = done || function (err,
+                    # (H) str) {...}`, express's render) hides the stored function
+                    # (H) one level down; scan the binary operands too.
+                    if value.type == cs.TS_BINARY_EXPRESSION:
+                        for operand in value.named_children:
+                            operand = self._unwrap_ts_value(operand)
+                            if operand.type in _INLINE_FUNC_VALUE_TYPES:
+                                self._emit_callback_edge(
+                                    caller_spec,
+                                    operand,
+                                    module_qn,
+                                    local_var_types,
+                                    class_context,
+                                    resolve_func,
+                                    ensure_rel,
+                                    caller_qn,
+                                    cs.RelationshipType.REFERENCES,
+                                )
+                        continue
                     if (
                         value.type in _ASSIGNMENT_RHS_REF_TYPES
                         or value.type in _INLINE_FUNC_VALUE_TYPES
@@ -2505,7 +2539,7 @@ class CallProcessor:
                     ):
                         if value.type in _INLINE_FUNC_VALUE_TYPES:
                             self._emit_inline_value_function_ref(
-                                pair, value, caller_spec, ensure_rel
+                                pair, value, caller_spec, module_qn, ensure_rel
                             )
                             continue
                         self._emit_value_function_ref(
@@ -2657,6 +2691,7 @@ class CallProcessor:
         pair: Node,
         value: Node,
         caller_spec: tuple[str, str, str],
+        module_qn: str,
         ensure_rel,
     ) -> None:
         # (H) An inline arrow/function-expression object value is registered by the
@@ -2686,6 +2721,14 @@ class CallProcessor:
                 candidates.add(
                     f"{scope_qn}{cs.SEPARATOR_DOT}{pair_path}{cs.SEPARATOR_DOT}{key}"
                 )
+        # (H) A NAMED function expression value (`get: function getrouter() {...}`,
+        # (H) express) registers by its OWN name -- neither the key nor the
+        # (H) position form matches it; try the name under the scope and
+        # (H) module-flat (where the def pass puts it).
+        name_node = value.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and (own := safe_decode_text(name_node)):
+            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{own}")
+            candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{own}")
         for candidate in candidates:
             for target_qn in registry.variants(candidate):
                 if registry.get(target_qn) is None:
@@ -2795,6 +2838,7 @@ class CallProcessor:
         caller_spec: tuple[str, str, str],
         ensure_rel,
         caller_qn: str | None,
+        module_qn: str | None = None,
     ) -> None:
         args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if args is None:
@@ -2808,6 +2852,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     cs.RelationshipType.REFERENCES,
+                    module_qn=module_qn,
                 )
 
     def _emit_inline_arg_function_ref(
@@ -2817,6 +2862,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
+        module_qn: str | None = None,
     ) -> None:
         # (H) An inline arrow/function-expression call argument is registered by the
         # (H) definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
@@ -2825,23 +2871,35 @@ class CallProcessor:
         # (H) callable-param path). Registry guard skips unregistered names.
         registry = self._resolver.function_registry
         scope_qn = caller_qn or source_spec[2]
-        suffix = (
+        suffixes = [
             f"{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
             f"{arg_node.start_point[0]}_{arg_node.start_point[1]}"
-        )
+        ]
+        # (H) A NAMED function expression argument (`this.on('mount', function
+        # (H) onmount(parent) {...})`, express) registers by its own NAME -- the
+        # (H) position form never matches it, so try the name too, both under the
+        # (H) caller scope and module-flat (where the def pass puts it).
+        name_node = arg_node.child_by_field_name(cs.FIELD_NAME)
+        named = safe_decode_text(name_node) if name_node is not None else None
+        if named:
+            suffixes.append(f"{cs.SEPARATOR_DOT}{named}")
         # (H) A duplicate-variant caller (a TS overload implementation registers as
         # (H) `useStore@27`) owns anons the def pass registers under the NATURAL qn
         # (H) (`useStore.anonymous_R_C`); try the variant-stripped scope too.
-        for scope in _scope_qn_candidates(scope_qn):
-            candidate = f"{scope}{suffix}"
-            for target_qn in registry.variants(candidate):
-                if registry.get(target_qn) is None:
-                    continue
-                ensure_rel(
-                    source_spec,
-                    rel_type,
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        scopes = _scope_qn_candidates(scope_qn)
+        if named and module_qn is not None and module_qn not in scopes:
+            scopes = [*scopes, module_qn]
+        for scope in scopes:
+            for suffix in suffixes:
+                candidate = f"{scope}{suffix}"
+                for target_qn in registry.variants(candidate):
+                    if registry.get(target_qn) is None:
+                        continue
+                    ensure_rel(
+                        source_spec,
+                        rel_type,
+                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                    )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:

@@ -589,15 +589,18 @@ PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Prot
 
 # (H) Substrings in a node's file path that mark it as test code. Covers Python
 # (H) (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (H) (foo.test.ts, foo.spec.tsx), and the Jest __tests__/ directory so those
-# (H) files are not reported as dead. Singular /test/ and /spec/ directories are
-# (H) intentionally excluded: they collide with product code (a domain "spec"
-# (H) module), which would misclassify live code as test.
+# (H) (foo.test.ts, foo.spec.tsx), the Jest __tests__/ directory, and the
+# (H) Node.js/mocha singular /test/ dir (express: 34 of 49 dead-code reports
+# (H) were test/ helpers). Matching is segment-anchored via the leading-slash
+# (H) normalization, so contest/ and latest/ do not match. Singular /spec/
+# (H) stays excluded: it collides with product code (a domain "spec" module),
+# (H) which would misclassify live code as test.
 TEST_PATH_PATTERNS: tuple[str, ...] = (
     "test_",
     "_test",
     "conftest",
     "/tests/",
+    "/test/",
     ".test.",
     ".spec.",
     "__tests__",
@@ -895,7 +898,13 @@ CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
 
 IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
 IMPORT_NODES_FROM = ("import_from_statement",)
-IMPORT_NODES_MODULE = ("lexical_declaration", "export_statement")
+# (H) variable_declaration: CommonJS `var X = require(...)` (express) binds
+# (H) imports exactly like const/let lexical_declarations.
+IMPORT_NODES_MODULE = (
+    "lexical_declaration",
+    "variable_declaration",
+    "export_statement",
+)
 IMPORT_NODES_INCLUDE = ("preproc_include",)
 
 # (H) JS/TS specific node types
@@ -907,7 +916,12 @@ JS_TS_FUNCTION_NODES = (
     "method_definition",
 )
 JS_TS_CLASS_NODES = ("class_declaration", "class")
-JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
+JS_TS_IMPORT_NODES = (
+    "import_statement",
+    "lexical_declaration",
+    "variable_declaration",
+    "export_statement",
+)
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
@@ -2228,6 +2242,7 @@ TS_WILDCARD_IMPORT = "wildcard_import"
 TS_STRING = "string"
 TS_IMPORT_CLAUSE = "import_clause"
 TS_LEXICAL_DECLARATION = "lexical_declaration"
+TS_VARIABLE_DECLARATION = "variable_declaration"
 TS_EXPORT_STATEMENT = "export_statement"
 TS_NAMED_IMPORTS = "named_imports"
 TS_IMPORT_SPECIFIER = "import_specifier"
@@ -2469,6 +2484,12 @@ TS_ERROR = "ERROR"
 TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_BINARY_EXPRESSION = "binary_expression"
+# (H) Receivers that address the MODULE itself in CommonJS code
+# (H) (`exports.render()`, `module.exports.x()`, prototype-pattern `this`):
+# (H) only these may bind a dotted call to a same-module free function; an
+# (H) ordinary identifier receiver (`view.render()`) is an instance call.
+JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 TS_JAVA_CAST_EXPRESSION = "cast_expression"
 TS_ATTRIBUTE = "attribute"
 
@@ -3501,6 +3522,11 @@ JS_ARROW_NAME_CLIMB_BOUNDARY = frozenset(
         TS_METHOD_DEFINITION,
         TS_GENERATOR_FUNCTION_DECLARATION,
         TS_CLASS_BODY,
+        # (H) An OBJECT VALUE (`var pets = { list: function(req, res) {...} }`)
+        # (H) is owned by the pair-key naming path; climbing past it would steal
+        # (H) the enclosing declarator's name and register a phantom function.
+        TS_PY_PAIR,
+        TS_OBJECT,
     }
 )
 
