@@ -1185,6 +1185,26 @@ class FunctionIngestMixin:
             )
         )
 
+    def _claimed_qn_for_anonymous_guess(
+        self, module_qn: str, parent_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) An `anonymous_row_col` guess names the SPAN it stood for; if a
+        # (H) named pass claimed that span, the claim is the real parent.
+        tail = parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if not tail.startswith(cs.PREFIX_ANONYMOUS):
+            return None
+        row_col = tail[len(cs.PREFIX_ANONYMOUS) :].split(cs.CHAR_UNDERSCORE)
+        if len(row_col) != 2 or not all(part.isdigit() for part in row_col):
+            return None
+        loc = self.function_locations.get((module_qn, int(row_col[0]) + 1))
+        if (
+            loc is None
+            or loc.start_col != int(row_col[1])
+            or loc.qualified_name not in self.function_registry
+        ):
+            return None
+        return loc.label, loc.qualified_name
+
     def resolve_deferred_parent_links(self) -> int:
         """Emit deferred non-module DEFINES once every pass has registered.
 
@@ -1217,6 +1237,21 @@ class FunctionIngestMixin:
                     cs.NodeLabel(entry.fallback_label),
                     cs.KEY_QUALIFIED_NAME,
                     entry.fallback_qn,
+                )
+                rel_type = cs.RelationshipType.DEFINES.value
+            elif claimed := self._claimed_qn_for_anonymous_guess(
+                entry.module_qn, entry.parent_qn
+            ):
+                # (H) The parent guess was an anonymous placeholder for a span
+                # (H) a NAMED pass claimed after the child registered
+                # (H) (`exports.receiver = function () { function helper() }`):
+                # (H) the placeholder embeds its (row, col), so the claim
+                # (H) record recovers the registered enclosing node.
+                claimed_label, claimed_qn = claimed
+                parent_spec = (
+                    cs.NodeLabel(claimed_label),
+                    cs.KEY_QUALIFIED_NAME,
+                    claimed_qn,
                 )
                 rel_type = cs.RelationshipType.DEFINES.value
             else:
@@ -1328,6 +1363,23 @@ class FunctionIngestMixin:
                         cs.NodeLabel.METHOD,
                         f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
                     )
+                # (H) Reuse the enclosing function's REGISTERED identity when
+                # (H) its span is claimed: structural re-derivation produces
+                # (H) the pre-claim qn (an anonymous name whose node no longer
+                # (H) exists for `exports.f = function`, or the FIRST `t` for
+                # (H) the second same-name fn expr registered as `t@line`),
+                # (H) hoisting the child to the module or the wrong function.
+                if language in cs.JS_TS_LANGUAGES:
+                    recorded = self.function_locations.get(
+                        (module_qn, current.start_point[0] + 1)
+                    )
+                    if (
+                        recorded is not None
+                        and recorded.start_col == current.start_point[1]
+                        and recorded.qualified_name != func_qn
+                        and recorded.qualified_name in self.function_registry
+                    ):
+                        return cs.NodeLabel(recorded.label), recorded.qualified_name
                 resolution = (
                     self._resolve_function_identity(
                         current, module_qn, language, lang_config, file_path

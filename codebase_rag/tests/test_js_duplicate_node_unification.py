@@ -197,9 +197,7 @@ def test_true_anonymous_callback_still_gets_its_node(
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
         (str(call.args[0][2]), str(call.args[2][2]))
-        for call in get_relationships(
-            mock_ingestor, cs.RelationshipType.DEFINES.value
-        )
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value)
     }
 
 
