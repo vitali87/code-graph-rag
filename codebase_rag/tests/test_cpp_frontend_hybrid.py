@@ -47,6 +47,24 @@ int compute(int v) {
 int global_limit = MAX_SIZE;
 """
 
+# (H) QUAD expands SQUARE only when QUAD itself expands -- a NESTED expansion,
+# (H) which the preprocessing record does not report as a MACRO_INSTANTIATION.
+# (H) The definition-body reference is the only evidence SQUARE is used, so it
+# (H) must carry a macro -> macro CALLS edge or SQUARE reports dead.
+_NESTED_H = """\
+#ifndef NESTED_H
+#define NESTED_H
+#define SQUARE(x) ((x)*(x))
+#define QUAD(x) (SQUARE(x)*SQUARE(x))
+int compute(int v);
+#endif
+"""
+
+_NESTED_SRC = """\
+#include "nested.h"
+int compute(int v) { return QUAD(v); }
+"""
+
 
 def _compdb_entry(root: Path, source: Path) -> dict[str, str | list[str]]:
     return {
@@ -54,6 +72,15 @@ def _compdb_entry(root: Path, source: Path) -> dict[str, str | list[str]]:
         "arguments": ["c++", "-std=c++17", f"-I{root}", str(source)],
         "file": str(source),
     }
+
+
+def _write_nested(root: Path) -> None:
+    root.mkdir()
+    (root / "nested.h").write_text(_NESTED_H, encoding="utf-8")
+    (root / "nested.cpp").write_text(_NESTED_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "nested.cpp")]), encoding="utf-8"
+    )
 
 
 def _write_calc(root: Path) -> None:
@@ -180,6 +207,18 @@ def test_hybrid_emits_no_libclang_scheme_definitions(
     )
     # (H) no ns.cpp in this fixture, so ns.h claims the plain module qn
     assert "hybns.ns.NS_BEGIN" in functions, sorted(functions)
+
+
+def test_hybrid_macro_body_reference_emits_macro_to_macro_call(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybnest"
+    _write_nested(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    calls = _calls(ingestor)
+    assert ("hybnest.nested.QUAD", "hybnest.nested.SQUARE") in calls, sorted(calls)
+    # (H) a macro does not call itself
+    assert ("hybnest.nested.SQUARE", "hybnest.nested.SQUARE") not in calls
 
 
 def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
