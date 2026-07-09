@@ -2494,6 +2494,7 @@ TS_JAVA_CAST_EXPRESSION = "cast_expression"
 TS_ATTRIBUTE = "attribute"
 
 FIELD_OPERATOR = "operator"
+FIELD_MACRO = "macro"
 
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
@@ -3252,6 +3253,8 @@ TS_RS_USE_DECLARATION = "use_declaration"
 TS_RS_EXTERN_CRATE_DECLARATION = "extern_crate_declaration"
 TS_RS_CALL_EXPRESSION = "call_expression"
 TS_RS_MACRO_INVOCATION = "macro_invocation"
+TS_RS_MACRO_DEFINITION = "macro_definition"
+RS_MACRO_EXPORT_ATTR = "macro_export"
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
 
@@ -3674,6 +3677,11 @@ SPEC_RS_FUNCTION_TYPES = (
     TS_RS_FUNCTION_ITEM,
     TS_RS_FUNCTION_SIGNATURE_ITEM,
     TS_RS_CLOSURE_EXPRESSION,
+    # (H) macro_rules! definitions register as Function nodes (the
+    # (H) cross-language decision: C/C++/Rust macros all map onto Function), so
+    # (H) macro_invocation call sites (already in SPEC_RS_CALL_TYPES) have a
+    # (H) first-party definition to resolve to.
+    TS_RS_MACRO_DEFINITION,
 )
 SPEC_RS_CLASS_TYPES = (
     TS_RS_STRUCT_ITEM,

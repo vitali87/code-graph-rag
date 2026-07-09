@@ -154,7 +154,22 @@ def _rust_exported(node: Node) -> bool:
     # (H) (`pub(crate)`, `pub(super)`, `pub(in path)`) is visible only within the
     # (H) crate/module, so an uncalled one is genuinely dead and must not be seeded
     # (H) as a root. Bare `pub` is a lone keyword child; a restriction adds `(...)`.
+    if node.type == cs.TS_RS_MACRO_DEFINITION:
+        return _rust_macro_exported(node)
     modifier = next(
         (c for c in node.children if c.type == cs.TS_PHP_VISIBILITY_MODIFIER), None
     )
     return modifier is not None and modifier.child_count == 1
+
+
+def _rust_macro_exported(node: Node) -> bool:
+    # (H) macro_rules! takes no `pub`; a preceding #[macro_export] attribute is
+    # (H) what publishes it (to the crate root) as library API.
+    prev = node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_RS_ATTRIBUTE_ITEM:
+        if prev.text is not None and cs.RS_MACRO_EXPORT_ATTR in prev.text.decode(
+            cs.ENCODING_UTF8
+        ):
+            return True
+        prev = prev.prev_named_sibling
+    return False

@@ -118,6 +118,11 @@ class DefinitionProcessor(
         # (H) Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # (H) import verification counts them as real internal targets.
         self.declared_module_qns: set[str] = set()
+        # (H) Registered qns that are macro definitions (Rust macro_rules!):
+        # (H) macros register as Function nodes but live in a separate namespace,
+        # (H) so Pass-3 gates macro-invocation call sites to these targets and
+        # (H) fn-namespace call sites away from them.
+        self.macro_qns: set[str] = set()
         # (H) {qn: file path} for definitions rehydrated from the graph on an
         # (H) incremental run, whose modules are absent from module_qn_to_file_path
         # (H) (only re-parsed files populate it). _is_cpp_defined falls back to

@@ -325,6 +325,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (function_signature_item
             name: (identifier) @name) @function
         (closure_expression) @function
+        (macro_definition
+            name: (identifier) @name) @function
         """,
         class_query="""
         (struct_item

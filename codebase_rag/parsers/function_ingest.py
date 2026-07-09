@@ -140,6 +140,7 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: dict[tuple[str, int], FunctionLocation]
+    macro_qns: set[str]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -666,6 +667,11 @@ class FunctionIngestMixin:
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        if func_node.type == cs.TS_RS_MACRO_DEFINITION:
+            # (H) Rust macros live in a separate namespace from functions;
+            # (H) Pass-3 needs to know which Function qns are macros to gate
+            # (H) macro-invocation vs fn-call binding.
+            self.macro_qns.add(resolution.qualified_name)
         self.function_registry.mark_callable_params(
             resolution.qualified_name,
             callable_parameter_indices(func_node, language),

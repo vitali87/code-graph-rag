@@ -181,6 +181,7 @@ class CallProcessor:
         "_path_to_module_qn",
         "cpp_out_of_class_methods",
         "function_locations",
+        "macro_qns",
         "_resolver",
         "_flow_param_names",
         "_flow_args",
@@ -202,6 +203,7 @@ class CallProcessor:
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[tuple[str, int], FunctionLocation] | None = None,
+        macro_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -210,6 +212,7 @@ class CallProcessor:
         self._path_to_module_qn: dict[Path, str] | None = None
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
+        self.macro_qns = macro_qns if macro_qns is not None else set()
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -1458,6 +1461,14 @@ class CallProcessor:
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
                     return operator_node.text.decode(cs.ENCODING_UTF8)
+            # (H) Rust `square!(3)`: the callee lives in the `macro` field (no
+            # (H) `function`/`name` field), so the invocation was captured as a
+            # (H) call but dropped nameless here -- unresolvable even now that
+            # (H) macro_rules! definitions register as Function nodes.
+            case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
+                macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
+                if macro_node is not None and macro_node.text is not None:
+                    return macro_node.text.decode(cs.ENCODING_UTF8)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
@@ -1738,6 +1749,15 @@ class CallProcessor:
                     caller_qn,
                     language,
                 )
+            if callee_info and language == cs.SupportedLanguage.RUST:
+                # (H) Rust macros and functions live in SEPARATE namespaces:
+                # (H) a macro invocation (write!) must not bind a same-named fn
+                # (H) (std-prelude macro names collide with common fn names and
+                # (H) the false edge revives dead code), and a fn call must not
+                # (H) bind a same-named macro.
+                is_macro_target = callee_info[1] in self.macro_qns
+                if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
+                    callee_info = None
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
