@@ -268,6 +268,38 @@ class _Collector:
         self._add_module(module_qn, rel, file_name)
         return (fc.LABEL_MODULE, module_qn)
 
+    def process_includes(self, tu) -> None:
+        # (H) `#include` is the C++ import: emit IMPORTS Module -> Module for every
+        # (H) within-repo inclusion, at any depth (calc.h including util.h counts,
+        # (H) attributed to calc.h -- FileInclusion.source is the INCLUDING file).
+        # (H) System headers resolve outside the repo (module_qn None) and emit
+        # (H) nothing; the source != include guard keeps the tree-sitter path's
+        # (H) self-import bug out of the frontend.
+        for inclusion in tu.get_includes():
+            source = inclusion.source
+            included = inclusion.include
+            if source is None or included is None:
+                continue
+            src_name = source.name
+            inc_name = included.name
+            src_qn = self.resolver.module_qn(src_name)
+            inc_qn = self.resolver.module_qn(inc_name)
+            if src_qn is None or inc_qn is None or src_qn == inc_qn:
+                continue
+            src_rel = self.resolver.rel_path(src_name)
+            inc_rel = self.resolver.rel_path(inc_name)
+            if src_rel is None or inc_rel is None:
+                continue
+            self._add_module(src_qn, src_rel, src_name)
+            self._add_module(inc_qn, inc_rel, inc_name)
+            self._add_edge(
+                cs.RelationshipType.IMPORTS,
+                fc.LABEL_MODULE,
+                src_qn,
+                fc.LABEL_MODULE,
+                inc_qn,
+            )
+
     def _emit_inheritance(self, cursor: Cursor, derived_qn: str) -> None:
         for child in cursor.get_children():
             if child.kind.name != fc.KIND_BASE_SPECIFIER:
@@ -376,6 +408,7 @@ def run_cpp_frontend(
         except ci.TranslationUnitLoadError:
             continue
         _walk(tu.cursor, collector)
+        collector.process_includes(tu)
 
     collector.flush(ingestor)
     return frozenset(collector.covered)
