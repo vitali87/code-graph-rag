@@ -170,6 +170,17 @@ def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | 
     return _rust_return_type_name(return_type, impl_target)
 
 
+def tuple_group_inner(node: Node) -> Node | None:
+    # (H) The single grouped type inside a tuple_type, or None for a real tuple.
+    # (H) Grouping parens (`&(dyn Svc + Send)`) have one typed child and NO
+    # (H) comma; a 1-ary tuple is written `(T,)` and also has one typed child,
+    # (H) so the comma, not the child count, is what separates the two.
+    if any(c.type == cs.SEPARATOR_COMMA for c in node.children):
+        return None
+    inners = [c for c in node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES]
+    return inners[0] if len(inners) == 1 else None
+
+
 def _rust_return_type_name(node: Node, impl_target: str | None) -> str | None:
     match node.type:
         case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
@@ -181,16 +192,8 @@ def _rust_return_type_name(node: Node, impl_target: str | None) -> str | None:
             name_node = node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name_node) if name_node else None
         case cs.TS_RS_TUPLE_TYPE:
-            # (H) Only a single-element tuple_type is grouping parens
-            # (H) (`&(dyn Svc + Send)`); a real tuple has no single bare type.
-            inners = [
-                c for c in node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
-            ]
-            return (
-                _rust_return_type_name(inners[0], impl_target)
-                if (len(inners) == 1)
-                else None
-            )
+            inner = tuple_group_inner(node)
+            return _rust_return_type_name(inner, impl_target) if inner else None
         case _:
             # (H) reference_type (`&Frame`) / pointer_type / dyn / impl / bounded:
             # (H) descend to the first typed child (a bounded type's first bound

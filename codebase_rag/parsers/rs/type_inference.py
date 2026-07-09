@@ -4,6 +4,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .utils import tuple_group_inner
 
 
 class RustTypeInferenceEngine:
@@ -307,12 +308,8 @@ def _rust_bare_type_name(type_node: Node) -> str | None:
             name = type_node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name) if name else None
         case cs.TS_RS_TUPLE_TYPE:
-            # (H) Only a single-element tuple_type is grouping parens
-            # (H) (`&(dyn Svc + Send)`); a real tuple has no single bare type.
-            inners = [
-                c for c in type_node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
-            ]
-            return _rust_bare_type_name(inners[0]) if len(inners) == 1 else None
+            inner = tuple_group_inner(type_node)
+            return _rust_bare_type_name(inner) if inner else None
         case _:
             # (H) reference_type / dyn / impl / bounded / other wrappers: descend
             # (H) to the first typed child (a bounded type's first bound is the

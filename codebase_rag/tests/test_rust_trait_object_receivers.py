@@ -13,10 +13,20 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.rs import type_inference as rs_ti
+from codebase_rag.parsers.rs import utils as rs_utils
 from codebase_rag.tests.conftest import run_updater
 from evals.dead_code import cgr_dead_code, default_dead_code_config
+
+try:
+    import tree_sitter_rust as tsrust
+
+    RUST_AVAILABLE = True
+except ImportError:
+    RUST_AVAILABLE = False
 
 # (H) Impl names sort BEFORE "Svc" so the pre-fix lexicographic tie-break
 # (H) picks an impl, not the trait method; the fix must not depend on luck.
@@ -105,3 +115,22 @@ def test_multi_impl_trait_nothing_dead_regardless_of_names(tmp_path: Path) -> No
     )
     dead = cgr_dead_code(root, "proj", default_dead_code_config(False, False))
     assert not [d for d in dead if d.endswith(".run")], sorted(dead)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="tree-sitter-rust not installed")
+def test_one_ary_tuple_is_not_grouping_parens() -> None:
+    # (H) Rust writes a 1-ary tuple `(T,)` with a trailing comma; it also has
+    # (H) exactly one typed child, so a child-count-only grouping check would
+    # (H) type the value as its element. Only comma-free parens are grouping.
+    parser = Parser(Language(tsrust.language()))
+    src = (
+        b"fn a(s: (Alpha,)) -> (Beta,) { s.run() }\n"
+        b"fn b(s: (Alpha)) -> (Beta) { s.run() }\n"
+    )
+    fn_tuple, fn_grouped = parser.parse(src).root_node.children
+    engine = rs_ti.RustTypeInferenceEngine()
+    assert "s" not in engine.build_local_variable_type_map(fn_tuple, "proj.m")
+    assert rs_utils.extract_return_type_name(fn_tuple, None) is None
+    grouped = engine.build_local_variable_type_map(fn_grouped, "proj.m")
+    assert grouped.get("s") == "Alpha"
+    assert rs_utils.extract_return_type_name(fn_grouped, None) == "Beta"
