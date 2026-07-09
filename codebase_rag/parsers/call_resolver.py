@@ -20,8 +20,11 @@ _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
 # (H) Node labels a Rust receiver type name may resolve to: a struct (Class), an
-# (H) enum, or a type alias -- all can carry impl methods.
-_RS_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.ENUM, NodeType.TYPE})
+# (H) enum, a type alias, or a trait (Interface, when the receiver is typed to a
+# (H) `dyn`/`impl` trait or a trait-returning factory) -- all can carry methods.
+_RS_TYPE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
 
 
 def _split_receiver_chain(expr: str) -> list[str]:
