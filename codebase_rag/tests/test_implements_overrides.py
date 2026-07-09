@@ -12,7 +12,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from codebase_rag.graph_updater import FunctionRegistryTrie
+from codebase_rag.parsers.class_ingest.method_override import check_method_overrides
+from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import _capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
@@ -123,3 +127,23 @@ def test_rust_multi_impl_trait_methods_not_dead(tmp_path: Path) -> None:
     dead = cgr_dead_code(root, "proj", default_dead_code_config(False, False))
     impl_dead = [d for d in dead if d.endswith(".run")]
     assert not impl_dead, sorted(dead)
+
+
+def test_guard_skips_method_of_unregistered_class() -> None:
+    # (H) A method whose class is in NEITHER map (a rehydrated class from an
+    # (H) unchanged file on an incremental run has no local entry) has no
+    # (H) hierarchy to walk; the guard must bail without emitting anything.
+    registry = FunctionRegistryTrie()
+    registry["m.Impl.run"] = NodeType.METHOD
+    ingestor = MagicMock()
+    check_method_overrides("m.Impl.run", "run", "m.Impl", registry, {}, ingestor)
+    ingestor.ensure_relationship_batch.assert_not_called()
+
+    # (H) The same class known ONLY as an implementer (empty class_inheritance)
+    # (H) must pass the guard and reach the interface method through the
+    # (H) implemented-interfaces side of the walk.
+    registry["m.Svc.run"] = NodeType.METHOD
+    check_method_overrides(
+        "m.Impl.run", "run", "m.Impl", registry, {}, ingestor, {"m.Impl": ["m.Svc"]}
+    )
+    ingestor.ensure_relationship_batch.assert_called_once()
