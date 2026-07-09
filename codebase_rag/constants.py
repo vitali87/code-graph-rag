@@ -844,8 +844,8 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Java",
     ),
     SupportedLanguage.GO: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Methods, type declarations",
+        LanguageStatus.FULL,
+        "Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types",
         "Go",
     ),
     SupportedLanguage.SCALA: LanguageMetadata(

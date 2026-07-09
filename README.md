@@ -76,6 +76,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 |--------|------|----------|---------|---------------|-------|-----------------|-------------------|
 | C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
+| Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
@@ -84,7 +85,6 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
@@ -716,7 +716,7 @@ The knowledge graph uses the following node types and relationships:
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}` |
 | Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
@@ -733,6 +733,7 @@ The knowledge graph uses the following node types and relationships:
 <!-- SECTION:language_mappings -->
 - **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
@@ -741,7 +742,6 @@ The knowledge graph uses the following node types and relationships:
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `macro_definition`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
-- **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 
