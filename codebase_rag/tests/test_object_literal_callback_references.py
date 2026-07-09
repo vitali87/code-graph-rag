@@ -149,9 +149,11 @@ def test_function_expression_assigned_to_property_is_referenced(
     tmp_path: Path,
 ) -> None:
     # (H) `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
-    # (H) for a library to invoke later (the openapi-ts token provider); the arrow is
-    # (H) anonymous with no incoming edge. The assigning scope must reference it or it
-    # (H) reports as dead (the last frontend false positive on the template).
+    # (H) for a library to invoke later (the openapi-ts token provider); the arrow
+    # (H) has no incoming edge. The assigning scope must reference it or it reports
+    # (H) as dead (the last frontend false positive on the template). Span-claim
+    # (H) unification leaves ONE node for the arrow (the property-named TOKEN, no
+    # (H) anonymous twin), so that node is the one that must be referenced.
     files = {
         "main.tsx": (
             "import { OpenAPI } from './client'\n\n"
@@ -166,7 +168,7 @@ def test_function_expression_assigned_to_property_is_referenced(
     }
     rels = _run_rels(tmp_path, files, "tsx")
     refs = {b for a, r, b in rels if r == REFERENCES and a.endswith(".main")}
-    assert any(".main.anonymous_" in b for b in refs), (
+    assert any(b.endswith(".main.TOKEN") for b in refs), (
         f"function-expression assigned to a property not referenced; refs={refs}"
     )
 

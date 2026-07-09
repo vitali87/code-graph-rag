@@ -833,7 +833,20 @@ class CallProcessor:
                     accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
                 )
             if not func_name:
-                continue
+                # (H) A nameless JS/TS function expression that a NAMED pass
+                # (H) registered (`exports.f = function`, `x: function`) has a
+                # (H) real node; its body's calls belong to that node, not the
+                # (H) module, so adopt the record's simple name and fall
+                # (H) through (the recorded-caller branch below reuses the
+                # (H) registered qn). A GENERATED record (anonymous callback,
+                # (H) IIFE) keeps the historical bubble-to-module attribution.
+                if (
+                    language not in _JS_TS_LANGUAGES
+                    or (recorded := self._recorded_caller(func_node, module_qn)) is None
+                    or not recorded.is_named
+                ):
+                    continue
+                func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             # (H) The definition pass records where every function/method node
             # (H) landed; reuse that qn/label instead of re-deriving them from
             # (H) the AST -- the walks diverge on preprocessor-distorted C++

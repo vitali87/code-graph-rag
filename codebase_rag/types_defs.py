@@ -531,6 +531,11 @@ class FunctionLocation(NamedTuple):
     # (H) a mismatch instead of adopting the WRONG function's qn. None (the
     # (H) deferred C++ out-of-class path, which has no node) skips the check.
     start_col: int | None = None
+    # (H) False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
+    # (H) lets an unnamed JS/TS function expression adopt a NAMED record (the
+    # (H) node a named pass registered for `exports.f = function`), while a
+    # (H) generated record keeps the historical bubble-to-module attribution.
+    is_named: bool = True
 
 
 class DeferredCppInherit(NamedTuple):

@@ -97,6 +97,9 @@ class DefinitionProcessor(
         self._deferred_cpp_containment: list = []
         self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
+        # (H) Unnamed JS/TS function expressions held back until the named
+        # (H) JS passes have claimed their spans (one node per source function).
+        self._deferred_js_anonymous: list = []
         # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
         # (H) out-of-class C++ method the definition pass bound; Pass-3 call
         # (H) attribution reuses these decisions instead of re-resolving.
@@ -279,6 +282,10 @@ class DefinitionProcessor(
                 self._ingest_prototype_inheritance(
                     root_node, module_qn, language, queries
                 )
+                # (H) Named passes above have claimed their function nodes;
+                # (H) only genuinely anonymous spans (callbacks, IIFEs) still
+                # (H) need their held-back registration.
+                self._flush_deferred_js_anonymous()
 
             return (root_node, language)
 

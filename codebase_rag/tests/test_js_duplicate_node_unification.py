@@ -160,8 +160,7 @@ def test_true_anonymous_callback_still_gets_its_node(
 
     qns = _all_function_qns(mock_ingestor)
     assert any(
-        qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(cs.PREFIX_ANONYMOUS)
-        for qn in qns
+        qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(cs.PREFIX_ANONYMOUS) for qn in qns
     ), qns
     _assert_single_node_per_location(mock_ingestor)
 

@@ -2,9 +2,10 @@
 # (H) (state, replace) => {...}`, zustand's middleware store-patching shape) was
 # (H) orphaned two ways: (a) the assignment-reference walk stopped at EVERY function
 # (H) boundary, so an assignment inside an anonymous curried arrow (which gets no
-# (H) caller pass of its own) was scanned by nobody; (b) the def pass registers the
-# (H) assigned arrow by PROPERTY NAME (scope.setState), which the position-only
-# (H) anonymous candidate never matches. Both registrations must be referenced.
+# (H) caller pass of its own) was scanned by nobody; (b) the def pass used to ALSO
+# (H) register a position-named anonymous twin for the assigned arrow. Span-claim
+# (H) unification cured (b) at the root (one node per source function), so only
+# (H) the property-named node exists and it must be referenced.
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,14 +38,17 @@ def test_member_assigned_arrow_in_curried_anon_is_referenced(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
     refs = _refs(mock_ingestor)
-    # (H) both registrations of the assigned arrow must be reachable: the
-    # (H) property-named node and the position-named anonymous node.
+    # (H) the single (property-named) registration of the assigned arrow must
+    # (H) be reachable, and the position-named anonymous twin must not exist.
     assert any(t.endswith(".persistImpl.setState") for _, t in refs), sorted(
         t for _, t in refs if "persistImpl" in t
     )
-    assert any(".persistImpl.anonymous_1_" in t for _, t in refs), sorted(
-        t for _, t in refs if "persistImpl" in t
-    )
+    nodes = {
+        c.args[1]["qualified_name"]
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if str(c.args[0]) == "Function"
+    }
+    assert not any(".persistImpl.anonymous_1_" in qn for qn in nodes), sorted(nodes)
 
 
 def test_cast_wrapped_member_assignment_rhs_is_referenced(

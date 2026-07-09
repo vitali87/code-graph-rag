@@ -707,9 +707,11 @@ def ingest_exported_function(
     is_export_inside_function_func: Callable[[ASTNode], bool],
     file_path: Path | None,
     repo_path: Path | None,
-) -> None:
+) -> str | None:
+    # (H) Returns the registered qn (None when skipped) so the caller can claim
+    # (H) the function node's span against later registration passes.
     if is_export_inside_function_func(function_node):
-        return
+        return None
 
     function_qn = f"{module_qn}.{function_name}"
     # (H) The definition pass already ingests an exported function / const-arrow at
@@ -717,7 +719,7 @@ def ingest_exported_function(
     # (H) `qn@line` duplicate node, onto which call resolution then binds (mangling
     # (H) the callee qn). If the natural qn already exists, the node is done.
     if function_qn in function_registry:
-        return
+        return None
     # (H) Same for a nested export (TS namespace / module block): the main pass
     # (H) already ingested it under its nested qn (e.g. lib.geo.helper), so a
     # (H) module-level re-ingest would mint a phantom duplicate node plus a
@@ -727,7 +729,7 @@ def ingest_exported_function(
     current = function_node.parent
     while current is not None:
         if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
-            return
+            return None
         current = current.parent
     function_qn = function_registry.register_unique_qn(
         function_qn, function_node.start_point[0] + 1
@@ -756,6 +758,7 @@ def ingest_exported_function(
         cs.RelationshipType.DEFINES,
         (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
     )
+    return function_qn
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
