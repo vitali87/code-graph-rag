@@ -164,11 +164,18 @@ def _rust_exported(node: Node) -> bool:
 
 def _rust_macro_exported(node: Node) -> bool:
     # (H) macro_rules! takes no `pub`; a preceding #[macro_export] attribute is
-    # (H) what publishes it (to the crate root) as library API.
+    # (H) what publishes it (to the crate root) as library API. Comments (incl.
+    # (H) /// doc comments) are named siblings that interleave the attribute and
+    # (H) the definition, so skip them.
     prev = node.prev_named_sibling
-    while prev is not None and prev.type == cs.TS_RS_ATTRIBUTE_ITEM:
-        if prev.text is not None and cs.RS_MACRO_EXPORT_ATTR in prev.text.decode(
-            cs.ENCODING_UTF8
+    while prev is not None and prev.type in (
+        cs.TS_RS_ATTRIBUTE_ITEM,
+        *cs.RS_COMMENT_TYPES,
+    ):
+        if (
+            prev.type == cs.TS_RS_ATTRIBUTE_ITEM
+            and prev.text is not None
+            and cs.RS_MACRO_EXPORT_ATTR in prev.text.decode(cs.ENCODING_UTF8)
         ):
             return True
         prev = prev.prev_named_sibling

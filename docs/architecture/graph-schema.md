@@ -63,7 +63,7 @@ A `CALLS` edge to a name that has more than one definition links to every varian
 
 ## Macros
 
-Macro definitions map onto the existing `Function` label rather than a dedicated node type, since macros are a cross-language concept (C and C++ `#define`, Rust `macro_rules!`). Macro invocations resolve to their definitions and emit `CALLS` edges, and dead-code analysis treats macros like any function.
+Macro definitions map onto the existing `Function` label rather than a dedicated node type, since macros are a cross-language concept (C and C++ `#define`, Rust `macro_rules!`). Macro Function nodes carry `is_macro: true`, macro invocations resolve to their definitions and emit `CALLS` edges, and dead-code analysis treats macros like any function.
 
 Language notes:
 

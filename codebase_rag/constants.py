@@ -195,6 +195,7 @@ KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
@@ -1346,7 +1347,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property, n.path AS path"
+    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path"
 )
 
 # (H) Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -3255,6 +3256,9 @@ TS_RS_CALL_EXPRESSION = "call_expression"
 TS_RS_MACRO_INVOCATION = "macro_invocation"
 TS_RS_MACRO_DEFINITION = "macro_definition"
 RS_MACRO_EXPORT_ATTR = "macro_export"
+TS_RS_LINE_COMMENT = "line_comment"
+TS_RS_BLOCK_COMMENT = "block_comment"
+RS_COMMENT_TYPES = (TS_RS_LINE_COMMENT, TS_RS_BLOCK_COMMENT)
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
 

@@ -311,12 +311,9 @@ class _Collector:
             return
         self.covered.add(rel)
         self._add_module(module_qn, rel, file_name)
-        self._add_node(
-            fc.LABEL_FUNCTION,
-            qn,
-            self._node_props(cursor, qn, cursor.spelling, rel),
-            True,
-        )
+        props = self._node_props(cursor, qn, cursor.spelling, rel)
+        props[cs.KEY_IS_MACRO] = True
+        self._add_node(fc.LABEL_FUNCTION, qn, props, True)
         self._add_edge(
             cs.RelationshipType.DEFINES,
             fc.LABEL_MODULE,
@@ -352,10 +349,10 @@ class _Collector:
         for label, props, _ in self.nodes.values():
             if label not in (fc.LABEL_FUNCTION, fc.LABEL_METHOD):
                 continue
-            path = props[cs.KEY_PATH]
-            qn = props[cs.KEY_QUALIFIED_NAME]
-            start = props[cs.KEY_START_LINE]
-            end = props[cs.KEY_END_LINE]
+            path = props.get(cs.KEY_PATH)
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            start = props.get(cs.KEY_START_LINE)
+            end = props.get(cs.KEY_END_LINE)
             if (
                 isinstance(path, str)
                 and isinstance(qn, str)
