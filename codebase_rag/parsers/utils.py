@@ -12,6 +12,7 @@ from .. import constants as cs
 from .. import logs
 from ..types_defs import (
     ASTNode,
+    CppDefinitionSpan,
     DeferredParentLink,
     FunctionSpanKey,
     LanguageQueries,
@@ -31,6 +32,33 @@ if TYPE_CHECKING:
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
     # (H) tree-sitter points are 0-based; recorded lines are 1-based.
     return (module_qn, node.start_point[0] + 1, node.start_point[1])
+
+
+_CPP_SPAN_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+
+
+def record_cpp_definition_span(
+    spans: dict[str, list[CppDefinitionSpan]],
+    language: cs.SupportedLanguage | None,
+    file_path: Path | None,
+    repo_path: Path,
+    node: ASTNode,
+    label: str,
+    qualified_name: str,
+) -> None:
+    # (H) Record the full line span of a C/C++ definition the tree-sitter pass
+    # (H) ingested, keyed by relative path: the hybrid C++ frontend attributes
+    # (H) each macro use to the tightest enclosing tree-sitter span after
+    # (H) Pass 2 (macro cursors are TU-level, and libclang's own spans carry
+    # (H) wrong-scheme qns wherever macros hide namespaces).
+    if language not in _CPP_SPAN_LANGUAGES or file_path is None:
+        return
+    rel = cached_relative_path(file_path, repo_path).as_posix()
+    spans.setdefault(rel, []).append(
+        CppDefinitionSpan(
+            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+        )
+    )
 
 
 _QUERY_CACHE: dict[tuple[Language, str], Query] = {}

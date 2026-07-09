@@ -81,6 +81,7 @@ PKG_CONANFILE = "conanfile.txt"
 class CppFrontend(StrEnum):
     TREESITTER = "treesitter"
     LIBCLANG = "libclang"
+    HYBRID = "hybrid"
 
 
 # (H) JS/TS import specifier schemes that name genuinely external code (node

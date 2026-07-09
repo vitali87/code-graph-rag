@@ -12,6 +12,7 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
+    CppDefinitionSpan,
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
@@ -33,6 +34,7 @@ from .utils import (
     get_function_captures,
     ingest_method,
     is_method_node,
+    record_cpp_definition_span,
     safe_decode_text,
 )
 
@@ -112,6 +114,7 @@ class _DeferredMethod(NamedTuple):
     namespace_path: str
     start_line: int
     start_col: int
+    end_line: int
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -164,6 +167,7 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
+    cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredJsAnonymous]
     class_inheritance: dict[str, list[str]]
@@ -485,6 +489,15 @@ class FunctionIngestMixin:
                         container_qn=class_qn,
                     )
                 )
+                record_cpp_definition_span(
+                    self.cpp_definition_spans,
+                    cs.SupportedLanguage.CPP,
+                    file_path,
+                    self.repo_path,
+                    func_node,
+                    cs.NodeLabel.METHOD.value,
+                    bound_qn,
+                )
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
             ):
@@ -523,6 +536,7 @@ class FunctionIngestMixin:
                     ),
                     start_line=func_node.start_point[0] + 1,
                     start_col=func_node.start_point[1],
+                    end_line=func_node.end_point[0] + 1,
                 )
             )
 
@@ -573,6 +587,15 @@ class FunctionIngestMixin:
 
             props = dict(entry.method_props)
             props[cs.KEY_QUALIFIED_NAME] = method_qn
+            if isinstance(path := props.get(cs.KEY_PATH), str):
+                self.cpp_definition_spans.setdefault(path, []).append(
+                    CppDefinitionSpan(
+                        entry.start_line,
+                        entry.end_line,
+                        cs.NodeLabel.METHOD.value,
+                        method_qn,
+                    )
+                )
 
             logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
@@ -791,6 +814,15 @@ class FunctionIngestMixin:
             is_named=not resolution.is_anonymous,
         )
         self.function_locations[function_span_key(module_qn, func_node)] = location
+        record_cpp_definition_span(
+            self.cpp_definition_spans,
+            language,
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
+            func_node,
+            cs.NodeLabel.FUNCTION.value,
+            resolution.qualified_name,
+        )
         if (
             language == cs.SupportedLanguage.CPP
             and func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION

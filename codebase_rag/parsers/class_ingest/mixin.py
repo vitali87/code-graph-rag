@@ -14,6 +14,7 @@ from ...config import settings
 from ...language_spec import LanguageSpec
 from ...types_defs import (
     ASTNode,
+    CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
@@ -32,6 +33,7 @@ from ..rs import utils as rs_utils
 from ..utils import (
     function_span_key,
     ingest_method,
+    record_cpp_definition_span,
     safe_decode_text,
     sorted_captures,
 )
@@ -146,6 +148,7 @@ class ClassIngestMixin:
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
+    cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
@@ -915,6 +918,16 @@ class ClassIngestMixin:
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,
             )
+            if ingested_qn is not None:
+                record_cpp_definition_span(
+                    self.cpp_definition_spans,
+                    language,
+                    file_path,
+                    self.repo_path,
+                    method_node,
+                    cs.NodeLabel.METHOD.value,
+                    ingested_qn,
+                )
             # (H) A Java method declared inside an anonymous class body
             # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
             # (H) class but really overrides the anon class's base type. Record it so a

@@ -8,6 +8,7 @@ from ...services import IngestorProtocol
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
+    PendingMacroCall,
     PropertyDict,
     SimpleNameLookup,
 )
@@ -77,8 +78,16 @@ class _Collector:
         function_registry: FunctionRegistryTrieProtocol | None = None,
         simple_name_lookup: SimpleNameLookup | None = None,
         structural_elements: dict[Path, str | None] | None = None,
+        hybrid: bool = False,
     ) -> None:
         self.resolver = resolver
+        # (H) Hybrid mode: tree-sitter remains the backbone (its definitions
+        # (H) and CALLS stand), so collect ONLY the facts libclang is uniquely
+        # (H) right about -- macro definitions/uses and includes. Definition qns
+        # (H) diverge from tree-sitter's wherever macros hide namespaces, so no
+        # (H) definition node may be emitted; macro and Module qns are
+        # (H) scheme-identical (module_qn parity) and safe.
+        self.hybrid = hybrid
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
         self.structural_elements = structural_elements
@@ -95,6 +104,12 @@ class _Collector:
         # (H) enclosing caller is only recoverable by span once ALL definitions
         # (H) are collected -- resolved at flush.
         self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
+        # (H) {macro qn: identifier tokens in its definition body}: a macro
+        # (H) expanded only inside another macro's body is a NESTED expansion
+        # (H) the preprocessing record never reports, so the body reference is
+        # (H) the only evidence of use -- resolved to macro -> macro CALLS at
+        # (H) flush, once every macro node is known.
+        self._macro_body_refs: dict[str, set[str]] = {}
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -137,14 +152,18 @@ class _Collector:
         # (H) Returns the scope its subtree should attribute calls to: the node's
         # (H) own (label, qn) when it is a function/method, else the unchanged
         # (H) enclosing scope.
-        if cursor.kind.name == fc.KIND_CALL_EXPR:
-            self._process_call(cursor, enclosing)
-            return None
         if cursor.kind.name == fc.KIND_MACRO_DEFINITION:
             self._process_macro_definition(cursor)
             return None
         if cursor.kind.name == fc.KIND_MACRO_INSTANTIATION:
             self._queue_macro_call(cursor)
+            return None
+        if self.hybrid:
+            # (H) Everything below emits definition nodes or CALLS with
+            # (H) libclang-scheme qns -- tree-sitter's territory in hybrid.
+            return None
+        if cursor.kind.name == fc.KIND_CALL_EXPR:
+            self._process_call(cursor, enclosing)
             return None
         label = _classify(cursor)
         if label is None or cursor.location.file is None:
@@ -327,6 +346,38 @@ class _Collector:
             fc.LABEL_FUNCTION,
             qn,
         )
+        # (H) Body tokens after the macro's own name. A function-like macro
+        # (H) ('(' abutting the name -- the standard's distinction from an
+        # (H) object-like body that starts with a parenthesis) has its
+        # (H) parameter list skipped and those names excluded from the body:
+        # (H) a parameter is substituted by the caller's argument, so one
+        # (H) named like a real macro is not a reference to it.
+        tokens = list(cursor.get_tokens())
+        body_start = 1
+        params: set[str] = set()
+        name_end = tokens[0].extent.end
+        if (
+            len(tokens) > 1
+            and tokens[1].spelling == fc.TOKEN_LPAREN
+            and tokens[1].extent.start.line == name_end.line
+            and tokens[1].extent.start.column == name_end.column
+        ):
+            body_start = len(tokens)
+            for i, tok in enumerate(tokens[2:], start=2):
+                if tok.spelling == fc.TOKEN_RPAREN:
+                    body_start = i + 1
+                    break
+                if tok.spelling.isidentifier():
+                    params.add(tok.spelling)
+        refs = {
+            t.spelling
+            for t in tokens[body_start:]
+            if t.spelling.isidentifier()
+            and t.spelling != cursor.spelling
+            and t.spelling not in params
+        }
+        if refs:
+            self._macro_body_refs.setdefault(qn, set()).update(refs)
 
     def _queue_macro_call(self, cursor: Cursor) -> None:
         # (H) MACRO_INSTANTIATION.referenced is the exact MACRO_DEFINITION
@@ -471,8 +522,50 @@ class _Collector:
         if self.simple_name_lookup is not None and isinstance(name, str):
             self.simple_name_lookup[name].add(qn)
 
+    def _resolve_macro_body_refs(self) -> None:
+        # (H) Macros share one global, unscoped namespace, so match body
+        # (H) identifiers by simple name; a name defined in several files gets
+        # (H) an edge to each candidate (the duplicate-qn CALLS-to-both rule).
+        # (H) No self-loop is possible: a macro's collected refs exclude its
+        # (H) own spelling, and qn equality would imply name equality.
+        macros_by_name: dict[str, list[str]] = {}
+        for label, props, _ in self.nodes.values():
+            name = props.get(cs.KEY_NAME)
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            if (
+                props.get(cs.KEY_IS_MACRO)
+                and isinstance(name, str)
+                and isinstance(qn, str)
+            ):
+                macros_by_name.setdefault(name, []).append(qn)
+        for macro_qn, refs in self._macro_body_refs.items():
+            for name in refs:
+                for target_qn in macros_by_name.get(name, ()):
+                    self._add_edge(
+                        cs.RelationshipType.CALLS,
+                        fc.LABEL_FUNCTION,
+                        macro_qn,
+                        fc.LABEL_FUNCTION,
+                        target_qn,
+                    )
+
+    def pending_macro_calls(self) -> list[PendingMacroCall]:
+        # (H) Hybrid: callers are unknowable until the tree-sitter pass has
+        # (H) recorded its definition spans, so hand the uses back with the
+        # (H) Module fallback pre-resolved. A use site whose file has no
+        # (H) module qn (an ignored dir, e.g. build/) can never carry an edge.
+        pending: list[PendingMacroCall] = []
+        for rel, line, callee_qn, _file_name in sorted(self._pending_macro_calls):
+            module_qn = self.resolver.module_qn_for_rel(rel)
+            if module_qn is None:
+                continue
+            pending.append(PendingMacroCall(rel, line, callee_qn, module_qn))
+        return pending
+
     def flush(self, ingestor: IngestorProtocol) -> None:
-        self._resolve_macro_calls()
+        self._resolve_macro_body_refs()
+        if not self.hybrid:
+            self._resolve_macro_calls()
         for module_qn, props in self.modules.items():
             ingestor.ensure_node_batch(fc.LABEL_MODULE, props)
             path = props[cs.KEY_PATH]
@@ -524,12 +617,50 @@ def run_cpp_frontend(
     ``structural_elements`` is supplied, each Module is linked to its parent via
     CONTAINS_MODULE (the full-replace path used by GraphUpdater).
     """
-    import clang.cindex as ci
-
-    resolver = CppQnResolver(repo_path, project_name)
     collector = _Collector(
-        resolver, function_registry, simple_name_lookup, structural_elements
+        CppQnResolver(repo_path, project_name),
+        function_registry,
+        simple_name_lookup,
+        structural_elements,
     )
+    _parse_and_collect(collector, compdb_dir)
+    collector.flush(ingestor)
+    return frozenset(collector.covered)
+
+
+def run_cpp_frontend_hybrid(
+    ingestor: IngestorProtocol,
+    repo_path: Path,
+    project_name: str,
+    compdb_dir: Path,
+    function_registry: FunctionRegistryTrieProtocol | None = None,
+    simple_name_lookup: SimpleNameLookup | None = None,
+    structural_elements: dict[Path, str | None] | None = None,
+) -> list[PendingMacroCall]:
+    """Layer libclang's macro and include facts onto a tree-sitter index.
+
+    Parses every translation unit like :func:`run_cpp_frontend` but emits ONLY
+    macro Function nodes (with their Module DEFINES) and ``#include`` IMPORTS
+    edges -- the facts whose qns are scheme-identical between libclang and
+    tree-sitter. No definition nodes and no CALLS are emitted: tree-sitter
+    remains the backbone and covers every file, so nothing is skipped. Returns
+    the macro uses it saw; the caller attributes each to the tightest enclosing
+    tree-sitter definition span after Pass 2.
+    """
+    collector = _Collector(
+        CppQnResolver(repo_path, project_name),
+        function_registry,
+        simple_name_lookup,
+        structural_elements,
+        hybrid=True,
+    )
+    _parse_and_collect(collector, compdb_dir)
+    collector.flush(ingestor)
+    return collector.pending_macro_calls()
+
+
+def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
+    import clang.cindex as ci
 
     db = ci.CompilationDatabase.fromDirectory(str(Path(compdb_dir).resolve()))
     index = ci.Index.create()
@@ -548,6 +679,3 @@ def run_cpp_frontend(
             continue
         _walk(tu.cursor, collector)
         collector.process_includes(tu)
-
-    collector.flush(ingestor)
-    return frozenset(collector.covered)
