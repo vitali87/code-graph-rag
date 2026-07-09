@@ -2056,6 +2056,19 @@ class CallProcessor:
                             caller_spec, calls_rel, (sibling_type, qn_key, variant)
                         )
 
+            if callee_type == cs.NodeLabel.METHOD:
+                # (H) A call bound to an interface/trait method (the static callee;
+                # (H) removing its declaration breaks the call) with exactly ONE
+                # (H) implementer also runs the concrete method, so edge both. The
+                # (H) old REPLACING redirect orphaned the interface stub (gson's
+                # (H) FieldNamingStrategy.translateName reported dead); sorted():
+                # (H) the target label is a hash-randomized StrEnum.
+                for impl_type, impl_qn in sorted(
+                    resolver.interface_sole_impl_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(impl_qn):
+                        ensure_rel(caller_spec, calls_rel, (impl_type, qn_key, variant))
+
             if (
                 is_js_ts
                 and cs.SEPARATOR_DOT in call_name
