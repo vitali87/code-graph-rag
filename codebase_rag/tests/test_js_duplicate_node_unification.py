@@ -62,6 +62,26 @@ exports.readWord = function (b) {
 };
 """
 
+NESTED_RETURN_JS = """
+exports.receiver = function (callback) {
+  return function (data) {
+    return callback(data);
+  };
+};
+"""
+
+SAME_NAME_EXPR_JS = """
+register("first", function t(x) {
+  return x;
+});
+
+register("second", function t(y) {
+  return function inner() {
+    return y;
+  };
+});
+"""
+
 
 def _function_nodes_by_location(
     mock_ingestor: MagicMock,
@@ -163,6 +183,53 @@ def test_true_anonymous_callback_still_gets_its_node(
         qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(cs.PREFIX_ANONYMOUS) for qn in qns
     ), qns
     _assert_single_node_per_location(mock_ingestor)
+
+
+def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
+    return {
+        (str(call.args[0][2]), str(call.args[2][2]))
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.DEFINES.value
+        )
+    }
+
+
+def test_nested_function_parents_to_claimed_named_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The enclosing function's span is claimed under `receiver`; deriving
+    # (H) the nested function's parent structurally would produce the
+    # (H) since-unregistered anonymous qn and hoist the child to the module.
+    # (H) The parent derivation must reuse the claimed identity.
+    (temp_repo / "transport.js").write_text(NESTED_RETURN_JS)
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
+
+    assert any(
+        parent.endswith(".receiver")
+        and cs.PREFIX_ANONYMOUS in child.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        for parent, child in _defines_pairs(mock_ingestor)
+    ), _defines_pairs(mock_ingestor)
+
+
+def test_nested_function_parents_to_its_own_same_name_enclosing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Two function expressions share the name `t`; the second registers as
+    # (H) `t@line`. A function nested in the SECOND must parent to `t@line`,
+    # (H) not to the first `t` (structural re-derivation binds the wrong
+    # (H) function; the span record knows which one encloses the child).
+    (temp_repo / "suite.js").write_text(SAME_NAME_EXPR_JS)
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
+
+    inner_parents = {
+        parent
+        for parent, child in _defines_pairs(mock_ingestor)
+        if child.endswith(".inner")
+    }
+    assert any(cs.DUP_QN_MARKER in parent for parent in inner_parents), (
+        inner_parents,
+        _defines_pairs(mock_ingestor),
+    )
 
 
 def test_calls_from_exported_function_attribute_to_named_node(
