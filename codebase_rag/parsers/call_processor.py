@@ -16,6 +16,7 @@ from ..services import IngestorProtocol
 from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
 )
@@ -31,6 +32,7 @@ from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    function_span_key,
     get_function_captures,
     go_parameter_names,
     is_method_node,
@@ -202,7 +204,7 @@ class CallProcessor:
         interface_implementers: dict[str, set[str]] | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
-        function_locations: dict[tuple[str, int], FunctionLocation] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
@@ -833,7 +835,20 @@ class CallProcessor:
                     accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
                 )
             if not func_name:
-                continue
+                # (H) A nameless JS/TS function expression that a NAMED pass
+                # (H) registered (`exports.f = function`, `x: function`) has a
+                # (H) real node; its body's calls belong to that node, not the
+                # (H) module, so adopt the record's simple name and fall
+                # (H) through (the recorded-caller branch below reuses the
+                # (H) registered qn). A GENERATED record (anonymous callback,
+                # (H) IIFE) keeps the historical bubble-to-module attribution.
+                if (
+                    language not in _JS_TS_LANGUAGES
+                    or (recorded := self._recorded_caller(func_node, module_qn)) is None
+                    or not recorded.is_named
+                ):
+                    continue
+                func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             # (H) The definition pass records where every function/method node
             # (H) landed; reuse that qn/label instead of re-deriving them from
             # (H) the AST -- the walks diverge on preprocessor-distorted C++
@@ -982,14 +997,8 @@ class CallProcessor:
     ) -> FunctionLocation | None:
         # (H) The registry membership check guards incremental runs, where an
         # (H) unchanged file's locations were not re-recorded this run.
-        loc = self.function_locations.get((module_qn, func_node.start_point[0] + 1))
+        loc = self.function_locations.get(function_span_key(module_qn, func_node))
         if loc is None or loc.qualified_name not in self._resolver.function_registry:
-            return None
-        # (H) Two functions can start on one line (a one-line curried arrow); the
-        # (H) line-keyed entry then belongs to only one of them. A column mismatch
-        # (H) means THIS node is the other one -- fall back to name-based
-        # (H) attribution rather than adopt the wrong function's qn.
-        if loc.start_col is not None and loc.start_col != func_node.start_point[1]:
             return None
         return loc
 

@@ -116,6 +116,84 @@ function bindingName(node) {
   return "anonymous";
 }
 
+// (H) cgr models `X.prototype.m = function` as the CONSTRUCTOR node DEFINES the
+// (H) method (the prototype pass registers `module.X.m` under the constructor,
+// (H) resolved by module-flat name), so the oracle mirrors it: the file's
+// (H) declared functions (declarations and var-assigned expressions) are the
+// (H) constructor candidates. First declaration wins, matching cgr's registry.
+let declaredFns = new Map();
+
+// (H) Unwrap `( ... )` and `lhs = ...` chains so `var X = (exports.X =
+// (H) function ...)` resolves to the function expression, matching cgr's
+// (H) nameless-binding registration of X at the function node.
+function unwrapInitializer(node) {
+  while (node) {
+    if (ts.isParenthesizedExpression(node)) {
+      node = node.expression;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      node = node.right;
+    } else {
+      return node;
+    }
+  }
+  return node;
+}
+
+function collectDeclaredFunctions(sf) {
+  const decls = new Map();
+  function scan(node) {
+    // (H) cgr resolves prototype constructors MODULE-FLAT (module.X); a
+    // (H) function declared inside another function registers nested and
+    // (H) never matches, so the scan must not descend past function or
+    // (H) class boundaries.
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isClassDeclaration(node)
+    ) {
+      if (ts.isFunctionDeclaration(node) && node.name && !decls.has(node.name.text)) {
+        decls.set(node.name.text, lineOf(sf, node));
+      }
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.name &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      !decls.has(node.name.text)
+    ) {
+      const init = unwrapInitializer(node.initializer);
+      if (init && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) {
+        decls.set(node.name.text, lineOf(sf, init));
+        return;
+      }
+    }
+    node.forEachChild(scan);
+  }
+  sf.forEachChild(scan);
+  return decls;
+}
+
+// (H) `X.prototype.m = <fn expr>`: the shape cgr's prototype-method pass owns.
+function prototypeAssignment(node) {
+  if (!ts.isBinaryExpression(node)) return null;
+  if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null;
+  const lhs = node.left;
+  if (!ts.isPropertyAccessExpression(lhs) || !ts.isIdentifier(lhs.name)) return null;
+  const obj = lhs.expression;
+  if (!ts.isPropertyAccessExpression(obj) || !ts.isIdentifier(obj.name)) return null;
+  if (obj.name.text !== "prototype" || !ts.isIdentifier(obj.expression)) return null;
+  const rhs = node.right;
+  if (!ts.isFunctionExpression(rhs) && !ts.isArrowFunction(rhs)) return null;
+  return { ctorName: obj.expression.text, methodName: lhs.name.text, fn: rhs };
+}
+
 // ctx carries the file, the enclosing class/namespace ref (for Methods) and the
 // enclosing function ref (for nested Functions).
 function defineFunction(node, sf, file, container, ctx, kind, line) {
@@ -194,6 +272,23 @@ function walk(node, sf, file, container, ctx) {
     if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "function", sub));
     return;
   }
+  const proto = prototypeAssignment(node);
+  if (proto) {
+    const line = lineOf(sf, proto.fn);
+    emit("Function", file, line, proto.methodName, endLineOf(sf, proto.fn));
+    const ctorLine = declaredFns.get(proto.ctorName);
+    if (ctorLine !== undefined) {
+      emitEdge("DEFINES", file, "Function", ctorLine, "Function", line);
+    } else {
+      // (H) Unregistered constructor: cgr's deferred parent falls back to the
+      // (H) lexical enclosing function, then the module.
+      const parent = ctx.funcRef || { kind: "Module", line: MODULE_LINE };
+      emitEdge("DEFINES", file, parent.kind, parent.line, "Function", line);
+    }
+    const sub = { typeRef: null, funcRef: { kind: "Function", line } };
+    proto.fn.forEachChild((c) => walk(c, sf, file, "function", sub));
+    return;
+  }
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     // (H) cgr captures every arrow/function expression as a Function node (named
     // by its variable when assigned, else anonymous), at the expression's own
@@ -235,6 +330,7 @@ function visitDir(dir, root, exts) {
       const src = fs.readFileSync(p, "utf8");
       const sf = ts.createSourceFile(p, src, ts.ScriptTarget.Latest, true);
       const rel = path.relative(root, p).split(path.sep).join("/");
+      declaredFns = collectDeclaredFunctions(sf);
       const ctx = { typeRef: null, funcRef: null };
       sf.forEachChild((c) => walk(c, sf, rel, "module", ctx));
     }

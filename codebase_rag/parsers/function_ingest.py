@@ -16,6 +16,7 @@ from ..types_defs import (
     DeferredParentLink,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     NodeType,
     PropertyDict,
     SimpleNameLookup,
@@ -28,6 +29,7 @@ from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
     callable_parameter_indices,
+    function_span_key,
     get_function_captures,
     ingest_method,
     is_method_node,
@@ -70,6 +72,27 @@ class FunctionResolution(NamedTuple):
     qualified_name: str
     name: str
     is_exported: bool
+    # (H) True when the name was GENERATED (anonymous_row_col): a JS/TS named
+    # (H) pass (object literal, export, assignment, prototype) may own this
+    # (H) same source function, so its registration defers until those ran.
+    is_anonymous: bool = False
+
+
+class _DeferredJsAnonymous(NamedTuple):
+    """Unnamed JS/TS function expression held back until named passes claim.
+
+    The generic function pass runs before the JS-specific passes, so
+    registering `anonymous_row_col` eagerly minted a second node for every
+    function a named pass registers later (521 locations on thrift's JS
+    corpora). Registration happens at the per-file flush, only for spans no
+    named pass claimed.
+    """
+
+    func_node: Node
+    resolution: FunctionResolution
+    module_qn: str
+    language: cs.SupportedLanguage
+    lang_config: LanguageSpec
 
 
 class _DeferredMethod(NamedTuple):
@@ -88,6 +111,7 @@ class _DeferredMethod(NamedTuple):
     module_qn: str
     namespace_path: str
     start_line: int
+    start_col: int
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -139,8 +163,9 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: dict[tuple[str, int], FunctionLocation]
+    function_locations: dict[FunctionSpanKey, FunctionLocation]
     macro_qns: set[str]
+    _deferred_js_anonymous: list[_DeferredJsAnonymous]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -201,6 +226,19 @@ class FunctionIngestMixin:
             if not resolution:
                 continue
 
+            # (H) A nameless JS/TS function expression may be one a NAMED pass
+            # (H) (object literal, export, assignment, prototype) registers
+            # (H) under its real name; those passes run after this one, so hold
+            # (H) the anonymous registration back and flush only unclaimed
+            # (H) spans (each eager registration was a duplicate node).
+            if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
+                self._deferred_js_anonymous.append(
+                    _DeferredJsAnonymous(
+                        func_node, resolution, module_qn, language, lang_config
+                    )
+                )
+                continue
+
             self._register_function(
                 func_node, resolution, module_qn, language, lang_config
             )
@@ -213,6 +251,54 @@ class FunctionIngestMixin:
                 return_type := cpp_utils.extract_return_type_name(func_node)
             ):
                 self.method_return_types[resolution.qualified_name] = return_type
+
+    def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
+        # (H) A span is claimed when a pass recorded THIS function node's
+        # (H) location; the column in the key keeps a same-line neighbour's
+        # (H) claim from masking this node's own.
+        return function_span_key(module_qn, func_node) in self.function_locations
+
+    def _span_claimed_for_qn(
+        self, module_qn: str, func_node: Node, candidate_qn: str
+    ) -> bool:
+        # (H) A named pass re-deriving the SAME qn another pass already
+        # (H) registered for this span is a pure duplicate (it would collide
+        # (H) into a spurious `qn@line` twin). A DIFFERENT qn is the deliberate
+        # (H) twin model: `X.prototype.m = function m()` keeps both the
+        # (H) fn-expr's own-name node and the member-name node (duplicate-QN
+        # (H) design: keep both, CALLS-to-both), so it must still register.
+        loc = self.function_locations.get(function_span_key(module_qn, func_node))
+        if loc is None:
+            return False
+        claimed_base = loc.qualified_name.split(cs.DUP_QN_MARKER, 1)[0]
+        return claimed_base == candidate_qn
+
+    def _claim_function_span(
+        self, module_qn: str, func_node: Node, label: str, qualified_name: str
+    ) -> None:
+        # (H) First claim wins; a later pass deriving a different qn for the
+        # (H) same source function must skip registration, not mint a twin.
+        key = function_span_key(module_qn, func_node)
+        if key not in self.function_locations:
+            self.function_locations[key] = FunctionLocation(
+                label=label,
+                qualified_name=qualified_name,
+                container_qn=None,
+            )
+
+    def _flush_deferred_js_anonymous(self) -> None:
+        deferred = self._deferred_js_anonymous
+        self._deferred_js_anonymous = []
+        for entry in deferred:
+            if self._function_span_claimed(entry.module_qn, entry.func_node):
+                continue
+            self._register_function(
+                entry.func_node,
+                entry.resolution,
+                entry.module_qn,
+                entry.language,
+                entry.lang_config,
+            )
 
     def _resolve_function_identity(
         self,
@@ -381,13 +467,15 @@ class FunctionIngestMixin:
                 # (H) Record the binding so Pass-3 call attribution reuses this
                 # (H) exact decision instead of re-resolving (and diverging).
                 bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
-                location = (module_qn, func_node.start_point[0] + 1)
-                self.cpp_out_of_class_methods[location] = (bound_qn, class_qn)
-                self.function_locations[location] = FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=bound_qn,
-                    container_qn=class_qn,
-                    start_col=func_node.start_point[1],
+                self.cpp_out_of_class_methods[
+                    (module_qn, func_node.start_point[0] + 1)
+                ] = (bound_qn, class_qn)
+                self.function_locations[function_span_key(module_qn, func_node)] = (
+                    FunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=bound_qn,
+                        container_qn=class_qn,
+                    )
                 )
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
@@ -426,6 +514,7 @@ class FunctionIngestMixin:
                         cpp_utils.extract_namespace_path(func_node)
                     ),
                     start_line=func_node.start_point[0] + 1,
+                    start_col=func_node.start_point[1],
                 )
             )
 
@@ -466,12 +555,12 @@ class FunctionIngestMixin:
                 method_qn,
                 class_qn,
             )
-            self.function_locations[(entry.module_qn, entry.start_line)] = (
-                FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=method_qn,
-                    container_qn=class_qn,
-                )
+            self.function_locations[
+                (entry.module_qn, entry.start_line, entry.start_col)
+            ] = FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=method_qn,
+                container_qn=class_qn,
             )
 
             props = dict(entry.method_props)
@@ -619,6 +708,7 @@ class FunctionIngestMixin:
         ):
             func_name = self._extract_lua_assignment_function_name(func_node)
 
+        is_anonymous = not func_name
         if not func_name:
             func_name = self._generate_anonymous_function_name(func_node, module_qn)
 
@@ -626,7 +716,7 @@ class FunctionIngestMixin:
             func_node, module_qn, func_name, language, lang_config
         )
         is_exported = export_detection.is_exported(func_node, func_name, language)
-        return FunctionResolution(func_qn, func_name, is_exported)
+        return FunctionResolution(func_qn, func_name, is_exported, is_anonymous)
 
     def _build_function_qn(
         self,
@@ -690,9 +780,9 @@ class FunctionIngestMixin:
             label=cs.NodeLabel.FUNCTION.value,
             qualified_name=resolution.qualified_name,
             container_qn=None,
-            start_col=func_node.start_point[1],
+            is_named=not resolution.is_anonymous,
         )
-        self.function_locations[(module_qn, func_node.start_point[0] + 1)] = location
+        self.function_locations[function_span_key(module_qn, func_node)] = location
         if (
             language == cs.SupportedLanguage.CPP
             and func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION
@@ -725,15 +815,11 @@ class FunctionIngestMixin:
         self, func_node: Node, module_qn: str, location: FunctionLocation
     ) -> None:
         # (H) A template wrapper's body walk in Pass 3 visits the INNER
-        # (H) definition (it starts on its own line), so record that line
-        # (H) against the wrapper's node too. The Pass-3 walk matches on the
-        # (H) CHILD node, so the entry must carry the child's column, not the
-        # (H) wrapper's, or the column check rejects it.
+        # (H) definition (it starts on its own line), so record the entry
+        # (H) under the child's span too (the walk matches on that node).
         for child in func_node.children:
             if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                self.function_locations[(module_qn, child.start_point[0] + 1)] = (
-                    location._replace(start_col=child.start_point[1])
-                )
+                self.function_locations[function_span_key(module_qn, child)] = location
                 break
 
     def _build_function_props(
@@ -1095,6 +1181,24 @@ class FunctionIngestMixin:
             )
         )
 
+    def _claimed_qn_for_anonymous_guess(
+        self, module_qn: str, parent_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) An `anonymous_row_col` guess names the SPAN it stood for; if a
+        # (H) named pass claimed that span, the claim is the real parent.
+        tail = parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if not tail.startswith(cs.PREFIX_ANONYMOUS):
+            return None
+        row_col = tail[len(cs.PREFIX_ANONYMOUS) :].split(cs.CHAR_UNDERSCORE)
+        if len(row_col) != 2 or not all(part.isdigit() for part in row_col):
+            return None
+        loc = self.function_locations.get(
+            (module_qn, int(row_col[0]) + 1, int(row_col[1]))
+        )
+        if loc is None or loc.qualified_name not in self.function_registry:
+            return None
+        return loc.label, loc.qualified_name
+
     def resolve_deferred_parent_links(self) -> int:
         """Emit deferred non-module DEFINES once every pass has registered.
 
@@ -1127,6 +1231,21 @@ class FunctionIngestMixin:
                     cs.NodeLabel(entry.fallback_label),
                     cs.KEY_QUALIFIED_NAME,
                     entry.fallback_qn,
+                )
+                rel_type = cs.RelationshipType.DEFINES.value
+            elif claimed := self._claimed_qn_for_anonymous_guess(
+                entry.module_qn, entry.parent_qn
+            ):
+                # (H) The parent guess was an anonymous placeholder for a span
+                # (H) a NAMED pass claimed after the child registered
+                # (H) (`exports.receiver = function () { function helper() }`):
+                # (H) the placeholder embeds its (row, col), so the claim
+                # (H) record recovers the registered enclosing node.
+                claimed_label, claimed_qn = claimed
+                parent_spec = (
+                    cs.NodeLabel(claimed_label),
+                    cs.KEY_QUALIFIED_NAME,
+                    claimed_qn,
                 )
                 rel_type = cs.RelationshipType.DEFINES.value
             else:
@@ -1238,6 +1357,22 @@ class FunctionIngestMixin:
                         cs.NodeLabel.METHOD,
                         f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
                     )
+                # (H) Reuse the enclosing function's REGISTERED identity when
+                # (H) its span is claimed: structural re-derivation produces
+                # (H) the pre-claim qn (an anonymous name whose node no longer
+                # (H) exists for `exports.f = function`, or the FIRST `t` for
+                # (H) the second same-name fn expr registered as `t@line`),
+                # (H) hoisting the child to the module or the wrong function.
+                if language in cs.JS_TS_LANGUAGES:
+                    recorded = self.function_locations.get(
+                        function_span_key(module_qn, current)
+                    )
+                    if (
+                        recorded is not None
+                        and recorded.qualified_name != func_qn
+                        and recorded.qualified_name in self.function_registry
+                    ):
+                        return cs.NodeLabel(recorded.label), recorded.qualified_name
                 resolution = (
                     self._resolve_function_identity(
                         current, module_qn, language, lang_config, file_path
