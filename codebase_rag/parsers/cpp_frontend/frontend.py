@@ -86,6 +86,10 @@ class _Collector:
         self.modules: dict[str, PropertyDict] = {}
         self.edges: set[_EdgeKey] = set()
         self.covered: set[str] = set()
+        # (H) absolute file name -> (rel, module_qn), or None when outside the
+        # (H) repo. rel_path resolves symlinks (filesystem-touching); headers
+        # (H) recur across every TU that includes them, so resolve each once.
+        self._include_file_info: dict[str, tuple[str, str] | None] = {}
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -268,6 +272,45 @@ class _Collector:
         self._add_module(module_qn, rel, file_name)
         return (fc.LABEL_MODULE, module_qn)
 
+    def process_includes(self, tu) -> None:
+        # (H) `#include` is the C++ import: emit IMPORTS Module -> Module for every
+        # (H) within-repo inclusion, at any depth (calc.h including util.h counts,
+        # (H) attributed to calc.h -- FileInclusion.source is the INCLUDING file).
+        # (H) System headers resolve outside the repo (module_qn None) and emit
+        # (H) nothing; the source != include guard keeps the tree-sitter path's
+        # (H) self-import bug out of the frontend.
+        for inclusion in tu.get_includes():
+            source = inclusion.source
+            included = inclusion.include
+            if source is None or included is None:
+                continue
+            src = self._include_info(source.name)
+            inc = self._include_info(included.name)
+            if src is None or inc is None or src[1] == inc[1]:
+                continue
+            src_rel, src_qn = src
+            inc_rel, inc_qn = inc
+            self._add_module(src_qn, src_rel, source.name)
+            self._add_module(inc_qn, inc_rel, included.name)
+            self._add_edge(
+                cs.RelationshipType.IMPORTS,
+                fc.LABEL_MODULE,
+                src_qn,
+                fc.LABEL_MODULE,
+                inc_qn,
+            )
+
+    def _include_info(self, file_name: str) -> tuple[str, str] | None:
+        # (H) Resolve rel + module_qn together, once per file: rel_path is the
+        # (H) filesystem-touching step and module_qn is a map lookup keyed by it.
+        if file_name in self._include_file_info:
+            return self._include_file_info[file_name]
+        rel = self.resolver.rel_path(file_name)
+        qn = self.resolver.module_qn_for_rel(rel) if rel is not None else None
+        info = (rel, qn) if rel is not None and qn is not None else None
+        self._include_file_info[file_name] = info
+        return info
+
     def _emit_inheritance(self, cursor: Cursor, derived_qn: str) -> None:
         for child in cursor.get_children():
             if child.kind.name != fc.KIND_BASE_SPECIFIER:
@@ -376,6 +419,7 @@ def run_cpp_frontend(
         except ci.TranslationUnitLoadError:
             continue
         _walk(tu.cursor, collector)
+        collector.process_includes(tu)
 
     collector.flush(ingestor)
     return frozenset(collector.covered)
