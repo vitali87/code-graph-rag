@@ -61,6 +61,15 @@ The first definition keeps the plain dotted qualified name; each later definitio
 
 A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
 
+## Macros
+
+Macro definitions map onto the existing `Function` label rather than a dedicated node type, since macros are a cross-language concept (C and C++ `#define`, Rust `macro_rules!`). Macro invocations resolve to their definitions and emit `CALLS` edges, and dead-code analysis treats macros like any function.
+
+Language notes:
+
+- **Rust**: macros and functions live in separate namespaces, so a macro invocation (`write!`) never binds a same-named `fn` and a function call never binds a same-named macro. `#[macro_export]` sets `is_exported` (macros take no `pub`).
+- **C/C++** (libclang frontend): compiler builtins, system-header macros, and empty-bodied object-like macros (include guards, feature flags) are not nodes. A macro use inside a function body emits `CALLS` from that function; a use outside any function attributes to the `Module`.
+
 ## Language-Specific AST Mappings
 
 ### C++
@@ -112,6 +121,7 @@ A `CALLS` edge to a name that has more than one definition links to every varian
 - `function_item`
 - `function_signature_item`
 - `impl_item`
+- `macro_definition`
 - `struct_item`
 - `trait_item`
 - `type_item`

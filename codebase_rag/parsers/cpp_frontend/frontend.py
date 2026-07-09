@@ -510,9 +510,11 @@ def run_cpp_frontend(
     Parses every translation unit in the compilation database, walks the cursor
     tree, and emits Module/Class/Function/Method nodes plus DEFINES /
     DEFINES_METHOD / INHERITS edges and exact spans straight to the ingestor,
-    synthesizing the same qualified names the tree-sitter path would. Returns the
-    set of repo-relative files it covered (so callers can skip them in the
-    tree-sitter pass).
+    synthesizing the same qualified names the tree-sitter path would. Repo macro
+    definitions register as Function nodes and macro uses emit CALLS from their
+    enclosing function (see the graph-schema docs). Returns the set of
+    repo-relative files it covered (so callers can skip them in the tree-sitter
+    pass).
 
     When ``function_registry`` / ``simple_name_lookup`` are supplied, emitted
     definitions are registered for cross-file resolution; when

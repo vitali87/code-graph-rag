@@ -824,7 +824,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.CPP: LanguageMetadata(
         LanguageStatus.FULL,
-        "Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces",
+        "Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros",
         "C++",
     ),
     SupportedLanguage.LUA: LanguageMetadata(
@@ -834,7 +834,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.RUST: LanguageMetadata(
         LanguageStatus.FULL,
-        "impl blocks, associated functions",
+        "impl blocks, associated functions, macro_rules! macros",
         "Rust",
     ),
     SupportedLanguage.JAVA: LanguageMetadata(
