@@ -265,19 +265,13 @@ class TypeInferenceEngine:
         # (H)   ['self','shared','state','lock','unwrap'] -> base local self (Db),
         # (H)     field shared (Arc<Shared>->Shared), field state (Mutex<State>, guard
         # (H)     inner State), lock unwraps the guard -> State, unwrap identity -> State.
-        # (H) The base is a typed local (self/var) when present in var_types, else a
-        # (H) free fn called by bare name (`let s = make()`), else a type name. Each
-        # (H) hop tries: guard-unwrap (a guard accessor right after a guard-wrapped
-        # (H) field) -> field-type -> method-return -> identity.
+        # (H) Each hop tries: guard-unwrap (a guard accessor right after a guard-
+        # (H) wrapped field) -> field-type -> method-return -> identity.
         if not segments:
             return None
-        current_type: str | None = var_types.get(
-            segments[0]
-        ) or self._rust_free_fn_return_type(segments[0], module_qn)
+        current_type = self._rust_chain_base_type(segments, module_qn, var_types)
         if current_type is None:
-            if len(segments) < 2:
-                return None
-            current_type = segments[0]
+            return None
         # (H) Inner type of the guard-wrapped field just hopped through, pending a guard
         # (H) accessor to unwrap it (None otherwise).
         guard_inner: str | None = None
@@ -305,6 +299,20 @@ class TypeInferenceEngine:
             elif hop not in cs.RS_IDENTITY_METHODS:
                 return None
         return current_type
+
+    def _rust_chain_base_type(
+        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+    ) -> str | None:
+        # (H) Base of a flattened chain: a typed local (self/var) when present in
+        # (H) var_types, else a free fn called by bare name (`let s = make()`),
+        # (H) else the segment itself as a type name -- only useful when there are
+        # (H) hops to walk, so a bare unresolved name types nothing.
+        base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
+            segments[0], module_qn
+        )
+        if base is not None:
+            return base
+        return segments[0] if len(segments) > 1 else None
 
     def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
         # (H) Resolve a Rust type name to its class-node qn, honoring imports: a `use`
