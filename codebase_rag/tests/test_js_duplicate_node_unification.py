@@ -82,6 +82,15 @@ register("second", function t(y) {
 });
 """
 
+NAMED_NESTED_JS = """
+exports.receiver = function (callback) {
+  function helper(data) {
+    return callback(data);
+  }
+  return helper;
+};
+"""
+
 
 def _function_nodes_by_location(
     mock_ingestor: MagicMock,
@@ -228,6 +237,28 @@ def test_nested_function_parents_to_its_own_same_name_enclosing(
     }
     assert any(cs.DUP_QN_MARKER in parent for parent in inner_parents), (
         inner_parents,
+        _defines_pairs(mock_ingestor),
+    )
+
+
+def test_named_nested_function_parents_to_later_claimed_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `helper` registers EAGERLY (generic pass) while its enclosing
+    # (H) function expression is still unnamed; the parent guess is the
+    # (H) anonymous placeholder, deferred. By resolve time the enclosing span
+    # (H) is claimed under `receiver`; the resolver must re-consult the claim
+    # (H) (the placeholder embeds the span) instead of falling back to module.
+    (temp_repo / "eager.js").write_text(NAMED_NESTED_JS)
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
+
+    helper_parents = {
+        parent
+        for parent, child in _defines_pairs(mock_ingestor)
+        if child.endswith(".helper")
+    }
+    assert any(parent.endswith(".receiver") for parent in helper_parents), (
+        helper_parents,
         _defines_pairs(mock_ingestor),
     )
 
