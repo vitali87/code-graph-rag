@@ -346,13 +346,35 @@ class _Collector:
             fc.LABEL_FUNCTION,
             qn,
         )
-        # (H) Body tokens after the macro's own name; parameters and keywords
-        # (H) also pass isidentifier but can never match a macro node's name
-        # (H) at flush, so no further filtering is needed here.
+        # (H) Body tokens after the macro's own name. A function-like macro
+        # (H) ('(' abutting the name -- the standard's distinction from an
+        # (H) object-like body that starts with a parenthesis) has its
+        # (H) parameter list skipped and those names excluded from the body:
+        # (H) a parameter is substituted by the caller's argument, so one
+        # (H) named like a real macro is not a reference to it.
+        tokens = list(cursor.get_tokens())
+        body_start = 1
+        params: set[str] = set()
+        name_end = tokens[0].extent.end
+        if (
+            len(tokens) > 1
+            and tokens[1].spelling == fc.TOKEN_LPAREN
+            and tokens[1].extent.start.line == name_end.line
+            and tokens[1].extent.start.column == name_end.column
+        ):
+            body_start = len(tokens)
+            for i, tok in enumerate(tokens[2:], start=2):
+                if tok.spelling == fc.TOKEN_RPAREN:
+                    body_start = i + 1
+                    break
+                if tok.spelling.isidentifier():
+                    params.add(tok.spelling)
         refs = {
             t.spelling
-            for t in list(cursor.get_tokens())[1:]
-            if t.spelling.isidentifier() and t.spelling != cursor.spelling
+            for t in tokens[body_start:]
+            if t.spelling.isidentifier()
+            and t.spelling != cursor.spelling
+            and t.spelling not in params
         }
         if refs:
             self._macro_body_refs.setdefault(qn, set()).update(refs)

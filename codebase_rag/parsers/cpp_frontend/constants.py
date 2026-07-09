@@ -34,6 +34,9 @@ METHOD_KIND_NAMES: frozenset[str] = frozenset(
 # (H) declarations (TS_TYPE_ALIAS_DECLARATION) and Go/Rust type decls.
 TYPE_KIND_NAMES: frozenset[str] = frozenset({"TYPE_ALIAS_DECL", "TYPEDEF_DECL"})
 
+TOKEN_LPAREN = "("
+TOKEN_RPAREN = ")"
+
 LABEL_MODULE = cs.NodeLabel.MODULE.value
 LABEL_CLASS = cs.NodeLabel.CLASS.value
 LABEL_FUNCTION = cs.NodeLabel.FUNCTION.value
