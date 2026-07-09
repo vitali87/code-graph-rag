@@ -697,32 +697,30 @@ class CallResolver:
             # (H) function's parent is a module, which is never in the registry.
             if parent_qn in self.function_registry:
                 candidates.append(qn)
-        if len(candidates) > 1:
-            # (H) Prefer candidates VISIBLE to the calling module: parent imported
-            # (H) here or defined here (express's tryRender imports ./view, so
-            # (H) View.render wins over an unrelated example's GithubView.render).
-            import_map = self.import_processor.import_mapping.get(module_qn) or {}
-            imported = set(import_map.values())
-            # (H) A JS require maps the MODULE (`require('./view')` ->
-            # (H) express.lib.view), so a visible candidate's parent may equal an
-            # (H) import or sit anywhere under one; same-module candidates are
-            # (H) visible too.
-            visible = [
-                qn
-                for qn in candidates
-                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-                or any(
-                    qn.rpartition(cs.SEPARATOR_DOT)[0] == imp
-                    or qn.rpartition(cs.SEPARATOR_DOT)[0].startswith(
-                        f"{imp}{cs.SEPARATOR_DOT}"
-                    )
-                    for imp in imported
+        # (H) Only candidates VISIBLE to the calling module count -- parent module
+        # (H) imported here or defined here (express's tryRender imports ./view, so
+        # (H) View.render qualifies; an unrelated example's GithubView.render does
+        # (H) not). Required even for a SINGLETON: an untyped `client.render()` in
+        # (H) a file with no relation to the sole View.render must drop, not grow a
+        # (H) false cross-module edge that hides real dead code. A JS require maps
+        # (H) the MODULE (`require('./view')` -> express.lib.view), so a visible
+        # (H) candidate's parent may equal an import or sit anywhere under one.
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        imported = set(import_map.values())
+        visible = [
+            qn
+            for qn in candidates
+            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            or any(
+                qn.rpartition(cs.SEPARATOR_DOT)[0] == imp
+                or qn.rpartition(cs.SEPARATOR_DOT)[0].startswith(
+                    f"{imp}{cs.SEPARATOR_DOT}"
                 )
-            ]
-            if visible:
-                candidates = visible
-        if len(candidates) == 1:
-            return self.function_registry[candidates[0]], candidates[0]
+                for imp in imported
+            )
+        ]
+        if len(visible) == 1:
+            return self.function_registry[visible[0]], visible[0]
         return None
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:

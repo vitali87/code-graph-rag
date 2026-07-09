@@ -102,3 +102,36 @@ def test_var_require_visibility_disambiguates_member_call(
     assert not any(
         f.endswith(".tryRender") and t.endswith(".GithubView.render") for f, t in calls
     ), "member call bound the invisible module's twin"
+
+
+def test_invisible_singleton_member_is_not_bound(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An untyped member call in a file that neither defines nor imports the
+    # (H) candidate's module (`client.render()` in an unrelated file) must NOT
+    # (H) bind the repo's sole same-named member: visibility is required even
+    # (H) for a singleton, else external-object calls grow false edges that hide
+    # (H) real dead code.
+    root = temp_repo / "exinv"
+    root.mkdir(parents=True)
+    (root / "view.js").write_text(
+        "function View(name) {\n"
+        "  this.name = name\n"
+        "}\n"
+        "View.prototype.render = function render(options) {\n"
+        "  return options\n"
+        "}\n"
+        "module.exports = View\n",
+        encoding="utf-8",
+    )
+    (root / "unrelated.js").write_text(
+        "exports.ping = function (client) {\n  return client.render({})\n}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert not any(
+        f.startswith("exinv.unrelated") and "render" in t for f, t in calls
+    ), "invisible singleton member wrongly bound"
