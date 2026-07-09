@@ -10,12 +10,12 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |----------|--------|------------|-----------|-----------------|---------|-------------------|---------------------|
-| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | Yes | Yes | Yes | Yes | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | Yes | Yes | Yes | Yes | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
 | Java | Fully Supported | .java | Yes | Yes | Yes | No | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | Yes | Yes | Yes | No | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | Yes | No | Yes | No | Local/global functions, metatables, closures, coroutines |
 | Python | Fully Supported | .py | Yes | Yes | Yes | Yes | Type inference, decorators, nested functions |
-| Rust | Fully Supported | .rs | Yes | Yes | Yes | Yes | impl blocks, associated functions |
+| Rust | Fully Supported | .rs | Yes | Yes | Yes | Yes | impl blocks, associated functions, macro_rules! macros |
 | TypeScript | Fully Supported | .ts, .tsx | Yes | Yes | Yes | No | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | C# | In Development | .cs | Yes | Yes | Yes | No | Classes, interfaces, generics (planned) |
 | Go | In Development | .go | Yes | Yes | Yes | No | Methods, type declarations |

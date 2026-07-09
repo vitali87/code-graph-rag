@@ -90,6 +90,11 @@ class _Collector:
         # (H) repo. rel_path resolves symlinks (filesystem-touching); headers
         # (H) recur across every TU that includes them, so resolve each once.
         self._include_file_info: dict[str, tuple[str, str] | None] = {}
+        # (H) (use-site rel, use-site line, macro Function qn, use-site absolute
+        # (H) file): macro cursors are TU-level preprocessing entities, so the
+        # (H) enclosing caller is only recoverable by span once ALL definitions
+        # (H) are collected -- resolved at flush.
+        self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -134,6 +139,12 @@ class _Collector:
         # (H) enclosing scope.
         if cursor.kind.name == fc.KIND_CALL_EXPR:
             self._process_call(cursor, enclosing)
+            return None
+        if cursor.kind.name == fc.KIND_MACRO_DEFINITION:
+            self._process_macro_definition(cursor)
+            return None
+        if cursor.kind.name == fc.KIND_MACRO_INSTANTIATION:
+            self._queue_macro_call(cursor)
             return None
         label = _classify(cursor)
         if label is None or cursor.location.file is None:
@@ -272,6 +283,107 @@ class _Collector:
         self._add_module(module_qn, rel, file_name)
         return (fc.LABEL_MODULE, module_qn)
 
+    def _macro_function_qn(self, cursor: Cursor) -> str | None:
+        # (H) Macros register as Function nodes (the cross-language decision:
+        # (H) C/C++/Rust macros all map onto Function). Builtins and
+        # (H) command-line macros have no file; system-header macros resolve
+        # (H) outside the repo; an empty-bodied object-like macro (include
+        # (H) guard, feature flag -- extent covers only the name) is a flag,
+        # (H) not a callable.
+        if cursor.location.file is None:
+            return None
+        extent = cursor.extent
+        if (
+            extent.start.line == extent.end.line
+            and extent.end.column - extent.start.column == len(cursor.spelling)
+        ):
+            return None
+        return self.resolver.function_qn(cursor)
+
+    def _process_macro_definition(self, cursor: Cursor) -> None:
+        qn = self._macro_function_qn(cursor)
+        if qn is None:
+            return
+        file_name = cursor.location.file.name
+        rel = self.resolver.rel_path(file_name)
+        module_qn = self.resolver.module_qn(file_name)
+        if rel is None or module_qn is None:
+            return
+        self.covered.add(rel)
+        self._add_module(module_qn, rel, file_name)
+        props = self._node_props(cursor, qn, cursor.spelling, rel)
+        props[cs.KEY_IS_MACRO] = True
+        self._add_node(fc.LABEL_FUNCTION, qn, props, True)
+        self._add_edge(
+            cs.RelationshipType.DEFINES,
+            fc.LABEL_MODULE,
+            module_qn,
+            fc.LABEL_FUNCTION,
+            qn,
+        )
+
+    def _queue_macro_call(self, cursor: Cursor) -> None:
+        # (H) MACRO_INSTANTIATION.referenced is the exact MACRO_DEFINITION
+        # (H) (libclang resolved it); the caller needs span containment over the
+        # (H) full node set, so defer to flush.
+        if cursor.location.file is None:
+            return
+        referenced = cursor.referenced
+        if referenced is None:
+            return
+        callee_qn = self._macro_function_qn(referenced)
+        if callee_qn is None:
+            return
+        file_name = cursor.location.file.name
+        rel = self.resolver.rel_path(file_name)
+        if rel is None:
+            return
+        self._pending_macro_calls.add((rel, cursor.location.line, callee_qn, file_name))
+
+    def _resolve_macro_calls(self) -> None:
+        # (H) Attribute each macro use to the tightest enclosing
+        # (H) function/method span in its file (macro cursors are TU children,
+        # (H) never AST-nested); a use outside any span is a module-load-time
+        # (H) expansion -> the Module, mirroring _module_caller.
+        spans: dict[str, list[tuple[int, int, str, str]]] = {}
+        for label, props, _ in self.nodes.values():
+            if label not in (fc.LABEL_FUNCTION, fc.LABEL_METHOD):
+                continue
+            path = props.get(cs.KEY_PATH)
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            start = props.get(cs.KEY_START_LINE)
+            end = props.get(cs.KEY_END_LINE)
+            if (
+                isinstance(path, str)
+                and isinstance(qn, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+            ):
+                spans.setdefault(path, []).append((start, end, label, qn))
+        for rel, line, callee_qn, file_name in sorted(self._pending_macro_calls):
+            containing = [
+                s
+                for s in spans.get(rel, ())
+                if s[0] <= line <= s[1] and s[3] != callee_qn
+            ]
+            if containing:
+                _, _, caller_label, caller_qn = min(
+                    containing, key=lambda s: s[1] - s[0]
+                )
+            else:
+                module_qn = self.resolver.module_qn_for_rel(rel)
+                if module_qn is None:
+                    continue
+                self._add_module(module_qn, rel, file_name)
+                caller_label, caller_qn = fc.LABEL_MODULE, module_qn
+            self._add_edge(
+                cs.RelationshipType.CALLS,
+                caller_label,
+                caller_qn,
+                fc.LABEL_FUNCTION,
+                callee_qn,
+            )
+
     def process_includes(self, tu) -> None:
         # (H) `#include` is the C++ import: emit IMPORTS Module -> Module for every
         # (H) within-repo inclusion, at any depth (calc.h including util.h counts,
@@ -354,6 +466,7 @@ class _Collector:
             self.simple_name_lookup[name].add(qn)
 
     def flush(self, ingestor: IngestorProtocol) -> None:
+        self._resolve_macro_calls()
         for module_qn, props in self.modules.items():
             ingestor.ensure_node_batch(fc.LABEL_MODULE, props)
             path = props[cs.KEY_PATH]
@@ -394,9 +507,11 @@ def run_cpp_frontend(
     Parses every translation unit in the compilation database, walks the cursor
     tree, and emits Module/Class/Function/Method nodes plus DEFINES /
     DEFINES_METHOD / INHERITS edges and exact spans straight to the ingestor,
-    synthesizing the same qualified names the tree-sitter path would. Returns the
-    set of repo-relative files it covered (so callers can skip them in the
-    tree-sitter pass).
+    synthesizing the same qualified names the tree-sitter path would. Repo macro
+    definitions register as Function nodes and macro uses emit CALLS from their
+    enclosing function (see the graph-schema docs). Returns the set of
+    repo-relative files it covered (so callers can skip them in the tree-sitter
+    pass).
 
     When ``function_registry`` / ``simple_name_lookup`` are supplied, emitted
     definitions are registered for cross-file resolution; when
@@ -415,7 +530,14 @@ def run_cpp_frontend(
     for command in db.getAllCompileCommands():
         args = list(command.arguments)[1:]
         try:
-            tu = index.parse(None, args=args)
+            # (H) the detailed record exposes MACRO_DEFINITION /
+            # (H) MACRO_INSTANTIATION cursors (preprocessing entities are
+            # (H) otherwise absent from the cursor tree)
+            tu = index.parse(
+                None,
+                args=args,
+                options=ci.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+            )
         except ci.TranslationUnitLoadError:
             continue
         _walk(tu.cursor, collector)

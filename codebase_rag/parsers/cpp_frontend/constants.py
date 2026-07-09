@@ -13,6 +13,8 @@ KIND_DESTRUCTOR = "DESTRUCTOR"
 KIND_BASE_SPECIFIER = "CXX_BASE_SPECIFIER"
 KIND_TRANSLATION_UNIT = "TRANSLATION_UNIT"
 KIND_CALL_EXPR = "CALL_EXPR"
+KIND_MACRO_DEFINITION = "MACRO_DEFINITION"
+KIND_MACRO_INSTANTIATION = "MACRO_INSTANTIATION"
 
 # (H) class/struct/union and their templated forms -> a Class node (cgr collapses
 # (H) struct/class to Class, matching parsers/cpp + the oracle).

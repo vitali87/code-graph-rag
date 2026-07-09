@@ -140,6 +140,7 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: dict[tuple[str, int], FunctionLocation]
+    macro_qns: set[str]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -660,12 +661,21 @@ class FunctionIngestMixin:
             resolution = resolution._replace(qualified_name=unique_qn)
 
         func_props = self._build_function_props(func_node, resolution, module_qn)
+        is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
+        if is_macro:
+            # (H) Rust macros live in a separate namespace from functions;
+            # (H) Pass-3 gates macro-invocation vs fn-call binding on macro_qns,
+            # (H) and the persisted property lets incremental runs rehydrate the
+            # (H) set for UNCHANGED files (the is_property pattern).
+            func_props[cs.KEY_IS_MACRO] = True
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        if is_macro:
+            self.macro_qns.add(resolution.qualified_name)
         self.function_registry.mark_callable_params(
             resolution.qualified_name,
             callable_parameter_indices(func_node, language),

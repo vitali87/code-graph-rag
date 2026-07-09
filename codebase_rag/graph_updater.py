@@ -666,6 +666,11 @@ class GraphUpdater:
             # (H) @property defined elsewhere would otherwise drop vs a clean index.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
+            # (H) Restore the macro-namespace set for unchanged files: the Rust
+            # (H) macro/fn gate consults it, so a re-parsed file's invocation of
+            # (H) a macro defined elsewhere would otherwise drop vs a clean index.
+            if row.get(cs.KEY_IS_MACRO):
+                self.factory.definition_processor.macro_qns.add(qn)
             # (H) Record the defining file so _is_cpp_defined can language-check
             # (H) rehydrated candidates (deferred C++ INHERITS resolution runs
             # (H) after this and must reach bases in UNCHANGED headers).
