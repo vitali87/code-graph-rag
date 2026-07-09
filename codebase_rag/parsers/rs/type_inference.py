@@ -215,7 +215,13 @@ class RustTypeInferenceEngine:
         name = safe_decode_text(pattern)
         if not name:
             return
-        if segments := self._callee_chain_segments(self._unwrap_try(value)):
+        value_expr = self._unwrap_try(value)
+        if segments := self._callee_chain_segments(value_expr):
+            # (H) A single bare identifier is a move or fn-pointer binding
+            # (H) (`let f = make;`), not a call: `f` holds the function itself,
+            # (H) not a value of its return type. Only an invoked base counts.
+            if len(segments) == 1 and value_expr.type not in cs.RS_CALL_OR_GENERIC_FN:
+                return
             bindings.append((name, segments))
 
     def _callee_chain_segments(self, node: Node) -> list[str] | None:

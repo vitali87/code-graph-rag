@@ -252,6 +252,14 @@ class FunctionIngestMixin:
             ):
                 self.method_return_types[resolution.qualified_name] = return_type
 
+            # (H) Same for a free Rust fn (impl methods are recorded in class
+            # (H) ingest): a call-bound local (`let s = make()`) types from
+            # (H) this map. No impl target here, so a `Self` return stays None.
+            if language == cs.SupportedLanguage.RUST and (
+                return_type := rs_utils.extract_return_type_name(func_node, None)
+            ):
+                self.method_return_types[resolution.qualified_name] = return_type
+
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # (H) A span is claimed when a pass recorded THIS function node's
         # (H) location; the column in the key keeps a same-line neighbour's
