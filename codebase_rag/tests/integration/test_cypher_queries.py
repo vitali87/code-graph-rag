@@ -11,13 +11,13 @@ from codebase_rag.cypher_queries import (
     CYPHER_FIND_BY_QUALIFIED_NAME,
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     build_constraint_query,
-    build_dead_code_query,
     build_merge_node_query,
     build_merge_relationship_query,
     build_nodes_by_ids_query,
     wrap_with_unwind,
 )
-from codebase_rag.types_defs import PropertyValue
+from codebase_rag.dead_code import collect_dead_code
+from codebase_rag.types_defs import DeadCodeConfig
 
 if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor
@@ -345,59 +345,7 @@ class TestBuildMergeRelationshipQueryIntegration:
         assert verify[0]["line"] == 42
 
 
-class TestBuildDeadCodeQueryUnit:
-    def test_include_tests_references_test_patterns(self) -> None:
-        query = build_dead_code_query(include_tests=True)
-
-        assert "$test_patterns" in query
-        assert "$project_prefix" in query
-        assert "$root_decorators" in query
-        assert "$entry_points" in query
-        assert "is_exported" in query
-        # (H) BFS expansion: visits each reachable node once instead of
-        # (H) enumerating every path (which times out on real graphs). REFERENCES
-        # (H) (a function passed/stored as a value) keeps callbacks reachable.
-        assert "CALLS|REFERENCES*BFS" in query
-        # (H) test functions are roots when tests are included; the path is
-        # (H) leading-slash-normalized so a root tests/ dir matches too.
-        assert "coalesce(n.path, '')) CONTAINS" in query
-
-    def test_exclude_tests_omits_test_function_roots(self) -> None:
-        query = build_dead_code_query(include_tests=False)
-
-        # (H) test functions are NOT roots when excluding tests ...
-        assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
-        # (H) ... but test_patterns still filters test modules out of the
-        # (H) module-load root clause so test-only code is not kept alive.
-        assert "$test_patterns" in query
-        assert "coalesce(m.path, '')) CONTAINS" in query
-        assert "$project_prefix" in query
-        # (H) ... and test-file symbols are excluded from the REPORT: their only
-        # (H) callers are excluded as roots, so reporting them is unconditional
-        # (H) noise (test helpers/mocks are infrastructure, not dead production
-        # (H) code). Path is leading-slash-normalized so a root tests/ dir matches.
-        assert (
-            "AND NOT ANY(p IN $test_patterns"
-            " WHERE ('/' + coalesce(n.path, '')) CONTAINS p)" in query
-        )
-
-    def test_include_tests_reports_test_file_candidates(self) -> None:
-        query = build_dead_code_query(include_tests=True)
-
-        # (H) with tests included, test-file symbols are roots AND stay
-        # (H) reportable candidates; no candidate-side path filter exists.
-        assert (
-            "AND NOT ANY(p IN $test_patterns WHERE coalesce(n.path, '') CONTAINS p)"
-            not in query
-        )
-
-    def test_module_load_callees_are_roots(self) -> None:
-        query = build_dead_code_query(include_tests=False)
-
-        # (H) a function called by a Module node runs at import, so it is a root
-        assert "Module" in query
-        assert "[:CALLS|REFERENCES]-(" in query
-
+class TestTestPathPatternsUnit:
     def test_test_patterns_cover_js_ts_convention(self) -> None:
         from codebase_rag.constants import TEST_PATH_PATTERNS
 
@@ -410,23 +358,24 @@ class TestBuildDeadCodeQueryUnit:
         ):
             assert any(p in path for p in TEST_PATH_PATTERNS), path
 
-    def test_include_classes_adds_class_candidates(self) -> None:
-        # (H) the INHERITS check targets the *BFS traversal set: the protocol-stub
-        # (H) root clause mentions INHERITS in every query variant, so a bare
-        # (H) substring check would no longer prove class traversal is off.
-        with_classes = build_dead_code_query(include_tests=False, include_classes=True)
-        assert "Function|Method|Class" in with_classes
-        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" in with_classes
 
-        without_classes = build_dead_code_query(
-            include_tests=False, include_classes=False
-        )
-        assert "Function|Method|Class" not in without_classes
-        assert "CALLS|REFERENCES|INSTANTIATES|INHERITS*BFS" not in without_classes
+def _dead_code_config(
+    include_tests: bool,
+    include_classes: bool = False,
+    root_decorators: tuple[str, ...] = (),
+    entry_points: tuple[str, ...] = (),
+) -> DeadCodeConfig:
+    return DeadCodeConfig(
+        include_tests=include_tests,
+        include_classes=include_classes,
+        root_decorators=frozenset(root_decorators),
+        entry_points=entry_points,
+        test_patterns=("test_", "_test", "conftest", "/tests/"),
+    )
 
 
 @pytest.mark.integration
-class TestBuildDeadCodeQueryIntegration:
+class TestCollectDeadCodeIntegration:
     def _seed(self, ingestor: MemgraphIngestor) -> None:
         # (H) called -> live; orphan -> dead; handler is a @task root;
         # (H) routed is a @app.route root calling routed_callee (decorators are
@@ -462,26 +411,23 @@ class TestBuildDeadCodeQueryIntegration:
             "(testfn)-[:CALLS]->(helper)"
         )
 
-    def _params(self, include_tests: bool) -> dict[str, PropertyValue]:  # noqa: ARG002
-        # (H) test_patterns is always supplied; the query (built per include_tests)
-        # (H) decides whether it gates test-function roots or test-module filtering.
-        return {
-            "project_prefix": "proj.",
-            "root_decorators": ["task", "route"],
-            "entry_points": ["proj.mod.main"],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
+    _SEED_CONFIG_ARGS = {
+        "root_decorators": ("task", "route"),
+        "entry_points": ("proj.mod.main",),
+    }
 
     def test_reports_only_the_orphan_with_tests_included(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
         self._seed(memgraph_ingestor)
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=True), self._params(True)
+        rows = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
 
-        names = {r["qualified_name"] for r in results}
+        names = {r["qualified_name"] for r in rows}
         assert names == {"proj.mod.orphan"}
 
     def test_excluding_tests_reports_orphan_and_test_only_code(
@@ -489,11 +435,13 @@ class TestBuildDeadCodeQueryIntegration:
     ) -> None:
         self._seed(memgraph_ingestor)
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False), self._params(False)
+        rows = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=False, **self._SEED_CONFIG_ARGS),
         )
 
-        names = {r["qualified_name"] for r in results}
+        names = {r["qualified_name"] for r in rows}
         # (H) without test roots, production code reached only from tests (helper)
         # (H) is reported; the test fn itself is test infrastructure, filtered
         # (H) from candidates by path.
@@ -505,12 +453,14 @@ class TestBuildDeadCodeQueryIntegration:
     def test_returns_row_shape(self, memgraph_ingestor: MemgraphIngestor) -> None:
         self._seed(memgraph_ingestor)
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=True), self._params(True)
+        rows = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
 
-        assert len(results) == 1
-        row = results[0]
+        assert len(rows) == 1
+        row = rows[0]
         assert row["label"] == "Function"
         assert row["name"] == "orphan"
         assert row["start_line"] == 9
@@ -531,20 +481,14 @@ class TestBuildDeadCodeQueryIntegration:
             "  path: 'proj/mod.py'}), "
             "(tm)-[:CALLS]->(tool)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        excluded = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False), params
+        excluded = collect_dead_code(
+            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in excluded} == {"proj.mod.tool_only"}
 
-        included = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=True), params
+        included = collect_dead_code(
+            memgraph_ingestor, "proj", _dead_code_config(include_tests=True)
         )
         assert {r["qualified_name"] for r in included} == set()
 
@@ -584,20 +528,18 @@ class TestBuildDeadCodeQueryIntegration:
             "(used)-[:INSTANTIATES]->(ni), "
             "(used)-[:INSTANTIATES]->(der)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        without_classes = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False, include_classes=False), params
+        without_classes = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=False, include_classes=False),
         )
         assert {r["qualified_name"] for r in without_classes} == {"proj.mod.orphan_fn"}
 
-        with_classes = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False, include_classes=True), params
+        with_classes = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=False, include_classes=True),
         )
         assert {r["qualified_name"] for r in with_classes} == {
             "proj.mod.orphan_fn",
@@ -611,7 +553,7 @@ class TestBuildDeadCodeQueryIntegration:
         # (H) the traversal never reaches Derived and therefore never reaches Base
         # (H) via INHERITS. The whole dead cluster (both classes) is reported: a
         # (H) base kept alive only by an unreachable subclass is itself dead.
-        # (H) Live is present purely so the query has a reachable root to anchor.
+        # (H) Live is present purely so the scan has a reachable root to anchor.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -624,15 +566,11 @@ class TestBuildDeadCodeQueryIntegration:
             "(der)-[:INHERITS]->(base), "
             "(m)-[:INSTANTIATES]->(live)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        with_classes = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False, include_classes=True), params
+        with_classes = collect_dead_code(
+            memgraph_ingestor,
+            "proj",
+            _dead_code_config(include_tests=False, include_classes=True),
         )
         assert {r["qualified_name"] for r in with_classes} == {
             "proj.mod.Base",
@@ -644,8 +582,7 @@ class TestBuildDeadCodeQueryIntegration:
     ) -> None:
         # (H) with no roots at all (nothing exported / entry-point / decorated /
         # (H) called at module load), every function is unreachable and must be
-        # (H) reported. The empty-roots guard keeps the query from silently
-        # (H) returning nothing (UNWIND of [] would drop the final MATCH).
+        # (H) reported.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(a:Function {qualified_name: 'proj.mod.a', name: 'a', start_line: 1, "
@@ -654,17 +591,11 @@ class TestBuildDeadCodeQueryIntegration:
             "  end_line: 5, decorators: [], is_exported: false, path: 'proj/mod.py'}), "
             "(a)-[:CALLS]->(b)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False), params
+        rows = collect_dead_code(
+            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
-        assert {r["qualified_name"] for r in results} == {
+        assert {r["qualified_name"] for r in rows} == {
             "proj.mod.a",
             "proj.mod.b",
         }
@@ -722,17 +653,11 @@ class TestBuildDeadCodeQueryIntegration:
             "(loadable)-[:DEFINES_METHOD]->(stub), "
             "(plain)-[:DEFINES_METHOD]->(helper)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False), params
+        rows = collect_dead_code(
+            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
-        assert {r["qualified_name"] for r in results} == {
+        assert {r["qualified_name"] for r in rows} == {
             "proj.mod.outer._unused",
             "proj.mod.Plain._helper",
             "proj.mod.dead_outer",
@@ -758,17 +683,11 @@ class TestBuildDeadCodeQueryIntegration:
             "(m)-[:CALLS]->(main), "
             "(main)-[:CALLS]->(used)"
         )
-        params: dict[str, PropertyValue] = {
-            "project_prefix": "proj.",
-            "root_decorators": [],
-            "entry_points": [],
-            "test_patterns": ["test_", "_test", "conftest", "/tests/"],
-        }
 
-        results = memgraph_ingestor._execute_query(
-            build_dead_code_query(include_tests=False), params
+        rows = collect_dead_code(
+            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
-        names = {r["qualified_name"] for r in results}
+        names = {r["qualified_name"] for r in rows}
 
         assert names == {"proj.mod.orphan"}
 

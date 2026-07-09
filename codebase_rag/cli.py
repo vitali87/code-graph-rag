@@ -40,7 +40,7 @@ from .stack.constants import StackState
 from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
-from .types_defs import DeadCodeRow, PropertyValue, ResultRow
+from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -922,24 +922,25 @@ def _resolve_dead_code_project(
     return None
 
 
-def _dead_code_params(
-    project_name: str,
+def _dead_code_config(
+    include_tests: bool,
+    include_classes: bool,
     entry_points: list[str],
     decorator_roots: list[str],
-) -> dict[str, PropertyValue]:
-    root_decorators = sorted(
-        {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
-        | {d.lower() for d in decorator_roots}
-    )
-    # (H) test_patterns is always passed: with tests included it makes test
+) -> DeadCodeConfig:
+    # (H) test_patterns is always set: with tests included it makes test
     # (H) functions roots; with tests excluded it filters test modules out of the
-    # (H) module-load root clause so test-only code is not kept alive.
-    return {
-        "project_prefix": f"{project_name}{cs.SEPARATOR_DOT}",
-        "root_decorators": root_decorators,
-        "entry_points": list(entry_points),
-        "test_patterns": list(cs.TEST_PATH_PATTERNS),
-    }
+    # (H) module-load roots so test-only code is not kept alive.
+    return DeadCodeConfig(
+        include_tests=include_tests,
+        include_classes=include_classes,
+        root_decorators=frozenset(
+            {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
+            | {d.lower() for d in decorator_roots}
+        ),
+        entry_points=tuple(entry_points),
+        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
+    )
 
 
 def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
@@ -1066,7 +1067,7 @@ def dead_code(
         False, "--fail-on-found", help=ch.HELP_DEADCODE_FAIL_ON_FOUND
     ),
 ) -> None:
-    from .cypher_queries import build_dead_code_query
+    from .dead_code import collect_dead_code
 
     show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
     if show_progress:
@@ -1081,9 +1082,12 @@ def dead_code(
             resolved = _resolve_dead_code_project(project_name, projects)
             if resolved is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows = ingestor.fetch_all(
-                    build_dead_code_query(include_tests, include_classes),
-                    _dead_code_params(resolved, entry_point, decorator_root),
+                rows = collect_dead_code(
+                    ingestor,
+                    resolved,
+                    _dead_code_config(
+                        include_tests, include_classes, entry_point, decorator_root
+                    ),
                 )
     except Exception as e:
         app_context.console.print(

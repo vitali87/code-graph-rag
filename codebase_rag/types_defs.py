@@ -429,6 +429,21 @@ class DeadCodeRow(TypedDict):
     end_line: int
 
 
+class DeadCodeConfig(NamedTuple):
+    include_tests: bool
+    include_classes: bool
+    root_decorators: frozenset[str]
+    entry_points: tuple[str, ...]
+    test_patterns: tuple[str, ...]
+    exclude_patterns: tuple[str, ...] = ()
+
+
+class GraphQueryClient(Protocol):
+    def fetch_all(
+        self, query: str, params: dict[str, PropertyValue] | None = None
+    ) -> list[ResultRow]: ...
+
+
 class ListProjectsSuccessResult(TypedDict):
     projects: list[str]
     count: int
