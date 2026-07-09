@@ -3308,9 +3308,20 @@ RS_RESULT_WRAPPERS = frozenset({"Result", "Option"})
 RS_RETURN_STRIP_WRAPPERS = RS_DEREF_WRAPPERS | RS_RESULT_WRAPPERS
 TS_RS_REFERENCE_TYPE = "reference_type"
 TS_RS_POINTER_TYPE = "pointer_type"
+# (H) Trait-object and impl-Trait wrappers: `dyn Svc` / `impl Svc` /
+# (H) `dyn Svc + Send`. The trait IS the value's static type (a method call on
+# (H) the value dispatches through the trait), so type walkers descend through
+# (H) these to the trait name, mirroring the Java interface-receiver design.
+TS_RS_DYNAMIC_TYPE = "dynamic_type"
+TS_RS_ABSTRACT_TYPE = "abstract_type"
+TS_RS_BOUNDED_TYPE = "bounded_type"
+# (H) A parenthesized type (`&(dyn Svc + Send)`) parses as tuple_type; only a
+# (H) single-element one is grouping (a real tuple has no single bare type).
+TS_RS_TUPLE_TYPE = "tuple_type"
 # (H) Node types that can stand for a Rust return/field type. Reference/pointer
 # (H) wrappers (`&Frame`, `*const T`) are included so a generic inner argument
-# (H) (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent.
+# (H) (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent;
+# (H) dyn/impl/bounded wrappers so a trait-object type descends to its trait.
 RS_RETURN_TYPE_NODE_TYPES = (
     TS_TYPE_IDENTIFIER,
     TS_RS_PRIMITIVE_TYPE,
@@ -3318,6 +3329,10 @@ RS_RETURN_TYPE_NODE_TYPES = (
     TS_RS_SCOPED_TYPE_IDENTIFIER,
     TS_RS_REFERENCE_TYPE,
     TS_RS_POINTER_TYPE,
+    TS_RS_DYNAMIC_TYPE,
+    TS_RS_ABSTRACT_TYPE,
+    TS_RS_BOUNDED_TYPE,
+    TS_RS_TUPLE_TYPE,
 )
 # (H) Wrapper-passthrough methods: they return the receiver's own (inner) type, so
 # (H) a call-bound local keeps its type across them (`Type::mk().unwrap().m()`).

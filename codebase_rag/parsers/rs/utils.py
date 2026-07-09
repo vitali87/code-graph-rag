@@ -180,9 +180,21 @@ def _rust_return_type_name(node: Node, impl_target: str | None) -> str | None:
         case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
             name_node = node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name_node) if name_node else None
+        case cs.TS_RS_TUPLE_TYPE:
+            # (H) Only a single-element tuple_type is grouping parens
+            # (H) (`&(dyn Svc + Send)`); a real tuple has no single bare type.
+            inners = [
+                c for c in node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
+            ]
+            return (
+                _rust_return_type_name(inners[0], impl_target)
+                if (len(inners) == 1)
+                else None
+            )
         case _:
-            # (H) reference_type (`&Frame`) / pointer_type: descend to the referent
-            # (H) type so a reference-returning method still yields its element type.
+            # (H) reference_type (`&Frame`) / pointer_type / dyn / impl / bounded:
+            # (H) descend to the first typed child (a bounded type's first bound
+            # (H) is the principal trait; the rest are auto-trait markers).
             for child in node.children:
                 if child.type in cs.RS_RETURN_TYPE_NODE_TYPES:
                     return _rust_return_type_name(child, impl_target)

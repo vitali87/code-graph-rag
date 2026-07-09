@@ -62,15 +62,18 @@ def test_boxed_dyn_return_type_binds_to_trait_method(
 ) -> None:
     # (H) The same walker gap on the RETURN side: a factory returning
     # (H) `Box<dyn Svc>` typed its result as `Box`, so a call on the bound
-    # (H) local never reached the trait method either.
+    # (H) local never reached the trait method either. (An associated-fn
+    # (H) factory: only impl-method return types are recorded, a free fn's
+    # (H) `let s = make()` chain is a separate, unrelated gap.)
     (temp_repo / "m.rs").write_text(
         "trait Svc { fn run(&self) -> i32; }\n"
         "struct Alpha;\n"
         "impl Svc for Alpha { fn run(&self) -> i32 { 1 } }\n"
         "struct Beta;\n"
         "impl Svc for Beta { fn run(&self) -> i32 { 2 } }\n"
-        "fn make() -> Box<dyn Svc> { Box::new(Alpha) }\n"
-        "pub fn use_made() -> i32 { let s = make(); s.run() }\n",
+        "struct Maker;\n"
+        "impl Maker { fn make() -> Box<dyn Svc> { Box::new(Alpha) } }\n"
+        "pub fn use_made() -> i32 { let s = Maker::make(); s.run() }\n",
         encoding="utf-8",
     )
     run_updater(temp_repo, mock_ingestor, skip_if_missing="rust")
