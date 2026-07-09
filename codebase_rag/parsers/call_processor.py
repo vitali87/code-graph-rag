@@ -16,6 +16,7 @@ from ..services import IngestorProtocol
 from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
 )
@@ -31,6 +32,7 @@ from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    function_span_key,
     get_function_captures,
     go_parameter_names,
     is_method_node,
@@ -202,7 +204,7 @@ class CallProcessor:
         interface_implementers: dict[str, set[str]] | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
-        function_locations: dict[tuple[str, int], FunctionLocation] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
@@ -995,14 +997,8 @@ class CallProcessor:
     ) -> FunctionLocation | None:
         # (H) The registry membership check guards incremental runs, where an
         # (H) unchanged file's locations were not re-recorded this run.
-        loc = self.function_locations.get((module_qn, func_node.start_point[0] + 1))
+        loc = self.function_locations.get(function_span_key(module_qn, func_node))
         if loc is None or loc.qualified_name not in self._resolver.function_registry:
-            return None
-        # (H) Two functions can start on one line (a one-line curried arrow); the
-        # (H) line-keyed entry then belongs to only one of them. A column mismatch
-        # (H) means THIS node is the other one -- fall back to name-based
-        # (H) attribution rather than adopt the wrong function's qn.
-        if loc.start_col is not None and loc.start_col != func_node.start_point[1]:
             return None
         return loc
 

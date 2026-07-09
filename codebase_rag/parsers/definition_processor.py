@@ -15,6 +15,7 @@ from ..types_defs import (
     DeferredInherit,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -108,7 +109,7 @@ class DefinitionProcessor(
         # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
         # (H) the registered label/qn instead of re-deriving them structurally
         # (H) (the walks diverge on preprocessor-distorted class bodies).
-        self.function_locations: dict[tuple[str, int], FunctionLocation] = {}
+        self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
         # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # (H) registered; resolve_deferred_inherits re-resolves the guesses.

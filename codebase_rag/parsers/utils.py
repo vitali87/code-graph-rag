@@ -13,6 +13,7 @@ from .. import logs
 from ..types_defs import (
     ASTNode,
     DeferredParentLink,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
     PropertyDict,
@@ -25,6 +26,12 @@ if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
+
+
+def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
+    # (H) tree-sitter points are 0-based; recorded lines are 1-based.
+    return (module_qn, node.start_point[0] + 1, node.start_point[1])
+
 
 _QUERY_CACHE: dict[tuple[Language, str], Query] = {}
 _QUERY_LAST: tuple[tuple[Language, str], Query] | None = None

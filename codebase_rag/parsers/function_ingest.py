@@ -16,6 +16,7 @@ from ..types_defs import (
     DeferredParentLink,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     NodeType,
     PropertyDict,
     SimpleNameLookup,
@@ -28,6 +29,7 @@ from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
     callable_parameter_indices,
+    function_span_key,
     get_function_captures,
     ingest_method,
     is_method_node,
@@ -109,6 +111,7 @@ class _DeferredMethod(NamedTuple):
     module_qn: str
     namespace_path: str
     start_line: int
+    start_col: int
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -160,7 +163,7 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: dict[tuple[str, int], FunctionLocation]
+    function_locations: dict[FunctionSpanKey, FunctionLocation]
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredJsAnonymous]
     class_inheritance: dict[str, list[str]]
@@ -251,10 +254,9 @@ class FunctionIngestMixin:
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # (H) A span is claimed when a pass recorded THIS function node's
-        # (H) location (same line and column, mirroring Pass-3's ownership
-        # (H) check); a same-line different-column entry is another function.
-        loc = self.function_locations.get((module_qn, func_node.start_point[0] + 1))
-        return loc is not None and loc.start_col == func_node.start_point[1]
+        # (H) location; the column in the key keeps a same-line neighbour's
+        # (H) claim from masking this node's own.
+        return function_span_key(module_qn, func_node) in self.function_locations
 
     def _span_claimed_for_qn(
         self, module_qn: str, func_node: Node, candidate_qn: str
@@ -265,8 +267,8 @@ class FunctionIngestMixin:
         # (H) twin model: `X.prototype.m = function m()` keeps both the
         # (H) fn-expr's own-name node and the member-name node (duplicate-QN
         # (H) design: keep both, CALLS-to-both), so it must still register.
-        loc = self.function_locations.get((module_qn, func_node.start_point[0] + 1))
-        if loc is None or loc.start_col != func_node.start_point[1]:
+        loc = self.function_locations.get(function_span_key(module_qn, func_node))
+        if loc is None:
             return False
         claimed_base = loc.qualified_name.split(cs.DUP_QN_MARKER, 1)[0]
         return claimed_base == candidate_qn
@@ -276,13 +278,12 @@ class FunctionIngestMixin:
     ) -> None:
         # (H) First claim wins; a later pass deriving a different qn for the
         # (H) same source function must skip registration, not mint a twin.
-        key = (module_qn, func_node.start_point[0] + 1)
+        key = function_span_key(module_qn, func_node)
         if key not in self.function_locations:
             self.function_locations[key] = FunctionLocation(
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
-                start_col=func_node.start_point[1],
             )
 
     def _flush_deferred_js_anonymous(self) -> None:
@@ -466,13 +467,15 @@ class FunctionIngestMixin:
                 # (H) Record the binding so Pass-3 call attribution reuses this
                 # (H) exact decision instead of re-resolving (and diverging).
                 bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
-                location = (module_qn, func_node.start_point[0] + 1)
-                self.cpp_out_of_class_methods[location] = (bound_qn, class_qn)
-                self.function_locations[location] = FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=bound_qn,
-                    container_qn=class_qn,
-                    start_col=func_node.start_point[1],
+                self.cpp_out_of_class_methods[
+                    (module_qn, func_node.start_point[0] + 1)
+                ] = (bound_qn, class_qn)
+                self.function_locations[function_span_key(module_qn, func_node)] = (
+                    FunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=bound_qn,
+                        container_qn=class_qn,
+                    )
                 )
             if return_type and (
                 method_name := cpp_utils.extract_function_name(func_node)
@@ -511,6 +514,7 @@ class FunctionIngestMixin:
                         cpp_utils.extract_namespace_path(func_node)
                     ),
                     start_line=func_node.start_point[0] + 1,
+                    start_col=func_node.start_point[1],
                 )
             )
 
@@ -551,12 +555,12 @@ class FunctionIngestMixin:
                 method_qn,
                 class_qn,
             )
-            self.function_locations[(entry.module_qn, entry.start_line)] = (
-                FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=method_qn,
-                    container_qn=class_qn,
-                )
+            self.function_locations[
+                (entry.module_qn, entry.start_line, entry.start_col)
+            ] = FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=method_qn,
+                container_qn=class_qn,
             )
 
             props = dict(entry.method_props)
@@ -776,32 +780,19 @@ class FunctionIngestMixin:
             label=cs.NodeLabel.FUNCTION.value,
             qualified_name=resolution.qualified_name,
             container_qn=None,
-            start_col=func_node.start_point[1],
             is_named=not resolution.is_anonymous,
         )
-        # (H) Never steal another function's line slot: a deferred anonymous
-        # (H) flushing next to a same-line named function (one-line curried
-        # (H) arrow) must not repoint the named function's Pass-3 record.
-        location_key = (module_qn, func_node.start_point[0] + 1)
-        existing_location = self.function_locations.get(location_key)
-        if (
-            existing_location is None
-            or existing_location.start_col == location.start_col
-        ):
-            self.function_locations[location_key] = location
+        self.function_locations[function_span_key(module_qn, func_node)] = location
         if language == cs.SupportedLanguage.CPP:
             # (H) A template wrapper's body walk in Pass 3 visits the INNER
-            # (H) definition (it starts on its own line), so record that line
-            # (H) against the wrapper's node too.
+            # (H) definition (it starts on its own line), so record the entry
+            # (H) under the child's span too (the walk matches on that node).
             if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
                 for child in func_node.children:
                     if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                        # (H) The Pass-3 walk matches on the CHILD node, so the
-                        # (H) entry must carry the child's column, not the
-                        # (H) wrapper's, or the column check rejects it.
-                        self.function_locations[
-                            (module_qn, child.start_point[0] + 1)
-                        ] = location._replace(start_col=child.start_point[1])
+                        self.function_locations[function_span_key(module_qn, child)] = (
+                            location
+                        )
                         break
 
         # (H) A method-body anonymous-class override (`new Base(){ @Override m(){} }`
@@ -1196,12 +1187,10 @@ class FunctionIngestMixin:
         row_col = tail[len(cs.PREFIX_ANONYMOUS) :].split(cs.CHAR_UNDERSCORE)
         if len(row_col) != 2 or not all(part.isdigit() for part in row_col):
             return None
-        loc = self.function_locations.get((module_qn, int(row_col[0]) + 1))
-        if (
-            loc is None
-            or loc.start_col != int(row_col[1])
-            or loc.qualified_name not in self.function_registry
-        ):
+        loc = self.function_locations.get(
+            (module_qn, int(row_col[0]) + 1, int(row_col[1]))
+        )
+        if loc is None or loc.qualified_name not in self.function_registry:
             return None
         return loc.label, loc.qualified_name
 
@@ -1371,11 +1360,10 @@ class FunctionIngestMixin:
                 # (H) hoisting the child to the module or the wrong function.
                 if language in cs.JS_TS_LANGUAGES:
                     recorded = self.function_locations.get(
-                        (module_qn, current.start_point[0] + 1)
+                        function_span_key(module_qn, current)
                     )
                     if (
                         recorded is not None
-                        and recorded.start_col == current.start_point[1]
                         and recorded.qualified_name != func_qn
                         and recorded.qualified_name in self.function_registry
                     ):

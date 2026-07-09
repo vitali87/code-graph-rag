@@ -512,25 +512,26 @@ class DeferredParentLink(NamedTuple):
     fallback_qn: str | None = None
 
 
+# (H) (module_qn, 1-based start line, 0-based start column) of a function
+# (H) node; the full span identifies the function even on shared lines.
+type FunctionSpanKey = tuple[str, int, int]
+
+
 class FunctionLocation(NamedTuple):
     """Where the definition pass put a C++ function/method node.
 
-    Keyed by (module_qn, start_line) so Pass-3 call attribution reuses the
-    exact label and qn Pass 2 registered instead of re-deriving them from the
-    AST; the two walks diverge on preprocessor-distorted class bodies and
-    every divergence is a phantom caller the database drops (issue #652).
+    Keyed by (module_qn, start_line, start_col) so Pass-3 call attribution
+    reuses the exact label and qn Pass 2 registered instead of re-deriving
+    them from the AST; the two walks diverge on preprocessor-distorted class
+    bodies and every divergence is a phantom caller the database drops
+    (issue #652). The column in the key keeps same-line functions (a one-line
+    curried arrow, minified `exports.a = ...; exports.b = ...`) from evicting
+    or masking each other's records.
     """
 
     label: str
     qualified_name: str
     container_qn: str | None
-    # (H) Start COLUMN of the recorded node. Two functions can share a start line
-    # (H) (a one-line curried arrow `const f = (a) => (b) => ...` records both the
-    # (H) outer and inner arrow at line 1), and the line-keyed map keeps only one;
-    # (H) the reader compares columns and falls back to name-based attribution on
-    # (H) a mismatch instead of adopting the WRONG function's qn. None (the
-    # (H) deferred C++ out-of-class path, which has no node) skips the check.
-    start_col: int | None = None
     # (H) False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
     # (H) lets an unnamed JS/TS function expression adopt a NAMED record (the
     # (H) node a named pass registered for `exports.f = function`), while a
