@@ -278,7 +278,7 @@ def test_hybrid_incremental_header_edit_keeps_macro_nodes(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
     ).run(force=False)
     assert macro_node in store.nodes, sorted(
-        uid for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION.value
+        str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION.value
     )
 
 

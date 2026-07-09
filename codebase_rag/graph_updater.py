@@ -616,10 +616,20 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
-        self._run_cpp_frontend()
+        # (H) LIBCLANG must run before Pass 2: _process_files consumes the
+        # (H) covered-file set to skip those files.
+        if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
+
+        # (H) HYBRID must run after Pass 2: an incremental run deletes each
+        # (H) changed file's Module subtree before re-parsing it, so macro
+        # (H) nodes and include IMPORTS emitted earlier would be deleted with
+        # (H) it and vanish until a forced rebuild.
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
 
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
