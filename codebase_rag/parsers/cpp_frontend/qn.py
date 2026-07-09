@@ -90,6 +90,11 @@ class CppQnResolver:
             return None
         return self._module_qn.get(rel)
 
+    def module_qn_for_rel(self, rel: str) -> str | None:
+        # (H) Map lookup only -- for callers that already paid rel_path's
+        # (H) filesystem resolution and must not pay it twice.
+        return self._module_qn.get(rel)
+
     def _namespace_chain(self, cursor: Cursor) -> list[str]:
         parts: list[str] = []
         parent = cursor.semantic_parent
