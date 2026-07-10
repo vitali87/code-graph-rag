@@ -30,11 +30,6 @@ _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
-# (H) Rounds of override-reachability expansion. Covers depth-N override/callee
-# (H) interleaving (a base revived via an override's callee, whose own overrides
-# (H) then need reviving); a round that adds nothing breaks out early.
-_OVERRIDE_EXPANSION_ROUNDS = 3
-
 _NodeId = tuple[str, PropertyValue]
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 
@@ -183,9 +178,12 @@ def dead_code_from_graph(
     defines_pairs: list[tuple[str, str]] = []
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
-    for from_label, from_val, rel_type, _to_label, to_val in rels:
+    nested_class_pairs: list[tuple[str, str]] = []
+    for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
+            if to_label == _CLASS:
+                nested_class_pairs.append((str(from_val), str(to_val)))
         elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
             protocol_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
@@ -281,30 +279,62 @@ def dead_code_from_graph(
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
 
-    # (H) Override expansion: a call to a base or interface method dispatches at
-    # (H) runtime to any override, so every (transitive) override of a LIVE method
-    # (H) is a reachable dispatch target, as is its callee closure. `override_rev`
-    # (H) walks all multi-level overriders (Base<-Sub<-SubSub); an override of a
-    # (H) DEAD base stays dead. Run several rounds because a base can go live only
-    # (H) via a revived override's CALLEE (depth-2+ interleaving); one pass would
-    # (H) miss those. A round that adds nothing is a no-op. Each round scans only
-    # (H) the nodes that became live since the last one (override_rev is static,
-    # (H) so already-scanned nodes cannot yield new overriders), keeping the loop
-    # (H) O(live) total instead of O(rounds x live).
+    # (H) Factory-class and override expansions, iterated together to a fixed
+    # (H) point because they feed each other (a factory revived only via an
+    # (H) override's callee still needs its class rooted, and vice versa).
+    # (H)
+    # (H) Factory-class rule: a class defined inside a LIVE function or method
+    # (H) (django's create_reverse_many_to_one_manager) escapes through the
+    # (H) factory's return value or arguments, so its instances live behind
+    # (H) receivers the call graph cannot type and no call edge ever lands on
+    # (H) the methods. Treat the methods as dispatch surface (like exported
+    # (H) API) and revive their callee closure; a DEAD factory's class stays
+    # (H) dead.
+    # (H)
+    # (H) Override rule: a call to a base or interface method dispatches at
+    # (H) runtime to any override, so every (transitive) override of a LIVE
+    # (H) method is a reachable dispatch target, as is its callee closure.
+    # (H) `override_rev` walks all multi-level overriders (Base<-Sub<-SubSub);
+    # (H) an override of a DEAD base stays dead.
+    # (H)
+    # (H) Each round scans only the nodes revived since the last one (the pair
+    # (H) maps and override_rev are static, so a rescanned node cannot yield
+    # (H) anything new), keeping the loop O(live) total; a round that adds
+    # (H) nothing terminates it.
+    classes_by_owner: dict[str, set[str]] = defaultdict(set)
+    for owner, cls in nested_class_pairs:
+        classes_by_owner[owner].add(cls)
+    methods_by_class: dict[str, set[str]] = defaultdict(set)
+    for cls, m in class_methods:
+        methods_by_class[cls].add(m)
+
     frontier = set(live)
-    for _ in range(_OVERRIDE_EXPANSION_ROUNDS):
+    while frontier:
+        added: set[str] = set()
+
+        factory_method_roots: set[str] = set()
+        for owner in frontier:
+            for cls in classes_by_owner.get(owner, ()):
+                if cls not in live:
+                    live.add(cls)
+                    added.add(cls)
+                factory_method_roots |= methods_by_class[cls] - live
+        live |= factory_method_roots
+        added |= factory_method_roots
+        _walk(factory_method_roots, adjacency, live, added=added)
+
         override_roots: set[str] = set()
-        stack = list(frontier)
+        stack = list(frontier | added)
         while stack:
             for overrider in override_rev.get(stack.pop(), ()):
                 if overrider not in live and overrider not in override_roots:
                     override_roots.add(overrider)
                     stack.append(overrider)
-        if not override_roots:
-            break
         live |= override_roots
-        frontier = set(override_roots)
-        _walk(override_roots, adjacency, live, added=frontier)
+        added |= override_roots
+        _walk(override_roots, adjacency, live, added=added)
+
+        frontier = added
 
     dead = candidates - live
     # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
