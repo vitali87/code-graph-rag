@@ -254,3 +254,55 @@ def test_argument_to_call_expression_callee_is_referenced(tmp_path: Path) -> Non
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, "deco.csrf_exempt", REFERENCES, "csrf_exempt._view_wrapper")
+
+
+def test_ternary_assignment_references_both_methods(tmp_path: Path) -> None:
+    # (H) `get_response = self._async if flag else self._sync` binds one of two
+    # (H) methods as a value; both are possible referents and must be referenced
+    # (H) (django BaseHandler.load_middleware shape), or dead-code flags them.
+    files = {
+        "handler.py": (
+            "def convert(handler):\n"
+            "    return handler\n\n"
+            "class BaseHandler:\n"
+            "    def load_middleware(self, is_async):\n"
+            "        get_response = self._async if is_async else self._sync\n"
+            "        return convert(get_response)\n\n"
+            "    def _async(self, request):\n"
+            "        return request\n\n"
+            "    def _sync(self, request):\n"
+            "        return request\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "BaseHandler.load_middleware", REFERENCES, "BaseHandler._async")
+    assert _has(rels, "BaseHandler.load_middleware", REFERENCES, "BaseHandler._sync")
+
+
+def test_returned_method_attribute_is_referenced(tmp_path: Path) -> None:
+    # (H) `return self._get_point_2d` hands the bound method to the caller for
+    # (H) later dispatch (django GEOSCoordSeq._point_getter shape); the returning
+    # (H) scope must reference it or dead-code flags the whole getter cluster.
+    files = {
+        "coordseq.py": (
+            "class GEOSCoordSeq:\n"
+            "    @property\n"
+            "    def _point_getter(self):\n"
+            "        if self.dims == 3:\n"
+            "            return self._get_point_3d\n"
+            "        return self._get_point_2d\n\n"
+            "    def _get_point_2d(self, index):\n"
+            "        return index\n\n"
+            "    def _get_point_3d(self, index):\n"
+            "        return index\n\n"
+            "    def use(self, index):\n"
+            "        return self._point_getter(index)\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "GEOSCoordSeq._point_getter", REFERENCES, "GEOSCoordSeq._get_point_2d"
+    )
+    assert _has(
+        rels, "GEOSCoordSeq._point_getter", REFERENCES, "GEOSCoordSeq._get_point_3d"
+    )
