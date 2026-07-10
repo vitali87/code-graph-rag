@@ -78,3 +78,33 @@ def test_override_of_reexported_base_method_is_recorded(
         "reexp.pkg.auth.forms.BaseUserCreationForm._post_clean",
         "reexp.pkg.formslib.models.BaseModelForm._post_clean",
     ) in _edges(mock_ingestor, "OVERRIDES")
+
+
+def test_same_named_function_under_package_is_not_an_inheritance_target(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A factory FUNCTION with the base's simple name under the written
+    # (H) package must not be picked as the re-export target; with no class
+    # (H) candidate the base stays unresolved rather than corrupting the
+    # (H) hierarchy with an INHERITS edge onto a Function node.
+    project = temp_repo / "reexp2"
+    (project / "pkg" / "formslib").mkdir(parents=True)
+    (project / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "pkg" / "formslib" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "pkg" / "formslib" / "factory.py").write_text(
+        "def ModelForm():\n    return 1\n", encoding="utf-8"
+    )
+    (project / "pkg" / "user.py").write_text(
+        "from pkg import formslib as forms\n\n\n"
+        "class UserForm(forms.ModelForm):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="python")
+
+    inherits = _edges(mock_ingestor, "INHERITS")
+    assert not any(
+        child == "reexp2.pkg.user.UserForm"
+        and parent == "reexp2.pkg.formslib.factory.ModelForm"
+        for child, parent in inherits
+    )

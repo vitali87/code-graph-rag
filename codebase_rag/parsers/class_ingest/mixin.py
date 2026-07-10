@@ -517,10 +517,17 @@ class ClassIngestMixin:
             package_prefix = (
                 entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
             )
+            # (H) The registry also holds functions/methods with the same simple
+            # (H) name; only a TYPE declaration is a valid inheritance target, so
+            # (H) filter before the uniqueness check (a same-named factory function
+            # (H) under the package must not corrupt the class hierarchy).
+            type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
             package_matches = {
                 qn
                 for qn in candidates
-                if qn.startswith(package_prefix) and qn != entry.child_qn
+                if qn.startswith(package_prefix)
+                and qn != entry.child_qn
+                and self.function_registry.get(qn) in type_decls
             }
             if len(package_matches) == 1:
                 return package_matches.pop(), False
