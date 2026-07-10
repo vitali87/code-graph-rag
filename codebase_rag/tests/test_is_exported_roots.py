@@ -295,3 +295,31 @@ def test_commonjs_module_symbols_stay_private(tmp_path: Path) -> None:
     # (H) unexported top-level function is module-private, not a page-global.
     exported = _run(tmp_path, {"mod.js": COMMONJS_SRC})
     assert _one(exported, "mod.helper") is False
+
+
+PROTO_SCRIPT_JS_SRC = """\
+String.prototype.strptime = function (format) {
+    return format;
+};
+"""
+
+PROTO_COMMONJS_SRC = """\
+const util = require("./util");
+
+String.prototype.strptime = function (format) {
+    return util.parse(format);
+};
+"""
+
+
+def test_browser_script_prototype_method_is_exported(tmp_path: Path) -> None:
+    # (H) A prototype-assigned method in a page-scope script (django admin's
+    # (H) core.js String.prototype.strptime) extends a global builtin, so it is
+    # (H) callable from any other script or template: a reachability root.
+    exported = _run(tmp_path, {"core.js": PROTO_SCRIPT_JS_SRC})
+    assert _one(exported, "core.String.strptime") is True
+
+
+def test_commonjs_prototype_method_stays_private(tmp_path: Path) -> None:
+    exported = _run(tmp_path, {"mod.js": PROTO_COMMONJS_SRC})
+    assert _one(exported, "mod.String.strptime") is False
