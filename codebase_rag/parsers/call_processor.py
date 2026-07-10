@@ -1612,10 +1612,15 @@ class CallProcessor:
             )
         # (H) A function handed back bare (`return defaultUsageFunc`) is a first-class
         # (H) value invoked by whoever receives it, never by a visible call -- Go leans
-        # (H) on this for factories/getters (cobra's getUsageFunc). Reference it so the
-        # (H) returned function is reachable. Go shares the `return_statement` node type
-        # (H) and the emit path already resolves bare Go identifiers.
-        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.GO:
+        # (H) on this for factories/getters (cobra's getUsageFunc), Python on returned
+        # (H) bound methods (django GEOSCoordSeq `return self._get_point_2d`).
+        # (H) Reference it so the returned function is reachable. These languages share
+        # (H) the `return_statement` node type and the emit path resolves bare names
+        # (H) and self-attributes alike.
+        if language in _JS_TS_LANGUAGES or language in (
+            cs.SupportedLanguage.GO,
+            cs.SupportedLanguage.PYTHON,
+        ):
             self._ingest_returned_function_references(
                 caller_node,
                 caller_spec,
@@ -2336,6 +2341,41 @@ class CallProcessor:
                         for operand in value.named_children:
                             operand = self._unwrap_ts_value(operand)
                             if operand.type in _INLINE_FUNC_VALUE_TYPES:
+                                self._emit_callback_edge(
+                                    caller_spec,
+                                    operand,
+                                    module_qn,
+                                    local_var_types,
+                                    class_context,
+                                    resolve_func,
+                                    ensure_rel,
+                                    caller_qn,
+                                    cs.RelationshipType.REFERENCES,
+                                )
+                        continue
+                    # (H) A Python TERNARY / BOOLEAN-DEFAULT RHS (`get_response =
+                    # (H) self._async if is_async else self._sync`, django's
+                    # (H) BaseHandler; `f = handler or fallback`) binds one of its
+                    # (H) RESULT operands as the value; each result operand naming
+                    # (H) a callable is a possible referent. A ternary's condition
+                    # (H) is only truthiness-tested, never bound, so it is excluded;
+                    # (H) both boolean operands are possible results.
+                    if value.type in (
+                        cs.TS_PY_CONDITIONAL_EXPRESSION,
+                        cs.TS_PY_BOOLEAN_OPERATOR,
+                    ):
+                        operands = list(value.named_children)
+                        if (
+                            value.type == cs.TS_PY_CONDITIONAL_EXPRESSION
+                            and len(operands) == 3
+                        ):
+                            operands = [operands[0], operands[2]]
+                        for operand in operands:
+                            operand = self._unwrap_ts_value(operand)
+                            if (
+                                operand.type in _ASSIGNMENT_RHS_REF_TYPES
+                                or operand.type in _INLINE_FUNC_VALUE_TYPES
+                            ):
                                 self._emit_callback_edge(
                                     caller_spec,
                                     operand,
