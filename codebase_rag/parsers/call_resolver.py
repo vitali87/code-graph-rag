@@ -290,6 +290,29 @@ class CallResolver:
             )
         )
 
+    def _resolve_js_prototype_sibling(
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[str, str] | None:
+        # (H) Only a two-part `this.m` call in a JS/TS caller qualifies; the caller's
+        # (H) parent scope (module.Date for Date.prototype.strftime) is where the
+        # (H) prototype siblings were registered. A module-level caller degrades to
+        # (H) the same module-method lookup the CommonJS fallback performs.
+        if language not in cs.JS_TS_LANGUAGES or not caller_qn:
+            return None
+        if not call_name.startswith(cs.JS_THIS_CALL_PREFIX):
+            return None
+        method_name = call_name[len(cs.JS_THIS_CALL_PREFIX) :]
+        if not method_name or cs.SEPARATOR_DOT in method_name:
+            return None
+        parent_scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        method_qn = f"{parent_scope}{cs.SEPARATOR_DOT}{method_name}"
+        if func_type := self.function_registry.get(method_qn):
+            return func_type, method_qn
+        return None
+
     def _resolve_enclosing_scope(
         self, call_name: str, caller_qn: str | None, module_qn: str
     ) -> tuple[str, str] | None:
@@ -606,6 +629,14 @@ class CallResolver:
         # (H) before the module-keyed cache/trie, which would otherwise return a sibling
         # (H) scope's same-named nested function.
         if result := self._resolve_enclosing_scope(call_name, caller_qn, module_qn):
+            return result
+
+        # (H) `this.m()` inside a prototype-assigned function dispatches to a sibling
+        # (H) method of the same prototype target (Date.prototype.strftime calling
+        # (H) this.getTwoDigitMonth()); the caller's parent scope names that target.
+        # (H) Caller-specific, so it too must run before the module-keyed cache; the
+        # (H) CommonJS module-receiver fallback still applies when no sibling exists.
+        if result := self._resolve_js_prototype_sibling(call_name, caller_qn, language):
             return result
 
         use_cache = not local_var_types
