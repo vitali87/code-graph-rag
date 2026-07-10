@@ -56,6 +56,12 @@ class EmbeddingDevice(StrEnum):
     CPU = "cpu"
 
 
+# (H) Batches between torch.mps.empty_cache() calls: dropping the Metal
+# (H) allocator cache every batch costs ~21% throughput (measured on an M-series
+# (H) UniXcoder run), so release it periodically just to bound growth.
+EMBEDDING_MPS_CACHE_DROP_INTERVAL = 64
+
+
 # (H) ModelConfig field names
 FIELD_PROVIDER = "provider"
 FIELD_MODEL_ID = "model_id"
