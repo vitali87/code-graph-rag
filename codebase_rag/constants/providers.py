@@ -49,6 +49,13 @@ UNIXCODER_MODEL = "microsoft/unixcoder-base"
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
+
+class EmbeddingDevice(StrEnum):
+    CUDA = "cuda"
+    MPS = "mps"
+    CPU = "cpu"
+
+
 # (H) ModelConfig field names
 FIELD_PROVIDER = "provider"
 FIELD_MODEL_ID = "model_id"

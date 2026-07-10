@@ -130,6 +130,7 @@ def _sync_workspace(
     config: WorkspaceConfig,
     batch_size: int,
     exclude: list[str] | None,
+    skip_embeddings: bool | None = None,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -162,6 +163,7 @@ def _sync_workspace(
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
+            skip_embeddings=skip_embeddings,
         )
 
 
@@ -192,6 +194,7 @@ def _run_graph_sync(
     interactive_setup: bool,
     clean: bool = False,
     output: str | None = None,
+    skip_embeddings: bool | None = None,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
@@ -221,6 +224,7 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            skip_embeddings=skip_embeddings,
         )
         updater.run()
         cgr_state.record_sync(project_name)
@@ -377,6 +381,11 @@ def start(
         "--no-sync",
         help=ch.HELP_NO_SYNC,
     ),
+    no_embeddings: bool = typer.Option(
+        False,
+        "--no-embeddings",
+        help=ch.HELP_NO_EMBEDDINGS,
+    ),
     projects: str | None = typer.Option(
         None,
         "--projects",
@@ -441,6 +450,7 @@ def start(
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
+            skip_embeddings=no_embeddings or None,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
@@ -452,7 +462,11 @@ def start(
     if not no_sync:
         if workspace_config is not None:
             sync_task = partial(
-                _sync_workspace, workspace_config, effective_batch_size, exclude
+                _sync_workspace,
+                workspace_config,
+                effective_batch_size,
+                exclude,
+                skip_embeddings=no_embeddings or None,
             )
             sync_message = cs.MSG_SYNCING_WORKSPACE.format(
                 name=workspace_config.name, count=len(workspace_config.repos)
@@ -465,6 +479,7 @@ def start(
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
+                skip_embeddings=no_embeddings or None,
             )
 
     if workspace_config is not None:

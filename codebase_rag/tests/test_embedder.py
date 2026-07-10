@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.embedder import EmbeddingCache, clear_embedding_cache
 from codebase_rag.utils.dependencies import has_torch, has_transformers
 
@@ -132,13 +133,13 @@ def test_get_model_uses_cuda_when_available(reset_model_cache: None) -> None:
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
         mock_instance = MagicMock()
         mock_instance.eval.return_value = mock_instance
-        mock_instance.cuda.return_value = mock_instance
+        mock_instance.to.return_value = mock_instance
         mock_unixcoder_class.return_value = mock_instance
 
         with patch("codebase_rag.embedder.torch.cuda.is_available", return_value=True):
             get_model()
 
-    mock_instance.cuda.assert_called_once()
+    mock_instance.to.assert_called_once_with(cs.EmbeddingDevice.CUDA)
 
 
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")

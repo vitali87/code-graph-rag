@@ -98,22 +98,33 @@ if has_torch() and has_transformers():
 
     from .unixcoder import UniXcoder
 
-    def _select_device() -> str:
+    def _device_available(device: cs.EmbeddingDevice) -> bool:
+        match device:
+            case cs.EmbeddingDevice.CUDA:
+                return torch.cuda.is_available()
+            case cs.EmbeddingDevice.MPS:
+                return torch.backends.mps.is_available()
+            case _:
+                return True
+
+    def _select_device() -> cs.EmbeddingDevice:
+        if (override := settings.EMBEDDING_DEVICE) is not None:
+            if _device_available(override):
+                return override
+            logger.warning(ls.EMBEDDING_DEVICE_UNAVAILABLE.format(device=override))
         if torch.cuda.is_available():
-            return "cuda"
+            return cs.EmbeddingDevice.CUDA
         if torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+            return cs.EmbeddingDevice.MPS
+        return cs.EmbeddingDevice.CPU
 
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
         model = UniXcoder(cs.UNIXCODER_MODEL)
         model.eval()
         device = _select_device()
-        if device == "cuda":
-            model = model.cuda()
-        elif device == "mps":
-            model = model.to("mps")
+        if device != cs.EmbeddingDevice.CPU:
+            model = model.to(device)
         return model
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
