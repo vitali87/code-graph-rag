@@ -2983,17 +2983,20 @@ class CallProcessor:
                     if not (name := safe_decode_text(child)):
                         continue
                     nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
+                    # (H) A duplicated name (if/else twin definitions) returns
+                    # (H) whichever branch ran, so record EVERY twin; recording one
+                    # (H) leaves the others unreachable and falsely dead.
                     if nested_qn in registry:
-                        self._returned_callables.setdefault(caller_qn, set()).add(
-                            nested_qn
+                        self._returned_callables.setdefault(caller_qn, set()).update(
+                            registry.variants(nested_qn)
                         )
                     elif (
                         resolved := resolve_func(
                             name, module_qn, local_var_types, class_context, caller_qn
                         )
                     ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
-                        self._returned_callables.setdefault(caller_qn, set()).add(
-                            resolved[1]
+                        self._returned_callables.setdefault(caller_qn, set()).update(
+                            registry.variants(resolved[1])
                         )
             stack.extend(node.children)
 
