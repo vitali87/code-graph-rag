@@ -502,13 +502,28 @@ class ClassIngestMixin:
             tail = entry.parent_qn[len(project_prefix) :]
             simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             suffix = f"{cs.SEPARATOR_DOT}{tail}"
+            candidates = self.function_registry.find_ending_with(simple)
             matches = {
-                qn
-                for qn in self.function_registry.find_ending_with(simple)
-                if qn.endswith(suffix) and qn != entry.child_qn
+                qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
             }
             if len(matches) == 1:
                 return matches.pop(), False
+            # (H) A base written as a PACKAGE attribute (`forms.ModelForm` via
+            # (H) `from django import forms`) names the re-exporting package, not
+            # (H) the defining module (django.forms.models.ModelForm behind the
+            # (H) package __init__'s star import), so the suffix match cannot
+            # (H) bridge the missing segment. A UNIQUE same-named class UNDER the
+            # (H) written package path is that re-export; ambiguity means no edge.
+            package_prefix = (
+                entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+            )
+            package_matches = {
+                qn
+                for qn in candidates
+                if qn.startswith(package_prefix) and qn != entry.child_qn
+            }
+            if len(package_matches) == 1:
+                return package_matches.pop(), False
             return None
         # (H) The module-anchored fallback shape carries the raw written name
         # (H) as the remainder after the module qn.
