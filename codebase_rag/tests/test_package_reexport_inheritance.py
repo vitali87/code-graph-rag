@@ -108,3 +108,31 @@ def test_same_named_function_under_package_is_not_an_inheritance_target(
         and parent == "reexp2.pkg.formslib.factory.ModelForm"
         for child, parent in inherits
     )
+
+
+def test_non_exported_internal_class_is_not_an_inheritance_target(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The package __init__ exports nothing, so `forms.ModelForm` cannot
+    # (H) refer to the internal class; no INHERITS edge may be minted to it.
+    project = temp_repo / "reexp3"
+    (project / "pkg" / "formslib").mkdir(parents=True)
+    (project / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "pkg" / "formslib" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "pkg" / "formslib" / "models.py").write_text(
+        FORMS_MODELS, encoding="utf-8"
+    )
+    (project / "pkg" / "user.py").write_text(
+        "from pkg import formslib as forms\n\n\n"
+        "class UserForm(forms.ModelForm):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="python")
+
+    inherits = _edges(mock_ingestor, "INHERITS")
+    assert not any(
+        child == "reexp3.pkg.user.UserForm"
+        and parent == "reexp3.pkg.formslib.models.ModelForm"
+        for child, parent in inherits
+    )

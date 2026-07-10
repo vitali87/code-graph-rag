@@ -520,14 +520,19 @@ class ClassIngestMixin:
             # (H) The registry also holds functions/methods with the same simple
             # (H) name; only a TYPE declaration is a valid inheritance target, so
             # (H) filter before the uniqueness check (a same-named factory function
-            # (H) under the package must not corrupt the class hierarchy).
+            # (H) under the package must not corrupt the class hierarchy). The
+            # (H) package must also actually EXPOSE the name (its __init__ imports
+            # (H) it explicitly or star-imports the defining module); a same-named
+            # (H) internal class the package never re-exports is not the referent.
             type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+            package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
             package_matches = {
                 qn
                 for qn in candidates
                 if qn.startswith(package_prefix)
                 and qn != entry.child_qn
                 and self.function_registry.get(qn) in type_decls
+                and self._package_exposes(package_qn, simple, qn)
             }
             if len(package_matches) == 1:
                 return package_matches.pop(), False
@@ -545,6 +550,23 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
+        # (H) True when the package __init__ makes `simple` an attribute of the
+        # (H) package: an explicit import binding the name to this class (or its
+        # (H) defining module member), or a star import of the module that
+        # (H) defines it. Star-import keys carry a leading GLOB_ALL marker,
+        # (H) matching the call resolver's wildcard convention.
+        imports = self.import_processor.import_mapping.get(package_qn)
+        if not imports:
+            return False
+        if imports.get(simple) == class_qn:
+            return True
+        star_member = f"{cs.SEPARATOR_DOT}{simple}"
+        return any(
+            key.startswith(cs.GLOB_ALL) and class_qn == f"{target}{star_member}"
+            for key, target in imports.items()
+        )
 
     def _externalize_written_base(
         self, raw_name: str, language: cs.SupportedLanguage
