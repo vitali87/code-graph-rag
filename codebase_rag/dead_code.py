@@ -125,13 +125,20 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
 
 
-def _walk(frontier: set[str], adjacency: dict[str, set[str]], live: set[str]) -> None:
+def _walk(
+    frontier: set[str],
+    adjacency: dict[str, set[str]],
+    live: set[str],
+    added: set[str] | None = None,
+) -> None:
     stack = list(frontier)
     while stack:
         current = stack.pop()
         for nxt in adjacency.get(current, ()):
             if nxt not in live:
                 live.add(nxt)
+                if added is not None:
+                    added.add(nxt)
                 stack.append(nxt)
 
 
@@ -280,10 +287,14 @@ def dead_code_from_graph(
     # (H) walks all multi-level overriders (Base<-Sub<-SubSub); an override of a
     # (H) DEAD base stays dead. Run several rounds because a base can go live only
     # (H) via a revived override's CALLEE (depth-2+ interleaving); one pass would
-    # (H) miss those. A round that adds nothing is a no-op.
+    # (H) miss those. A round that adds nothing is a no-op. Each round scans only
+    # (H) the nodes that became live since the last one (override_rev is static,
+    # (H) so already-scanned nodes cannot yield new overriders), keeping the loop
+    # (H) O(live) total instead of O(rounds x live).
+    frontier = set(live)
     for _ in range(_OVERRIDE_EXPANSION_ROUNDS):
         override_roots: set[str] = set()
-        stack = list(live)
+        stack = list(frontier)
         while stack:
             for overrider in override_rev.get(stack.pop(), ()):
                 if overrider not in live and overrider not in override_roots:
@@ -292,7 +303,8 @@ def dead_code_from_graph(
         if not override_roots:
             break
         live |= override_roots
-        _walk(override_roots, adjacency, live)
+        frontier = set(override_roots)
+        _walk(override_roots, adjacency, live, added=frontier)
 
     dead = candidates - live
     # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
