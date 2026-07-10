@@ -1009,3 +1009,42 @@ def test_module_level_class_methods_are_not_rooted_by_defines() -> None:
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
     assert dead == {"proj.m.Plain.helper"}
+
+
+def test_factory_revived_by_override_expansion_roots_its_class() -> None:
+    # (H) Interleaving: Sub.make only goes live as an OVERRIDE of the called
+    # (H) Base.make, and Sub.make is itself a class factory. The factory and
+    # (H) override expansions feed each other, so the nested class's methods
+    # (H) must still be revived (fixed point, not a fixed pass order).
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.Base.make"),
+            _method("proj.m.Sub.make"),
+            _method("proj.m.Sub.make.Manager.run"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, method, "proj.m.Base.make"),
+        (
+            method,
+            "proj.m.Sub.make",
+            cs.RelationshipType.OVERRIDES.value,
+            method,
+            "proj.m.Base.make",
+        ),
+        (method, "proj.m.Sub.make", _DEFINES, _CLASS, "proj.m.Sub.make.Manager"),
+        (
+            _CLASS,
+            "proj.m.Sub.make.Manager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.Sub.make.Manager.run",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == set()
