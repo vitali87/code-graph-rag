@@ -38,7 +38,7 @@ def query_ingestor() -> MagicMock:
 
 
 def _make_updater(
-    temp_repo: Path, ingestor: MagicMock, **kwargs: bool | None
+    temp_repo: Path, ingestor: MagicMock, skip_embeddings: bool | None = None
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -46,7 +46,7 @@ def _make_updater(
         repo_path=temp_repo,
         parsers=parsers,
         queries=queries,
-        **kwargs,
+        skip_embeddings=skip_embeddings,
     )
 
 
@@ -149,9 +149,7 @@ class TestEmbeddingDeviceOverride:
     def test_override_wins_when_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from codebase_rag.embedder import (
-            _select_device,  # ty: ignore[possibly-missing-import]
-        )
+        from codebase_rag.embedder import _select_device
 
         monkeypatch.setattr(settings, "EMBEDDING_DEVICE", cs.EmbeddingDevice.CPU)
         assert _select_device() == cs.EmbeddingDevice.CPU
@@ -161,9 +159,7 @@ class TestEmbeddingDeviceOverride:
     ) -> None:
         import torch
 
-        from codebase_rag.embedder import (
-            _select_device,  # ty: ignore[possibly-missing-import]
-        )
+        from codebase_rag.embedder import _select_device
 
         monkeypatch.setattr(settings, "EMBEDDING_DEVICE", cs.EmbeddingDevice.CUDA)
         with (

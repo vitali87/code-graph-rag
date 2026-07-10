@@ -59,6 +59,13 @@ SEMANTIC_NOT_AVAILABLE = (
     "Semantic search dependencies not available, skipping embedding generation"
 )
 INGESTOR_NO_QUERY = "Ingestor does not support querying, skipping embedding generation"
+EMBEDDINGS_SKIPPED = (
+    "Skipping semantic embedding generation (--no-embeddings / CGR_SKIP_EMBEDDINGS)"
+)
+EMBEDDING_DEVICE_UNAVAILABLE = (
+    "Requested embedding device '{device}' is unavailable, falling back to"
+    " automatic selection"
+)
 NO_FUNCTIONS_FOR_EMBEDDING = "No functions or methods found for embedding generation"
 GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
 EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"

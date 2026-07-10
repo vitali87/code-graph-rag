@@ -444,6 +444,7 @@ class GraphUpdater:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
+        skip_embeddings: bool | None = None,
     ):
         self.ingestor = ingestor
         self._single_file: Path | None = None
@@ -468,6 +469,11 @@ class GraphUpdater:
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        # (H) None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
+        # (H) callers (MCP, workspace sync) opt out without a CLI flag.
+        self.skip_embeddings = (
+            settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
+        )
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
@@ -1432,6 +1438,10 @@ class GraphUpdater:
             logger.info(ls.PRUNE_SKIP)
 
     def _generate_semantic_embeddings(self) -> None:
+        if self.skip_embeddings:
+            logger.info(ls.EMBEDDINGS_SKIPPED)
+            return
+
         if not has_semantic_dependencies():
             logger.info(ls.SEMANTIC_NOT_AVAILABLE)
             return

@@ -262,6 +262,10 @@ class AppConfig(BaseSettings):
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
+    SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")
+    EMBEDDING_DEVICE: cs.EmbeddingDevice | None = Field(
+        None, validation_alias="CGR_EMBEDDING_DEVICE"
+    )
 
     FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
     FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
