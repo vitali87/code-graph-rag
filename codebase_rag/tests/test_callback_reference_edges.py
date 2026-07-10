@@ -236,3 +236,21 @@ def test_annotated_assignment_is_referenced(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, "registry", REFERENCES, "handlers.handle_event")
+
+
+def test_argument_to_call_expression_callee_is_referenced(tmp_path: Path) -> None:
+    # (H) `wraps(view_func)(_view_wrapper)` consumes _view_wrapper through the
+    # (H) callable the inner call returns. The callee has no extractable name (it
+    # (H) is itself a call), but the passed function must still be referenced or
+    # (H) dead-code flags every django-style view decorator wrapper.
+    files = {
+        "deco.py": (
+            "from functools import wraps\n\n"
+            "def csrf_exempt(view_func):\n"
+            "    def _view_wrapper(request):\n"
+            "        return view_func(request)\n"
+            "    return wraps(view_func)(_view_wrapper)\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "deco.csrf_exempt", REFERENCES, "csrf_exempt._view_wrapper")

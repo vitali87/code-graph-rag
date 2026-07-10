@@ -1717,6 +1717,23 @@ class CallProcessor:
                     call_node, caller_spec, ensure_rel, caller_qn, module_qn
                 )
             if not call_name:
+                # (H) A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
+                # (H) or otherwise yields no name still consumes its arguments through
+                # (H) whatever callable it produced; reference first-party functions
+                # (H) passed to it or dead-code flags every django-style view
+                # (H) decorator wrapper.
+                if is_flow_lang:
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                        cs.RelationshipType.REFERENCES,
+                    )
                 continue
 
             call_var_types = local_var_types
