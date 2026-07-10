@@ -300,7 +300,12 @@ class CallResolver:
         # (H) parent scope (module.Date for Date.prototype.strftime) is where the
         # (H) prototype siblings were registered. A module-level caller degrades to
         # (H) the same module-method lookup the CommonJS fallback performs.
+        # (H) A dotless caller_qn has no parent scope to consult: rsplit would
+        # (H) return the caller itself and the lookup would land on the caller's
+        # (H) own NESTED function, which `this.m` never names.
         if language not in cs.JS_TS_LANGUAGES or not caller_qn:
+            return None
+        if cs.SEPARATOR_DOT not in caller_qn:
             return None
         if not call_name.startswith(cs.JS_THIS_CALL_PREFIX):
             return None
