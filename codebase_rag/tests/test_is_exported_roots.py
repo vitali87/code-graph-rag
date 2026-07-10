@@ -238,3 +238,60 @@ def test_js_hash_private_method_of_exported_class_is_not_exported(
     exported = _run(tmp_path, {"store.js": JS_CLASS_HASH_PRIVATE_SRC})
     assert _one(exported, ".Store.read") is True
     assert _one(exported, ".Store.#load") is False
+
+
+SCRIPT_JS_SRC = """\
+class MapWidget {
+    constructor(options) {
+        this.options = options;
+    }
+
+    createMap() {
+        return 1;
+    }
+}
+
+function quickElement() {
+    return 1;
+}
+
+function pageInit() {
+    const localFn = function () {
+        return 2;
+    };
+    return localFn();
+}
+"""
+
+COMMONJS_SRC = """\
+const util = require("./util");
+
+function helper() {
+    return util;
+}
+"""
+
+
+def test_browser_script_top_level_symbols_are_exported(tmp_path: Path) -> None:
+    # (H) A JS file with no import/export/require runs in page scope: every
+    # (H) top-level declaration (and its class members) is a page-global the
+    # (H) HTML can call, so it is a reachability root (django's OLMapWidget).
+    exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
+    assert _one(exported, "widget.MapWidget.constructor") is True
+    assert _one(exported, "widget.MapWidget.createMap") is True
+    assert _one(exported, "widget.quickElement") is True
+    assert _one(exported, "widget.pageInit") is True
+
+
+def test_browser_script_function_locals_stay_private(tmp_path: Path) -> None:
+    # (H) Declarations inside a function body are locals reached only through
+    # (H) their enclosing scope, even in a page-scope script.
+    exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
+    assert _one(exported, "pageInit.localFn") is False
+
+
+def test_commonjs_module_symbols_stay_private(tmp_path: Path) -> None:
+    # (H) A require() call marks the file as a CommonJS module, so an
+    # (H) unexported top-level function is module-private, not a page-global.
+    exported = _run(tmp_path, {"mod.js": COMMONJS_SRC})
+    assert _one(exported, "mod.helper") is False
