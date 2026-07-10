@@ -118,6 +118,23 @@ if has_torch() and has_transformers():
             return cs.EmbeddingDevice.MPS
         return cs.EmbeddingDevice.CPU
 
+    _batches_since_cache_drop = 0
+
+    def _sync_after_batch(device: torch.device | str) -> None:
+        # (H) MPS wedges inside Metal's waitUntilCompleted when command buffers
+        # (H) accumulate across thousands of batches (issue #689); draining the
+        # (H) stream after every batch keeps each command buffer short-lived,
+        # (H) and a periodic (not per-batch: ~21% throughput cost) cache drop
+        # (H) bounds Metal allocator growth over monorepo-scale runs.
+        if torch.device(device).type != cs.EmbeddingDevice.MPS:
+            return
+        torch.mps.synchronize()
+        global _batches_since_cache_drop
+        _batches_since_cache_drop += 1
+        if _batches_since_cache_drop >= cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL:
+            torch.mps.empty_cache()
+            _batches_since_cache_drop = 0
+
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
         model = UniXcoder(cs.UNIXCODER_MODEL)
@@ -141,6 +158,7 @@ if has_torch() and has_transformers():
         with torch.no_grad():
             _, sentence_embeddings = model(tokens_tensor)
             embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+        _sync_after_batch(device)
         result: list[float] = embedding[0].tolist()
 
         cache.put(code, result)
@@ -178,6 +196,7 @@ if has_torch() and has_transformers():
             with torch.no_grad():
                 _, sentence_embeddings = model(tokens_tensor)
                 batch_np: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+            _sync_after_batch(device)
             for row in batch_np:
                 all_new_embeddings.append(row.tolist())
 
