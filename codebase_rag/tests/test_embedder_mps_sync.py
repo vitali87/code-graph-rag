@@ -43,8 +43,15 @@ def mock_unixcoder() -> MagicMock:
     return mock_model
 
 
+@pytest.fixture(autouse=True)
+def reset_batch_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from codebase_rag import embedder
+
+    monkeypatch.setattr(embedder, "_batches_since_cache_drop", 0)
+
+
 class TestSyncAfterBatch:
-    def test_mps_device_synchronizes_and_drops_cache(self) -> None:
+    def test_mps_device_synchronizes_every_batch(self) -> None:
         from codebase_rag.embedder import _sync_after_batch
 
         with (
@@ -54,12 +61,38 @@ class TestSyncAfterBatch:
             _sync_after_batch(cs.EmbeddingDevice.MPS)
 
         mock_sync.assert_called_once()
+        mock_empty.assert_not_called()
+
+    def test_cache_dropped_once_per_interval(self) -> None:
+        from codebase_rag.embedder import _sync_after_batch
+
+        with (
+            patch("codebase_rag.embedder.torch.mps.synchronize") as mock_sync,
+            patch("codebase_rag.embedder.torch.mps.empty_cache") as mock_empty,
+        ):
+            for _ in range(cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL + 1):
+                _sync_after_batch(cs.EmbeddingDevice.MPS)
+
+        assert mock_sync.call_count == cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL + 1
         mock_empty.assert_called_once()
+
+    def test_counter_resets_after_drop(self) -> None:
+        from codebase_rag.embedder import _sync_after_batch
+
+        with (
+            patch("codebase_rag.embedder.torch.mps.synchronize"),
+            patch("codebase_rag.embedder.torch.mps.empty_cache") as mock_empty,
+        ):
+            for _ in range(2 * cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL):
+                _sync_after_batch(cs.EmbeddingDevice.MPS)
+
+        assert mock_empty.call_count == 2
 
     @pytest.mark.parametrize(
         "device", [cs.EmbeddingDevice.CPU, cs.EmbeddingDevice.CUDA]
     )
     def test_other_devices_do_nothing(self, device: cs.EmbeddingDevice) -> None:
+        from codebase_rag import embedder
         from codebase_rag.embedder import _sync_after_batch
 
         with (
@@ -70,6 +103,7 @@ class TestSyncAfterBatch:
 
         mock_sync.assert_not_called()
         mock_empty.assert_not_called()
+        assert embedder._batches_since_cache_drop == 0
 
     def test_accepts_torch_device_objects(self) -> None:
         import torch
