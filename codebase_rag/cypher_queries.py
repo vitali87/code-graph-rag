@@ -1,13 +1,4 @@
-from .constants import (
-    CPP_EXTENSIONS,
-    CPP_OPERATOR_PREFIX,
-    CYPHER_DEFAULT_LIMIT,
-    GO_ROOT_FUNCTION_NAMES,
-    JAVA_SERIALIZATION_METHOD_NAMES,
-    PROTOCOL_BASE_QNS,
-    RUST_ROOT_FUNCTION_NAMES,
-    RUST_TRAIT_METHOD_NAMES,
-)
+from .constants import CYPHER_DEFAULT_LIMIT, NodeLabel, RelationshipType
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
@@ -132,193 +123,46 @@ ORDER BY count DESC
 """
 
 
-# (H) Match against a leading-slash-normalized path so a `/tests/` pattern also
-# (H) matches a ROOT `tests/` dir (Rust integration tests, a top-level tests/
-# (H) folder), not just a nested `src/tests/`; `/contests/` still won't match.
-_DEAD_CODE_TEST_ROOT_CLAUSE = (
-    "\n    OR ANY(p IN $test_patterns WHERE ('/' + coalesce(n.path, '')) CONTAINS p)"
-)
-
-# (H) When tests are excluded, a test-file symbol's only callers (test functions)
-# (H) are excluded as roots, so reporting it is unconditional noise: test helpers
-# (H) and mocks are test infrastructure, not dead production code. Filter them
-# (H) from the reported candidates; production code reached only from tests is
-# (H) still reported.
-# (H) coalesce: a null path must not null out the NOT and silently drop the
-# (H) node from the report (NOT null = null in Cypher).
-_DEAD_CODE_CANDIDATE_NON_TEST = (
-    "\n  AND NOT ANY(p IN $test_patterns WHERE ('/' + coalesce(n.path, '')) CONTAINS p)"
-)
-
-# (H) A node reached by a Module node runs at import (top-level statement,
-# (H) `if __name__ == "__main__"`, a bare decorator, or a module-scope
-# (H) construction), so it is a root. `size([...])` avoids the non-standard
-# (H) `exists(pattern)`. When tests are excluded, an edge from a test module must
-# (H) NOT keep project code alive, so the test-module variant filters by path.
-# (H) `{module_rels}` is the relationship set walked from the module (CALLS, plus
-# (H) INSTANTIATES when classes are included so module-scope construction roots a
-# (H) class).
-_DEAD_CODE_MODULE_ROOT_ANY = "size([(n)<-[:{module_rels}]-(:Module) | 1]) > 0"
-_DEAD_CODE_MODULE_ROOT_NON_TEST = (
-    "size([(n)<-[:{module_rels}]-(m:Module)"
-    " WHERE NOT ANY(p IN $test_patterns"
-    " WHERE ('/' + coalesce(m.path, '')) CONTAINS p) | 1]) > 0"
-)
-
-# (H) A method whose class INHERITS typing.Protocol is an interface stub; callers
-# (H) resolve to the implementations, never to the stub, so every Protocol method
-# (H) is a root.
-_DEAD_CODE_PROTOCOL_STUB_CLAUSE = (
-    "size([(n)<-[:DEFINES_METHOD]-(:Class)-[:INHERITS]->(p:Class)"
-    " WHERE p.qualified_name IN [{protocol_bases}] | 1]) > 0"
-)
-
-# (H) Reachability walks CALLS only by default. With classes included it also
-# (H) walks INSTANTIATES (construction keeps a class live) and INHERITS forward
-# (H) from subclass to base, so a base is kept live only by a REACHABLE subclass.
-# (H) A base whose sole subclass is itself unreachable is therefore reported as
-# (H) part of the dead cluster (the subclass is reported too). Classes referenced
-# (H) solely via type annotations / isinstance / dynamic lookups are not modelled
-# (H) as edges, so class candidates are review hints, not a delete list.
-# (H) *BFS visits each reachable node once; plain *0.. enumerates every path and
-# (H) times out on real graphs (cycles/diamonds make it combinatorial). *BFS
-# (H) excludes the source node, so the roots are unioned into the live set. The
-# (H) CASE keeps one row when there are no roots (UNWIND of [] yields zero rows,
-# (H) which would drop the final MATCH and wrongly report nothing as dead).
-# (H) After the base round, a second expansion roots decorated functions DEFINED
-# (H) by a LIVE function/method (prompt_toolkit @bindings.add, MCP
-# (H) @server.list_tools, nested typer/click commands): the enclosing function
-# (H) executes the registration, so the closure and its callees are live. The
-# (H) exemption is tied to owner liveness on purpose — a decorated closure of a
-# (H) DEAD owner never registers and is reported with its whole cluster.
-# (H) ponytail: one expansion round, so a registration chain nested two closures
-# (H) deep is missed; add a third round (or iterate to fixed point) if real code
-# (H) ever registers closures from inside registered closures.
-_DEAD_CODE_QUERY_TEMPLATE = """MATCH (n:{labels})
-WHERE n.qualified_name STARTS WITH $project_prefix
-  AND (
-    ANY(d IN n.decorators
-        WHERE toLower(last(split(split(replace(d, '@', ''), '(')[0], '.')))
-              IN $root_decorators)
-    OR n.is_exported = true
-    OR n.overrides_external = true
-    OR {protocol_stub_clause}
-    OR ('Method' IN labels(n)
-        AND n.name STARTS WITH '__' AND n.name ENDS WITH '__' AND size(n.name) > 4
-        AND n.path ENDS WITH '.py')
-    OR ('Function' IN labels(n)
-        AND n.name IN {go_root_names} AND n.path ENDS WITH '.go')
-    OR ('Function' IN labels(n)
-        AND n.name IN {rust_root_names} AND n.path ENDS WITH '.rs')
-    OR ('Method' IN labels(n)
-        AND n.name IN {rust_trait_methods} AND n.path ENDS WITH '.rs')
-    OR ('Method' IN labels(n)
-        AND n.name IN {java_serialization_methods} AND n.path ENDS WITH '.java')
-    OR {cpp_operator_clause}
-    OR ANY(e IN $entry_points WHERE n.qualified_name ENDS WITH e)
-    OR {module_clause}{test_clause}
-  )
-WITH collect(n) AS roots
-UNWIND (CASE WHEN size(roots) = 0 THEN [null] ELSE roots END) AS r
-OPTIONAL MATCH (r)-[:{traversal}*BFS]->(reached)
-WITH roots, collect(DISTINCT reached) AS reached_set
-WITH roots + reached_set AS live_set
-OPTIONAL MATCH (o:Function|Method)-[:DEFINES]->(c:Function|Method)
-WHERE o IN live_set AND size(coalesce(c.decorators, [])) > 0
-  AND NOT c IN live_set
-WITH live_set, collect(DISTINCT c) AS closure_roots
-UNWIND (
-  CASE WHEN size(closure_roots) = 0 THEN [null] ELSE closure_roots END
-) AS cr
-OPTIONAL MATCH (cr)-[:{traversal}*BFS]->(cr_reached)
-WITH live_set, closure_roots, collect(DISTINCT cr_reached) AS cr_reached_set
-WITH live_set + closure_roots + cr_reached_set AS live_set
-{override_stages}
-MATCH (n:{labels})
-WHERE n.qualified_name STARTS WITH $project_prefix
-  AND NOT n IN live_set{candidate_clause}
-RETURN labels(n)[0] AS label, n.name AS name,
-       n.qualified_name AS qualified_name, n.path AS path,
-       n.start_line AS start_line, n.end_line AS end_line
-ORDER BY qualified_name"""
-
-
-# (H) One override-reachability stage: revive every (transitive) override of a method
-# (H) already in live_set, plus its callee closure. Emitted several times (see
-# (H) _OVERRIDE_EXPANSION_ROUNDS) because a base can go live via a revived override's
-# (H) callee (depth-2+ interleaving), whose own overrides then need reviving; a single
-# (H) stage misses those. Repeating the block matches the offline eval's round loop.
-_DEAD_CODE_OVERRIDE_STAGE = """OPTIONAL MATCH (ov:Function|Method)-[:OVERRIDES*]->(base)
-WHERE base IN live_set AND NOT ov IN live_set
-WITH live_set, collect(DISTINCT ov) AS override_roots
-UNWIND (
-  CASE WHEN size(override_roots) = 0 THEN [null] ELSE override_roots END
-) AS orr
-OPTIONAL MATCH (orr)-[:{traversal}*BFS]->(or_reached)
-WITH live_set, override_roots, collect(DISTINCT or_reached) AS or_reached_set
-WITH live_set + override_roots + or_reached_set AS live_set"""
-
-# (H) Must equal evals.dead_code._OVERRIDE_EXPANSION_ROUNDS so the offline eval and this
-# (H) query compute the same live set for deep override/callee interleaving.
-_OVERRIDE_EXPANSION_ROUNDS = 3
-
-
-def build_dead_code_query(include_tests: bool, include_classes: bool = False) -> str:
-    if include_classes:
-        labels = "Function|Method|Class"
-        traversal = "CALLS|REFERENCES|INSTANTIATES|INHERITS"
-        module_rels = "CALLS|REFERENCES|INSTANTIATES"
-    else:
-        labels = "Function|Method"
-        traversal = "CALLS|REFERENCES"
-        module_rels = "CALLS|REFERENCES"
-    if include_tests:
-        module_clause = _DEAD_CODE_MODULE_ROOT_ANY.format(module_rels=module_rels)
-        test_clause = _DEAD_CODE_TEST_ROOT_CLAUSE
-        candidate_clause = ""
-    else:
-        module_clause = _DEAD_CODE_MODULE_ROOT_NON_TEST.format(module_rels=module_rels)
-        test_clause = ""
-        candidate_clause = _DEAD_CODE_CANDIDATE_NON_TEST
-    protocol_bases = ", ".join(f"'{qn}'" for qn in PROTOCOL_BASE_QNS)
-    go_root_names = _cypher_str_list(GO_ROOT_FUNCTION_NAMES)
-    rust_root_names = _cypher_str_list(RUST_ROOT_FUNCTION_NAMES)
-    rust_trait_methods = _cypher_str_list(RUST_TRAIT_METHOD_NAMES)
-    java_serialization_methods = _cypher_str_list(JAVA_SERIALIZATION_METHOD_NAMES)
-    override_stages = "\n".join(
-        _DEAD_CODE_OVERRIDE_STAGE.format(traversal=traversal)
-        for _ in range(_OVERRIDE_EXPANSION_ROUNDS)
+# (H) Dead-code fetch queries. Reachability itself runs client-side in
+# (H) codebase_rag/dead_code.py: the previous single-query formulation expanded
+# (H) *BFS from every root, which is O(roots x graph) and hit memgraph's 600s
+# (H) query timeout on big projects (django: 31k roots, 101k CALLS edges). These
+# (H) two linear scans fetch the project's nodes and edges instead; the target
+# (H) of a relationship is deliberately unfiltered so INHERITS to an external
+# (H) base (typing.Protocol) and OVERRIDES of external methods stay visible.
+_DEAD_CODE_NODE_LABELS = "|".join(
+    (
+        NodeLabel.FUNCTION.value,
+        NodeLabel.METHOD.value,
+        NodeLabel.CLASS.value,
+        NodeLabel.MODULE.value,
     )
-    return _DEAD_CODE_QUERY_TEMPLATE.format(
-        labels=labels,
-        traversal=traversal,
-        module_clause=module_clause,
-        test_clause=test_clause,
-        candidate_clause=candidate_clause,
-        go_root_names=go_root_names,
-        rust_root_names=rust_root_names,
-        rust_trait_methods=rust_trait_methods,
-        java_serialization_methods=java_serialization_methods,
-        override_stages=override_stages,
-        cpp_operator_clause=_cpp_operator_root_clause(),
-        protocol_stub_clause=_DEAD_CODE_PROTOCOL_STUB_CLAUSE.format(
-            protocol_bases=protocol_bases
-        ),
+)
+_DEAD_CODE_REL_TYPES = "|".join(
+    (
+        RelationshipType.CALLS.value,
+        RelationshipType.REFERENCES.value,
+        RelationshipType.INSTANTIATES.value,
+        RelationshipType.INHERITS.value,
+        RelationshipType.DEFINES.value,
+        RelationshipType.DEFINES_METHOD.value,
+        RelationshipType.OVERRIDES.value,
     )
+)
 
+CYPHER_DEAD_CODE_NODES = f"""MATCH (n:{_DEAD_CODE_NODE_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.name AS name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.decorators AS decorators, n.is_exported AS is_exported,
+       n.overrides_external AS overrides_external"""
 
-def _cpp_operator_root_clause() -> str:
-    # (H) A C++ operator overload / user-defined literal (name headed by the reserved
-    # (H) `operator` keyword) is invoked by operator/literal syntax the call graph does
-    # (H) not model, so it is a reachability root on any C++ file (member or free).
-    exts = " OR ".join(f"n.path ENDS WITH '{ext}'" for ext in CPP_EXTENSIONS)
-    return f"(n.name STARTS WITH '{CPP_OPERATOR_PREFIX}' AND ({exts}))"
-
-
-def _cypher_str_list(values: frozenset[str]) -> str:
-    # (H) Render a set of names as a Cypher list literal (`['a', 'b']`); sorted for
-    # (H) deterministic query text.
-    return "[" + ", ".join(f"'{v}'" for v in sorted(values)) + "]"
+CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
+WHERE a.qualified_name STARTS WITH $project_prefix
+RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
+       type(r) AS rel_type, labels(b)[0] AS to_label,
+       b.qualified_name AS to_qn"""
 
 
 def wrap_with_unwind(query: str) -> str:

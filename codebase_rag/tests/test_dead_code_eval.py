@@ -865,3 +865,37 @@ def test_singular_test_dir_is_excluded() -> None:
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
     assert "proj.test.helper" not in dead
     assert "proj.contest.helper" in dead
+
+
+def test_missing_decorators_property_is_not_a_root() -> None:
+    # (H) A node whose decorators property is absent (NULL in the graph) must not
+    # (H) crash root selection and must stay a dead candidate.
+    nodes = {
+        (_FUNCTION, "proj.m.bare"): {
+            cs.KEY_QUALIFIED_NAME: "proj.m.bare",
+            cs.KEY_PATH: "m.py",
+        },
+    }
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert dead == {"proj.m.bare"}
+
+
+def test_module_edge_to_non_candidate_is_ignored() -> None:
+    # (H) A module-load edge whose target is outside the candidate set (a class
+    # (H) with classes excluded) must not root anything or leak into the report.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            (
+                (_CLASS, "proj.m.Widget"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m.Widget", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.orphan"),
+        ]
+    )
+    rels = [(_MODULE, "proj.m", _CALLS, _CLASS, "proj.m.Widget")]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.orphan"}
