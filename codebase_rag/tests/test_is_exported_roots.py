@@ -323,3 +323,26 @@ def test_browser_script_prototype_method_is_exported(tmp_path: Path) -> None:
 def test_commonjs_prototype_method_stays_private(tmp_path: Path) -> None:
     exported = _run(tmp_path, {"mod.js": PROTO_COMMONJS_SRC})
     assert _one(exported, "mod.String.strptime") is False
+
+
+BLOCK_SCRIPT_JS_SRC = """\
+{
+    String.prototype.strptime = function (format) {
+        return format;
+    };
+}
+
+function helper() {
+    return 1;
+}
+"""
+
+
+def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
+    # (H) django admin's core.js wraps its prototype extensions in bare
+    # (H) top-level `{ ... }` blocks. A block is not a function scope: the
+    # (H) prototype mutation still lands on the page-global builtin, so the
+    # (H) method must stay a reachability root.
+    exported = _run(tmp_path, {"core.js": BLOCK_SCRIPT_JS_SRC})
+    assert _one(exported, "core.String.strptime") is True
+    assert _one(exported, "core.helper") is True
