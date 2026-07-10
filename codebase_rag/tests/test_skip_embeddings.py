@@ -154,14 +154,17 @@ class TestEmbeddingDeviceOverride:
         monkeypatch.setattr(settings, "EMBEDDING_DEVICE", cs.EmbeddingDevice.CPU)
         assert _select_device() == cs.EmbeddingDevice.CPU
 
+    @pytest.mark.parametrize(
+        "override", [cs.EmbeddingDevice.CUDA, cs.EmbeddingDevice.MPS]
+    )
     def test_unavailable_override_falls_back_to_auto(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, override: cs.EmbeddingDevice
     ) -> None:
         import torch
 
         from codebase_rag.embedder import _select_device
 
-        monkeypatch.setattr(settings, "EMBEDDING_DEVICE", cs.EmbeddingDevice.CUDA)
+        monkeypatch.setattr(settings, "EMBEDDING_DEVICE", override)
         with (
             patch.object(torch.cuda, "is_available", return_value=False),
             patch.object(torch.backends.mps, "is_available", return_value=False),
