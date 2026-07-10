@@ -38,8 +38,7 @@ class BaseUserCreationForm(SetPasswordMixin, forms.ModelForm):
 
 def _edges(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
     return {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, rel_type)
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
     }
 
 
