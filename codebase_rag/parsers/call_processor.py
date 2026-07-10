@@ -2356,14 +2356,21 @@ class CallProcessor:
                     # (H) A Python TERNARY / BOOLEAN-DEFAULT RHS (`get_response =
                     # (H) self._async if is_async else self._sync`, django's
                     # (H) BaseHandler; `f = handler or fallback`) binds one of its
-                    # (H) operands as the value; every operand naming a callable is
-                    # (H) a possible referent, so reference each (a non-callable
-                    # (H) operand such as the condition simply fails to resolve).
+                    # (H) RESULT operands as the value; each result operand naming
+                    # (H) a callable is a possible referent. A ternary's condition
+                    # (H) is only truthiness-tested, never bound, so it is excluded;
+                    # (H) both boolean operands are possible results.
                     if value.type in (
                         cs.TS_PY_CONDITIONAL_EXPRESSION,
                         cs.TS_PY_BOOLEAN_OPERATOR,
                     ):
-                        for operand in value.named_children:
+                        operands = list(value.named_children)
+                        if (
+                            value.type == cs.TS_PY_CONDITIONAL_EXPRESSION
+                            and len(operands) == 3
+                        ):
+                            operands = [operands[0], operands[2]]
+                        for operand in operands:
                             operand = self._unwrap_ts_value(operand)
                             if (
                                 operand.type in _ASSIGNMENT_RHS_REF_TYPES

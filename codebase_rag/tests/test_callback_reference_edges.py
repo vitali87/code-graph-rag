@@ -306,3 +306,25 @@ def test_returned_method_attribute_is_referenced(tmp_path: Path) -> None:
     assert _has(
         rels, "GEOSCoordSeq._point_getter", REFERENCES, "GEOSCoordSeq._get_point_3d"
     )
+
+
+def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
+    # (H) The ternary's condition is truthiness-tested, never bound to the LHS,
+    # (H) so a callable named there must NOT get an assignment reference.
+    files = {
+        "picker.py": (
+            "def check():\n"
+            "    return True\n\n"
+            "def first():\n"
+            "    return 1\n\n"
+            "def second():\n"
+            "    return 2\n\n"
+            "def pick():\n"
+            "    chosen = first if check else second\n"
+            "    return chosen()\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "picker.pick", REFERENCES, "picker.first")
+    assert _has(rels, "picker.pick", REFERENCES, "picker.second")
+    assert not _has(rels, "picker.pick", REFERENCES, "picker.check")
