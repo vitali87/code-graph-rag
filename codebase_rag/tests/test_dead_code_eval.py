@@ -38,11 +38,12 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
-def _method(uid: str, path: str) -> tuple:
+def _method(uid: str, path: str = "m.py") -> tuple:
     return (
         (cs.NodeLabel.METHOD.value, uid),
         {
             cs.KEY_QUALIFIED_NAME: uid,
+            cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
             cs.KEY_PATH: path,
             cs.KEY_DECORATORS: [],
             cs.KEY_IS_EXPORTED: False,
@@ -441,19 +442,6 @@ def test_cgr_dead_code_matches_known_dead_set(tmp_path: Path) -> None:
     assert "proj.m.orphan" not in dead
     assert "proj.m.main" not in dead
     assert "proj.m.helper" not in dead
-
-
-def _method(uid: str, path: str = "m.py") -> tuple:
-    return (
-        (cs.NodeLabel.METHOD.value, uid),
-        {
-            cs.KEY_QUALIFIED_NAME: uid,
-            cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-            cs.KEY_PATH: path,
-            cs.KEY_DECORATORS: [],
-            cs.KEY_IS_EXPORTED: False,
-        },
-    )
 
 
 def test_dunder_root_is_limited_to_methods() -> None:
