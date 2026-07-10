@@ -39,6 +39,10 @@ TS_LOCALS_PATTERN = """
 # (H) only these may bind a dotted call to a same-module free function; an
 # (H) ordinary identifier receiver (`view.render()`) is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
+# (H) `this.` receiver prefix of a call name; a prototype-assigned function
+# (H) (`Date.prototype.strftime`) dispatches such calls to a sibling method of
+# (H) the same prototype target before the module-receiver fallback applies.
+JS_THIS_CALL_PREFIX = "this."
 
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # (H) JSX element nodes that carry a component name (javascript and tsx
