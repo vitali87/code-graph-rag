@@ -183,9 +183,12 @@ def dead_code_from_graph(
     defines_pairs: list[tuple[str, str]] = []
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
-    for from_label, from_val, rel_type, _to_label, to_val in rels:
+    nested_class_pairs: list[tuple[str, str]] = []
+    for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
+            if to_label == _CLASS:
+                nested_class_pairs.append((str(from_val), str(to_val)))
         elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
             protocol_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
@@ -280,6 +283,22 @@ def dead_code_from_graph(
     }
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
+
+    # (H) Factory-class expansion: a class defined inside a LIVE function or
+    # (H) method (django's create_reverse_many_to_one_manager) escapes through
+    # (H) the factory's return value or arguments, so its instances live behind
+    # (H) receivers the call graph cannot type and no call edge ever lands on
+    # (H) the methods. Treat the methods as dispatch surface (like exported
+    # (H) API) and revive their callee closure; a DEAD factory's class stays
+    # (H) dead. ponytail: one round, so a factory first revived by the override
+    # (H) expansion below is missed -- iterate to fixed point if real code hits
+    # (H) that.
+    factory_classes = {c for owner, c in nested_class_pairs if owner in live}
+    factory_method_roots = {
+        m for c, m in class_methods if c in factory_classes and m not in live
+    }
+    live |= factory_classes | factory_method_roots
+    _walk(factory_method_roots, adjacency, live)
 
     # (H) Override expansion: a call to a base or interface method dispatches at
     # (H) runtime to any override, so every (transitive) override of a LIVE method
