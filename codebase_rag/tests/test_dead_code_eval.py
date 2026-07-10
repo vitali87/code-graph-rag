@@ -899,3 +899,125 @@ def test_module_edge_to_non_candidate_is_ignored() -> None:
     rels = [(_MODULE, "proj.m", _CALLS, _CLASS, "proj.m.Widget")]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
     assert dead == {"proj.m.orphan"}
+
+
+def test_factory_class_methods_are_dispatch_roots() -> None:
+    # (H) django-style class factory: create_manager() defines RelatedManager
+    # (H) inside itself and hands it out (return value / argument), so instances
+    # (H) surface behind dynamic receivers and no call edge ever lands on the
+    # (H) methods. Once the factory is LIVE its class's methods are dispatch
+    # (H) surface, and their callee closure revives with them.
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.create_manager"),
+            _class("proj.m.create_manager.RelatedManager"),
+            _method("proj.m.create_manager.RelatedManager.add"),
+            _method("proj.m.create_manager.RelatedManager._apply_filters"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m.create_manager"),
+        (
+            _FUNCTION,
+            "proj.m.create_manager",
+            _DEFINES,
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager._apply_filters",
+        ),
+        (
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+            _CALLS,
+            method,
+            "proj.m.create_manager.RelatedManager._apply_filters",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == set()
+
+
+def test_dead_factory_class_methods_stay_dead() -> None:
+    # (H) The factory itself is never called: neither it nor its nested class's
+    # (H) methods may be revived (the dispatch-surface rule applies only to LIVE
+    # (H) factories).
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.create_manager"),
+            _class("proj.m.create_manager.RelatedManager"),
+            _method("proj.m.create_manager.RelatedManager.add"),
+        ]
+    )
+    rels = [
+        (
+            _FUNCTION,
+            "proj.m.create_manager",
+            _DEFINES,
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {
+        "proj.m.create_manager",
+        "proj.m.create_manager.RelatedManager.add",
+    }
+
+
+def test_module_level_class_methods_are_not_rooted_by_defines() -> None:
+    # (H) The dispatch-surface rule is scoped to classes nested in functions or
+    # (H) methods: a module-level class's uncalled method must stay dead.
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _class("proj.m.Plain"),
+            _method("proj.m.Plain.helper"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _DEFINES, _CLASS, "proj.m.Plain"),
+        (_MODULE, "proj.m", _CALLS, _CLASS, "proj.m.Plain"),
+        (
+            _CLASS,
+            "proj.m.Plain",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.Plain.helper",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.Plain.helper"}
