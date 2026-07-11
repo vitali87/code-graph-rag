@@ -328,3 +328,116 @@ def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
     assert _has(rels, "picker.pick", REFERENCES, "picker.first")
     assert _has(rels, "picker.pick", REFERENCES, "picker.second")
     assert not _has(rels, "picker.pick", REFERENCES, "picker.check")
+
+
+def test_bound_function_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) `el.addEventListener("click", handler.bind(this))` hands off `handler`;
+    # (H) the .bind call itself resolves to the Function.prototype builtin, so the
+    # (H) bound function must be referenced from the passing scope or it reports
+    # (H) dead (django admin's inlines.js inlineDeleteHandler).
+    files = {
+        "inlines.js": (
+            "function formset(row) {\n"
+            "    const inlineDeleteHandler = function (e1) {\n"
+            "        return e1;\n"
+            "    };\n"
+            '    row.addEventListener("click", inlineDeleteHandler.bind(this));\n'
+            "}\n"
+            "module.exports = formset;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "inlines.formset", REFERENCES, "inlines.formset.inlineDeleteHandler"
+    ) or _has(rels, "inlines.formset", "CALLS", "inlines.formset.inlineDeleteHandler")
+
+
+def test_bound_function_assignment_rhs_is_referenced(tmp_path: Path) -> None:
+    # (H) `const bound = handler.bind(null)` stores the bound handler for later
+    # (H) invocation; the assignment walk must peel .bind like a cast so the
+    # (H) underlying function is referenced.
+    files = {
+        "store.js": (
+            "function attach() {\n"
+            "    const onSave = function (e) {\n"
+            "        return e;\n"
+            "    };\n"
+            "    const bound = onSave.bind(null);\n"
+            "    return bound;\n"
+            "}\n"
+            "module.exports = attach;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "store.attach", REFERENCES, "store.attach.onSave")
+
+
+def test_cast_wrapped_bound_function_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) `(handler as any).bind(this)` interleaves a cast INSIDE the bind
+    # (H) receiver; a single unwrap pass leaves the cast node behind, so the
+    # (H) peel must iterate cast/paren and bind unwraps to a fixpoint. Chained
+    # (H) binds (`h.bind(a).bind(b)`) peel the same way.
+    files = {
+        "wrapped.ts": (
+            "function attach(el: { on: (cb: unknown) => void }) {\n"
+            "    const onSave = function (e: number) {\n"
+            "        return e;\n"
+            "    };\n"
+            "    el.on((onSave as any).bind(null));\n"
+            "    const rebound = onSave.bind(null).bind(null);\n"
+            "    return rebound;\n"
+            "}\n"
+            "export default attach;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "wrapped.attach", REFERENCES, "wrapped.attach.onSave") or _has(
+        rels, "wrapped.attach", "CALLS", "wrapped.attach.onSave"
+    )
+
+
+def test_bound_function_argument_flows_to_callable_param(tmp_path: Path) -> None:
+    # (H) A bound function passed to a FIRST-PARTY callee that invokes its
+    # (H) parameter must produce the callable-flow CALLS edge (run -> handler),
+    # (H) not just the passing scope's REFERENCES edge.
+    files = {
+        "flow.js": (
+            "function run(cb) {\n"
+            "    return cb();\n"
+            "}\n"
+            "function handler() {\n"
+            "    return 1;\n"
+            "}\n"
+            "function main() {\n"
+            "    return run(handler.bind(this));\n"
+            "}\n"
+            "module.exports = main;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "flow.run", "CALLS", "flow.handler")
+
+
+def test_bound_function_flows_through_passthrough_param(tmp_path: Path) -> None:
+    # (H) The callable-flow fixpoint (outer forwards its param to run) records
+    # (H) seeds in _collect_callable_flow, which must peel .bind like the
+    # (H) direct-argument path or the propagated CALLS edge is lost.
+    files = {
+        "flow2.js": (
+            "function run(cb) {\n"
+            "    return cb();\n"
+            "}\n"
+            "function outer(cb2) {\n"
+            "    return run(cb2);\n"
+            "}\n"
+            "function handler() {\n"
+            "    return 1;\n"
+            "}\n"
+            "function main() {\n"
+            "    return outer(handler.bind(this));\n"
+            "}\n"
+            "module.exports = main;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "flow2.run", "CALLS", "flow2.handler")
