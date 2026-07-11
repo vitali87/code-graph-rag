@@ -187,6 +187,7 @@ NODE_PROJECT = NodeLabel.PROJECT
 # (H) Property keys
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
+KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
 # (H) Marks a method that overrides a method of an EXTERNAL stdlib base class

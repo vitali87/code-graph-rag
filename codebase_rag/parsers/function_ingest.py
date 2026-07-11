@@ -30,6 +30,7 @@ from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
     callable_parameter_indices,
+    extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
     ingest_method,
@@ -95,6 +96,7 @@ class _DeferredJsAnonymous(NamedTuple):
     module_qn: str
     language: cs.SupportedLanguage
     lang_config: LanguageSpec
+    lang_queries: LanguageQueries
 
 
 class _DeferredMethod(NamedTuple):
@@ -115,6 +117,7 @@ class _DeferredMethod(NamedTuple):
     start_line: int
     start_col: int
     end_line: int
+    lang_queries: LanguageQueries | None = None
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -124,6 +127,7 @@ class _DeferredGoMethod(NamedTuple):
     module_qn: str
     receiver_type: str
     file_path: Path | None
+    lang_queries: LanguageQueries | None = None
 
 
 class _DeferredCppContainment(NamedTuple):
@@ -177,9 +181,6 @@ class FunctionIngestMixin:
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
 
-    @abstractmethod
-    def _extract_decorators(self, node: ASTNode) -> list[str]: ...
-
     def _ingest_all_functions(
         self,
         root_node: Node,
@@ -197,6 +198,7 @@ class FunctionIngestMixin:
             if not result:
                 return
             lang_config, captures = result
+            lang_queries = queries[language]
         file_path = self.module_qn_to_file_path.get(module_qn)
         has_classes = bool(captures.get(cs.CAPTURE_CLASS))
 
@@ -205,7 +207,9 @@ class FunctionIngestMixin:
                 continue
 
             if language == cs.SupportedLanguage.CPP:
-                if self._handle_cpp_out_of_class_method(func_node, module_qn):
+                if self._handle_cpp_out_of_class_method(
+                    func_node, module_qn, lang_queries
+                ):
                     continue
                 # (H) The query captures a templated function twice: the
                 # (H) template_declaration wrapper AND its inner definition.
@@ -220,7 +224,7 @@ class FunctionIngestMixin:
                     continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
-                func_node, module_qn
+                func_node, module_qn, lang_queries
             ):
                 continue
 
@@ -238,13 +242,18 @@ class FunctionIngestMixin:
             if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
                 self._deferred_js_anonymous.append(
                     _DeferredJsAnonymous(
-                        func_node, resolution, module_qn, language, lang_config
+                        func_node,
+                        resolution,
+                        module_qn,
+                        language,
+                        lang_config,
+                        lang_queries,
                     )
                 )
                 continue
 
             self._register_function(
-                func_node, resolution, module_qn, language, lang_config
+                func_node, resolution, module_qn, language, lang_config, lang_queries
             )
 
             # (H) Record a free C++ function's return type so a chained call off a
@@ -310,6 +319,7 @@ class FunctionIngestMixin:
                 entry.module_qn,
                 entry.language,
                 entry.lang_config,
+                entry.lang_queries,
             )
 
     def _resolve_function_identity(
@@ -431,7 +441,12 @@ class FunctionIngestMixin:
             return suffix in cs.CPP_EXTENSIONS or suffix in cs.C_EXTENSIONS
         return False
 
-    def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
+    def _handle_cpp_out_of_class_method(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_queries: LanguageQueries | None = None,
+    ) -> bool:
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return False
 
@@ -471,7 +486,7 @@ class FunctionIngestMixin:
                 simple_name_lookup=self.simple_name_lookup,
                 get_docstring_func=self._get_docstring,
                 language=cs.SupportedLanguage.CPP,
-                extract_decorators_func=self._extract_decorators,
+                lang_queries=lang_queries,
                 file_path=file_path,
                 repo_path=self.repo_path,
             )
@@ -508,9 +523,15 @@ class FunctionIngestMixin:
             method_name = cpp_utils.extract_function_name(func_node)
             if not method_name:
                 return True
-            decorators = self._extract_decorators(func_node)
+            decorators = []
+            modifiers = []
+            if lang_queries:
+                modifiers, decorators = extract_modifiers_and_decorators(
+                    func_node, lang_queries
+                )
             props: PropertyDict = {
                 cs.KEY_NAME: method_name,
+                cs.KEY_MODIFIERS: modifiers,
                 cs.KEY_DECORATORS: decorators,
                 cs.KEY_START_LINE: func_node.start_point[0] + 1,
                 cs.KEY_END_LINE: func_node.end_point[0] + 1,
@@ -537,6 +558,7 @@ class FunctionIngestMixin:
                     start_line=func_node.start_point[0] + 1,
                     start_col=func_node.start_point[1],
                     end_line=func_node.end_point[0] + 1,
+                    lang_queries=lang_queries,
                 )
             )
 
@@ -625,7 +647,12 @@ class FunctionIngestMixin:
         self._deferred_cpp_methods = []
         return ingested
 
-    def _defer_go_receiver_method(self, func_node: Node, module_qn: str) -> bool:
+    def _defer_go_receiver_method(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_queries: LanguageQueries | None = None,
+    ) -> bool:
         if not go_utils.is_receiver_method(func_node):
             return False
         receiver_type = go_utils.extract_receiver_type_name(func_node)
@@ -774,6 +801,7 @@ class FunctionIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
     ) -> None:
         unique_qn = self.function_registry.register_unique_qn(
             resolution.qualified_name, func_node.start_point[0] + 1
@@ -781,7 +809,9 @@ class FunctionIngestMixin:
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
 
-        func_props = self._build_function_props(func_node, resolution, module_qn)
+        func_props = self._build_function_props(
+            func_node, resolution, module_qn, lang_queries
+        )
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
             # (H) Rust macros live in a separate namespace from functions;
@@ -863,13 +893,21 @@ class FunctionIngestMixin:
                 break
 
     def _build_function_props(
-        self, func_node: Node, resolution: FunctionResolution, module_qn: str
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_queries: LanguageQueries,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
+        modifiers, decorators = extract_modifiers_and_decorators(
+            func_node, lang_queries
+        )
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,
-            cs.KEY_DECORATORS: self._extract_decorators(func_node),
+            cs.KEY_MODIFIERS: modifiers,
+            cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: func_node.start_point[0] + 1,
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node),

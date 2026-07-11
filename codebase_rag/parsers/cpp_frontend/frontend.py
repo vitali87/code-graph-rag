@@ -115,6 +115,7 @@ class _Collector:
         return {
             cs.KEY_QUALIFIED_NAME: qn,
             cs.KEY_NAME: name,
+            cs.KEY_MODIFIERS: [],
             cs.KEY_DECORATORS: [],
             cs.KEY_START_LINE: cursor.location.line,
             cs.KEY_END_LINE: cursor.extent.end.line,

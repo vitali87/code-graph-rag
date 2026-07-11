@@ -32,6 +32,7 @@ def _function(qn: str) -> GraphNodeRecord:
     props: PropertyDict = {
         "qualified_name": qn,
         "name": qn.rsplit(".", 1)[-1],
+        "modifiers": [],
         "decorators": [],
         "path": "src/mod.py",
         "absolute_path": "/repo/src/mod.py",
