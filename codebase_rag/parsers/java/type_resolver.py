@@ -230,10 +230,10 @@ class JavaTypeResolverMixin:
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
+        if file_path is None or not (entry := self.ast_cache.load(file_path)):
             return []
 
-        root_node, _ = self.ast_cache[file_path]
+        root_node, _ = entry
 
         return self._find_interfaces_using_ast(root_node, target_class_name, module_qn)
 

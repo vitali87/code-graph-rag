@@ -3763,9 +3763,9 @@ class CallProcessor:
     def _module_string_constant(self, module_qn: str, const_name: str) -> str | None:
         type_inference = self._resolver.type_inference
         file_path = type_inference.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in type_inference.ast_cache:
+        if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
             return None
-        root_node, _ = type_inference.ast_cache[file_path]
+        root_node, _ = entry
         for child in root_node.children:
             if child.type != cs.TS_PY_EXPRESSION_STATEMENT or not child.children:
                 continue

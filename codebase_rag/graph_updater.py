@@ -14,7 +14,11 @@ from . import constants as cs
 from . import logs as ls
 from .capture import CaptureSelection, default_capture
 from .config import settings
-from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .language_spec import (
+    LANGUAGE_FQN_SPECS,
+    get_language_for_extension,
+    get_language_spec,
+)
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
@@ -303,14 +307,17 @@ class FunctionRegistryTrie:
 
 
 class BoundedASTCache:
-    __slots__ = ("cache", "max_entries", "max_memory_bytes")
+    __slots__ = ("cache", "loader", "max_entries", "max_memory_bytes")
 
     def __init__(
         self,
         max_entries: int | None = None,
         max_memory_mb: int | None = None,
+        loader: Callable[[Path], tuple[Node, cs.SupportedLanguage] | None]
+        | None = None,
     ):
         self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
+        self.loader = loader
         self.max_entries = (
             max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
         )
@@ -318,6 +325,19 @@ class BoundedASTCache:
             max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
         )
         self.max_memory_bytes = max_mem * cs.BYTES_PER_MB
+
+    def load(self, key: Path) -> tuple[Node, cs.SupportedLanguage] | None:
+        # (H) Cache read that survives eviction: a miss re-parses from disk via the
+        # (H) loader and re-inserts (bounded). Type inference reads OTHER modules'
+        # (H) ASTs long after Pass 2 parsed them; on a repo larger than max_entries
+        # (H) a plain __getitem__ would silently drop the inferred type (django:
+        # (H) urls/resolvers.py evicted before admindocs resolves get_resolver()).
+        if key in self.cache:
+            return self[key]
+        if self.loader is None or not (entry := self.loader(key)):
+            return None
+        self[key] = entry
+        return entry
 
     def __setitem__(self, key: Path, value: tuple[Node, cs.SupportedLanguage]) -> None:
         if key in self.cache:
@@ -487,7 +507,7 @@ class GraphUpdater:
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
         )
-        self.ast_cache = BoundedASTCache()
+        self.ast_cache = BoundedASTCache(loader=self._load_ast_from_disk)
         # (H) Every file parsed this run, in parse order. The AST cache is bounded
         # (H) and evicts on large repos, so Pass 3 must iterate this full list (not
         # (H) the cache) and re-parse evicted files, or their calls are dropped.
@@ -1370,13 +1390,18 @@ class GraphUpdater:
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
     def _ast_for(self, file_path: Path, language: cs.SupportedLanguage) -> Node | None:
-        # (H) Return the file's AST from the bounded cache, or re-parse from disk
-        # (H) when it was evicted. Evicted files carry stale captures (nodes from
-        # (H) the discarded tree), so drop them: downstream recomputes captures
-        # (H) from this fresh tree. Re-caching keeps the cache bounded across the
-        # (H) two Pass-3 loops.
-        if file_path in self.ast_cache:
-            return self.ast_cache[file_path][0]
+        entry = self.ast_cache.load(file_path)
+        return entry[0] if entry else None
+
+    def _load_ast_from_disk(
+        self, file_path: Path
+    ) -> tuple[Node, cs.SupportedLanguage] | None:
+        # (H) BoundedASTCache loader: re-parse an evicted file. Evicted files carry
+        # (H) stale captures (nodes from the discarded tree), so drop them:
+        # (H) downstream recomputes captures from the fresh tree.
+        language = get_language_for_extension(file_path.suffix)
+        if language is None or language not in self.parsers:
+            return None
         parser = self.queries[language].get(cs.KEY_PARSER)
         if parser is None:
             return None
@@ -1386,9 +1411,8 @@ class GraphUpdater:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
             return None
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
-        self.ast_cache[file_path] = (root_node, language)
         self.factory._func_class_captures_cache.pop(file_path, None)
-        return root_node
+        return (root_node, language)
 
     def _process_function_calls(self) -> None:
         captures_cache = self.factory._func_class_captures_cache

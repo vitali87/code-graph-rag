@@ -69,6 +69,8 @@ PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
 # (H) Optional annotation handling: X | None names a single concrete class.
 PY_UNION_SEPARATOR = "|"
 PY_NONE = "None"
+# (H) `-> Self` names the enclosing class, not a class called Self.
+PY_ANNOTATION_SELF = "Self"
 
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"

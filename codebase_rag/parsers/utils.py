@@ -14,6 +14,7 @@ from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
     DeferredParentLink,
+    FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
     NodeType,
@@ -27,6 +28,33 @@ if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
+
+
+def follow_reexports(
+    qn: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str:
+    # (H) `from .pkg import sym` records the importer's name against the re-export
+    # (H) module (pkg.sym), not the symbol's real definition (pkg.mod.sym), so a
+    # (H) qn that is not itself registered may be a re-export. Follow the module's
+    # (H) own import map one hop at a time until a registered symbol is reached,
+    # (H) guarding against cycles.
+    seen: set[str] = set()
+    current = qn
+    while (
+        current
+        and current not in seen
+        and current not in function_registry
+        and cs.SEPARATOR_DOT in current
+    ):
+        seen.add(current)
+        module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
+        following = import_mapping.get(module_qn, {}).get(name)
+        if not following or following == current:
+            break
+        current = following
+    return current
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:

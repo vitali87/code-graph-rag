@@ -80,10 +80,7 @@ def test_factory_return_inference_survives_ast_cache_eviction(tmp_path: Path) ->
         encoding="utf-8",
     )
     (tmp_path / "driver.py").write_text(
-        "from widgets import make_widget\n"
-        "\n"
-        "def driver():\n"
-        "    make_widget().run()\n",
+        "from widgets import make_widget\n\ndef driver():\n    make_widget().run()\n",
         encoding="utf-8",
     )
 
