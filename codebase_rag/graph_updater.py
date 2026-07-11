@@ -1389,7 +1389,7 @@ class GraphUpdater:
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
-    def _ast_for(self, file_path: Path, language: cs.SupportedLanguage) -> Node | None:
+    def _ast_for(self, file_path: Path) -> Node | None:
         entry = self.ast_cache.load(file_path)
         return entry[0] if entry else None
 
@@ -1420,7 +1420,7 @@ class GraphUpdater:
         # (H) large repo the cache evicts most files, and iterating it drops their
         # (H) calls (a whole module ends up with zero CALLS edges).
         for file_path, language in self._parsed_files:
-            root_node = self._ast_for(file_path, language)
+            root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
             self.factory.call_processor.collect_callable_field_bindings(
@@ -1435,7 +1435,7 @@ class GraphUpdater:
         # (H) before the file defining its class.
         self.factory.call_processor.finalize_callable_field_bindings()
         for file_path, language in self._parsed_files:
-            root_node = self._ast_for(file_path, language)
+            root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
             if captures_cache is not None and file_path in captures_cache:
