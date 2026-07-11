@@ -138,3 +138,67 @@ def test_conditional_brace_file_keeps_call_edges(
         "brcalls.reader.detail.binary_reader.helper_3",
         "brcalls.reader.detail.binary_reader.read_one",
     ) in calls, sorted(calls)
+
+
+def test_blank_helper_edge_shapes() -> None:
+    from codebase_rag.parsers.cpp.preproc_recovery import (
+        _blank_unbalanced_leaf_branches,
+    )
+
+    # (H) balanced-only conditionals produce no rewrite
+    balanced = b"#if A\nint x = 1;\n#endif\n"
+    assert _blank_unbalanced_leaf_branches(balanced) is None
+
+    # (H) a stray #endif with no open conditional is ignored, not a crash
+    assert _blank_unbalanced_leaf_branches(b"#endif\nint x;\n") is None
+
+    # (H) an #else split: only the unbalanced branch is blanked, the balanced
+    # (H) one survives verbatim; an EMPTY branch (#if directly followed by
+    # (H) #else) is skipped
+    split = b"#if A\n#else\nvoid f() {\n#endif\nint keep = 1;\n"
+    blanked = _blank_unbalanced_leaf_branches(split)
+    assert blanked is not None
+    assert b"void f() {" not in blanked
+    assert b"int keep = 1;" in blanked
+    # (H) blanking is position-preserving: same byte length, same line count
+    assert len(blanked) == len(split)
+    assert blanked.count(b"\n") == split.count(b"\n")
+
+
+def test_parse_recovery_passthrough_shapes() -> None:
+    import pytest as _pytest
+
+    from codebase_rag import constants as cs
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp.preproc_recovery import (
+        parse_with_preproc_recovery,
+    )
+
+    parsers, _ = load_parsers()
+    if "cpp" not in parsers or "python" not in parsers:
+        _pytest.skip("parsers not available")
+
+    # (H) a non-C-family language never enters the recovery path, even for
+    # (H) unparseable content
+    py = parsers["python"]
+    tree = parse_with_preproc_recovery(
+        py, b"def broken(:\n", cs.SupportedLanguage.PYTHON
+    )
+    assert tree.root_node is not None
+
+    cpp = parsers["cpp"]
+    # (H) a clean C++ file returns the first parse untouched
+    clean = parse_with_preproc_recovery(cpp, b"int x = 1;\n", cs.SupportedLanguage.CPP)
+    assert not clean.root_node.has_error
+
+    # (H) a catastrophic file with NO conditional directives has nothing to
+    # (H) blank and keeps the original tree
+    garbage = b"}}}} class {{{{\n" * 4
+    kept = parse_with_preproc_recovery(cpp, garbage, cs.SupportedLanguage.CPP)
+    assert kept.root_node.has_error
+
+    # (H) a catastrophic file whose unbalanced branch is NOT the cause keeps
+    # (H) the original tree via the strict-improvement guard
+    unrelated = b"#if A\nvoid g() {\n#endif\n" + b"}}}} class {{{{\n" * 4
+    kept2 = parse_with_preproc_recovery(cpp, unrelated, cs.SupportedLanguage.CPP)
+    assert kept2.root_node.has_error
