@@ -2348,12 +2348,10 @@ class CallProcessor:
                     # (H) interleaves parens (`api.setState = ((s, r) => {...}) as
                     # (H) SetState`); peel both so the bare name/arrow underneath is
                     # (H) what we reference.
-                    value = self._unwrap_ts_value(value)
                     # (H) `const bound = handler.bind(null)` stores the bound
                     # (H) handler; .bind/.call/.apply are transparent for
                     # (H) reference resolution like a cast.
-                    if (bound := self._unwrap_bound_function(value)) is not None:
-                        value = bound
+                    value = self._peel_bound_callable(value, peel_parens=True)
                     # (H) A bare-name RHS names a callable; an inline arrow/function-expr
                     # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
                     # (H) function on the target for later invocation --
@@ -2802,14 +2800,10 @@ class CallProcessor:
         ensure_rel,
     ) -> None:
         # (H) A value cast for typing (`persistImpl as unknown as Persist`) is
-        # (H) transparent for reference resolution; unwrap it first.
-        node = self._unwrap_ts_cast(node)
-        # (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` in value position
-        # (H) (onError: handleError.bind(toast)) hands off `fn`; the call resolves to
-        # (H) the Function.prototype builtin, so unwrap to the bound function and
-        # (H) reference it instead, or it reports as dead.
-        if (bound := self._unwrap_bound_function(node)) is not None:
-            node = bound
+        # (H) transparent for reference resolution, and `fn.bind(ctx)` /
+        # (H) `fn.call(...)` / `fn.apply(...)` in value position (onError:
+        # (H) handleError.bind(toast)) hands off `fn`; peel both to a fixpoint.
+        node = self._peel_bound_callable(node)
         # (H) Only a bare name / attribute / member-expression in value position names
         # (H) a function; a call, comprehension or literal is not a reference to a
         # (H) callable itself. Reuses the flow-arg ref types (identifier, Python
@@ -2848,6 +2842,22 @@ class CallProcessor:
                 break
             current = inner
         return current
+
+    def _peel_bound_callable(self, node: Node, peel_parens: bool = False) -> Node:
+        # (H) Iterate cast (and optionally paren) unwraps with the bound-call
+        # (H) unwrap to a FIXPOINT: `(handler as any).bind(null)` interleaves a
+        # (H) cast INSIDE the bind receiver and `h.bind(a).bind(b)` chains, so
+        # (H) a single pass of either unwrap leaves a wrapper behind.
+        while True:
+            node = (
+                self._unwrap_ts_value(node)
+                if peel_parens
+                else self._unwrap_ts_cast(node)
+            )
+            bound = self._unwrap_bound_function(node)
+            if bound is None:
+                return node
+            node = bound
 
     def _unwrap_bound_function(self, node: Node) -> Node | None:
         # (H) For `fn.bind(ctx)` (a call_expression whose function is `fn.bind`),
@@ -3313,15 +3323,12 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
-        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent for
-        # (H) reference resolution; unwrap it so the callable underneath resolves.
-        arg_node = self._unwrap_ts_cast(arg_node)
-        # (H) `fn.bind(ctx)` / `.call` / `.apply` in argument position
-        # (H) (addEventListener("click", handler.bind(this)), django admin's
-        # (H) inlines.js) hands off `fn`; the call itself resolves to the
-        # (H) Function.prototype builtin, so unwrap to the bound function.
-        if (bound := self._unwrap_bound_function(arg_node)) is not None:
-            arg_node = bound
+        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent
+        # (H) for reference resolution, and `fn.bind(ctx)` / `.call` / `.apply` in
+        # (H) argument position (addEventListener("click", handler.bind(this)),
+        # (H) django admin's inlines.js) hands off `fn` while the call itself
+        # (H) resolves to the Function.prototype builtin; peel both to a fixpoint.
+        arg_node = self._peel_bound_callable(arg_node)
         # (H) An arrow/function-expression passed DIRECTLY as a call argument
         # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
         # (H) registered anonymously in the enclosing scope but named after no
@@ -3420,7 +3427,10 @@ class CallProcessor:
         for position, keyword_name, raw_arg in items:
             # (H) `f(callback as any)` casts the argument; unwrap so a cast callable
             # (H) argument still flows.
-            arg_node = self._unwrap_ts_cast(raw_arg)
+            # (H) `outer(handler.bind(this))` forwards the bound handler through
+            # (H) a pass-through param; peel .bind like the direct-argument path
+            # (H) or the propagated flow edge is lost.
+            arg_node = self._peel_bound_callable(raw_arg)
             if arg_node.type not in _FLOW_ARG_REF_TYPES:
                 continue
             arg_text = safe_decode_text(arg_node)
