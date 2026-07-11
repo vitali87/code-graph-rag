@@ -758,3 +758,11 @@ MODEL_CURRENT = "Current model: {model}"
 # (H) Progress bar logs
 PROGRESS_INDEXING_LABEL = "[bold blue]Indexing files..."
 PROGRESS_FILES_PROCESSED = "{count} processed"
+
+# (H) Capture selection logs
+CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_DEPENDENCY_GAP = (
+    "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
+    "obeying as requested (edges may be incomplete)"
+)
+CAPTURE_RESOLVED = "Capture enabled: {rels}"

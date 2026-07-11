@@ -25,3 +25,8 @@ class QueryProtocol(Protocol):
     ) -> list[ResultRow]: ...
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None: ...
+
+
+from .filtering import FilteringIngestor  # noqa: E402
+
+__all__ = ["IngestorProtocol", "QueryProtocol", "FilteringIngestor"]
