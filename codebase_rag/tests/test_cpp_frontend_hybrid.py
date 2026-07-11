@@ -559,3 +559,62 @@ def test_find_compile_commands_checks_parent_build_dirs(tmp_path: Path) -> None:
     target = tmp_path / "include" / "proj"
     target.mkdir(parents=True)
     assert find_compile_commands(target) == tmp_path / "build"
+
+
+def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) Incremental gap: editing only the CALLER file re-parses it (fresh
+    # (H) spans) while the callee's file stays unchanged (no spans this run);
+    # (H) the expansion call's callee join must fall back to spans rehydrated
+    # (H) from the graph, or the re-emitted edge silently drops until a forced
+    # (H) rebuild.
+    root = temp_repo / "hybincexp"
+    root.mkdir()
+    (root / "tgt.h").write_text(
+        "#ifndef TGT_H\n"
+        "#define TGT_H\n"
+        "int target(int v);\n"
+        "#define CALL_TARGET(v) target(v)\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    (root / "tgt.cpp").write_text(
+        '#include "tgt.h"\nint target(int v) { return v + 1; }\n', encoding="utf-8"
+    )
+    (root / "drv.cpp").write_text(
+        '#include "tgt.h"\nint driver(int v) { return CALL_TARGET(v); }\n',
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                _compdb_entry(root, root / "tgt.cpp"),
+                _compdb_entry(root, root / "drv.cpp"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+
+    (root / "drv.cpp").write_text(
+        '#include "tgt.h"\n'
+        "int driver(int v) { return CALL_TARGET(v); }\n"
+        "int extra() { return 0; }\n",
+        encoding="utf-8",
+    )
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+
+    calls = {
+        (str(from_val), str(to_val))
+        for _fl, from_val, rel_type, _tl, to_val in store.edges
+        if rel_type == cs.RelationshipType.CALLS.value
+    }
+    assert ("hybincexp.drv.driver", "hybincexp.tgt.target") in calls, sorted(calls)
