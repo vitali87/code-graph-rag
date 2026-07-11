@@ -716,6 +716,10 @@ def module_function_props(
     repo_path: Path | None,
 ) -> PropertyDict:
     """Standard Function node properties for module-scoped JS/TS functions."""
+    # (H) Lazy import: export_detection reaches back into this module through
+    # (H) cpp.utils, so a top-level import would be circular.
+    from . import export_detection
+
     props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: function_qn,
         cs.KEY_NAME: function_name,
@@ -723,6 +727,11 @@ def module_function_props(
         cs.KEY_START_LINE: function_node.start_point[0] + 1,
         cs.KEY_END_LINE: function_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: docstring,
+        # (H) JS/TS only (per this helper's contract), so the JS branch of the
+        # (H) language dispatch applies regardless of which of the two it is.
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            function_node, function_name, cs.SupportedLanguage.JS
+        ),
     }
     if file_path is not None and repo_path is not None:
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()

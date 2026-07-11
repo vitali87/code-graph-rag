@@ -8,6 +8,26 @@ from .cpp import utils as cpp_utils
 # (H) Once inside a function body the declaration is a local, not a module-level
 # (H) export, so an `export` ancestor beyond this boundary must not count.
 _JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK})
+# (H) Textual markers whose presence in a top-level statement makes a JS file a
+# (H) CommonJS module rather than a classic page-scope script.
+_JS_REQUIRE_CALL = (cs.JS_REQUIRE_KEYWORD + cs.CHAR_PAREN_OPEN).encode()
+_JS_MODULE_EXPORTS = (
+    cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
+).encode()
+_JS_EXPORTS_MEMBER = (cs.JS_EXPORTS_KEYWORD + cs.SEPARATOR_DOT).encode()
+# (H) Real function scopes. A bare `{ ... }` statement_block at top level
+# (H) (django's core.js) is NOT one: prototype mutations and var/function
+# (H) declarations inside it still land in page scope, so only a function
+# (H) ancestor makes a script declaration local.
+_JS_TS_FUNCTION_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_METHOD_DEFINITION,
+    }
+)
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
@@ -74,7 +94,56 @@ def _js_ts_exported(node: Node, name: str) -> bool:
     # (H) must be matched by name against the module's export clauses.
     if _has_export_ancestor(node):
         return True
-    return bool(name) and name in _module_export_list_names(node)
+    if bool(name) and name in _module_export_list_names(node):
+        return True
+    return _is_script_global(node)
+
+
+def _is_script_global(node: Node) -> bool:
+    # (H) Classic browser script: a JS/TS file with no import/export statement
+    # (H) and no CommonJS require/module.exports construct runs in page scope,
+    # (H) so every module-level declaration (and its class members) is a global
+    # (H) reachable from HTML/templates the graph cannot see (django's
+    # (H) OLMapWidget classes, core.js helpers). Function-local declarations
+    # (H) are still reached only through their enclosing scope.
+    root = node
+    current = node.parent
+    while current is not None:
+        if current.type in _JS_TS_FUNCTION_SCOPE_TYPES:
+            return False
+        root = current
+        current = current.parent
+    return not _has_module_construct(root)
+
+
+# (H) 1-slot memo of the last root's module-construct scan: files are ingested
+# (H) sequentially, so consecutive symbols of one file hit the slot and the
+# (H) O(top-level statements) scan runs once per FILE instead of once per
+# (H) symbol. The slot holds the root Node itself, which keeps its tree alive,
+# (H) so the entry can never alias a recycled node address; retaining one
+# (H) parse tree is the bounded cost (an unbounded Node-keyed lru_cache would
+# (H) pin every cached tree in memory).
+_last_script_scan: tuple[Node, bool] | None = None
+
+
+def _has_module_construct(root: Node) -> bool:
+    global _last_script_scan
+    if _last_script_scan is not None and _last_script_scan[0] == root:
+        return _last_script_scan[1]
+    result = any(_is_module_construct(stmt) for stmt in root.children)
+    _last_script_scan = (root, result)
+    return result
+
+
+def _is_module_construct(statement: Node) -> bool:
+    if statement.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
+        return True
+    text = statement.text or b""
+    return (
+        _JS_REQUIRE_CALL in text
+        or _JS_MODULE_EXPORTS in text
+        or text.startswith(_JS_EXPORTS_MEMBER)
+    )
 
 
 def _js_ts_private_member(node: Node) -> bool:
