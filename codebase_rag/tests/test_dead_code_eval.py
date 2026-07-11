@@ -38,14 +38,16 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
-def _method(uid: str, path: str = "m.py") -> tuple:
+def _method(
+    uid: str, path: str = "m.py", decorators: list[str] | None = None
+) -> tuple:
     return (
         (cs.NodeLabel.METHOD.value, uid),
         {
             cs.KEY_QUALIFIED_NAME: uid,
             cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
             cs.KEY_PATH: path,
-            cs.KEY_DECORATORS: [],
+            cs.KEY_DECORATORS: decorators or [],
             cs.KEY_IS_EXPORTED: False,
         },
     )
@@ -1073,3 +1075,44 @@ def test_enum_protocol_hooks_are_roots() -> None:
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
     assert dead == {"proj.m.Color._custom_sunder_", "proj.m.Color._order_"}
+
+
+def test_property_family_decorated_methods_are_roots() -> None:
+    # (H) A @property/@cached_property/@classproperty method (and @x.setter /
+    # (H) @x.deleter) is invoked by ATTRIBUTE syntax -- a bare read like
+    # (H) `self.app_config._is_default_auto_field_overridden` produces no call
+    # (H) node, so no CALLS edge can ever land on it (django's
+    # (H) WhereNode._output_field_or_none, Expression._constructor_signature).
+    # (H) Same invisible-invocation situation as dunders: roots, not dead code.
+    # (H) Its callees revive through the normal walk.
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.Options.plain_prop", decorators=["@property"]),
+            _method(
+                "proj.m.Options.cached",
+                decorators=["@functools.cached_property"],
+            ),
+            _method("proj.m.Expr.sig", decorators=["@classproperty"]),
+            _method("proj.m.Options.value", decorators=["@value.setter"]),
+            _method("proj.m.Options.gone", decorators=["@gone.deleter"]),
+            _method("proj.m.Options._helper"),
+            _method("proj.m.Options.undecorated"),
+            _method("proj.m.Options.custom", decorators=["@deprecated"]),
+        ]
+    )
+    rels = [
+        (
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Options.plain_prop",
+            _CALLS,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Options._helper",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, config)
+    assert dead == {"proj.m.Options.undecorated", "proj.m.Options.custom"}
