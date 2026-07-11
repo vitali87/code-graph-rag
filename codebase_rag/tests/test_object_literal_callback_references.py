@@ -149,9 +149,11 @@ def test_function_expression_assigned_to_property_is_referenced(
     tmp_path: Path,
 ) -> None:
     # (H) `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
-    # (H) for a library to invoke later (the openapi-ts token provider); the arrow is
-    # (H) anonymous with no incoming edge. The assigning scope must reference it or it
-    # (H) reports as dead (the last frontend false positive on the template).
+    # (H) for a library to invoke later (the openapi-ts token provider); the arrow
+    # (H) has no incoming edge. The assigning scope must reference it or it reports
+    # (H) as dead (the last frontend false positive on the template). Span-claim
+    # (H) unification leaves ONE node for the arrow (the property-named TOKEN, no
+    # (H) anonymous twin), so that node is the one that must be referenced.
     files = {
         "main.tsx": (
             "import { OpenAPI } from './client'\n\n"
@@ -166,7 +168,7 @@ def test_function_expression_assigned_to_property_is_referenced(
     }
     rels = _run_rels(tmp_path, files, "tsx")
     refs = {b for a, r, b in rels if r == REFERENCES and a.endswith(".main")}
-    assert any(".main.anonymous_" in b for b in refs), (
+    assert any(b.endswith(".main.TOKEN") for b in refs), (
         f"function-expression assigned to a property not referenced; refs={refs}"
     )
 
@@ -343,6 +345,147 @@ def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
     assert any(".hook.useCopyToClipboard.anonymous_" in b for b in edges), (
         f"inline call-argument arrow not referenced; edges={edges}"
     )
+
+
+def test_inline_arrow_new_expression_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) A Promise executor (`new Promise((resolve, reject) => {...})`) is an inline
+    # (H) arrow handed to a constructor. JS/TS never treated `new X(...)` as a call
+    # (H) node, so the executor got no incoming edge and reported as dead (the
+    # (H) openapi-ts CancelablePromise/request plumbing is built on this pattern).
+    # (H) Constructing must reference the inline callback the same way a call does.
+    files = {
+        "make.ts": (
+            "export function make() {\n"
+            "  return new Promise((resolve, reject) => { resolve(go()) })\n"
+            "}\n\n\n"
+            "function go() { return 1 }\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) A DEFINES edge always exists; the executor must gain a CALLS/REFERENCES edge.
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {b for a, r, b in rels if a.endswith("make.make") and r != defines}
+    assert any(".make.make.anonymous_" in b for b in edges), (
+        f"inline new-expression executor arrow not referenced; edges={edges}"
+    )
+
+
+def test_new_first_party_class_records_instantiation(tmp_path: Path) -> None:
+    # (H) Adding new_expression to the JS/TS call query also wires the previously
+    # (H) missing INSTANTIATES edge for `new Foo()` to a first-party class.
+    files = {
+        "app.ts": (
+            "class Widget {\n"
+            "  constructor() {}\n"
+            "}\n\n\n"
+            "export function build() {\n"
+            "  return new Widget()\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    instantiates = cs.RelationshipType.INSTANTIATES.value
+    assert _has(rels, "app.build", instantiates, "app.Widget"), (
+        f"new Widget() did not record INSTANTIATES; rels={rels}"
+    )
+
+
+def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> None:
+    # (H) An inline `.forEach(v => ...)` inside a NESTED arrow-const (encodePair inside
+    # (H) getQueryString) reported as dead: the call pass built the caller qn from the
+    # (H) ancestor arrow-const's missing `name` field, dropping the outer segment
+    # (H) (request.encodePair instead of request.getQueryString.encodePair), so the
+    # (H) inline-arg candidate never matched the registered node. The whole openapi-ts
+    # (H) query-string encoder is this shape.
+    files = {
+        "request.ts": (
+            "export const getQueryString = (params) => {\n"
+            "  const encodePair = (key, value) => {\n"
+            "    if (Array.isArray(value)) {\n"
+            "      value.forEach(v => encodePair(key, v))\n"
+            "    }\n"
+            "  }\n"
+            "  Object.entries(params).forEach(([key, value]) => encodePair(key, value))\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    # (H) A DEFINES edge always exists; require a CALLS/REFERENCES edge to the inner
+    # (H) arrow nested under the fully-qualified encodePair (request.getQueryString.
+    # (H) encodePair.anonymous_*), which only matches once the caller qn keeps the
+    # (H) outer getQueryString segment.
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {
+        b
+        for a, r, b in rels
+        if a.endswith("getQueryString.encodePair") and r != defines
+    }
+    assert any(".getQueryString.encodePair.anonymous_" in b for b in edges), (
+        f"inline forEach arrow in nested arrow-const not referenced; edges={edges}"
+    )
+
+
+def test_promise_executor_in_constructor_is_referenced(tmp_path: Path) -> None:
+    # (H) The openapi-ts CancelablePromise shape: a class constructor builds
+    # (H) `this.promise = new Promise((resolve, reject) => {...})`. The executor arrow
+    # (H) is anonymous and nested inside the constructor, so its qn must keep the full
+    # (H) class.constructor path (not flatten to module.anonymous) for the constructor's
+    # (H) CALLS edge to connect; otherwise the executor is orphaned and reports dead.
+    files = {
+        "CancelablePromise.ts": (
+            "export class CancelablePromise {\n"
+            "  constructor(executor) {\n"
+            "    this.promise = new Promise((resolve, reject) => {\n"
+            "      run(resolve)\n"
+            "    })\n"
+            "  }\n"
+            "}\n\n\n"
+            "function run(f) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    defines = cs.RelationshipType.DEFINES.value
+    edges = {
+        b
+        for a, r, b in rels
+        if a.endswith("CancelablePromise.constructor") and r != defines
+    }
+    assert any(".CancelablePromise.constructor.anonymous_" in b for b in edges), (
+        f"promise executor in constructor not referenced; edges={edges}"
+    )
+
+
+def test_defineproperty_getter_in_executor_is_referenced(tmp_path: Path) -> None:
+    # (H) A getter descriptor (`Object.defineProperty(x, 'y', {get: () => ...})`) sits
+    # (H) inside an anonymous Promise-executor arrow that gets no caller pass of its own;
+    # (H) its calls bubble to the enclosing constructor. The constructor's collection
+    # (H) walk must therefore descend into the unowned executor and reference the getter,
+    # (H) or every defineProperty getter/setter reports as dead.
+    files = {
+        "CancelablePromise.ts": (
+            "export class CancelablePromise {\n"
+            "  constructor(executor) {\n"
+            "    this.promise = new Promise((resolve, reject) => {\n"
+            "      const onCancel = (h) => { track(h) }\n"
+            "      Object.defineProperty(onCancel, 'isResolved', {\n"
+            "        get: () => this._isResolved,\n"
+            "      })\n"
+            "    })\n"
+            "  }\n"
+            "}\n\n\n"
+            "function track(h) {}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files, "typescript")
+    refs = {
+        b
+        for a, r, b in rels
+        if r == REFERENCES and a.endswith("CancelablePromise.constructor")
+    }
+    assert any(
+        ".CancelablePromise.constructor." in b and b.rsplit(".", 1)[-1] == "get"
+        for b in refs
+    ), f"defineProperty getter in executor not referenced; refs={refs}"
 
 
 def test_inline_arrow_call_argument_function_expr_is_referenced(

@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-SKIP_GO = "Go is in development status"
 SKIP_SCALA = "Scala is in development status"
 
 
@@ -609,7 +608,6 @@ class TestRustNodeLabels:
         assert "MyTrait" in interface_names
 
 
-@pytest.mark.skip(reason=SKIP_GO)
 class TestGoNodeLabels:
     def test_go_creates_class_nodes_for_structs(
         self, memgraph_ingestor: MemgraphIngestor, go_project: Path
@@ -861,7 +859,7 @@ DEFINES_TEST_PARAMS = [
     ("typescript_project", None),
     ("javascript_project", None),
     ("rust_project", None),
-    ("go_project", SKIP_GO),
+    ("go_project", None),
     ("scala_project", SKIP_SCALA),
     ("java_project", None),
     ("cpp_project", None),

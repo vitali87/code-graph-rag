@@ -15,12 +15,17 @@ PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
 CPP_FRONTEND_UNAVAILABLE = (
-    "CPP_FRONTEND=libclang but libclang is unavailable; using tree-sitter"
+    "C/C++ libclang frontend enabled but libclang is unavailable; using tree-sitter"
 )
 CPP_FRONTEND_NO_COMPDB = (
-    "CPP_FRONTEND=libclang but no compile_commands.json found; using tree-sitter"
+    "C/C++ libclang frontend enabled but no compile_commands.json found; "
+    "using tree-sitter"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
+CPP_FRONTEND_HYBRID_PENDING = (
+    "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
+)
+CPP_FRONTEND_MACRO_CALLS = "Resolved {count} hybrid macro CALLS edge(s)"
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
@@ -54,6 +59,13 @@ SEMANTIC_NOT_AVAILABLE = (
     "Semantic search dependencies not available, skipping embedding generation"
 )
 INGESTOR_NO_QUERY = "Ingestor does not support querying, skipping embedding generation"
+EMBEDDINGS_SKIPPED = (
+    "Skipping semantic embedding generation (--no-embeddings / CGR_SKIP_EMBEDDINGS)"
+)
+EMBEDDING_DEVICE_UNAVAILABLE = (
+    "Requested embedding device '{device}' is unavailable, falling back to"
+    " automatic selection"
+)
 NO_FUNCTIONS_FOR_EMBEDDING = "No functions or methods found for embedding generation"
 GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
 EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"
@@ -462,6 +474,10 @@ IMP_CREATED_RELATIONSHIP = (
     "  Created IMPORTS relationship: {from_module} -> {to_module} (from {full_name})"
 )
 IMP_PARSE_FAILED = "Failed to parse imports in {module}: {error}"
+IMP_DROPPED_PHANTOM_TARGET = (
+    "  Dropped IMPORTS edge to unverifiable internal target: "
+    "{from_module} -> {to_module}"
+)
 IMP_IMPORT = "  Import: {local} -> {full}"
 IMP_ALIASED_IMPORT = "  Aliased import: {alias} -> {full}"
 IMP_WILDCARD_IMPORT = "  Wildcard import: * -> {module}"
@@ -709,6 +725,12 @@ INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
+PARSER_FINGERPRINT_MISMATCH = (
+    "Parser code changed since this graph was built. Incremental sync keeps "
+    "results from the old parser for unchanged files, so the graph may be "
+    "stale. Run 'cgr start --clean' to rebuild it from scratch."
+)
 
 # (H) Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"

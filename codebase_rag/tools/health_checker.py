@@ -7,8 +7,10 @@ import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
 from .. import constants as cs
+from .. import graph_audit
 from ..config import settings
 from ..schemas import HealthCheckResult
+from ..types_defs import ResultRow
 
 
 class HealthChecker:
@@ -183,10 +185,67 @@ class HealthChecker:
                 error=str(e),
             )
 
+    def check_graph_integrity(self) -> list[HealthCheckResult]:
+        """Structural audit of the live graph (issue #646).
+
+        Returns no results when Memgraph is unreachable: connectivity is
+        already reported by check_memgraph_connection.
+        """
+        try:
+            conn = mgclient.connect(
+                host=settings.MEMGRAPH_HOST,
+                port=settings.MEMGRAPH_PORT,
+            )
+        except Exception:
+            return []
+        cursor = conn.cursor()
+
+        def fetch_all(query: str) -> list[ResultRow]:
+            cursor.execute(query)
+            # (H) mgclient.Column is not subscriptable; the name is an attribute.
+            columns = [column.name for column in cursor.description or []]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        try:
+            violations = graph_audit.collect_live_violations(fetch_all)
+        except Exception as e:
+            return [
+                HealthCheckResult(
+                    name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
+                    passed=False,
+                    message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG,
+                    error=str(e),
+                )
+            ]
+        finally:
+            cursor.close()
+            conn.close()
+        if not violations:
+            return [
+                HealthCheckResult(
+                    name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
+                    passed=True,
+                    message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
+                )
+            ]
+        return [
+            HealthCheckResult(
+                name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
+                passed=False,
+                message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG.format(
+                    count=len(violations)
+                ),
+                error=cs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
+                    v.detail for v in violations
+                ),
+            )
+        ]
+
     def run_all_checks(self) -> list[HealthCheckResult]:
         self.results = []
         self.results.append(self.check_docker())
         self.results.append(self.check_memgraph_connection())
+        self.results.extend(self.check_graph_integrity())
         self.results.extend(self.check_api_keys())
         for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:
             self.results.append(self.check_external_tool(tool_name, cmd))

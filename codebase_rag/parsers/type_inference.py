@@ -265,12 +265,13 @@ class TypeInferenceEngine:
         # (H)   ['self','shared','state','lock','unwrap'] -> base local self (Db),
         # (H)     field shared (Arc<Shared>->Shared), field state (Mutex<State>, guard
         # (H)     inner State), lock unwraps the guard -> State, unwrap identity -> State.
-        # (H) The base is a typed local (self/var) when present in var_types, else a
-        # (H) type name. Each hop tries: guard-unwrap (a guard accessor right after a
-        # (H) guard-wrapped field) -> field-type -> method-return -> identity.
-        if len(segments) < 2:
+        # (H) Each hop tries: guard-unwrap (a guard accessor right after a guard-
+        # (H) wrapped field) -> field-type -> method-return -> identity.
+        if not segments:
             return None
-        current_type: str | None = var_types.get(segments[0]) or segments[0]
+        current_type = self._rust_chain_base_type(segments, module_qn, var_types)
+        if current_type is None:
+            return None
         # (H) Inner type of the guard-wrapped field just hopped through, pending a guard
         # (H) accessor to unwrap it (None otherwise).
         guard_inner: str | None = None
@@ -299,6 +300,20 @@ class TypeInferenceEngine:
                 return None
         return current_type
 
+    def _rust_chain_base_type(
+        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+    ) -> str | None:
+        # (H) Base of a flattened chain: a typed local (self/var) when present in
+        # (H) var_types, else a free fn called by bare name (`let s = make()`),
+        # (H) else the segment itself as a type name -- only useful when there are
+        # (H) hops to walk, so a bare unresolved name types nothing.
+        base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
+            segments[0], module_qn
+        )
+        if base is not None:
+            return base
+        return segments[0] if len(segments) > 1 else None
+
     def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
         # (H) Resolve a Rust type name to its class-node qn, honoring imports: a `use`
         # (H) target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
@@ -314,7 +329,33 @@ class TypeInferenceEngine:
             return self._resolve_rust_import_path(target)
         return self._resolve_class_name(type_name, module_qn) or type_name
 
-    def _resolve_rust_import_path(self, target: str) -> str:
+    def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
+        # (H) Return type of a free fn called by bare name: same-module first, then
+        # (H) a `use`-imported fn resolved through its raw `::` path. A type-name
+        # (H) base (`Maker::make`) misses here because a bare type is never a
+        # (H) recorded key (fns and types share a name only across Rust's separate
+        # (H) fn/type namespaces, which idiomatic code never does).
+        if return_type := self.method_return_types.get(
+            f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        ):
+            return return_type
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (target := import_map.get(name)) and cs.SEPARATOR_DOUBLE_COLON in target:
+            fn_qn = self._resolve_rust_import_path(
+                target, node_types=(NodeType.FUNCTION,)
+            )
+            return self.method_return_types.get(fn_qn)
+        return None
+
+    def _resolve_rust_import_path(
+        self,
+        target: str,
+        node_types: tuple[NodeType, ...] = (
+            NodeType.CLASS,
+            NodeType.ENUM,
+            NodeType.TYPE,
+        ),
+    ) -> str:
         # (H) Map a `use` target (`crate::cmd::Command`) to its registry qn. Prefer the
         # (H) candidate whose qn ends with the import's module path (`.cmd.Command`),
         # (H) so two same-named types in different modules disambiguate by path; fall
@@ -331,8 +372,7 @@ class TypeInferenceEngine:
         candidates = [
             qn
             for qn in self.function_registry.find_ending_with(simple)
-            if self.function_registry.get(qn)
-            in (NodeType.CLASS, NodeType.ENUM, NodeType.TYPE)
+            if self.function_registry.get(qn) in node_types
         ]
         if not candidates:
             return target

@@ -193,6 +193,22 @@ func collectEdges(pf parsedFile, types map[string]Def, edges *[]Edge) {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			line := pf.fset.Position(d.Name.Pos()).Line
+			// A function-local type parents to the enclosing FuncDecl: Go has
+			// no nested named funcs and cgr creates no nodes for func
+			// literals, so the FuncDecl is the nearest node-bearing scope.
+			parentKind := kindFunction
+			if d.Recv != nil {
+				parentKind = kindMethod
+			}
+			funcRef := NodeRef{parentKind, pf.rel, line}
+			ast.Inspect(d.Body, func(n ast.Node) bool {
+				if ts, ok := n.(*ast.TypeSpec); ok {
+					tline := pf.fset.Position(ts.Name.Pos()).Line
+					child := NodeRef{typeSpecKind(ts), pf.rel, tline}
+					*edges = append(*edges, Edge{relDefines, funcRef, child})
+				}
+				return true
+			})
 			if d.Recv == nil {
 				child := NodeRef{kindFunction, pf.rel, line}
 				*edges = append(*edges, Edge{relDefines, module, child})

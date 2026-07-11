@@ -20,8 +20,11 @@ _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
 # (H) Node labels a Rust receiver type name may resolve to: a struct (Class), an
-# (H) enum, or a type alias -- all can carry impl methods.
-_RS_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.ENUM, NodeType.TYPE})
+# (H) enum, a type alias, or a trait (Interface, when the receiver is typed to a
+# (H) `dyn`/`impl` trait or a trait-returning factory) -- all can carry methods.
+_RS_TYPE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
 
 
 def _split_receiver_chain(expr: str) -> list[str]:
@@ -274,12 +277,46 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         return self._redirect_protocol_method(
             self._resolve_function_call(
-                call_name, module_qn, local_var_types, class_context, caller_qn
+                call_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
         )
+
+    def _resolve_js_prototype_sibling(
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[str, str] | None:
+        # (H) Only a two-part `this.m` call in a JS/TS caller qualifies; the caller's
+        # (H) parent scope (module.Date for Date.prototype.strftime) is where the
+        # (H) prototype siblings were registered. A module-level caller degrades to
+        # (H) the same module-method lookup the CommonJS fallback performs.
+        # (H) A dotless caller_qn has no parent scope to consult: rsplit would
+        # (H) return the caller itself and the lookup would land on the caller's
+        # (H) own NESTED function, which `this.m` never names.
+        if language not in cs.JS_TS_LANGUAGES or not caller_qn:
+            return None
+        if cs.SEPARATOR_DOT not in caller_qn:
+            return None
+        if not call_name.startswith(cs.JS_THIS_CALL_PREFIX):
+            return None
+        method_name = call_name[len(cs.JS_THIS_CALL_PREFIX) :]
+        if not method_name or cs.SEPARATOR_DOT in method_name:
+            return None
+        parent_scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        method_qn = f"{parent_scope}{cs.SEPARATOR_DOT}{method_name}"
+        if func_type := self.function_registry.get(method_qn):
+            return func_type, method_qn
+        return None
 
     def _resolve_enclosing_scope(
         self, call_name: str, caller_qn: str | None, module_qn: str
@@ -298,6 +335,22 @@ class CallResolver:
             candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
             if candidate in self.function_registry:
                 return self.function_registry[candidate], candidate
+            # (H) A duplicate-variant caller (click's real `command` registers as
+            # (H) `command@168` behind its @t.overload stubs) owns nested defs the
+            # (H) def pass registers under the NATURAL qn (`command.decorator`);
+            # (H) probe the variant-stripped scope too, or the call falls to the
+            # (H) module trie and mis-binds to a sibling's same-named nested.
+            last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            if cs.DUP_QN_MARKER in last:
+                natural_scope = (
+                    scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+                )
+                natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
+                if natural_candidate in self.function_registry:
+                    return (
+                        self.function_registry[natural_candidate],
+                        natural_candidate,
+                    )
             if cs.SEPARATOR_DOT not in scope:
                 return None
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
@@ -388,6 +441,90 @@ class CallResolver:
                 targets.add((self.function_registry[override_qn], override_qn))
         return targets
 
+    def js_member_twin_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) `View.prototype.lookup = function lookup(...)` registers TWO nodes for
+        # (H) one method: the prototype path's `View.lookup` and the fn-expr's
+        # (H) own-name module-flat `view.lookup`. A call binds one twin and the
+        # (H) other reports dead. Return the same-name twin(s) whose parent chain
+        # (H) extends (or is extended by) the callee's parent -- i.e. the same
+        # (H) module's flat/member pair -- so the caller can edge both (the
+        # (H) duplicate-QN keep-both design). Never crosses modules.
+        parent_qn, sep, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        twins: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(leaf):
+            if qn == callee_qn:
+                continue
+            other_parent, d, other_leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if not d or other_leaf != leaf:
+                continue
+            if not (
+                other_parent.startswith(f"{parent_qn}{cs.SEPARATOR_DOT}")
+                or parent_qn.startswith(f"{other_parent}{cs.SEPARATOR_DOT}")
+            ):
+                continue
+            label = self.function_registry.get(qn)
+            if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+                twins.add((label, qn))
+        return twins
+
+    def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) Go package-level functions are package-scoped, but cgr keys each file as
+        # (H) its own module (`pkgdir.file.name`). Two same-package functions with the
+        # (H) same name can ONLY be mutually-exclusive build-tag variants (gin's
+        # (H) `validate` under `//go:build !nomsgpack` vs `nomsgpack`) -- the compiler
+        # (H) rejects duplicate top-level identifiers in a package otherwise. A bare call
+        # (H) resolves to just one file's copy, orphaning the other build's copy; return
+        # (H) every same-package same-name package-level sibling so no build variant is
+        # (H) reported dead. Revive-only and precise: a same-name function in a DIFFERENT
+        # (H) package (different directory) is a distinct function, never a variant, so
+        # (H) the package-dir equality guard excludes it.
+        file_module_qn, sep, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        pkg_dir, dsep, _file = file_module_qn.rpartition(cs.SEPARATOR_DOT)
+        if not dsep:
+            return set()
+        targets: set[tuple[str, str]] = set()
+        for qn in self.function_registry.find_ending_with(name):
+            label = self.function_registry.get(qn)
+            if qn == callee_qn or label != cs.NodeLabel.FUNCTION:
+                continue
+            other_module, d, other_name = qn.rpartition(cs.SEPARATOR_DOT)
+            if not d or other_name != name or other_module == file_module_qn:
+                continue
+            other_pkg, d2, other_file = other_module.rpartition(cs.SEPARATOR_DOT)
+            # (H) Same directory is necessary but not sufficient for same-package: Go
+            # (H) permits an external test package (`package p_test`) in a `_test.go` file
+            # (H) sharing the directory. Production code can never call a function defined
+            # (H) in a `_test.go` file, so exclude such siblings -- else a genuinely
+            # (H) test-only dead function would be masked as live.
+            if (
+                d2
+                and other_pkg == pkg_dir
+                and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
+            ):
+                targets.add((label, qn))
+        return targets
+
+    def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
+        # (H) A Java constructor is registered as a method directly under its class whose
+        # (H) simple name equals the class's simple name (`Foo.Foo(int)`). `new Foo(...)`
+        # (H) resolves to the CLASS, so redirect a CALLS edge to each declared constructor
+        # (H) (all overloads) -- argument-type overload selection is not attempted, which
+        # (H) is unnecessary for reachability and never fabricates a call to a
+        # (H) non-constructor. Only constructors DIRECTLY on the class match (a nested
+        # (H) class's constructor has an extra qn segment and is excluded).
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        targets: set[tuple[str, str]] = set()
+        for qn, node_type in self.function_registry.find_with_prefix(class_qn):
+            head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            parent, dot, mname = head.rpartition(cs.SEPARATOR_DOT)
+            if dot and parent == class_qn and mname == simple:
+                targets.add((node_type, qn))
+        return targets
+
     def cpp_dispatch_targets(
         self,
         call_name: str,
@@ -432,11 +569,11 @@ class CallResolver:
 
     def _interface_impl_map(self) -> dict[str, str]:
         # (H) Map an interface to its SOLE first-party implementer. A call typed to an
-        # (H) interface resolves to the interface's own method declaration; when the
-        # (H) interface has exactly one implementer the concrete method is the one that
-        # (H) runs, so redirect to it (call-graph accuracy). >1 implementer is
-        # (H) ambiguous -> not mapped -> the call stays on the interface method (no
-        # (H) precision risk, recall preserved).
+        # (H) interface resolves to the interface's own method declaration (the static
+        # (H) callee); when the interface has exactly one implementer the concrete
+        # (H) method is the one that runs, so ALSO edge it (call-graph accuracy).
+        # (H) >1 implementer is ambiguous -> not mapped -> the call stays on the
+        # (H) interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
             self._interface_impl_cache = {
                 interface_qn: next(iter(implementers))
@@ -445,17 +582,38 @@ class CallResolver:
             }
         return self._interface_impl_cache
 
+    def interface_sole_impl_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # (H) A callee that IS an interface/trait method (the receiver was typed to
+        # (H) the interface -- a concrete receiver dispatches to the impl directly)
+        # (H) with exactly one implementer also runs the concrete method, so return
+        # (H) it for an additional CALLS edge. REPLACING the interface edge instead
+        # (H) (the pre-#665-era redirect) orphaned the interface stub: OVERRIDES
+        # (H) expansion only walks interface -> impl, so the stub's declaration
+        # (H) (gson's FieldNamingStrategy.translateName) reported dead.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return set()
+        impl_qn = self._interface_impl_map().get(class_qn)
+        if impl_qn is None:
+            return set()
+        if result := self._try_resolve_method(impl_qn, method_name):
+            return {result}
+        return set()
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:
+        # (H) Only Python Protocol stubs REPLACE the resolved target: a Protocol
+        # (H) method body never runs (it is `...`), so the concrete method is the
+        # (H) sole real callee. An interface/trait method is a live declaration the
+        # (H) call depends on, so its sole-impl companion edge is ADDITIVE
+        # (H) (interface_sole_impl_targets), never a replacement.
         if result is None:
             return result
         class_qn, sep, method_name = result[1].rpartition(cs.SEPARATOR_DOT)
         if not sep:
             return result
-        impl_qn = self._protocol_impl_map().get(
-            class_qn
-        ) or self._interface_impl_map().get(class_qn)
+        impl_qn = self._protocol_impl_map().get(class_qn)
         if impl_qn is None:
             return result
         redirected = f"{impl_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -470,11 +628,20 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         # (H) Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # (H) before the module-keyed cache/trie, which would otherwise return a sibling
         # (H) scope's same-named nested function.
         if result := self._resolve_enclosing_scope(call_name, caller_qn, module_qn):
+            return result
+
+        # (H) `this.m()` inside a prototype-assigned function dispatches to a sibling
+        # (H) method of the same prototype target (Date.prototype.strftime calling
+        # (H) this.getTwoDigitMonth()); the caller's parent scope names that target.
+        # (H) Caller-specific, so it too must run before the module-keyed cache; the
+        # (H) CommonJS module-receiver fallback still applies when no sibling exists.
+        if result := self._resolve_js_prototype_sibling(call_name, caller_qn, language):
             return result
 
         use_cache = not local_var_types
@@ -493,11 +660,22 @@ class CallResolver:
             # (H) A chained call resolves via return-type inference only; it does NOT
             # (H) fall through to the trie fallback, because a hop returning a container
             # (H) (`Kids() []Command`) or an unknown type must drop the edge rather than
-            # (H) rebind the final method by bare name (a false `Command.Run`).
-            return self._resolve_chained_call(call_name, module_qn, local_var_types)
+            # (H) rebind the final method by bare name (a false `Command.Run`). C++ is the
+            # (H) exception: a `foo().bar()` receiver with an unrecordable return type
+            # (H) (`auto`/trailing/decltype, e.g. fmt's get_container(out).append) fell to
+            # (H) the bare-method trie before chained typing existed, so preserve that
+            # (H) fallback for C++ to avoid dropping edges the typing can't yet recover.
+            return self._resolve_chained_call(
+                call_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
 
         if result := self._try_resolve_via_imports(
-            call_name, module_qn, local_var_types
+            call_name, module_qn, local_var_types, language
         ):
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
@@ -548,10 +726,62 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = None
             return None
 
+        # (H) A JS/TS member call on an UNTYPED receiver (`view.render(...)` where
+        # (H) `view` is a param constructed in the caller) targets a MEMBER: the
+        # (H) bare-name trie would rebind it to a free function of the same name
+        # (H) (express's application.render), a false edge that also kills the real
+        # (H) prototype method. Bind the UNIQUE member-like candidate (parent qn
+        # (H) itself registered) or drop.
+        if language in cs.JS_TS_LANGUAGES and cs.SEPARATOR_DOT in call_name:
+            result = self._resolve_js_member_call_unique(call_name, module_qn)
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
+            return result
+
         result = self._try_resolve_via_trie(call_name, module_qn)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _resolve_js_member_call_unique(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        method_name = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        candidates: list[str] = []
+        for qn in self.function_registry.find_ending_with(method_name):
+            parent_qn, sep, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if not sep or leaf != method_name:
+                continue
+            # (H) Member-like: the parent is itself a registered node (a class, a
+            # (H) prototype constructor Function, an object scope) -- a free
+            # (H) function's parent is a module, which is never in the registry.
+            if parent_qn in self.function_registry:
+                candidates.append(qn)
+        # (H) Only candidates VISIBLE to the calling module count -- parent module
+        # (H) imported here or defined here (express's tryRender imports ./view, so
+        # (H) View.render qualifies; an unrelated example's GithubView.render does
+        # (H) not). Required even for a SINGLETON: an untyped `client.render()` in
+        # (H) a file with no relation to the sole View.render must drop, not grow a
+        # (H) false cross-module edge that hides real dead code. A JS require maps
+        # (H) the MODULE (`require('./view')` -> express.lib.view), so a visible
+        # (H) candidate's parent may equal an import or sit anywhere under one.
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        imported = set(import_map.values())
+        visible = [
+            qn
+            for qn in candidates
+            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            or any(
+                qn.rpartition(cs.SEPARATOR_DOT)[0] == imp
+                or qn.rpartition(cs.SEPARATOR_DOT)[0].startswith(
+                    f"{imp}{cs.SEPARATOR_DOT}"
+                )
+                for imp in imported
+            )
+        ]
+        if len(visible) == 1:
+            return self.function_registry[visible[0]], visible[0]
+        return None
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # (H) True when the dotted call's object segment is imported from a target
@@ -689,6 +919,7 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is None:
@@ -706,7 +937,7 @@ class CallResolver:
             return result
 
         if result := self._try_resolve_qualified_call(
-            call_name, import_map, module_qn, local_var_types
+            call_name, import_map, module_qn, local_var_types, language
         ):
             return result
 
@@ -729,6 +960,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
@@ -743,7 +975,13 @@ class CallResolver:
 
         if len(parts) == 2:
             if result := self._resolve_two_part_call(
-                parts, call_name, separator, import_map, module_qn, local_var_types
+                parts,
+                call_name,
+                separator,
+                import_map,
+                module_qn,
+                local_var_types,
+                language,
             ):
                 return result
 
@@ -859,6 +1097,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         object_name, method_name = parts
 
@@ -889,6 +1128,18 @@ class CallResolver:
         ):
             return result
 
+        # (H) A JS/TS dotted call binds to a same-module free function ONLY through
+        # (H) a module-ish receiver (`exports.render()`, `this.render()` in the
+        # (H) CommonJS/prototype pattern). An ordinary identifier receiver
+        # (H) (`view.render()`) is an instance call: binding it to the free
+        # (H) function is a false edge that also kills the real prototype method
+        # (H) (express's View.render); let it fall to the unique-member gate.
+        if (
+            language in cs.JS_TS_LANGUAGES
+            and separator == cs.SEPARATOR_DOT
+            and object_name not in cs.JS_MODULE_RECEIVERS
+        ):
+            return None
         return self._try_resolve_module_method(method_name, call_name, module_qn)
 
     def _try_resolve_static_type_method(
@@ -1161,7 +1412,55 @@ class CallResolver:
                     )
                     return inherited_method
 
-        return None
+        return self._resolve_field_hop_method(
+            parts, call_name, import_map, module_qn, local_var_types
+        )
+
+    def _resolve_field_hop_method(
+        self,
+        parts: list[str],
+        call_name: str,
+        import_map: dict[str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # (H) A paren-free field-hop receiver called inline (gin's `c.writermem.reset`):
+        # (H) `c` is a typed local (Context), each middle segment is a struct FIELD whose
+        # (H) recorded type advances the receiver (writermem -> responseWriter), and the
+        # (H) final segment is a method on the last field's type. Resolves ONLY when every
+        # (H) middle segment is a known field and the method exists -- never a name-only
+        # (H) fallback -- so it can revive a dropped edge but never mis-bind. Distinct
+        # (H) from the stored-local field-hop (`root := e.field.get(); root.m()`) which is
+        # (H) already typed via _enrich_go_call_locals; this is the no-local direct form.
+        if len(parts) < 3 or not local_var_types:
+            return None
+        current_type = local_var_types.get(parts[0])
+        if not current_type:
+            return None
+        class_qn = self._resolve_class_qn_from_type(current_type, import_map, module_qn)
+        for field in parts[1:-1]:
+            if not class_qn:
+                return None
+            field_type = self.type_inference.class_field_types.get(class_qn, {}).get(
+                field
+            )
+            if not field_type:
+                return None
+            class_qn = self._chain_class_qn(field_type, module_qn)
+        if not class_qn:
+            return None
+        method_name = parts[-1]
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=parts[0],
+                var_type=current_type,
+            )
+            return self.function_registry[method_qn], method_qn
+        return self._resolve_inherited_method(class_qn, method_name)
 
     def operator_dunder_targets(
         self,
@@ -1248,9 +1547,11 @@ class CallResolver:
         if not call_name.startswith(cs.OPERATOR_PREFIX):
             return None
 
-        if call_name in cs.CPP_OPERATORS:
-            return (cs.NodeLabel.FUNCTION, cs.CPP_OPERATORS[call_name])
-
+        # (H) A user-defined overload always beats the builtin: the old table
+        # (H) of synthetic `builtin.cpp.operator_*` qns shadowed real overloads
+        # (H) and produced edges to nodes that never exist (dropped by the
+        # (H) database). A primitive builtin operator is not a first-party
+        # (H) callee, so with no registered overload there is no edge at all.
         if possible_matches := self.function_registry.find_ending_with(call_name):
             same_module_ops = [
                 qn
@@ -1269,6 +1570,9 @@ class CallResolver:
         object_expr: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        class_context: str | None = None,
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         # (H) Type of a chained receiver expression like `c.Root()` using the shared
         # (H) method_return_types map: the base is a typed local (`c` -> Command), and
@@ -1285,8 +1589,14 @@ class CallResolver:
         if cs.CHAR_PAREN_OPEN in base:
             # (H) A Rust chain rooted in an associated-function call
             # (H) (`Ping::new(msg).into_frame()`): type the base from the assoc fn's
-            # (H) recorded return type. Other paren bases stay unresolved.
-            current_type = self._infer_rust_assoc_base_type(base, module_qn)
+            # (H) recorded return type. A bare-identifier factory call
+            # (H) (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
+            # (H) return type. Other paren bases stay unresolved.
+            current_type = self._infer_rust_assoc_base_type(
+                base, module_qn
+            ) or self._infer_call_base_type(
+                base, module_qn, local_var_types, class_context, caller_qn, language
+            )
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -1310,6 +1620,60 @@ class CallResolver:
             self._resolve_class_qn_from_type(type_name, import_map, module_qn)
             or type_name
         )
+
+    def _infer_call_base_type(
+        self,
+        base: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str | None:
+        # (H) `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
+        # (H) Resolve the callee to its function/method qn (a sibling static method
+        # (H) `Owner.parser` or a free `make`, never the same-named class -- the
+        # (H) registry holds only callables) and return its recorded return type. A
+        # (H) `::`-qualified callee is the Rust assoc path's job, handled by the caller.
+        callee = base.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if not callee or cs.SEPARATOR_DOUBLE_COLON in callee:
+            return None
+        resolved = self.resolve_function_call(
+            callee, module_qn, local_var_types, class_context, caller_qn, language
+        )
+        if resolved is None:
+            return None
+        return_type = self.type_inference.method_return_types.get(resolved[1])
+        if not return_type:
+            return None
+        return self._resolve_type_to_class_qn(return_type, module_qn)
+
+    def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
+        # (H) Resolve a recorded return-type path to a registered CLASS qn. A factory
+        # (H) return type names a class, but the plain class-name resolver can return a
+        # (H) same-named factory METHOD (nlohmann's basic_json has both a `parser` class
+        # (H) and a `parser()` factory), so filter to class-labeled nodes. Try the
+        # (H) import-aware resolver first (same-file bare types, imports), then a
+        # (H) class-only suffix match on the qualified path, then on the bare name.
+        candidate = self._chain_class_qn(type_path, module_qn)
+        if candidate and self.function_registry.get(candidate) == cs.NodeLabel.CLASS:
+            return candidate
+        matches = [
+            qn
+            for qn in self.function_registry.find_ending_with(type_path)
+            if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+        ]
+        if not matches and cs.SEPARATOR_DOT in type_path:
+            simple = type_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            matches = [
+                qn
+                for qn in self.function_registry.find_ending_with(simple)
+                if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+            ]
+        if not matches:
+            return None
+        matches.sort(key=lambda qn: (len(qn), qn))
+        return matches[0]
 
     def _infer_rust_assoc_base_type(self, base: str, module_qn: str) -> str | None:
         # (H) `Ping::new(msg)` -> the return type recorded for `Ping::new` (Ping).
@@ -1344,6 +1708,9 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
+        class_context: str | None = None,
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
@@ -1357,7 +1724,14 @@ class CallResolver:
             self.type_inference.python_type_inference._infer_expression_return_type(
                 object_expr, module_qn, local_var_types
             )
-            or self._infer_chained_object_type(object_expr, module_qn, local_var_types)
+            or self._infer_chained_object_type(
+                object_expr,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
         )
         if object_type:
             full_object_type = object_type
@@ -1390,6 +1764,27 @@ class CallResolver:
                     obj_type=object_type,
                 )
                 return inherited_method
+
+        # (H) C/C++ only, and ONLY when the receiver type was never inferred: its return
+        # (H) type is unrecordable (`auto`/trailing/decltype, e.g. fmt's
+        # (H) get_container(out).append). Before chained typing existed the bare method
+        # (H) name resolved via the trie, so fall back to it here rather than dropping an
+        # (H) edge that used to land. When the type WAS inferred but lacks the method, we
+        # (H) must NOT rebind to an unrelated same-named method -- drop instead. C shares
+        # (H) the field_expression call shape but has no method dispatch, so it always
+        # (H) lands here = its exact prior behaviour. Go/Rust deliberately drop.
+        if not object_type and language in (
+            cs.SupportedLanguage.CPP,
+            cs.SupportedLanguage.C,
+        ):
+            return self._resolve_function_call(
+                final_method,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+            )
 
         return None
 
@@ -1592,11 +1987,16 @@ class CallResolver:
         return type_name
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
+        # (H) Call resolution runs in Pass 3, after every definition pass, so a
+        # (H) class qn missing from the registry can never be a real node;
+        # (H) require registration so an import-map module entry (a C++ header
+        # (H) stem shadowing its class name) cannot mask the real class.
         return resolve_class_name(
             self._dealias_type(class_name),
             module_qn,
             self.import_processor,
             self.function_registry,
+            require_registered=True,
         )
 
     def resolve_java_method_call(
@@ -1604,11 +2004,14 @@ class CallResolver:
         call_node: Node,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 
         result = self._redirect_protocol_method(
-            java_engine.resolve_java_method_call(call_node, local_var_types, module_qn)
+            java_engine.resolve_java_method_call(
+                call_node, local_var_types, module_qn, caller_qn
+            )
         )
 
         if result:

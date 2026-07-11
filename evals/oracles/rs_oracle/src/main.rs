@@ -428,6 +428,16 @@ fn process_edges(
                                     REL_DEFINES_METHOD, file, kind, *tline, KIND_METHOD,
                                     m.sig.ident.span().start().line,
                                 ));
+                            } else {
+                                // (H) An impl on a type declared elsewhere (Box<P>,
+                                // (H) primitives, external types) has no owner node;
+                                // (H) cgr anchors such methods to the module with
+                                // (H) DEFINES (orphan-prevention fallback), so the
+                                // (H) oracle models the same containment.
+                                edges.push(edge_json(
+                                    REL_DEFINES, file, KIND_MODULE, module_line, KIND_METHOD,
+                                    m.sig.ident.span().start().line,
+                                ));
                             }
                         }
                         syn::ImplItem::Type(t) => edges.push(edge_json(

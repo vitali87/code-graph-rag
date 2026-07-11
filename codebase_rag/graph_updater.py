@@ -15,11 +15,14 @@ from . import logs as ls
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
     run_cpp_frontend,
+    run_cpp_frontend_hybrid,
 )
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
@@ -29,6 +32,7 @@ from .types_defs import (
     FunctionRegistry,
     LanguageQueries,
     NodeType,
+    PendingMacroCall,
     QualifiedName,
     ResultRow,
     SimpleNameLookup,
@@ -400,6 +404,20 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+def _load_parser_fingerprint(stamp_path: Path) -> str | None:
+    try:
+        return stamp_path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
+    try:
+        stamp_path.write_text(fingerprint, encoding="utf-8")
+    except OSError as e:
+        logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
+
+
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
     if not cache_path.is_file():
         return {}
@@ -444,6 +462,7 @@ class GraphUpdater:
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
         capture: CaptureSelection | None = None,
+        skip_embeddings: bool | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
         # (H) `ingestor` stays the raw object for DB queries (QueryProtocol),
@@ -475,9 +494,23 @@ class GraphUpdater:
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        # (H) None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
+        # (H) callers (MCP, workspace sync) opt out without a CLI flag.
+        self.skip_embeddings = (
+            settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
+        )
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # (H) Hybrid-mode macro uses awaiting a caller: attribution needs the
+        # (H) tree-sitter definition spans, which exist only after Pass 2.
+        self._pending_cpp_macro_calls: list[PendingMacroCall] = []
+        # (H) Files (re)parsed by Pass 2 this run: the only files whose
+        # (H) definition spans exist for hybrid macro-call attribution.
+        self._reparsed_file_keys: set[str] = set()
+        # (H) Module qns read back from the graph on incremental runs; deferred
+        # (H) import verification counts them as real internal targets.
+        self._rehydrated_module_qns: set[str] = set()
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -493,13 +526,20 @@ class GraphUpdater:
         )
 
     def _run_cpp_frontend(self) -> None:
-        # (H) Optional libclang C++ pre-pass: when CPP_FRONTEND=libclang and a
-        # (H) compile_commands.json is discoverable, emit macro-accurate C/C++
-        # (H) nodes/edges directly (tree-sitter cannot expand macros). Covered
-        # (H) files are then skipped by the tree-sitter definition pass. Missing
-        # (H) either condition falls back to tree-sitter with no change.
+        # (H) Optional libclang C++ pre-pass when a compile_commands.json is
+        # (H) discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
+        # (H) directly (tree-sitter cannot expand macros) and skip covered
+        # (H) files in the tree-sitter definition pass. HYBRID: tree-sitter
+        # (H) stays the backbone (nothing is skipped); libclang layers on only
+        # (H) macro Function nodes and #include IMPORTS, whose qns are
+        # (H) scheme-identical, and hands back macro uses for span attribution
+        # (H) after Pass 2. Missing either condition falls back to tree-sitter.
         self._cpp_frontend_covered = frozenset()
-        if settings.CPP_FRONTEND != cs.CppFrontend.LIBCLANG:
+        self._pending_cpp_macro_calls = []
+        if settings.CPP_FRONTEND not in (
+            cs.CppFrontend.LIBCLANG,
+            cs.CppFrontend.HYBRID,
+        ):
             return
         if not cpp_frontend_available():
             logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
@@ -509,6 +549,24 @@ class GraphUpdater:
             logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._pending_cpp_macro_calls = run_cpp_frontend_hybrid(
+                self.ingestor,
+                self.repo_path,
+                self.project_name,
+                compdb_dir,
+                function_registry=self.function_registry,
+                simple_name_lookup=self.simple_name_lookup,
+                structural_elements=(
+                    self.factory.structure_processor.structural_elements
+                ),
+            )
+            logger.info(
+                ls.CPP_FRONTEND_HYBRID_PENDING.format(
+                    count=len(self._pending_cpp_macro_calls)
+                )
+            )
+            return
         self._cpp_frontend_covered = run_cpp_frontend(
             self._sink,
             self.repo_path,
@@ -521,6 +579,44 @@ class GraphUpdater:
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
+
+    def _resolve_hybrid_macro_calls(self) -> None:
+        # (H) Attribute each hybrid macro use to the tightest enclosing
+        # (H) TREE-SITTER definition span (recorded during Pass 2), falling
+        # (H) back to the use site's Module -- the mirror of the libclang
+        # (H) frontend's own span resolution, but against the qn scheme the
+        # (H) rest of the graph actually uses.
+        if not self._pending_cpp_macro_calls:
+            return
+        spans = self.factory.definition_processor.cpp_definition_spans
+        emitted = 0
+        for call in self._pending_cpp_macro_calls:
+            # (H) The frontend parses every TU each run, but an incremental
+            # (H) run records spans only for re-parsed files. An unchanged
+            # (H) file has no spans here AND already carries its caller->macro
+            # (H) edges in the graph, so resolving it would re-attribute
+            # (H) in-function uses to the Module.
+            if call.rel_path not in self._reparsed_file_keys:
+                continue
+            containing = [
+                s
+                for s in spans.get(call.rel_path, ())
+                if s.start_line <= call.line <= s.end_line
+                and s.qualified_name != call.callee_qn
+            ]
+            if containing:
+                tightest = min(containing, key=lambda s: s.end_line - s.start_line)
+                caller_label, caller_qn = tightest.label, tightest.qualified_name
+            else:
+                caller_label = cs.NodeLabel.MODULE.value
+                caller_qn = call.fallback_module_qn
+            self.ingestor.ensure_relationship_batch(
+                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
+            )
+            emitted += 1
+        logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
@@ -541,6 +637,9 @@ class GraphUpdater:
         self._sink.ensure_node_batch(cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name})
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
+        if not force and self._single_file is None:
+            self._warn_if_parser_changed()
+
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -550,14 +649,33 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
-        self._run_cpp_frontend()
+        # (H) LIBCLANG must run before Pass 2: _process_files consumes the
+        # (H) covered-file set to skip those files.
+        if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        # (H) HYBRID must run after Pass 2: an incremental run deletes each
+        # (H) changed file's Module subtree before re-parsing it, so macro
+        # (H) nodes and include IMPORTS emitted earlier would be deleted with
+        # (H) it and vanish until a forced rebuild.
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
+
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
+
+        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
+        if contained:
+            logger.info("Resolved {} deferred C++ nested containments", contained)
+
+        # (H) After resolve_deferred_cpp_methods: an out-of-class method's span
+        # (H) is recorded only once its class binding resolves, and a macro use
+        # (H) inside such a method must attribute to it, not the Module.
+        self._resolve_hybrid_macro_calls()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
@@ -578,6 +696,54 @@ class GraphUpdater:
                 "Registered {} forward-declared C/C++ types with no definition",
                 kept_forwards,
             )
+
+        # (H) After forward declarations so a base whose only representation is
+        # (H) a kept forward declaration still resolves to a real node.
+        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
+        if inherits:
+            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+
+        # (H) Same reasoning for every other language: parents resolve against
+        # (H) the full registry (including rehydrated definitions), and an
+        # (H) unresolvable parent emits no edge instead of a phantom.
+        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
+        if generic_inherits:
+            logger.info(
+                "Resolved {} deferred inheritance/implements parents",
+                generic_inherits,
+            )
+
+        module_impls = (
+            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
+        )
+        if module_impls:
+            logger.info("Resolved {} C++20 module implementation links", module_impls)
+
+        # (H) IMPORTS edges verify against every module qn this run produced
+        # (H) (files, inline modules, rehydrated unchanged files); an internal
+        # (H) target that resolves nowhere emits no edge.
+        known_module_paths: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known_module_paths.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known_module_paths.setdefault(qn, "")
+        imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
+            known_module_paths
+        )
+        if imports_emitted:
+            logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
+
+        # (H) Last containment step: every node-registering pass above (deferred
+        # (H) C++ methods, Go receivers, kept forward declarations) must finish
+        # (H) before parent qns are verified against the registry.
+        linked = self.factory.definition_processor.resolve_deferred_parent_links()
+        if linked:
+            logger.info("Resolved {} deferred containment parents", linked)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
@@ -619,9 +785,31 @@ class GraphUpdater:
             # (H) @property defined elsewhere would otherwise drop vs a clean index.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
+            # (H) Restore the macro-namespace set for unchanged files: the Rust
+            # (H) macro/fn gate consults it, so a re-parsed file's invocation of
+            # (H) a macro defined elsewhere would otherwise drop vs a clean index.
+            if row.get(cs.KEY_IS_MACRO):
+                self.factory.definition_processor.macro_qns.add(qn)
+            # (H) Record the defining file so _is_cpp_defined can language-check
+            # (H) rehydrated candidates (deferred C++ INHERITS resolution runs
+            # (H) after this and must reach bases in UNCHANGED headers).
+            if isinstance(path := row.get(cs.KEY_PATH), str):
+                self.factory.definition_processor.rehydrated_definition_paths[qn] = path
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)
+        # (H) Module qns from unchanged files: deferred import verification and
+        # (H) C++20 module-impl resolution must count them as real targets, or
+        # (H) an incremental run would drop edges a clean index emits.
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(label, str):
+                continue
+            if label == cs.NodeLabel.MODULE_INTERFACE.value:
+                self.factory.definition_processor.cpp_module_interfaces.add(qn)
+            else:
+                self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
     def _rehydrate_class_inheritance_from_graph(self) -> None:
@@ -799,7 +987,7 @@ class GraphUpdater:
             with os.scandir(dir_path_str) as it:
                 for entry in it:
                     name = entry.name
-                    if name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
+                    if name in cs.CGR_STATE_FILENAMES:
                         continue
                     try:
                         is_symlink = entry.is_symlink()
@@ -864,6 +1052,19 @@ class GraphUpdater:
             )
         )
 
+    def _warn_if_parser_changed(self) -> None:
+        # (H) No hash cache means a full build is coming: nothing to compare.
+        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+            return
+        stored = _load_parser_fingerprint(
+            self.repo_path / cs.PARSER_FINGERPRINT_FILENAME
+        )
+        # (H) A missing stamp on an existing graph means it was built by an
+        # (H) unknown (pre-fingerprint) parser: treat it as stale too, without
+        # (H) paying for a fingerprint computation that cannot match.
+        if stored is None or stored != compute_parser_fingerprint():
+            logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
+
     def _is_already_in_sync(self) -> bool:
         if self._single_file is not None:
             return False
@@ -920,8 +1121,7 @@ class GraphUpdater:
             return []
 
         eligible: list[tuple[Path, str]] = []
-        hash_name = cs.HASH_CACHE_FILENAME
-        dir_mtimes_name = cs.DIR_MTIMES_FILENAME
+        state_filenames = cs.CGR_STATE_FILENAMES
         repo_str = str(self.repo_path)
         repo_prefix_len = len(repo_str) + 1
         exclude_paths = self.exclude_paths
@@ -945,7 +1145,7 @@ class GraphUpdater:
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
             )
             for fname in sorted(filenames):
-                if fname in (hash_name, dir_mtimes_name):
+                if fname in state_filenames:
                     continue
                 dot = fname.rfind(".")
                 suffix = fname[dot:] if dot != -1 else ""
@@ -964,6 +1164,7 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        is_full_build = (force or not old_hashes) and self._single_file is None
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
@@ -1029,6 +1230,9 @@ class GraphUpdater:
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
         captured_inbound = self._capture_inbound_edges(reindexed_keys)
+        self._reparsed_file_keys = {
+            file_key for _fp, file_key, _new, _b in changed_entries
+        }
 
         pre_parsed = self._pre_parse_changed_files(changed_entries)
 
@@ -1090,6 +1294,14 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
         _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
+        # (H) Stamp only full builds: re-stamping an incremental run would
+        # (H) silence the staleness warning while unchanged files still carry
+        # (H) the old parser's edges.
+        if is_full_build:
+            _save_parser_fingerprint(
+                self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
+                compute_parser_fingerprint(),
+            )
 
     def _pre_parse_changed_files(
         self,
@@ -1108,7 +1320,7 @@ class GraphUpdater:
             parser = self.queries[language].get(cs.KEY_PARSER)
             if not parser:
                 continue
-            tree = parser.parse(file_bytes)
+            tree = parse_with_preproc_recovery(parser, file_bytes, language)
             root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
@@ -1173,7 +1385,7 @@ class GraphUpdater:
         except OSError as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
             return None
-        root_node = parser.parse(file_bytes).root_node
+        root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.ast_cache[file_path] = (root_node, language)
         self.factory._func_class_captures_cache.pop(file_path, None)
         return root_node
@@ -1274,6 +1486,10 @@ class GraphUpdater:
             logger.info(ls.PRUNE_SKIP)
 
     def _generate_semantic_embeddings(self) -> None:
+        if self.skip_embeddings:
+            logger.info(ls.EMBEDDINGS_SKIPPED)
+            return
+
         if not has_semantic_dependencies():
             logger.info(ls.SEMANTIC_NOT_AVAILABLE)
             return

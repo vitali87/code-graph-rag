@@ -9,10 +9,20 @@ from tree_sitter import QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
-from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from ..types_defs import (
+    ASTNode,
+    CppDefinitionSpan,
+    DeferredCppInherit,
+    DeferredInherit,
+    FunctionLocation,
+    FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
+    SimpleNameLookup,
+)
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
+from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
@@ -62,6 +72,12 @@ class DefinitionProcessor(
         # (H) method resolves via the field's declared type. Populated at class
         # (H) ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # (H) Java anonymous-class override methods: (anon_method_qn, method_name,
+        # (H) base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
+        # (H) is not modelled as a subclass, so its overrides register under the
+        # (H) enclosing class with no OVERRIDES edge and look dead. Recorded at method
+        # (H) ingestion, resolved to OVERRIDES edges once every base type is registered.
+        self.java_anon_overrides: list[tuple[str, str, str, str]] = []
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a
@@ -81,7 +97,47 @@ class DefinitionProcessor(
         self._type_alias_conflicts: set[str] = set()
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
+        self._deferred_cpp_containment: list = []
+        self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
+        # (H) Unnamed JS/TS function expressions held back until the named
+        # (H) JS passes have claimed their spans (one node per source function).
+        self._deferred_js_anonymous: list = []
+        # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
+        # (H) out-of-class C++ method the definition pass bound; Pass-3 call
+        # (H) attribution reuses these decisions instead of re-resolving.
+        self.cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] = {}
+        # (H) (module_qn, def start_line) -> location of EVERY C++ function or
+        # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
+        # (H) the registered label/qn instead of re-deriving them structurally
+        # (H) (the walks diverge on preprocessor-distorted class bodies).
+        self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
+        # (H) {rel path: [full line spans]} of every C/C++ function/method the
+        # (H) tree-sitter pass ingested; the hybrid C++ frontend's macro-use
+        # (H) CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
+        self.cpp_definition_spans: dict[str, list[CppDefinitionSpan]] = {}
+        self._deferred_cpp_inherits: list[DeferredCppInherit] = []
+        # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
+        # (H) registered; resolve_deferred_inherits re-resolves the guesses.
+        self._deferred_inherits: list[DeferredInherit] = []
+        # (H) C++20 module interfaces declared this run (export module X), and
+        # (H) implementation units whose IMPLEMENTS edge waits for its
+        # (H) interface to be known.
+        self.cpp_module_interfaces: set[str] = set()
+        self._deferred_cpp_module_impls: list[tuple[str, str]] = []
+        # (H) Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
+        # (H) import verification counts them as real internal targets.
+        self.declared_module_qns: set[str] = set()
+        # (H) Registered qns that are macro definitions (Rust macro_rules!):
+        # (H) macros register as Function nodes but live in a separate namespace,
+        # (H) so Pass-3 gates macro-invocation call sites to these targets and
+        # (H) fn-namespace call sites away from them.
+        self.macro_qns: set[str] = set()
+        # (H) {qn: file path} for definitions rehydrated from the graph on an
+        # (H) incremental run, whose modules are absent from module_qn_to_file_path
+        # (H) (only re-parsed files populate it). _is_cpp_defined falls back to
+        # (H) this so cross-file resolution into UNCHANGED headers still works.
+        self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
@@ -134,7 +190,7 @@ class DefinitionProcessor(
                 if not parser:
                     logger.warning(ls.DEF_NO_PARSER.format(language=language))
                     return None
-                tree = parser.parse(source_bytes)
+                tree = parse_with_preproc_recovery(parser, source_bytes, language)
                 root_node = tree.root_node
                 pre_combined_captures = None
 
@@ -233,6 +289,10 @@ class DefinitionProcessor(
                 self._ingest_prototype_inheritance(
                     root_node, module_qn, language, queries
                 )
+                # (H) Named passes above have claimed their function nodes;
+                # (H) only genuinely anonymous spans (callbacks, IIFEs) still
+                # (H) need their held-back registration.
+                self._flush_deferred_js_anonymous()
 
             return (root_node, language)
 

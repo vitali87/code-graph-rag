@@ -56,6 +56,12 @@ _DEFINES_RELS = frozenset(
         cs.RelationshipType.DEFINES_METHOD.value,
     }
 )
+_MODULE_QN_LABELS = frozenset(
+    {
+        _MODULE_LABEL,
+        cs.NodeLabel.MODULE_INTERFACE.value,
+    }
+)
 _DEFINITION_LABELS = frozenset(
     {
         cs.NodeLabel.FUNCTION.value,
@@ -162,6 +168,8 @@ class _StatefulIngestor:
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
+                        cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                     }
                     defs.append(row)
                 return defs
@@ -186,6 +194,17 @@ class _StatefulIngestor:
                     )
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
+            case cs.CYPHER_ALL_MODULE_QNS:
+                module_rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label not in _MODULE_QN_LABELS:
+                        continue
+                    module_row: ResultRow = {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_LABEL: label,
+                    }
+                    module_rows.append(module_row)
+                return module_rows
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():

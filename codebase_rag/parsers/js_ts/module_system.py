@@ -37,6 +37,7 @@ class JsTsModuleSystemMixin:
     project_name: str
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
+    module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     _processed_imports: set[str]
 
@@ -45,6 +46,20 @@ class JsTsModuleSystemMixin:
 
     @abstractmethod
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
+
+    # (H) Span-claim protocol (implemented by FunctionIngestMixin): one source
+    # (H) function must mint exactly one node PER NAME, so every JS/TS
+    # (H) registration path checks the claim before registering and claims
+    # (H) after (deliberate different-name twins still register).
+    @abstractmethod
+    def _span_claimed_for_qn(
+        self, module_qn: str, func_node: ASTNode, candidate_qn: str
+    ) -> bool: ...
+
+    @abstractmethod
+    def _claim_function_span(
+        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
+    ) -> None: ...
 
     def __init__(self) -> None:
         self._processed_imports = set()
@@ -70,7 +85,7 @@ class JsTsModuleSystemMixin:
 
                 for declarator in variable_declarators:
                     self._process_variable_declarator_for_commonjs(
-                        declarator, module_qn
+                        declarator, module_qn, language
                     )
 
             except Exception as e:
@@ -112,11 +127,15 @@ class JsTsModuleSystemMixin:
         return safe_decode_with_fallback(module_string_node).strip("'\"")
 
     def _process_destructured_child(
-        self, child: ASTNode, module_name: str, module_qn: str
+        self,
+        child: ASTNode,
+        module_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if child.text is not None and (name := safe_decode_text(child)):
-                self._process_commonjs_import(name, module_name, module_qn)
+                self._process_commonjs_import(name, module_name, module_qn, language)
             return
 
         if child.type != cs.TS_PAIR_PATTERN:
@@ -133,10 +152,10 @@ class JsTsModuleSystemMixin:
             return
 
         if alias_name := safe_decode_text(value_node):
-            self._process_commonjs_import(alias_name, module_name, module_qn)
+            self._process_commonjs_import(alias_name, module_name, module_qn, language)
 
     def _process_variable_declarator_for_commonjs(
-        self, declarator: ASTNode, module_qn: str
+        self, declarator: ASTNode, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
         try:
             module_name = self._extract_require_module_name(declarator)
@@ -148,13 +167,19 @@ class JsTsModuleSystemMixin:
                 return
 
             for child in name_node.children:
-                self._process_destructured_child(child, module_name, module_qn)
+                self._process_destructured_child(
+                    child, module_name, module_qn, language
+                )
 
         except Exception as e:
             logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED, error=e)
 
     def _process_commonjs_import(
-        self, imported_name: str, module_name: str, module_qn: str
+        self,
+        imported_name: str,
+        module_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         try:
             resolved_source_module = self.import_processor._resolve_js_module_path(
@@ -163,22 +188,13 @@ class JsTsModuleSystemMixin:
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.MODULE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: resolved_source_module,
-                        cs.KEY_NAME: resolved_source_module,
-                    },
-                )
-
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                    cs.RelationshipType.IMPORTS,
-                    (
-                        cs.NodeLabel.MODULE,
-                        cs.KEY_QUALIFIED_NAME,
-                        resolved_source_module,
-                    ),
+                # (H) Route through the same deferred verification as every
+                # (H) other IMPORTS edge: an internal target must be a real
+                # (H) module, an external one gets its ExternalModule node at
+                # (H) flush (issue #652: this path emitted directly and was the
+                # (H) last source of phantom import targets).
+                self.import_processor.defer_import_edge(
+                    module_qn, resolved_source_module, language
                 )
 
                 logger.debug(
@@ -202,7 +218,13 @@ class JsTsModuleSystemMixin:
         module_qn: str,
         export_type: str,
     ) -> None:
-        ingest_exported_function(
+        if self._span_claimed_for_qn(
+            module_qn,
+            export_function,
+            f"{module_qn}{cs.SEPARATOR_DOT}{function_name}",
+        ):
+            return
+        function_qn = ingest_exported_function(
             export_function,
             function_name,
             module_qn,
@@ -212,7 +234,16 @@ class JsTsModuleSystemMixin:
             self.simple_name_lookup,
             self._get_docstring,
             self._is_export_inside_function,
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
         )
+        if function_qn is not None:
+            self._claim_function_span(
+                module_qn,
+                export_function,
+                cs.NodeLabel.FUNCTION.value,
+                function_qn,
+            )
 
     def _process_exports_pattern(
         self,
@@ -331,16 +362,11 @@ class JsTsModuleSystemMixin:
                     ):
                         if export_name.text and export_function:
                             if function_name := safe_decode_text(export_name):
-                                ingest_exported_function(
+                                self._ingest_export_function(
                                     export_function,
                                     function_name,
                                     module_qn,
                                     cs.JS_EXPORT_TYPE_ES6_FUNCTION,
-                                    self.ingestor,
-                                    self.function_registry,
-                                    self.simple_name_lookup,
-                                    self._get_docstring,
-                                    self._is_export_inside_function,
                                 )
 
                     if not export_names:
@@ -351,16 +377,11 @@ class JsTsModuleSystemMixin:
                                 ):
                                     if name_node.text:
                                         if function_name := safe_decode_text(name_node):
-                                            ingest_exported_function(
+                                            self._ingest_export_function(
                                                 export_function,
                                                 function_name,
                                                 module_qn,
                                                 cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
-                                                self.ingestor,
-                                                self.function_registry,
-                                                self.simple_name_lookup,
-                                                self._get_docstring,
-                                                self._is_export_inside_function,
                                             )
 
                 except Exception as e:

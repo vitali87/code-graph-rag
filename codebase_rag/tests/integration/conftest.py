@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import time
 from collections.abc import Generator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,6 +12,21 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
     import mgclient
+
+_INTEGRATION_DIR = Path(__file__).parent
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # (H) Every integration test wipes the whole Memgraph database, and under
+    # (H) xdist a session-scoped container fixture is per-worker, so -n auto
+    # (H) races one container startup per worker. Pinning the directory to a
+    # (H) single xdist_group serializes these tests on one worker with one
+    # (H) container (scheduled by the --dist=loadgroup in pyproject addopts).
+    for item in items:
+        # (H) Third-party plugins can collect virtual items with no path.
+        if item.path and _INTEGRATION_DIR in item.path.parents:
+            item.add_marker(pytest.mark.xdist_group("memgraph-integration"))
 
 
 @pytest.fixture(scope="session")

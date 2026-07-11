@@ -84,6 +84,10 @@ HELP_NO_START_STACK = (
 HELP_NO_SYNC = (
     "Skip the automatic incremental graph sync that runs before the agent starts."
 )
+HELP_NO_EMBEDDINGS = (
+    "Skip the semantic embedding pass after graph sync; the graph itself still "
+    "builds fully. Env equivalent: CGR_SKIP_EMBEDDINGS=1."
+)
 HELP_PROJECTS = (
     "Comma-separated list of project names to scope agent queries to. "
     "Overrides --project-name. If omitted, defaults to the current repo's project."

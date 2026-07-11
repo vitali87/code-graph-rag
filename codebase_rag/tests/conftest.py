@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, call
 import pytest
 from loguru import logger
 
+from codebase_rag import graph_audit
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
     pass  # ty: ignore[unresolved-import]
@@ -174,7 +176,37 @@ def create_and_run_updater(
         queries=queries,
     )
     updater.run()
+    _audit_recorded_graph(mock_ingestor)
     return updater
+
+
+def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
+    """Structural integrity audit of the recorded batches (issue #646).
+
+    Every test that indexes a fixture also asserts the resulting graph is
+    schema-conformant, orphan-free, and free of dangling relationships (issue
+    #652: an edge with a phantom endpoint is silently dropped by the
+    database). CGR_AUDIT_SWEEP=<file> switches to collect mode, appending
+    violations as JSON lines instead of failing.
+    """
+    nodes = [
+        GraphNodeRecord(str(c.args[0]), c.args[1])
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+    ]
+    rels = [
+        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+    ]
+    violations = graph_audit.collect_violations(nodes, rels)
+    if sweep_path := os.environ.get("CGR_AUDIT_SWEEP"):
+        import json
+
+        test_id = os.environ.get("PYTEST_CURRENT_TEST", "")
+        with open(sweep_path, "a") as f:
+            for v in violations:
+                f.write(json.dumps([str(v.check), v.detail, test_id]) + "\n")
+        return
+    assert not violations, "\n".join(v.detail for v in violations)
 
 
 def get_relationships(mock_ingestor: MagicMock, rel_type: str) -> list:

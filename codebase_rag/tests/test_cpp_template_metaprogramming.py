@@ -793,7 +793,8 @@ void demonstrateComprehensiveMetaprogramming() {
         if "comprehensive_metaprogramming" in call.args[0][2]
     ]
 
-    assert len(comprehensive_calls) >= 2, (
+    # (H) builtin operator edges no longer emitted (#652)
+    assert len(comprehensive_calls) >= 1, (
         f"Expected at least 2 comprehensive metaprogramming calls, found {len(comprehensive_calls)}"
     )
 

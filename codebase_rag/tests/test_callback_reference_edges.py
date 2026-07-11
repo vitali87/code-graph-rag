@@ -236,3 +236,208 @@ def test_annotated_assignment_is_referenced(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, "registry", REFERENCES, "handlers.handle_event")
+
+
+def test_argument_to_call_expression_callee_is_referenced(tmp_path: Path) -> None:
+    # (H) `wraps(view_func)(_view_wrapper)` consumes _view_wrapper through the
+    # (H) callable the inner call returns. The callee has no extractable name (it
+    # (H) is itself a call), but the passed function must still be referenced or
+    # (H) dead-code flags every django-style view decorator wrapper.
+    files = {
+        "deco.py": (
+            "from functools import wraps\n\n"
+            "def csrf_exempt(view_func):\n"
+            "    def _view_wrapper(request):\n"
+            "        return view_func(request)\n"
+            "    return wraps(view_func)(_view_wrapper)\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "deco.csrf_exempt", REFERENCES, "csrf_exempt._view_wrapper")
+
+
+def test_ternary_assignment_references_both_methods(tmp_path: Path) -> None:
+    # (H) `get_response = self._async if flag else self._sync` binds one of two
+    # (H) methods as a value; both are possible referents and must be referenced
+    # (H) (django BaseHandler.load_middleware shape), or dead-code flags them.
+    files = {
+        "handler.py": (
+            "def convert(handler):\n"
+            "    return handler\n\n"
+            "class BaseHandler:\n"
+            "    def load_middleware(self, is_async):\n"
+            "        get_response = self._async if is_async else self._sync\n"
+            "        return convert(get_response)\n\n"
+            "    def _async(self, request):\n"
+            "        return request\n\n"
+            "    def _sync(self, request):\n"
+            "        return request\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "BaseHandler.load_middleware", REFERENCES, "BaseHandler._async")
+    assert _has(rels, "BaseHandler.load_middleware", REFERENCES, "BaseHandler._sync")
+
+
+def test_returned_method_attribute_is_referenced(tmp_path: Path) -> None:
+    # (H) `return self._get_point_2d` hands the bound method to the caller for
+    # (H) later dispatch (django GEOSCoordSeq._point_getter shape); the returning
+    # (H) scope must reference it or dead-code flags the whole getter cluster.
+    files = {
+        "coordseq.py": (
+            "class GEOSCoordSeq:\n"
+            "    @property\n"
+            "    def _point_getter(self):\n"
+            "        if self.dims == 3:\n"
+            "            return self._get_point_3d\n"
+            "        return self._get_point_2d\n\n"
+            "    def _get_point_2d(self, index):\n"
+            "        return index\n\n"
+            "    def _get_point_3d(self, index):\n"
+            "        return index\n\n"
+            "    def use(self, index):\n"
+            "        return self._point_getter(index)\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "GEOSCoordSeq._point_getter", REFERENCES, "GEOSCoordSeq._get_point_2d"
+    )
+    assert _has(
+        rels, "GEOSCoordSeq._point_getter", REFERENCES, "GEOSCoordSeq._get_point_3d"
+    )
+
+
+def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
+    # (H) The ternary's condition is truthiness-tested, never bound to the LHS,
+    # (H) so a callable named there must NOT get an assignment reference.
+    files = {
+        "picker.py": (
+            "def check():\n"
+            "    return True\n\n"
+            "def first():\n"
+            "    return 1\n\n"
+            "def second():\n"
+            "    return 2\n\n"
+            "def pick():\n"
+            "    chosen = first if check else second\n"
+            "    return chosen()\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "picker.pick", REFERENCES, "picker.first")
+    assert _has(rels, "picker.pick", REFERENCES, "picker.second")
+    assert not _has(rels, "picker.pick", REFERENCES, "picker.check")
+
+
+def test_bound_function_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) `el.addEventListener("click", handler.bind(this))` hands off `handler`;
+    # (H) the .bind call itself resolves to the Function.prototype builtin, so the
+    # (H) bound function must be referenced from the passing scope or it reports
+    # (H) dead (django admin's inlines.js inlineDeleteHandler).
+    files = {
+        "inlines.js": (
+            "function formset(row) {\n"
+            "    const inlineDeleteHandler = function (e1) {\n"
+            "        return e1;\n"
+            "    };\n"
+            '    row.addEventListener("click", inlineDeleteHandler.bind(this));\n'
+            "}\n"
+            "module.exports = formset;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "inlines.formset", REFERENCES, "inlines.formset.inlineDeleteHandler"
+    ) or _has(rels, "inlines.formset", "CALLS", "inlines.formset.inlineDeleteHandler")
+
+
+def test_bound_function_assignment_rhs_is_referenced(tmp_path: Path) -> None:
+    # (H) `const bound = handler.bind(null)` stores the bound handler for later
+    # (H) invocation; the assignment walk must peel .bind like a cast so the
+    # (H) underlying function is referenced.
+    files = {
+        "store.js": (
+            "function attach() {\n"
+            "    const onSave = function (e) {\n"
+            "        return e;\n"
+            "    };\n"
+            "    const bound = onSave.bind(null);\n"
+            "    return bound;\n"
+            "}\n"
+            "module.exports = attach;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "store.attach", REFERENCES, "store.attach.onSave")
+
+
+def test_cast_wrapped_bound_function_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) `(handler as any).bind(this)` interleaves a cast INSIDE the bind
+    # (H) receiver; a single unwrap pass leaves the cast node behind, so the
+    # (H) peel must iterate cast/paren and bind unwraps to a fixpoint. Chained
+    # (H) binds (`h.bind(a).bind(b)`) peel the same way.
+    files = {
+        "wrapped.ts": (
+            "function attach(el: { on: (cb: unknown) => void }) {\n"
+            "    const onSave = function (e: number) {\n"
+            "        return e;\n"
+            "    };\n"
+            "    el.on((onSave as any).bind(null));\n"
+            "    const rebound = onSave.bind(null).bind(null);\n"
+            "    return rebound;\n"
+            "}\n"
+            "export default attach;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "wrapped.attach", REFERENCES, "wrapped.attach.onSave") or _has(
+        rels, "wrapped.attach", "CALLS", "wrapped.attach.onSave"
+    )
+
+
+def test_bound_function_argument_flows_to_callable_param(tmp_path: Path) -> None:
+    # (H) A bound function passed to a FIRST-PARTY callee that invokes its
+    # (H) parameter must produce the callable-flow CALLS edge (run -> handler),
+    # (H) not just the passing scope's REFERENCES edge.
+    files = {
+        "flow.js": (
+            "function run(cb) {\n"
+            "    return cb();\n"
+            "}\n"
+            "function handler() {\n"
+            "    return 1;\n"
+            "}\n"
+            "function main() {\n"
+            "    return run(handler.bind(this));\n"
+            "}\n"
+            "module.exports = main;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "flow.run", "CALLS", "flow.handler")
+
+
+def test_bound_function_flows_through_passthrough_param(tmp_path: Path) -> None:
+    # (H) The callable-flow fixpoint (outer forwards its param to run) records
+    # (H) seeds in _collect_callable_flow, which must peel .bind like the
+    # (H) direct-argument path or the propagated CALLS edge is lost.
+    files = {
+        "flow2.js": (
+            "function run(cb) {\n"
+            "    return cb();\n"
+            "}\n"
+            "function outer(cb2) {\n"
+            "    return run(cb2);\n"
+            "}\n"
+            "function handler() {\n"
+            "    return 1;\n"
+            "}\n"
+            "function main() {\n"
+            "    return outer(handler.bind(this));\n"
+            "}\n"
+            "module.exports = main;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "flow2.run", "CALLS", "flow2.handler")

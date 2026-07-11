@@ -472,21 +472,24 @@ class TestResolveSuperCall:
 
 
 class TestResolveCppOperatorCall:
-    def test_builtin_operator_plus(self, call_processor: CallProcessor) -> None:
+    def test_builtin_operator_plus_has_no_callee(
+        self, call_processor: CallProcessor
+    ) -> None:
+        # (H) A primitive builtin operator is not a first-party callee; the old
+        # (H) synthetic builtin.cpp.* qns had no nodes, so their edges were
+        # (H) silently dropped by the database (issue #652).
         result = call_processor._resolver.resolve_cpp_operator_call(
             "operator_plus", "proj.module"
         )
-        assert result is not None
-        assert result[0] == cs.NodeLabel.FUNCTION
-        assert result[1] == cs.CPP_OPERATORS["operator_plus"]
+        assert result is None
 
-    def test_builtin_operator_equal(self, call_processor: CallProcessor) -> None:
+    def test_builtin_operator_equal_has_no_callee(
+        self, call_processor: CallProcessor
+    ) -> None:
         result = call_processor._resolver.resolve_cpp_operator_call(
             "operator_equal", "proj.module"
         )
-        assert result is not None
-        assert result[0] == cs.NodeLabel.FUNCTION
-        assert result[1] == cs.CPP_OPERATORS["operator_equal"]
+        assert result is None
 
     def test_non_operator_returns_none(self, call_processor: CallProcessor) -> None:
         result = call_processor._resolver.resolve_cpp_operator_call(

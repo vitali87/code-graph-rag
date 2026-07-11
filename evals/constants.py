@@ -557,20 +557,18 @@ INHERITANCE_TITLE = "cgr inheritance eval: resolved INHERITS and OVERRIDES"
 STAR_IMPORT = "*"
 SEP_NUL = "\x00"
 
-# (H) Dead-code eval: reproduce cgr's reachability (build_dead_code_query) over the
-# (H) captured graph and grade the reported unreachable set against controlled
+# (H) Dead-code eval: run cgr's reachability engine (codebase_rag.dead_code) over
+# (H) the captured graph and grade the reported unreachable set against controlled
 # (H) fixtures whose dead functions are known by construction. Surfaces missing
-# (H) CALLS edges (a live function wrongly flagged dead). The reachability is a
-# (H) faithful re-implementation of the documented query, unit-tested on hand-built
-# (H) graphs, so a fixture mismatch points at cgr's graph, not the scorer.
+# (H) CALLS edges (a live function wrongly flagged dead). The engine is
+# (H) unit-tested on hand-built graphs, so a fixture mismatch points at cgr's
+# (H) graph, not the scorer.
 DEAD_CODE_DEFAULT_TARGET = "codebase_rag"
 DEAD_CODE_SCORES_FILENAME = "dead_code_scores.csv"
 DEAD_CODE_DIFF_FILENAME = "dead_code_diff.json"
 DEAD_CODE_DIFF_PREFIX = "dead-code:"
 DEAD_CODE_LABEL = "dead-code"
 DEAD_CODE_TITLE = "cgr dead-code eval: reachability over the captured graph"
-DECORATOR_AT = "@"
-DECORATOR_CALL_OPEN = "("
 
 # (H) Cross-project (monorepo) eval: does cgr resolve CALLS and IMPORTS across
 # (H) top-level package boundaries? The single-package corpora the other evals use

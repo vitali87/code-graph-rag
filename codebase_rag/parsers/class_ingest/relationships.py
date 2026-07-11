@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import NodeType
+from ...types_defs import DeferredCppInherit, DeferredInherit, NodeType
+from ..cpp import utils as cpp_utils
 from . import parent_extraction as pe
 
 if TYPE_CHECKING:
@@ -19,8 +20,6 @@ def create_class_relationships(
     class_node: Node,
     class_qn: str,
     module_qn: str,
-    parent_label: str,
-    parent_qn: str,
     node_type: NodeType,
     is_exported: bool,
     language: cs.SupportedLanguage,
@@ -30,17 +29,22 @@ def create_class_relationships(
     resolve_to_qn: Callable[[str, str], str],
     function_registry: FunctionRegistryTrieProtocol,
     interface_implementers: dict[str, set[str]] | None = None,
+    defer_cpp_inherits: list[DeferredCppInherit] | None = None,
+    defer_inherits: list[DeferredInherit] | None = None,
 ) -> None:
-    parent_classes = pe.extract_parent_classes(
-        class_node, module_qn, import_processor, resolve_to_qn
-    )
+    cpp_bases: list[tuple[str, str]] | None = None
+    if class_node.type in cs.CPP_CLASS_TYPES:
+        cpp_bases = pe.extract_cpp_parent_bases(class_node, module_qn)
+        parent_classes = [guess for _, guess in cpp_bases]
+    else:
+        parent_classes = pe.extract_parent_classes(
+            class_node, module_qn, import_processor, resolve_to_qn
+        )
     class_inheritance[class_qn] = parent_classes
 
-    ingestor.ensure_relationship_batch(
-        (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
-        cs.RelationshipType.DEFINES,
-        (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
-    )
+    # (H) The DEFINES containment edge is emitted by the caller via
+    # (H) _emit_or_defer_defines, so a non-module parent is verified against
+    # (H) the registry after all passes instead of risking a phantom endpoint.
 
     if is_exported and language == cs.SupportedLanguage.CPP:
         ingestor.ensure_relationship_batch(
@@ -49,15 +53,51 @@ def create_class_relationships(
             (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
-    for base_index, parent_class_qn in enumerate(parent_classes):
-        create_inheritance_relationship(
-            node_type,
-            class_qn,
-            parent_class_qn,
-            function_registry,
-            ingestor,
-            base_index,
+    if cpp_bases is not None and defer_cpp_inherits is not None:
+        # (H) A C++ base often lives in another header, so its qn cannot resolve
+        # (H) until every class is registered; hold the INHERITS edge back for
+        # (H) resolve_deferred_cpp_inherits instead of emitting the module-anchored
+        # (H) guess (a phantom the database drops for every cross-file base).
+        namespace_path = cs.SEPARATOR_DOT.join(
+            cpp_utils.extract_namespace_path(class_node)
         )
+        for base_index, (written_name, guess_qn) in enumerate(cpp_bases):
+            defer_cpp_inherits.append(
+                DeferredCppInherit(
+                    child_label=str(node_type),
+                    child_qn=class_qn,
+                    base_name=written_name,
+                    guess_qn=guess_qn,
+                    namespace_path=namespace_path,
+                    base_index=base_index,
+                )
+            )
+    elif defer_inherits is not None:
+        # (H) A non-C++ parent may live in a file not yet parsed, in which case
+        # (H) the qn above is only the module-anchored fallback guess; hold the
+        # (H) edge back for resolve_deferred_inherits so it is re-resolved
+        # (H) against the full registry (an unresolvable parent emits no edge).
+        for base_index, parent_class_qn in enumerate(parent_classes):
+            defer_inherits.append(
+                DeferredInherit(
+                    rel_type=cs.RelationshipType.INHERITS,
+                    child_qn=class_qn,
+                    parent_qn=parent_class_qn,
+                    module_qn=module_qn,
+                    base_index=base_index,
+                    language=language,
+                )
+            )
+    else:
+        for base_index, parent_class_qn in enumerate(parent_classes):
+            create_inheritance_relationship(
+                node_type,
+                class_qn,
+                parent_class_qn,
+                function_registry,
+                ingestor,
+                base_index,
+            )
 
     # (H) A class OR an enum can `implements` interfaces; both expose them via the
     # (H) `interfaces` field (a super_interfaces clause), so handle both.
@@ -65,7 +105,21 @@ def create_class_relationships(
         for interface_qn in pe.extract_implemented_interfaces(
             class_node, module_qn, resolve_to_qn
         ):
-            create_implements_relationship(node_type, class_qn, interface_qn, ingestor)
+            if defer_inherits is not None:
+                defer_inherits.append(
+                    DeferredInherit(
+                        rel_type=cs.RelationshipType.IMPLEMENTS,
+                        child_qn=class_qn,
+                        parent_qn=interface_qn,
+                        module_qn=module_qn,
+                        base_index=0,
+                        language=language,
+                    )
+                )
+            else:
+                create_implements_relationship(
+                    node_type, class_qn, interface_qn, ingestor
+                )
             # (H) Record implementers so the resolver can dispatch an interface-typed
             # (H) call to the concrete method when the interface has exactly one impl.
             if interface_implementers is not None:
@@ -87,8 +141,11 @@ def create_inheritance_relationship(
     function_registry: FunctionRegistryTrieProtocol,
     ingestor: IngestorProtocol,
     base_index: int = 0,
+    parent_label: str | None = None,
 ) -> None:
-    parent_type = get_node_type_for_inheritance(parent_qn, function_registry)
+    parent_type = parent_label or get_node_type_for_inheritance(
+        parent_qn, function_registry
+    )
     # (H) Persist the base's position in the child's base list. An incremental run
     # (H) rehydrates class_inheritance from these edges; ordering by base_index
     # (H) restores the original source order, which method resolution (Pass 3) and
@@ -106,9 +163,14 @@ def create_implements_relationship(
     class_qn: str,
     interface_qn: str,
     ingestor: IngestorProtocol,
+    interface_label: str | None = None,
 ) -> None:
     ingestor.ensure_relationship_batch(
         (class_type, cs.KEY_QUALIFIED_NAME, class_qn),
         cs.RelationshipType.IMPLEMENTS,
-        (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
+        (
+            interface_label or cs.NodeLabel.INTERFACE,
+            cs.KEY_QUALIFIED_NAME,
+            interface_qn,
+        ),
     )

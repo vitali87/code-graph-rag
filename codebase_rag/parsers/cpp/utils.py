@@ -25,6 +25,21 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
 
         return cs.SEPARATOR_DOT.join([project_name, filename, name])
 
+    path_parts = extract_namespace_path(node)
+
+    if path_parts:
+        return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
+    return cs.SEPARATOR_DOT.join([module_qn, name])
+
+
+def extract_namespace_path(node: Node) -> list[str]:
+    """Names of the namespace blocks enclosing *node*, outermost first.
+
+    C++17 nested syntax (`namespace a::b {`) parses as ONE namespace node
+    named `a::b`; split it so both spellings of the same namespaces yield
+    identical qn segments (`a.b`), matching classic nesting and the libclang
+    frontend's nested cursors.
+    """
     path_parts: list[str] = []
     current = node.parent
 
@@ -47,14 +62,13 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
                         namespace_name = safe_decode_text(child)
                         break
             if namespace_name:
-                path_parts.append(namespace_name)
+                path_parts.extend(
+                    reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON))
+                )
         current = current.parent
 
     path_parts.reverse()
-
-    if path_parts:
-        return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
-    return cs.SEPARATOR_DOT.join([module_qn, name])
+    return path_parts
 
 
 _EXPORT_CANDIDATE_TYPES = frozenset(
@@ -273,6 +287,57 @@ def _get_inner_function_node(node: Node) -> Node:
             if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
                 return child
     return node
+
+
+def _scope_segment_name(scope: Node) -> str | None:
+    # (H) The name of one scope segment of a qualified return type. A namespace or
+    # (H) plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
+    # (H) must reduce to its `type_identifier` -- the raw text carries `<T>` template
+    # (H) arguments that no registry class QN holds, so it would never suffix-match.
+    if scope.type == cs.CppNodeType.TEMPLATE_TYPE:
+        name = scope.child_by_field_name(cs.FIELD_NAME)
+        return safe_decode_text(name) if name is not None else None
+    return safe_decode_text(scope)
+
+
+def _return_type_path(type_node: Node) -> str | None:
+    # (H) Reduce a return-type node to a dotted namespace-qualified class path:
+    # (H) `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
+    # (H) `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
+    # (H) collecting each `scope` namespace, and unwrap a template_type
+    # (H) (`parser<J, A>`) to its `type_identifier`. A primitive/auto/other return
+    # (H) type has no class name and yields None so a chained hop off it stays
+    # (H) unresolved. The qualified path disambiguates a factory-returned class from
+    # (H) a same-named factory method (nlohmann's basic_json has both).
+    parts: list[str] = []
+    current: Node | None = type_node
+    while current is not None:
+        match current.type:
+            case cs.CppNodeType.TYPE_IDENTIFIER:
+                if name := safe_decode_text(current):
+                    parts.append(name)
+                break
+            case cs.CppNodeType.TEMPLATE_TYPE:
+                current = current.child_by_field_name(cs.FIELD_NAME)
+            case cs.CppNodeType.QUALIFIED_IDENTIFIER:
+                scope = current.child_by_field_name(cs.FIELD_SCOPE)
+                if scope is not None and (scope_name := _scope_segment_name(scope)):
+                    parts.append(scope_name)
+                current = current.child_by_field_name(cs.FIELD_NAME)
+            case _:
+                return None
+    return cs.SEPARATOR_DOT.join(parts) if parts else None
+
+
+def extract_return_type_name(func_node: Node) -> str | None:
+    # (H) The qualified class path a C++ function/method returns, for chained-call
+    # (H) typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
+    # (H) inner function_definition, then reduces its `type` field to a class path.
+    inner = _get_inner_function_node(func_node)
+    type_node = inner.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None:
+        return None
+    return _return_type_path(type_node)
 
 
 def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:

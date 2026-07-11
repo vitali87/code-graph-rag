@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.241"
+version = "0.0.300"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -69,6 +69,13 @@ cgr = "codebase_rag.cli:app"
 
 [tool.uv]
 package = true
+
+# (H) Patched grammars: upstream tree-sitter-c drops declarations after a
+# (H) #define whose value embeds a block comment (issue #555). Our forks carry
+# (H) the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
+[tool.uv.sources]
+tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
+tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
 
 [tool.setuptools.packages.find]
 include = ["codebase_rag*", "codec*", "cgr*"]
@@ -141,6 +148,13 @@ exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# (H) loadgroup honors the xdist_group marker that pins the integration dir to
+# (H) one worker; for unmarked tests it schedules identically to the default.
+# (H) xdist workers decide their grouping flag from the parsed args/ini before
+# (H) any conftest hook fires (xdist remote.py setup_config), so this must be
+# (H) an ini-level option; every dependency set that carries pytest also
+# (H) carries pytest-xdist, so the flag always parses.
+addopts = "--dist=loadgroup"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
@@ -160,6 +174,7 @@ dev = [
     "pyinstaller>=6.14.1",
     "pylint>=4.0.4",
     "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",

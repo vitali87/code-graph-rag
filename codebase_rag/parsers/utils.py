@@ -6,12 +6,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Query, QueryCursor
+from tree_sitter import Language, Node, Query, QueryCursor
 
 from .. import constants as cs
 from .. import logs
 from ..types_defs import (
     ASTNode,
+    CppDefinitionSpan,
+    DeferredParentLink,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
     PropertyDict,
@@ -25,13 +28,49 @@ if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
 
-_QUERY_CACHE: dict[tuple[int, str], Query] = {}
-_QUERY_LAST: tuple[tuple[int, str], Query] | None = None
+
+def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
+    # (H) tree-sitter points are 0-based; recorded lines are 1-based.
+    return (module_qn, node.start_point[0] + 1, node.start_point[1])
 
 
-def get_cached_query(language_obj, query_text: str) -> Query:
+_CPP_SPAN_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+
+
+def record_cpp_definition_span(
+    spans: dict[str, list[CppDefinitionSpan]],
+    language: cs.SupportedLanguage | None,
+    file_path: Path | None,
+    repo_path: Path,
+    node: ASTNode,
+    label: str,
+    qualified_name: str,
+) -> None:
+    # (H) Record the full line span of a C/C++ definition the tree-sitter pass
+    # (H) ingested, keyed by relative path: the hybrid C++ frontend attributes
+    # (H) each macro use to the tightest enclosing tree-sitter span after
+    # (H) Pass 2 (macro cursors are TU-level, and libclang's own spans carry
+    # (H) wrong-scheme qns wherever macros hide namespaces).
+    if language not in _CPP_SPAN_LANGUAGES or file_path is None:
+        return
+    rel = cached_relative_path(file_path, repo_path).as_posix()
+    spans.setdefault(rel, []).append(
+        CppDefinitionSpan(
+            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+        )
+    )
+
+
+_QUERY_CACHE: dict[tuple[Language, str], Query] = {}
+_QUERY_LAST: tuple[tuple[Language, str], Query] | None = None
+
+
+def get_cached_query(language_obj: Language, query_text: str) -> Query:
+    # (H) Key by the Language itself, never id(): Language hashes by grammar
+    # (H) pointer, so wrappers dedupe, and the dict pins the key so a GC'd
+    # (H) wrapper's address can't be reused to serve a wrong-grammar Query.
     global _QUERY_LAST
-    key = (id(language_obj), query_text)
+    key = (language_obj, query_text)
     if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
         return _QUERY_LAST[1]
     if key not in _QUERY_CACHE:
@@ -87,6 +126,71 @@ def get_function_captures(
     return FunctionCapturesResult(lang_config, captures)
 
 
+def extract_modifiers_and_decorators(
+    node: ASTNode, lang_queries: LanguageQueries
+) -> tuple[list[str], list[str]]:
+    query = lang_queries.get(cs.QUERY_HIGHLIGHTS)
+    if not query:
+        return [], []
+
+    cursor = get_query_cursor(query)
+
+    body_node = node.child_by_field_name(cs.FIELD_BODY)
+    header_end_byte = body_node.start_byte if body_node else node.end_byte
+
+    target_node = node
+    if node.parent and node.parent.type in (
+        cs.TS_PY_DECORATED_DEFINITION,
+        cs.TS_EXPORT_STATEMENT,
+    ):
+        target_node = node.parent
+
+    query_nodes = [target_node]
+    curr_sibling = target_node.prev_named_sibling
+    while curr_sibling and (
+        curr_sibling.type == cs.TS_RS_ATTRIBUTE_ITEM
+        or (
+            target_node.type == cs.TS_METHOD_DEFINITION
+            and curr_sibling.type == cs.TS_DECORATOR
+        )
+    ):
+        query_nodes.insert(0, curr_sibling)
+        curr_sibling = curr_sibling.prev_named_sibling
+
+    modifiers: list[str] = []
+    decorators: list[str] = []
+
+    for q_node in query_nodes:
+        if q_node == target_node:
+            cursor.set_byte_range(q_node.start_byte, header_end_byte)
+        else:
+            cursor.set_byte_range(q_node.start_byte, q_node.end_byte)
+
+        captures = sorted_captures(cursor, q_node)
+        for name, nodes in captures.items():
+            if (
+                name.startswith(cs.CAPTURE_KEYWORD_MODIFIER)
+                or name == cs.CAPTURE_KEYWORD
+            ):
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if (
+                        text
+                        and text not in modifiers
+                        and text not in cs.EXCLUDED_KEYWORDS
+                    ):
+                        modifiers.append(text)
+            elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
+                cs.CAPTURE_FUNCTION_DECORATOR
+            ):
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if text and text not in decorators:
+                        decorators.append(text)
+
+    return modifiers, decorators
+
+
 @lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
@@ -116,7 +220,10 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
 
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
-        decorator.lstrip(cs.DECORATOR_AT).split(cs.SEPARATOR_DOT)[-1]
+        decorator.lstrip("@#[]() ")
+        .split("(")[0]
+        .split(cs.SEPARATOR_DOT)[-1]
+        .rstrip(")] ")
         for decorator in decorators
     }
 
@@ -549,25 +656,32 @@ def ingest_method(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     language: cs.SupportedLanguage | None = None,
-    extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
+    lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
     repo_path: Path | None = None,
-) -> None:
+    defer_containment: list[DeferredParentLink] | None = None,
+    module_qn: str | None = None,
+    external_override_names: frozenset[str] = frozenset(),
+) -> str | None:
+    # (H) Returns the registered method qn (post register_unique_qn, so with any
+    # (H) @line dedup suffix) so a caller can wire further edges to the exact node --
+    # (H) e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
+    # (H) None only when the method has no resolvable name and nothing was registered.
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
-            return
+            return None
     elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # (H) field on the function node; take the binding name from the enclosing
         # (H) field definition so it is modelled as a member instead of dropped.
         if not (method_name := _js_ts_field_member_name(method_node, language)):
-            return
+            return None
     elif (text := method_name_node.text) is None:
-        return
+        return None
     else:
         method_name = text.decode(cs.ENCODING_UTF8)
 
@@ -577,7 +691,12 @@ def ingest_method(
             method_qn, method_node.start_point[0] + 1
         )
 
-    decorators = extract_decorators_func(method_node) if extract_decorators_func else []
+    decorators = []
+    modifiers = []
+    if lang_queries:
+        modifiers, decorators = extract_modifiers_and_decorators(
+            method_node, lang_queries
+        )
 
     # (H) Local import breaks the export_detection -> cpp.utils -> utils cycle.
     from . import export_detection
@@ -585,6 +704,7 @@ def ingest_method(
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
         cs.KEY_NAME: method_name,
+        cs.KEY_MODIFIERS: modifiers,
         cs.KEY_DECORATORS: decorators,
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
@@ -609,6 +729,12 @@ def ingest_method(
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
 
+    # (H) Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
+    # (H) subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
+    # (H) it, so the dead-code surfaces root this property.
+    if method_name in external_override_names:
+        method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
+
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     function_registry[method_qn] = NodeType.METHOD
@@ -620,6 +746,22 @@ def ingest_method(
         method_qn, callable_parameter_indices(method_node, language)
     )
     simple_name_lookup[method_name].add(method_qn)
+
+    # (H) A container that may never register (a Rust impl on a primitive type)
+    # (H) defers so the edge is verified once every pass has run, falling back
+    # (H) to the module rather than a phantom the database would drop.
+    if defer_containment is not None and module_qn is not None:
+        defer_containment.append(
+            DeferredParentLink(
+                parent_label_guess=container_type,
+                parent_qn=container_qn,
+                child_label=cs.NodeLabel.METHOD,
+                child_qn=method_qn,
+                module_qn=module_qn,
+                rel_type=cs.RelationshipType.DEFINES_METHOD.value,
+            )
+        )
+        return method_qn
 
     # (H) The DEFINES_METHOD parent is matched in the graph by LABEL +
     # (H) qualified_name, so it must carry the container's real node label. Callers
@@ -636,6 +778,40 @@ def ingest_method(
         cs.RelationshipType.DEFINES_METHOD,
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
     )
+    return method_qn
+
+
+def module_function_props(
+    function_qn: str,
+    function_name: str,
+    function_node: ASTNode,
+    docstring: str | None,
+    file_path: Path | None,
+    repo_path: Path | None,
+) -> PropertyDict:
+    """Standard Function node properties for module-scoped JS/TS functions."""
+    # (H) Lazy import: export_detection reaches back into this module through
+    # (H) cpp.utils, so a top-level import would be circular.
+    from . import export_detection
+
+    props: PropertyDict = {
+        cs.KEY_QUALIFIED_NAME: function_qn,
+        cs.KEY_NAME: function_name,
+        cs.KEY_MODIFIERS: [],
+        cs.KEY_DECORATORS: [],
+        cs.KEY_START_LINE: function_node.start_point[0] + 1,
+        cs.KEY_END_LINE: function_node.end_point[0] + 1,
+        cs.KEY_DOCSTRING: docstring,
+        # (H) JS/TS only (per this helper's contract), so the JS branch of the
+        # (H) language dispatch applies regardless of which of the two it is.
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            function_node, function_name, cs.SupportedLanguage.JS
+        ),
+    }
+    if file_path is not None and repo_path is not None:
+        props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
+        props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    return props
 
 
 def ingest_exported_function(
@@ -648,9 +824,13 @@ def ingest_exported_function(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     is_export_inside_function_func: Callable[[ASTNode], bool],
-) -> None:
+    file_path: Path | None,
+    repo_path: Path | None,
+) -> str | None:
+    # (H) Returns the registered qn (None when skipped) so the caller can claim
+    # (H) the function node's span against later registration passes.
     if is_export_inside_function_func(function_node):
-        return
+        return None
 
     function_qn = f"{module_qn}.{function_name}"
     # (H) The definition pass already ingests an exported function / const-arrow at
@@ -658,18 +838,31 @@ def ingest_exported_function(
     # (H) `qn@line` duplicate node, onto which call resolution then binds (mangling
     # (H) the callee qn). If the natural qn already exists, the node is done.
     if function_qn in function_registry:
-        return
+        return None
+    # (H) Same for a nested export (TS namespace / module block): the main pass
+    # (H) already ingested it under its nested qn (e.g. lib.geo.helper), so a
+    # (H) module-level re-ingest would mint a phantom duplicate node plus a
+    # (H) spurious Module-DEFINES edge. Walk ancestors instead of matching
+    # (H) simple names so a top-level export may share a name with an
+    # (H) unrelated method elsewhere in the module.
+    current = function_node.parent
+    while current is not None:
+        if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+            return None
+        current = current.parent
     function_qn = function_registry.register_unique_qn(
         function_qn, function_node.start_point[0] + 1
     )
 
-    function_props = {
-        cs.KEY_QUALIFIED_NAME: function_qn,
-        cs.KEY_NAME: function_name,
-        cs.KEY_START_LINE: function_node.start_point[0] + 1,
-        cs.KEY_END_LINE: function_node.end_point[0] + 1,
-        cs.KEY_DOCSTRING: get_docstring_func(function_node),
-    }
+    function_props = module_function_props(
+        function_qn,
+        function_name,
+        function_node,
+        get_docstring_func(function_node),
+        file_path,
+        repo_path,
+    )
+    function_props[cs.KEY_IS_EXPORTED] = True
 
     logger.info(
         logs.EXPORT_FOUND.format(
@@ -679,6 +872,12 @@ def ingest_exported_function(
     ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
     function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
+    ingestor.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+        cs.RelationshipType.DEFINES,
+        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
+    )
+    return function_qn
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:

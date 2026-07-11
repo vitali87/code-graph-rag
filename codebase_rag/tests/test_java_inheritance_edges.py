@@ -22,6 +22,9 @@ enum Color implements A { RED }
 
 class Circle extends Base implements A, B {}
 
+class Box<T> {}
+interface Comparable<T> {}
+
 class Holder extends Box<String> implements Comparable<Holder> {}
 """
 

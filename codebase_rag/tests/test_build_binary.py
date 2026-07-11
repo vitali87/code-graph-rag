@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from build_binary import _build_package_args, _get_treesitter_packages
+from build_binary import _build_package_args, _get_treesitter_packages, build_binary
+from codebase_rag import constants as cs
 from codebase_rag.constants import PyInstallerPackage
 
 
@@ -123,3 +124,13 @@ class TestBuildPackageArgs:
         pkg = PyInstallerPackage(name="mypackage")
         args = _build_package_args(pkg)
         assert args == []
+
+
+class TestBuildBinaryCommand:
+    def test_copies_own_package_metadata_for_version_lookup(self) -> None:
+        with patch("build_binary.subprocess.run") as mock_run:
+            assert build_binary()
+
+        cmd = mock_run.call_args.args[0]
+        metadata_pair = [cs.PYINSTALLER_ARG_COPY_METADATA, cs.PACKAGE_NAME]
+        assert any(cmd[i : i + 2] == metadata_pair for i in range(len(cmd) - 1)), cmd

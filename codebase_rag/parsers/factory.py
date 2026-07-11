@@ -142,5 +142,9 @@ class ProcessorFactory:
                 type_aliases=self.definition_processor.type_aliases,
                 interface_implementers=self.definition_processor.interface_implementers,
                 capture=self.capture,
+                module_qn_to_file_path=self.module_qn_to_file_path,
+                cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
+                function_locations=self.definition_processor.function_locations,
+                macro_qns=self.definition_processor.macro_qns,
             )
         return self._call_processor
