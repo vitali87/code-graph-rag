@@ -78,25 +78,29 @@ def _resolve_token(token: str) -> frozenset[cs.RelationshipType] | None:
         return None
 
 
-def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
-    cleaned = [t.strip() for t in tokens if t and t.strip()]
+def _base_rels(groups: Iterable[cs.CaptureGroup]) -> set[cs.RelationshipType]:
+    enabled: set[cs.RelationshipType] = set()
+    for group in groups:
+        enabled |= cs.CAPTURE_GROUP_RELS[group]
+    return enabled
 
-    # (H) The last base token in order wins, so `--capture all` can override an
-    # (H) inherited `CGR_CAPTURE=none` (and vice versa), not whichever the set hits.
-    base_groups: frozenset[cs.CaptureGroup] = cs.DEFAULT_CAPTURE_GROUPS
-    for token in cleaned:
+
+def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
+    # (H) Tokens apply left-to-right so later ones win: a `none`/`all` base
+    # (H) clears everything before it, and group/rel add-drops after a base
+    # (H) survive. This makes `--capture none` override an inherited
+    # (H) `CGR_CAPTURE=io`, not just re-add whichever groups the set held.
+    enabled = _base_rels(cs.DEFAULT_CAPTURE_GROUPS)
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
         low = token.lower()
         if low == cs.CAPTURE_TOKEN_NONE:
-            base_groups = frozenset()
-        elif low == cs.CAPTURE_TOKEN_ALL:
-            base_groups = frozenset(cs.CaptureGroup)
-
-    enabled: set[cs.RelationshipType] = set()
-    for group in base_groups:
-        enabled |= cs.CAPTURE_GROUP_RELS[group]
-
-    for token in cleaned:
-        if token.lower() in (cs.CAPTURE_TOKEN_ALL, cs.CAPTURE_TOKEN_NONE):
+            enabled = set()
+            continue
+        if low == cs.CAPTURE_TOKEN_ALL:
+            enabled = set(_ALL_RELS)
             continue
         drop = token.startswith(cs.CAPTURE_DROP_PREFIX)
         name = token.lstrip(cs.CAPTURE_DROP_PREFIX + cs.CAPTURE_ADD_PREFIX)

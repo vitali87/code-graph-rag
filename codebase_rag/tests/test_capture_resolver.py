@@ -60,6 +60,18 @@ def test_later_base_token_wins() -> None:
     assert not sel.rel_enabled(RT.CALLS)
 
 
+def test_later_base_clears_earlier_group_tokens() -> None:
+    # (H) CGR_CAPTURE=io then --capture none must disable I/O: a later base
+    # (H) token clears groups added by earlier tokens, applied in order.
+    sel = resolve_capture(["io", "none"])
+    assert not sel.io_enabled
+    assert not sel.rel_enabled(RT.CALLS)
+    # (H) and a group added after the base survives.
+    sel = resolve_capture(["io", "none", "calls"])
+    assert sel.rel_enabled(RT.CALLS)
+    assert not sel.io_enabled
+
+
 def test_drop_group() -> None:
     sel = resolve_capture(["-imports"])
     assert not sel.rel_enabled(RT.IMPORTS)
