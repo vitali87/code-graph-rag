@@ -75,6 +75,8 @@ def _process_mro_shadow_overrides(
             for name in method_names_cache[ancestor_qn]:
                 providers.setdefault(name, []).append(ancestor_qn)
         for name, classes in providers.items():
+            if len(classes) < 2:
+                continue
             # (H) Same-branch pairs (the provider inherits the shadowed class)
             # (H) are the per-method walk's territory and already linked; this
             # (H) pass adds only cross-branch sibling shadows.
@@ -105,21 +107,27 @@ def _process_mro_shadow_overrides(
 def _linearized_ancestors(
     class_qn: str, class_inheritance: dict[str, list[str]]
 ) -> list[str]:
-    # (H) Left-to-right depth-first ancestor order, keep-first on repeats: a
-    # (H) close-enough MRO stand-in for picking each method name's dispatch
-    # (H) provider. The class itself comes first (its own methods shadow every
-    # (H) inherited one).
+    # (H) Reverse post-order over the ancestor DAG: a subclass always precedes
+    # (H) its bases and a diamond's common ancestor sinks below BOTH branches
+    # (H) (D(B, C) with B(A), C(A) linearizes [D, B, C, A], matching the C3
+    # (H) MRO), so a shadowed common base can never outrank the sibling branch
+    # (H) that shadows it. A plain depth-first preorder gets diamonds backwards
+    # (H) and would emit reversed OVERRIDES edges. The `expanded` guard also
+    # (H) keeps a malformed inheritance cycle from looping.
     order: list[str] = []
-    seen: set[str] = set()
-    stack = [class_qn]
+    expanded: set[str] = set()
+    stack: list[tuple[str, bool]] = [(class_qn, False)]
     while stack:
-        current = stack.pop()
-        if current in seen:
+        current, processed = stack.pop()
+        if processed:
+            order.append(current)
             continue
-        seen.add(current)
-        order.append(current)
-        stack.extend(reversed(class_inheritance.get(current, [])))
-    return order
+        if current in expanded:
+            continue
+        expanded.add(current)
+        stack.append((current, True))
+        stack.extend((base, False) for base in class_inheritance.get(current, []))
+    return list(reversed(order))
 
 
 def _direct_method_names(
