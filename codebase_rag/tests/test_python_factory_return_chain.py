@@ -243,6 +243,48 @@ def test_local_var_factory_assignment_types_receiver(tmp_path: Path) -> None:
     assert ("proj.app.widgets.driver", "proj.app.widgets.Aaa.run") not in calls
 
 
+def test_reexported_factory_return_chain_resolves(tmp_path: Path) -> None:
+    # (H) django imports get_resolver through package re-exports (`from
+    # (H) django.urls import get_resolver` -> __init__ -> .resolvers): the import
+    # (H) target is the package qn, not the registered function qn, so the
+    # (H) resolution must follow the re-export hops.
+    _make(
+        tmp_path,
+        {
+            "resolver.py": (
+                "class Aaa:\n"
+                "    def _is_callback(self, name):\n"
+                "        pass\n"
+                "\n"
+                "class URLResolver:\n"
+                "    def _is_callback(self, name):\n"
+                "        return name\n"
+                "\n"
+                "def get_resolver(urlconf=None):\n"
+                "    return URLResolver()\n"
+            ),
+            "checks.py": (
+                "from app import get_resolver\n"
+                "\n"
+                "def check_url(name):\n"
+                "    return get_resolver()._is_callback(name)\n"
+            ),
+        },
+    )
+    (tmp_path / "app" / "__init__.py").write_text(
+        "from app.resolver import get_resolver\n", encoding="utf-8"
+    )
+    calls = _calls(tmp_path)
+    assert (
+        "proj.app.checks.check_url",
+        "proj.app.resolver.URLResolver._is_callback",
+    ) in calls, sorted(c for c in calls if "_is_callback" in c[1])
+    assert (
+        "proj.app.checks.check_url",
+        "proj.app.resolver.Aaa._is_callback",
+    ) not in calls
+
+
 def test_factory_returning_local_variable_resolves(tmp_path: Path) -> None:
     # (H) The factory builds the instance into a local and returns the identifier;
     # (H) the identifier's type comes from the factory's own local-variable map.

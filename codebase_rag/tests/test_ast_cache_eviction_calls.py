@@ -53,3 +53,50 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
     parsed_after_first = len(updater._parsed_files)
     updater.run(force=True)
     assert len(updater._parsed_files) == parsed_after_first
+
+
+def test_factory_return_inference_survives_ast_cache_eviction(tmp_path: Path) -> None:
+    # (H) Type inference reads OTHER modules' ASTs (factory return statements,
+    # (H) class bodies, self-assignment maps). On a repo larger than
+    # (H) CACHE_MAX_ENTRIES the factory's module is often evicted by the time
+    # (H) the caller's calls are processed (django: urls/resolvers.py evicted
+    # (H) before contrib/admindocs/views.py resolves get_resolver()); the
+    # (H) lookup must reload from disk, not silently drop the inferred type.
+    parsers, queries = load_parsers()
+    if "python" not in parsers:
+        pytest.skip("python parser not available")
+
+    (tmp_path / "widgets.py").write_text(
+        "class Aaa:\n"
+        "    def run(self):\n"
+        "        pass\n"
+        "\n"
+        "class Widget:\n"
+        "    def run(self):\n"
+        "        pass\n"
+        "\n"
+        "def make_widget():\n"
+        "    return Widget()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "driver.py").write_text(
+        "from widgets import make_widget\n"
+        "\n"
+        "def driver():\n"
+        "    make_widget().run()\n",
+        encoding="utf-8",
+    )
+
+    mock = MagicMock()
+    updater = GraphUpdater(
+        ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
+    )
+    updater.ast_cache.max_entries = 1
+    updater.run()
+
+    calls = _calls(mock)
+    assert any(
+        caller.endswith("driver.driver") and callee.endswith("widgets.Widget.run")
+        for caller, callee in calls
+    ), sorted(calls)
+    assert not any(callee.endswith("widgets.Aaa.run") for _, callee in calls)
