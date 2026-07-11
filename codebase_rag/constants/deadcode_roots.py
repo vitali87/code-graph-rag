@@ -152,3 +152,17 @@ TEST_PATH_PATTERNS: tuple[str, ...] = (
     ".spec.",
     "__tests__",
 )
+
+# (H) Python Enum protocol hooks: the enum machinery invokes these sunder
+# (H) methods by NAME (_generate_next_value_ on auto(), _missing_ on a failed
+# (H) value lookup), never through a call the graph can see -- runtime roots
+# (H) exactly like dunders. A closed set: arbitrary sunder names are not part
+# (H) of the protocol.
+PY_ENUM_HOOK_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "_generate_next_value_",
+        "_missing_",
+        "_ignore_",
+        "_order_",
+    }
+)
