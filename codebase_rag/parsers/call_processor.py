@@ -101,6 +101,13 @@ _PY_SEQUENCE_LITERAL_TYPES = frozenset({cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TU
 # (H) (positional elements). All use the `pair`/named-child shapes handled below.
 _DICT_LIKE_COLLECTION_TYPES = frozenset({cs.TS_PY_DICTIONARY, cs.TS_OBJECT})
 _SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_ARRAY})
+# (H) Python nodes that transparently wrap first-class values one level down:
+# (H) sequence literals, a bare multi-value return (expression_list), and
+# (H) parentheses. Dict pairs and ternaries need field-aware handling and are
+# (H) matched separately in _expand_py_first_class_values.
+_PY_VALUE_WRAPPER_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset(
+    {cs.TS_PY_EXPRESSION_LIST, cs.TS_PARENTHESIZED_EXPRESSION}
+)
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -2606,11 +2613,7 @@ class CallProcessor:
         stack = [value]
         while stack:
             node = stack.pop()
-            if (
-                node.type in _PY_SEQUENCE_LITERAL_TYPES
-                or node.type == cs.TS_PY_EXPRESSION_LIST
-                or node.type == cs.TS_PARENTHESIZED_EXPRESSION
-            ):
+            if node.type in _PY_VALUE_WRAPPER_TYPES:
                 stack.extend(node.named_children)
             elif node.type == cs.TS_PY_DICTIONARY:
                 for pair in node.named_children:
