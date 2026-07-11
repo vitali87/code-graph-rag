@@ -131,6 +131,7 @@ def _sync_workspace(
     config: WorkspaceConfig,
     batch_size: int,
     exclude: list[str] | None,
+    capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
 ) -> None:
     total = len(config.repos)
@@ -164,6 +165,7 @@ def _sync_workspace(
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
+            capture=capture,
             skip_embeddings=skip_embeddings,
         )
 
@@ -481,6 +483,7 @@ def start(
                 workspace_config,
                 effective_batch_size,
                 exclude,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
             sync_message = cs.MSG_SYNCING_WORKSPACE.format(
@@ -494,6 +497,7 @@ def start(
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
 
