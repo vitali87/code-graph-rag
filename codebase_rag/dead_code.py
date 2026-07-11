@@ -203,6 +203,11 @@ def dead_code_from_graph(
         if qn in roots:
             continue
         props = props_by_qn[qn]
+        # (H) The duplicate-qn marker (`init@51`, a SECOND Go init() in one
+        # (H) file) is a registration artifact, never part of the written
+        # (H) name; strip it so every name-scoped root rule sees the real leaf
+        # (H) (kubernetes pkg.apis.abac register.init@51 reported dead).
+        leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
@@ -216,7 +221,7 @@ def dead_code_from_graph(
             roots.add(qn)
         elif (
             qn in method_qns
-            and _is_dunder(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+            and _is_dunder(leaf)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
         ):
             roots.add(qn)
@@ -225,28 +230,24 @@ def dead_code_from_graph(
         # (H) dead code (django's TextChoices._generate_next_value_).
         elif (
             qn in method_qns
-            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.PY_ENUM_HOOK_METHOD_NAMES
+            and leaf in cs.PY_ENUM_HOOK_METHOD_NAMES
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
         ):
             roots.add(qn)
         elif (
             qn not in method_qns
-            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.GO_ROOT_FUNCTION_NAMES
+            and leaf in cs.GO_ROOT_FUNCTION_NAMES
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
         ):
             roots.add(qn)
         elif _is_rust_runtime_root(
-            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-            qn in method_qns,
-            str(props.get(cs.KEY_PATH, "")),
+            leaf, qn in method_qns, str(props.get(cs.KEY_PATH, ""))
         ):
             roots.add(qn)
-        elif _is_cpp_operator_root(
-            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], str(props.get(cs.KEY_PATH, ""))
-        ):
+        elif _is_cpp_operator_root(leaf, str(props.get(cs.KEY_PATH, ""))):
             roots.add(qn)
         elif _is_java_serialization_root(
-            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[0],
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
             qn in method_qns,
             str(props.get(cs.KEY_PATH, "")),
         ):
