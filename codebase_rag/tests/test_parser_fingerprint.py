@@ -186,6 +186,22 @@ class TestStalenessWarning:
         assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
 
 
+class TestStampIO:
+    def test_unwritable_stamp_warns_without_raising(
+        self, tmp_path: Path, warnings_sink: list[str]
+    ) -> None:
+        # (H) The stamp is a best-effort safeguard: a failed write must not
+        # (H) abort the sync that just succeeded.
+        from codebase_rag.graph_updater import _save_parser_fingerprint
+
+        stamp_dir = tmp_path / cs.PARSER_FINGERPRINT_FILENAME
+        stamp_dir.mkdir()
+
+        _save_parser_fingerprint(stamp_dir, STALE_FINGERPRINT)
+
+        assert any(str(stamp_dir) in m for m in warnings_sink)
+
+
 class TestCleanRemovesStamp:
     def test_delete_hash_cache_removes_fingerprint_stamp(self, tmp_path: Path) -> None:
         for name in (
