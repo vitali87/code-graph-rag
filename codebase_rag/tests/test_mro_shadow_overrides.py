@@ -81,3 +81,72 @@ def test_unrelated_same_name_methods_stay_independent(tmp_path: Path) -> None:
 
     dead = cgr_dead_code(root, "proj", default_dead_code_config(False, False))
     assert any(qn.endswith("Right._helper") for qn in dead)
+
+
+DIAMOND_PY = """\
+class A:
+    def use(self):
+        return self.m()
+
+    def m(self):
+        return 1
+
+
+class B(A):
+    pass
+
+
+class C(A):
+    def m(self):
+        return 2
+
+
+class D(B, C):
+    pass
+"""
+
+PRECEDENCE_PY = """\
+class A:
+    def m(self):
+        return 1
+
+
+class B(A):
+    pass
+
+
+class C:
+    def use(self):
+        return self.m()
+
+    def m(self):
+        return 2
+
+
+class E(B, C):
+    pass
+"""
+
+
+def test_diamond_common_ancestor_does_not_shadow_sibling(tmp_path: Path) -> None:
+    # (H) D(B, C) with B(A), C(A): the C3 MRO is [D, B, C, A], so C.m is D's
+    # (H) dispatch target and the normal per-method walk already links
+    # (H) C.m -> A.m. A depth-first ancestry would visit A (via B) before C
+    # (H) and emit the REVERSED edge A.m -> C.m, wrongly reviving a dead A.m
+    # (H) whenever C.m is live.
+    root = tmp_path / "diamond"
+    root.mkdir()
+    (root / "d.py").write_text(DIAMOND_PY, encoding="utf-8")
+
+    assert ("proj.d.A.m", "proj.d.C.m") not in _overrides(root)
+
+
+def test_inherited_branch_method_shadows_later_sibling(tmp_path: Path) -> None:
+    # (H) E(B, C) with B(A) and standalone C: the C3 MRO is [E, B, A, C], so
+    # (H) A.m (inherited through B) shadows C.m for E instances and the edge
+    # (H) A.m -> C.m is correct.
+    root = tmp_path / "precedence"
+    root.mkdir()
+    (root / "p.py").write_text(PRECEDENCE_PY, encoding="utf-8")
+
+    assert ("proj.p.A.m", "proj.p.C.m") in _overrides(root)
