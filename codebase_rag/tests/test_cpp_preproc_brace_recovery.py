@@ -76,6 +76,14 @@ _BULK_METHOD = """
 """
 
 _TAIL = """
+#ifdef JSON_DOC_HELPERS
+    // extra doc notes: { see design doc
+    bool doc_helper()
+    {
+        return true;
+    }
+#endif
+
     bool read_one()
     {
         return true;
@@ -111,6 +119,11 @@ def test_conditional_brace_file_keeps_class_structure(
 
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "brproj.reader.helper_0" not in functions, sorted(functions)
+
+    # (H) an UNRELATED leaf branch whose only textual imbalance is a brace in
+    # (H) a comment must survive the recovery -- only the branch that causes
+    # (H) the collapse may be blanked
+    assert "brproj.reader.detail.binary_reader.doc_helper" in methods, sorted(methods)
 
     # (H) `const decltype(SOME_MACRO_) field = ...` is a FIELD whose type uses
     # (H) an unexpandable macro; the declarator must not register a phantom
