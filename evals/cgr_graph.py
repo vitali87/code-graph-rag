@@ -170,6 +170,8 @@ class _StatefulIngestor:
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_START_LINE: props.get(cs.KEY_START_LINE),
+                        cs.KEY_END_LINE: props.get(cs.KEY_END_LINE),
                     }
                     defs.append(row)
                 return defs

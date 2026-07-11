@@ -303,6 +303,9 @@ class FunctionRegistryTrie:
         return [] if node is None else self._collect_from_subtree(node)
 
 
+_CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
+
+
 class BoundedASTCache:
     __slots__ = ("cache", "max_entries", "max_memory_bytes")
 
@@ -501,6 +504,10 @@ class GraphUpdater:
         # (H) Hybrid-mode expansion-produced calls (call text lives inside a
         # (H) macro body): BOTH ends join to tree-sitter spans after Pass 2.
         self._pending_cpp_expansion_calls: list[PendingExpansionCall] = []
+        # (H) Definition spans read back from the graph on incremental runs:
+        # (H) an expansion call's CALLEE may live in an UNCHANGED file whose
+        # (H) spans Pass 2 never recorded this run.
+        self._rehydrated_cpp_spans: dict[str, list[CppDefinitionSpan]] = {}
         # (H) Files (re)parsed by Pass 2 this run: the only files whose
         # (H) definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -588,9 +595,13 @@ class GraphUpdater:
         self, rel_path: str, line: int
     ) -> CppDefinitionSpan | None:
         spans = self.factory.definition_processor.cpp_definition_spans
-        containing = [
-            s for s in spans.get(rel_path, ()) if s.start_line <= line <= s.end_line
-        ]
+        candidates = spans.get(rel_path)
+        if candidates is None and rel_path not in self._reparsed_file_keys:
+            # (H) An unchanged file on an incremental run has no fresh spans;
+            # (H) its definitions (and their lines) are unchanged too, so the
+            # (H) graph-rehydrated spans are exact.
+            candidates = self._rehydrated_cpp_spans.get(rel_path)
+        containing = [s for s in candidates or () if s.start_line <= line <= s.end_line]
         if not containing:
             return None
         return min(containing, key=lambda s: s.end_line - s.start_line)
@@ -740,7 +751,6 @@ class GraphUpdater:
         # (H) is recorded only once its class binding resolves, and a macro use
         # (H) inside such a method must attribute to it, not the Module.
         self._resolve_hybrid_macro_calls()
-        self._resolve_hybrid_expansion_calls()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
@@ -748,6 +758,10 @@ class GraphUpdater:
 
         if not force:
             self._rehydrate_registry_from_graph()
+
+        # (H) After rehydration: an expansion call's callee join needs spans
+        # (H) for unchanged files too.
+        self._resolve_hybrid_expansion_calls()
 
         # (H) After rehydration so the "does a real definition exist?" check sees
         # (H) definitions in files an incremental run did not re-parse; otherwise a
@@ -860,6 +874,19 @@ class GraphUpdater:
             # (H) after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # (H) Spans for hybrid expansion-call callee joins: only C/C++
+                # (H) Function/Method rows carry a usable span.
+                start = row.get(cs.KEY_START_LINE)
+                end = row.get(cs.KEY_END_LINE)
+                if (
+                    node_type in (NodeType.FUNCTION, NodeType.METHOD)
+                    and isinstance(start, int)
+                    and isinstance(end, int)
+                    and os.path.splitext(path)[1].lower() in _CPP_SPAN_FILE_EXTENSIONS
+                ):
+                    self._rehydrated_cpp_spans.setdefault(path, []).append(
+                        CppDefinitionSpan(start, end, node_type.value, qn)
+                    )
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)

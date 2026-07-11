@@ -122,9 +122,15 @@ class _Collector:
         # (H) so within a TU every instantiation is recorded before any
         # (H) CALL_EXPR at its site is visited.
         self._instantiation_extents: dict[str, list[tuple[int, int, int, int]]] = {}
-        # (H) (caller rel, caller line, callee rel, callee line): both ends
-        # (H) join to tree-sitter definition spans after Pass 2.
-        self._pending_expansion_calls: set[tuple[str, int, str, int]] = set()
+        # (H) (caller rel, caller line, callee USR, callee rel, callee line):
+        # (H) both ends join to tree-sitter definition spans after Pass 2.
+        self._pending_expansion_calls: set[tuple[str, int, str, str, int]] = set()
+        # (H) {USR: (rel, line)} of every in-repo function/method DEFINITION
+        # (H) seen across all TUs: a cross-TU callee's get_definition() is None
+        # (H) in the calling TU (only the header declaration is visible), but
+        # (H) another TU parses the definition -- prefer its location so the
+        # (H) span join targets the definition node, not the prototype.
+        self._usr_definitions: dict[str, tuple[str, int]] = {}
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -178,8 +184,12 @@ class _Collector:
         if self.hybrid:
             if cursor.kind.name == fc.KIND_CALL_EXPR:
                 self._queue_expansion_call(cursor)
-            elif _classify(cursor) == fc.LABEL_TYPE:
-                self._process_hybrid_type_alias(cursor)
+            else:
+                match _classify(cursor):
+                    case fc.LABEL_TYPE:
+                        self._process_hybrid_type_alias(cursor)
+                    case fc.LABEL_FUNCTION | fc.LABEL_METHOD:
+                        self._record_usr_definition(cursor)
             # (H) Everything else emits definition nodes or CALLS with
             # (H) libclang-scheme qns -- tree-sitter's territory in hybrid.
             return None
@@ -427,6 +437,18 @@ class _Collector:
             for sl, sc, el, ec in self._instantiation_extents.get(loc.file.name, ())
         )
 
+    def _record_usr_definition(self, cursor: Cursor) -> None:
+        # (H) No node is emitted: only the definition's location is kept so a
+        # (H) cross-TU expansion callee can join to the definition's span.
+        if not cursor.is_definition() or cursor.location.file is None:
+            return
+        rel = self.resolver.rel_path(cursor.location.file.name)
+        if rel is None:
+            return
+        usr = cursor.get_usr()
+        if usr:
+            self._usr_definitions[usr] = (rel, cursor.location.line)
+
     def _queue_expansion_call(self, cursor: Cursor) -> None:
         # (H) Only expansion-produced calls: everything else is tree-sitter's.
         # (H) Both ends are kept as locations; qns are joined to tree-sitter
@@ -447,7 +469,13 @@ class _Collector:
         if callee_rel is None or caller_rel is None:
             return
         self._pending_expansion_calls.add(
-            (caller_rel, cursor.location.line, callee_rel, callee.location.line)
+            (
+                caller_rel,
+                cursor.location.line,
+                callee.get_usr() or "",
+                callee_rel,
+                callee.location.line,
+            )
         )
 
     def _process_hybrid_type_alias(self, cursor: Cursor) -> None:
@@ -642,12 +670,17 @@ class _Collector:
         # (H) pre-resolved for the caller end; a caller file with no module qn
         # (H) can never carry an edge.
         pending: list[PendingExpansionCall] = []
-        for caller_rel, caller_line, callee_rel, callee_line in sorted(
+        for caller_rel, caller_line, usr, callee_rel, callee_line in sorted(
             self._pending_expansion_calls
         ):
             module_qn = self.resolver.module_qn_for_rel(caller_rel)
             if module_qn is None:
                 continue
+            # (H) Prefer the DEFINITION's location (recorded from whichever TU
+            # (H) parsed it) over the declaration the calling TU could see.
+            callee_rel, callee_line = self._usr_definitions.get(
+                usr, (callee_rel, callee_line)
+            )
             pending.append(
                 PendingExpansionCall(
                     caller_rel, caller_line, callee_rel, callee_line, module_qn
