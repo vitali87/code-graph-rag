@@ -411,3 +411,138 @@ def test_hybrid_directive_only_macro_use_attributes_to_module(
     # (H) it is never tokenized and carries no edge -- the graph mirrors the
     # (H) build configuration
     assert not any(t.endswith(".SKIPPED_FLAG") for _, t in calls), sorted(calls)
+
+
+# (H) B3 fixtures. Aliases: tree-sitter emits NO Type nodes for C++
+# (H) using/typedef at all, so namespace/file-scope aliases are a fact libclang
+# (H) can add; a MEMBER alias would need a Class parent whose libclang qn
+# (H) diverges from tree-sitter's wherever macros hide namespaces, so member
+# (H) aliases stay out. Post-expansion calls: a call written INSIDE a macro
+# (H) body exists only after expansion, invisible to tree-sitter; both its
+# (H) caller (expansion site) and callee (referenced definition) join to
+# (H) tree-sitter spans by location, so the emitted edge carries tree-sitter
+# (H) scheme qns end to end.
+_B3_H = """\
+#ifndef B3_H
+#define B3_H
+namespace ui {
+using Handle = int;
+struct Widget { using Member = char; };
+}
+typedef long FileScope;
+int target(int v);
+int decoy_target(int v);
+#define CALL_TARGET(v) target(v)
+#endif
+"""
+
+_B3_SRC = """\
+#include "b3.h"
+int target(int v) { return v + 1; }
+int decoy_target(int v) { return v + 2; }
+int driver(int v) { return CALL_TARGET(v); }
+int module_level = CALL_TARGET(3);
+"""
+
+
+def _write_b3(root: Path) -> None:
+    root.mkdir()
+    (root / "b3.h").write_text(_B3_H, encoding="utf-8")
+    (root / "b3.cpp").write_text(_B3_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "b3.cpp")]), encoding="utf-8"
+    )
+
+
+def _defines(ingestor: MagicMock) -> set[tuple[str, str]]:
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in ingestor.ensure_relationship_batch.call_args_list
+        if c.args[1] == "DEFINES"
+    }
+
+
+def test_hybrid_emits_namespace_and_file_scope_type_aliases(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybalias"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    types = get_qualified_names(get_nodes(ingestor, "Type"))
+    assert "hybalias.b3.h.ui.Handle" in types, sorted(types)
+    assert "hybalias.b3.h.FileScope" in types, sorted(types)
+    defines = _defines(ingestor)
+    assert ("hybalias.b3.h", "hybalias.b3.h.ui.Handle") in defines
+    assert ("hybalias.b3.h", "hybalias.b3.h.FileScope") in defines
+
+
+def test_hybrid_skips_member_type_aliases(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) A member alias would anchor to a libclang-scheme Class qn -- a
+    # (H) phantom node in hybrid -- so it is not emitted at all.
+    root = temp_repo / "hybmember"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    types = get_qualified_names(get_nodes(ingestor, "Type"))
+    assert not any(qn.endswith(".Member") for qn in types), sorted(types)
+
+
+def test_hybrid_macro_body_call_resolves_post_expansion(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `CALL_TARGET(v)` expands to `target(v)`: the call to target exists
+    # (H) only post-expansion. Both ends location-join to tree-sitter spans, so
+    # (H) driver -> target lands with tree-sitter qns; decoy_target never does.
+    root = temp_repo / "hybexp"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    calls = _calls(ingestor)
+    assert ("hybexp.b3.driver", "hybexp.b3.target") in calls, sorted(calls)
+    assert not any(callee == "hybexp.b3.decoy_target" for _, callee in calls), sorted(
+        calls
+    )
+
+
+def test_hybrid_module_scope_expansion_call_attributes_to_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `int module_level = CALL_TARGET(3);` expands outside every span:
+    # (H) the caller falls back to the Module, mirroring the macro-use rule.
+    root = temp_repo / "hybexpmod"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    assert ("hybexpmod.b3", "hybexpmod.b3.target") in _calls(ingestor), sorted(
+        _calls(ingestor)
+    )
+
+
+def test_hybrid_is_default_frontend() -> None:
+    # (H) HYBRID degrades to pure tree-sitter when libclang or a compdb is
+    # (H) missing, so it is safe as the default and strictly better with one.
+    from codebase_rag.config import AppConfig
+
+    default = AppConfig.model_fields["CPP_FRONTEND"].default
+    assert default == cs.CppFrontend.HYBRID, default
+
+
+def test_frontend_skips_repo_without_c_or_cpp_files(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) With HYBRID as the default every non-C++ repo would otherwise warn
+    # (H) about a missing compile_commands.json on every index; the frontend
+    # (H) must not even look for one when the repo has no C/C++ sources.
+    root = temp_repo / "pyonly"
+    root.mkdir()
+    (root / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    probed: list[Path] = []
+
+    def _spy(start: Path) -> None:
+        probed.append(start)
+        return None
+
+    monkeypatch.setattr(gu, "find_compile_commands", _spy)
+    ingestor = MagicMock()
+    run_updater(root, ingestor)
+    assert probed == [], probed
