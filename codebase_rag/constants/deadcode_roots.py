@@ -44,6 +44,7 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "property",
         "cached_property",
         "classproperty",
+        "hybrid_property",
         "setter",
         "deleter",
     }

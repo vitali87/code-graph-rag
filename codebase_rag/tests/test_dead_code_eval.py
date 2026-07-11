@@ -1096,6 +1096,7 @@ def test_property_family_decorated_methods_are_roots() -> None:
                 decorators=["@functools.cached_property"],
             ),
             _method("proj.m.Expr.sig", decorators=["@classproperty"]),
+            _method("proj.m.Model.hybrid", decorators=["@hybrid_property"]),
             _method("proj.m.Options.value", decorators=["@value.setter"]),
             _method("proj.m.Options.gone", decorators=["@gone.deleter"]),
             _method("proj.m.Options._helper"),
