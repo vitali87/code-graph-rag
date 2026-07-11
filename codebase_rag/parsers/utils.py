@@ -126,6 +126,71 @@ def get_function_captures(
     return FunctionCapturesResult(lang_config, captures)
 
 
+def extract_modifiers_and_decorators(
+    node: ASTNode, lang_queries: LanguageQueries
+) -> tuple[list[str], list[str]]:
+    query = lang_queries.get(cs.QUERY_HIGHLIGHTS)
+    if not query:
+        return [], []
+
+    cursor = get_query_cursor(query)
+
+    body_node = node.child_by_field_name(cs.FIELD_BODY)
+    header_end_byte = body_node.start_byte if body_node else node.end_byte
+
+    target_node = node
+    if node.parent and node.parent.type in (
+        cs.TS_PY_DECORATED_DEFINITION,
+        cs.TS_EXPORT_STATEMENT,
+    ):
+        target_node = node.parent
+
+    query_nodes = [target_node]
+    curr_sibling = target_node.prev_named_sibling
+    while curr_sibling and (
+        curr_sibling.type == cs.TS_RS_ATTRIBUTE_ITEM
+        or (
+            target_node.type == cs.TS_METHOD_DEFINITION
+            and curr_sibling.type == cs.TS_DECORATOR
+        )
+    ):
+        query_nodes.insert(0, curr_sibling)
+        curr_sibling = curr_sibling.prev_named_sibling
+
+    modifiers: list[str] = []
+    decorators: list[str] = []
+
+    for q_node in query_nodes:
+        if q_node == target_node:
+            cursor.set_byte_range(q_node.start_byte, header_end_byte)
+        else:
+            cursor.set_byte_range(q_node.start_byte, q_node.end_byte)
+
+        captures = sorted_captures(cursor, q_node)
+        for name, nodes in captures.items():
+            if (
+                name.startswith(cs.CAPTURE_KEYWORD_MODIFIER)
+                or name == cs.CAPTURE_KEYWORD
+            ):
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if (
+                        text
+                        and text not in modifiers
+                        and text not in cs.EXCLUDED_KEYWORDS
+                    ):
+                        modifiers.append(text)
+            elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
+                cs.CAPTURE_FUNCTION_DECORATOR
+            ):
+                for n in nodes:
+                    text = safe_decode_text(n)
+                    if text and text not in decorators:
+                        decorators.append(text)
+
+    return modifiers, decorators
+
+
 @lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
@@ -155,7 +220,10 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
 
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
-        decorator.lstrip(cs.DECORATOR_AT).split(cs.SEPARATOR_DOT)[-1]
+        decorator.lstrip("@#[]() ")
+        .split("(")[0]
+        .split(cs.SEPARATOR_DOT)[-1]
+        .rstrip(")] ")
         for decorator in decorators
     }
 
@@ -588,7 +656,7 @@ def ingest_method(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     language: cs.SupportedLanguage | None = None,
-    extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
+    lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
     repo_path: Path | None = None,
@@ -623,7 +691,12 @@ def ingest_method(
             method_qn, method_node.start_point[0] + 1
         )
 
-    decorators = extract_decorators_func(method_node) if extract_decorators_func else []
+    decorators = []
+    modifiers = []
+    if lang_queries:
+        modifiers, decorators = extract_modifiers_and_decorators(
+            method_node, lang_queries
+        )
 
     # (H) Local import breaks the export_detection -> cpp.utils -> utils cycle.
     from . import export_detection
@@ -631,6 +704,7 @@ def ingest_method(
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
         cs.KEY_NAME: method_name,
+        cs.KEY_MODIFIERS: modifiers,
         cs.KEY_DECORATORS: decorators,
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
         cs.KEY_END_LINE: method_node.end_point[0] + 1,

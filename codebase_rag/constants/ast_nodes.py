@@ -112,6 +112,7 @@ QUERY_IMPORTS = "imports"
 QUERY_LOCALS = "locals"
 QUERY_CONFIG = "config"
 QUERY_LANGUAGE = "language"
+QUERY_HIGHLIGHTS = "highlights"
 
 # (H) Query capture names
 CAPTURE_FUNCTION = "function"
@@ -119,6 +120,38 @@ CAPTURE_CLASS = "class"
 CAPTURE_CALL = "call"
 CAPTURE_IMPORT = "import"
 CAPTURE_IMPORT_FROM = "import_from"
+CAPTURE_KEYWORD_MODIFIER = "keyword.modifier"
+CAPTURE_KEYWORD = "keyword"
+CAPTURE_ATTRIBUTE = "attribute"
+CAPTURE_FUNCTION_DECORATOR = "function.decorator"
+
+# (H) Modifier extraction
+EXCLUDED_KEYWORDS = frozenset(
+    {
+        "def",
+        "class",
+        "fn",
+        "struct",
+        "impl",
+        "interface",
+        "enum",
+        "function",
+        "trait",
+        "type",
+        "void",
+        "None",
+        "True",
+        "False",
+        "null",
+        "true",
+        "false",
+        "return",
+        "import",
+        "from",
+        "as",
+        "where",
+    }
+)
 
 # (H) Tree-sitter Python import node types
 TS_IMPORT_STATEMENT = "import_statement"
