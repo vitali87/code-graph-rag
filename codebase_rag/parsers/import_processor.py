@@ -199,6 +199,7 @@ class ImportProcessor:
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
+        "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
         "_cpp_module_qn_map",
@@ -262,6 +263,16 @@ class ImportProcessor:
         )
 
         repo_is_package = (repo_path / cs.INIT_PY).is_file()
+
+        # (H) A repo whose top-level package shares the repo's name (a django
+        # (H) clone is django/django, celery is celery/celery) makes written
+        # (H) absolute imports collide with the project prefix: `django.http`
+        # (H) names the package dir and needs the project prefix on top
+        # (H) (django.django.http), while in a flat layout (repo root doubles
+        # (H) as the installed package) the written path already IS the qn.
+        self._project_named_package = (
+            not repo_is_package and (repo_path / project_name).is_dir()
+        )
 
         # (H) Python packages under nested source roots (src-layout, monorepo
         # (H) packages, pyproject package-dir remaps) are importable by a name that
@@ -629,6 +640,8 @@ class ImportProcessor:
         if module_name == self.project_name or module_name.startswith(
             self.project_name + cs.SEPARATOR_DOT
         ):
+            if self._project_named_package:
+                return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
             return module_name
         if self._is_local_module(top_level):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
@@ -772,9 +785,8 @@ class ImportProcessor:
         if not imported_items and not is_wildcard:
             return
 
-        base_module = self._resolve_python_base_module(module_name)
         self._register_python_from_imports(
-            module_qn, base_module, imported_items, is_wildcard
+            module_qn, module_name, imported_items, is_wildcard
         )
 
     def _extract_python_from_module_name(
@@ -785,7 +797,13 @@ class ImportProcessor:
             return None
 
         if module_name_node.type == cs.TS_DOTTED_NAME:
-            return safe_decode_text(module_name_node)
+            # (H) A written absolute path resolves through the same collision-
+            # (H) aware mapping as plain imports; a relative import is already
+            # (H) project-prefixed by construction and must NOT re-enter it (a
+            # (H) second prefixing would double the project segment).
+            if written := safe_decode_text(module_name_node):
+                return self._resolve_python_base_module(written)
+            return None
         if module_name_node.type == cs.TS_RELATIVE_IMPORT:
             return self._resolve_relative_import(module_name_node, module_qn)
         return None
@@ -816,8 +834,9 @@ class ImportProcessor:
         return None
 
     def _resolve_python_base_module(self, module_name: str) -> str:
-        if module_name.startswith(self.project_name):
-            return module_name
+        # (H) The old `startswith(project_name)` as-is shortcut is subsumed by
+        # (H) _resolve_import_full_name's first branch, which additionally
+        # (H) handles the project-named-package collision.
         top_level = module_name.split(cs.SEPARATOR_DOT)[0]
         return self._resolve_import_full_name(module_name, top_level)
 
