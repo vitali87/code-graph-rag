@@ -136,3 +136,29 @@ def test_indexing_twice_is_deterministic(
     assert first_rels, "fixture produced no relationships"
     assert first_nodes == second_nodes
     assert first_rels == second_rels
+
+
+def test_same_start_captures_order_by_span() -> None:
+    # (H) A chained constructor call (`Greeter().greet("x")`) yields two call
+    # (H) captures with the SAME start byte: the outer chain and the inner
+    # (H) constructor. Raw tree-sitter capture order flips between runs, so
+    # (H) sorted_captures must break the tie by end_byte (inner span first) or
+    # (H) the two emitted edges swap and indexing is nondeterministic.
+    from tree_sitter import QueryCursor
+
+    from codebase_rag import constants as cs
+    from codebase_rag.parsers.utils import get_cached_query, sorted_captures
+
+    parsers, queries = load_parsers()
+    if "python" not in parsers:
+        pytest.skip("python parser not available")
+
+    tree = parsers["python"].parse(b'Greeter().greet("world")\n')
+    lang_obj = queries[cs.SupportedLanguage.PYTHON]["language"]
+    query = get_cached_query(lang_obj, "(call) @call")
+    captures = sorted_captures(QueryCursor(query), tree.root_node)
+    calls = captures["call"]
+    assert len(calls) == 2
+    assert calls[0].start_byte == calls[1].start_byte
+    spans = [(n.start_byte, n.end_byte) for n in calls]
+    assert spans == sorted(spans), spans

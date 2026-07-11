@@ -86,7 +86,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         self, callee: str, module_qn: str
     ) -> str | None: ...
 
-    _return_stmt_cache: dict[int, list[Node]]
+    _return_stmt_cache: dict[Node, list[Node]]
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -106,7 +106,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 comprehensions = captures.get("comprehension", [])
                 for_statements = captures.get("for_stmt", [])
                 if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[id(node)] = return_stmts
+                    self._return_stmt_cache[node] = return_stmts
             except Exception:
                 py_lang_obj = None
 
@@ -408,7 +408,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         return self._find_class_in_scope(candidate, module_qn) or candidate
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        cached = self._return_stmt_cache.get(id(node))
+        cached = self._return_stmt_cache.get(node)
         if cached is not None:
             return_nodes.extend(cached)
             return

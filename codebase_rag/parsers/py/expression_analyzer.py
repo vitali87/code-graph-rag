@@ -50,7 +50,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     ast_cache: ASTCacheProtocol
 
     _method_return_type_cache: dict[str, str | None]
-    _self_assignment_cache: dict[tuple[int, str], dict[str, str] | None]
+    _self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None]
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -440,7 +440,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             if language != cs.SupportedLanguage.PYTHON:
                 return None
 
-            cache_key = (id(root_node), module_qn)
+            cache_key = (root_node, module_qn)
             if cache_key in self._self_assignment_cache:
                 instance_vars = self._self_assignment_cache[cache_key]
             else:

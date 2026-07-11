@@ -115,7 +115,10 @@ class FunctionCapturesResult(NamedTuple):
 
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
     # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
-    # (H) across process invocations; sort by start_byte for reproducibility
+    # (H) across invocations; sort by (start_byte, end_byte) for reproducibility.
+    # (H) start_byte alone leaves nested same-start captures (the outer
+    # (H) `Greeter().greet()` chain and its inner `Greeter()` call) in raw order,
+    # (H) which flips between runs and swaps their emitted edges.
     raw = cursor.captures(node)
     result: dict[str, list[ASTNode]] = {}
     for name, nodes in raw.items():
@@ -123,19 +126,19 @@ def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNod
             result[name] = nodes
         else:
             is_sorted = True
-            prev_byte = nodes[0].start_byte
+            prev_key = _span_key(nodes[0])
             for i in range(1, len(nodes)):
-                cur_byte = nodes[i].start_byte
-                if cur_byte < prev_byte:
+                cur_key = _span_key(nodes[i])
+                if cur_key < prev_key:
                     is_sorted = False
                     break
-                prev_byte = cur_byte
-            result[name] = nodes if is_sorted else sorted(nodes, key=_start_byte_key)
+                prev_key = cur_key
+            result[name] = nodes if is_sorted else sorted(nodes, key=_span_key)
     return result
 
 
-def _start_byte_key(n: ASTNode) -> int:
-    return n.start_byte
+def _span_key(n: ASTNode) -> tuple[int, int]:
+    return (n.start_byte, n.end_byte)
 
 
 def get_function_captures(

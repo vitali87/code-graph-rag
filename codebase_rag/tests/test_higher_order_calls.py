@@ -1,7 +1,7 @@
 # (H) L3 finding from the evals/ harness: a function passed as an argument and
 # (H) invoked via a parameter name (extract_decorators_func(node) inside
 # (H) ingest_method) or handed to an eager higher-order builtin (sorted(...,
-# (H) key=_start_byte_key)). The traced CALLS edge points from the function that
+# (H) key=_span_key)). The traced CALLS edge points from the function that
 # (H) actually invokes the callable: the callee for a parameter it calls, the
 # (H) enclosing function for a synchronous builtin. Sibling-class methods of the
 # (H) same name make the callback targets ambiguous so trie uniqueness cannot
