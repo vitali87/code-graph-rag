@@ -1551,13 +1551,18 @@ class CallResolver:
         # (H) first-party callee -- nlohmann's `token == token_type::x` must
         # (H) not rebind to an unrelated class's operator== and fan out to all
         # (H) its overload variants.
-        member_qn = f"{operand_type_qn}{cs.SEPARATOR_DOT}{call_name}"
-        if member_qn in self.function_registry:
-            return (self.function_registry[member_qn], member_qn)
-        type_module = operand_type_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        free_qn = f"{type_module}{cs.SEPARATOR_DOT}{call_name}"
-        if free_qn in self.function_registry:
-            return (self.function_registry[free_qn], free_qn)
+        # (H) _try_resolve_method covers both the direct member and one
+        # (H) INHERITED from a base (Derived : Base with Base::operator==).
+        if member := self._try_resolve_method(operand_type_qn, call_name):
+            return member
+        # (H) ADL: a free overload may live in ANY enclosing namespace of the
+        # (H) operand's type, not only its immediate parent scope.
+        parts = operand_type_qn.split(cs.SEPARATOR_DOT)
+        for depth in range(len(parts) - 1, 0, -1):
+            scope = cs.SEPARATOR_DOT.join(parts[:depth])
+            free_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+            if free_qn in self.function_registry:
+                return (self.function_registry[free_qn], free_qn)
         return None
 
     def cpp_operand_class_qn(

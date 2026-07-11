@@ -103,3 +103,61 @@ def test_untyped_operand_keeps_existing_binding(tmp_path: Path) -> None:
     assert ("proj.keep.driver", "proj.keep.Only.operator_equal") in calls, sorted(
         c for c in calls if "operator" in c[1]
     )
+
+
+def test_typed_operand_binds_inherited_operator(tmp_path: Path) -> None:
+    # (H) Derived inherits Base::operator==; suppressing the edge because
+    # (H) Derived itself declares none would orphan the base overload.
+    (tmp_path / "inh.hpp").write_text(
+        "struct Aaa {\n"
+        "    bool operator==(const Aaa& rhs) const { return true; }\n"
+        "};\n"
+        "struct Base {\n"
+        "    bool operator==(const Base& rhs) const { return true; }\n"
+        "};\n"
+        "struct Derived : public Base {};\n"
+        "bool driver(Derived a, Derived b) {\n"
+        "    return a == b;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls = _calls(tmp_path)
+    assert ("proj.inh.driver", "proj.inh.Base.operator_equal") in calls, sorted(
+        c for c in calls if "operator" in c[1]
+    )
+    assert ("proj.inh.driver", "proj.inh.Aaa.operator_equal") not in calls
+
+
+def test_typed_operand_binds_free_operator_in_enclosing_namespace(
+    tmp_path: Path,
+) -> None:
+    # (H) ADL: a free overload for a nested type may live in any enclosing
+    # (H) namespace, not only the type's immediate parent scope.
+    (tmp_path / "adl.hpp").write_text(
+        "struct Aaa {\n"
+        "    bool operator==(const Aaa& rhs) const { return true; }\n"
+        "};\n"
+        "namespace outer {\n"
+        "namespace inner {\n"
+        "struct Token { int v; };\n"
+        "}\n"
+        "bool operator==(const inner::Token& a, const inner::Token& b) {\n"
+        "    return a.v == b.v;\n"
+        "}\n"
+        "bool driver(inner::Token a, inner::Token b) {\n"
+        "    return a == b;\n"
+        "}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls = _calls(tmp_path)
+    assert (
+        "proj.adl.outer.driver",
+        "proj.adl.outer.operator_equal",
+    ) in calls, sorted(c for c in calls if "operator" in c[1])
+    # (H) scoped to the typed driver call: the `a.v == b.v` comparison inside
+    # (H) the free operator has FIELD operands (outside the bare-identifier
+    # (H) scope) and keeps the legacy path.
+    assert not any(
+        "Aaa.operator_equal" in callee for caller, callee in calls if "driver" in caller
+    )
