@@ -1048,3 +1048,28 @@ def test_factory_revived_by_override_expansion_roots_its_class() -> None:
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
     assert dead == set()
+
+
+def test_enum_protocol_hooks_are_roots() -> None:
+    # (H) Python's Enum machinery invokes _generate_next_value_ (on auto())
+    # (H) and _missing_ (on failed lookup) by NAME, never through a call the
+    # (H) graph can see -- runtime hooks exactly like dunders (django's
+    # (H) TextChoices._generate_next_value_). An arbitrary sunder-named
+    # (H) method is NOT in the protocol and must stay a dead candidate.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.TextChoices._generate_next_value_"),
+            _method("proj.m.Color._missing_"),
+            _method("proj.m.Color._custom_sunder_"),
+            # (H) _order_ / _ignore_ are Enum class ATTRIBUTES consumed at
+            # (H) class creation, never methods the machinery invokes; a
+            # (H) user-defined method with that name is ordinary dead code.
+            _method("proj.m.Color._order_"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert dead == {"proj.m.Color._custom_sunder_", "proj.m.Color._order_"}

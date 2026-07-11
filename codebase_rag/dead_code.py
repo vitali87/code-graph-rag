@@ -220,6 +220,15 @@ def dead_code_from_graph(
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
         ):
             roots.add(qn)
+        # (H) Python Enum protocol hooks (_generate_next_value_, _missing_) are
+        # (H) invoked by the enum machinery by NAME, like dunders -- roots, not
+        # (H) dead code (django's TextChoices._generate_next_value_).
+        elif (
+            qn in method_qns
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.PY_ENUM_HOOK_METHOD_NAMES
+            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
+        ):
+            roots.add(qn)
         elif (
             qn not in method_qns
             and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.GO_ROOT_FUNCTION_NAMES
