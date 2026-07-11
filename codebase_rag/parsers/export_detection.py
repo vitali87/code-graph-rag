@@ -15,6 +15,19 @@ _JS_MODULE_EXPORTS = (
     cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
 ).encode()
 _JS_EXPORTS_MEMBER = (cs.JS_EXPORTS_KEYWORD + cs.SEPARATOR_DOT).encode()
+# (H) Real function scopes. A bare `{ ... }` statement_block at top level
+# (H) (django's core.js) is NOT one: prototype mutations and var/function
+# (H) declarations inside it still land in page scope, so only a function
+# (H) ancestor makes a script declaration local.
+_JS_TS_FUNCTION_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_METHOD_DEFINITION,
+    }
+)
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
@@ -96,7 +109,7 @@ def _is_script_global(node: Node) -> bool:
     root = node
     current = node.parent
     while current is not None:
-        if current.type in _JS_TS_EXPORT_STOP_TYPES:
+        if current.type in _JS_TS_FUNCTION_SCOPE_TYPES:
             return False
         root = current
         current = current.parent
