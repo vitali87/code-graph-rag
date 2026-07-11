@@ -38,9 +38,7 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
-def _method(
-    uid: str, path: str = "m.py", decorators: list[str] | None = None
-) -> tuple:
+def _method(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tuple:
     return (
         (cs.NodeLabel.METHOD.value, uid),
         {
