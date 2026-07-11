@@ -36,6 +36,17 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "model_serializer",
         "computed_field",
         "abstractmethod",
+        # (H) Property-family accessors are invoked by ATTRIBUTE syntax -- a bare
+        # (H) read/write like `obj._output_field_or_none` produces no call node,
+        # (H) so no CALLS edge can ever land on them (django WhereNode.
+        # (H) _output_field_or_none, Expression._constructor_signature). The same
+        # (H) invisible-invocation argument as dunders: roots, not dead code.
+        "property",
+        "cached_property",
+        "classproperty",
+        "hybrid_property",
+        "setter",
+        "deleter",
     }
 )
 
