@@ -122,3 +122,33 @@ def test_first_class_container_values_are_not_dead(tmp_path: Path) -> None:
         qn.endswith(("_get_varchar_column", "_simple_validator", "_load_field"))
         for qn in dead
     )
+
+
+DICT_TERNARY_PY = """\
+def local_setter_real(obj):
+    return obj
+
+
+def local_setter_noop(obj):
+    return obj
+
+
+def get_related_selections(flag):
+    klass_info = {
+        "local_setter": (local_setter_real if flag else local_setter_noop),
+    }
+    return klass_info
+"""
+
+
+def test_dict_value_ternary_references_both_branches(tmp_path: Path) -> None:
+    # (H) django's SQLCompiler stores `(partial(...) if cond else
+    # (H) local_setter_noop)` as a dict VALUE: the parenthesized ternary hides
+    # (H) both dispatch candidates one level down inside the table entry.
+    root = tmp_path / "dictternary"
+    root.mkdir()
+    (root / "m.py").write_text(DICT_TERNARY_PY, encoding="utf-8")
+
+    refs = _references(root)
+    assert ("proj.m.get_related_selections", "proj.m.local_setter_noop") in refs
+    assert ("proj.m.get_related_selections", "proj.m.local_setter_real") in refs
