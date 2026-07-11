@@ -675,7 +675,8 @@ class GraphUpdater:
         extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
         for _root, dirs, files in os.walk(self.repo_path):
             dirs[:] = [d for d in dirs if not d.startswith(cs.SEPARATOR_DOT)]
-            if any(Path(f).suffix.lower() in extensions for f in files):
+            # (H) splitext, not Path(): no object allocation per repo file.
+            if any(os.path.splitext(f)[1].lower() in extensions for f in files):
                 return True
         return False
 
