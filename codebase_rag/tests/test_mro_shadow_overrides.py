@@ -150,3 +150,44 @@ def test_inherited_branch_method_shadows_later_sibling(tmp_path: Path) -> None:
     (root / "p.py").write_text(PRECEDENCE_PY, encoding="utf-8")
 
     assert ("proj.p.A.m", "proj.p.C.m") in _overrides(root)
+
+
+TWO_COMBINERS_PY = """\
+class Combinable:
+    def combine_or(self):
+        return self._combine()
+
+    def _combine(self):
+        return 1
+
+
+class SearchVectorCombinable:
+    def _combine(self):
+        return 2
+
+
+class SearchVector(SearchVectorCombinable, Combinable):
+    pass
+
+
+class SearchText(SearchVectorCombinable, Combinable):
+    pass
+"""
+
+
+def test_shadow_edge_emitted_once_across_combining_classes(tmp_path: Path) -> None:
+    # (H) Two classes combining the same mixin pair surface the same shadow
+    # (H) pair twice; the edge must be emitted exactly once.
+    root = tmp_path / "twocombine"
+    root.mkdir()
+    (root / "s.py").write_text(TWO_COMBINERS_PY, encoding="utf-8")
+
+    ingestor = _capture(root, "proj")
+    shadow_edges = [
+        (f, t)
+        for _fl, f, rel, _tl, t in ingestor.rels
+        if rel == "OVERRIDES"
+        and (f, t)
+        == ("proj.s.SearchVectorCombinable._combine", "proj.s.Combinable._combine")
+    ]
+    assert len(shadow_edges) == 1
