@@ -551,7 +551,7 @@ class GraphUpdater:
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
             self._pending_cpp_macro_calls = run_cpp_frontend_hybrid(
-                self.ingestor,
+                self._sink,
                 self.repo_path,
                 self.project_name,
                 compdb_dir,
@@ -610,7 +610,7 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
