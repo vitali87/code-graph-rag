@@ -14,6 +14,7 @@ from . import constants as cs
 from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
@@ -401,6 +402,20 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+def _load_parser_fingerprint(stamp_path: Path) -> str | None:
+    try:
+        return stamp_path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
+    try:
+        stamp_path.write_text(fingerprint, encoding="utf-8")
+    except OSError as e:
+        logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
+
+
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
     if not cache_path.is_file():
         return {}
@@ -612,6 +627,9 @@ class GraphUpdater:
             cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
+
+        if not force and self._single_file is None:
+            self._warn_if_parser_changed()
 
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
@@ -960,7 +978,7 @@ class GraphUpdater:
             with os.scandir(dir_path_str) as it:
                 for entry in it:
                     name = entry.name
-                    if name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
+                    if name in cs.CGR_STATE_FILENAMES:
                         continue
                     try:
                         is_symlink = entry.is_symlink()
@@ -1025,6 +1043,18 @@ class GraphUpdater:
             )
         )
 
+    def _warn_if_parser_changed(self) -> None:
+        # (H) No hash cache means a full build is coming: nothing to compare.
+        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+            return
+        stored = _load_parser_fingerprint(
+            self.repo_path / cs.PARSER_FINGERPRINT_FILENAME
+        )
+        # (H) A missing stamp on an existing graph means it was built by an
+        # (H) unknown (pre-fingerprint) parser: treat it as stale too.
+        if stored != compute_parser_fingerprint():
+            logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
+
     def _is_already_in_sync(self) -> bool:
         if self._single_file is not None:
             return False
@@ -1081,8 +1111,7 @@ class GraphUpdater:
             return []
 
         eligible: list[tuple[Path, str]] = []
-        hash_name = cs.HASH_CACHE_FILENAME
-        dir_mtimes_name = cs.DIR_MTIMES_FILENAME
+        state_filenames = cs.CGR_STATE_FILENAMES
         repo_str = str(self.repo_path)
         repo_prefix_len = len(repo_str) + 1
         exclude_paths = self.exclude_paths
@@ -1106,7 +1135,7 @@ class GraphUpdater:
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
             )
             for fname in sorted(filenames):
-                if fname in (hash_name, dir_mtimes_name):
+                if fname in state_filenames:
                     continue
                 dot = fname.rfind(".")
                 suffix = fname[dot:] if dot != -1 else ""
@@ -1125,6 +1154,7 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        is_full_build = (force or not old_hashes) and self._single_file is None
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
@@ -1254,6 +1284,14 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
         _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
+        # (H) Stamp only full builds: re-stamping an incremental run would
+        # (H) silence the staleness warning while unchanged files still carry
+        # (H) the old parser's edges.
+        if is_full_build:
+            _save_parser_fingerprint(
+                self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
+                compute_parser_fingerprint(),
+            )
 
     def _pre_parse_changed_files(
         self,

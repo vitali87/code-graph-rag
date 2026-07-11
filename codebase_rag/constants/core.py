@@ -121,6 +121,23 @@ KEYWORD_CONSTRUCTOR = "constructor"
 # (H) Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+CGR_STATE_FILENAMES: frozenset[str] = frozenset(
+    {HASH_CACHE_FILENAME, DIR_MTIMES_FILENAME, PARSER_FINGERPRINT_FILENAME}
+)
+
+# (H) Inputs to the parser fingerprint: everything that changes how source
+# (H) files are turned into graph nodes and edges, plus the installed grammar
+# (H) wheels. Paths are relative to the codebase_rag package root.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
+PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
+    "graph_updater.py",
+    "language_spec.py",
+    "parser_loader.py",
+)
+PY_SOURCE_GLOB = "*.py"
+GRAMMAR_DIST_PREFIX = "tree-sitter"
+GRAMMAR_VERSION_FMT = "{name}=={version}"
 GIT_DIR_NAME = ".git"
 ROOT_DIR_KEY = "."
 JSON_EMPTY_OBJECT = "{}"
