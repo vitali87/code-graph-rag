@@ -80,6 +80,9 @@ _TAIL = """
     {
         return true;
     }
+
+  private:
+    const decltype(JSON_MAKE_MARKERS_) type_markers = JSON_MAKE_MARKERS_;
 };
 
 }  // namespace detail
@@ -108,6 +111,11 @@ def test_conditional_brace_file_keeps_class_structure(
 
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "brproj.reader.helper_0" not in functions, sorted(functions)
+
+    # (H) `const decltype(SOME_MACRO_) field = ...` is a FIELD whose type uses
+    # (H) an unexpandable macro; the declarator must not register a phantom
+    # (H) method named after the reserved keyword
+    assert not any(q.endswith(".decltype") for q in methods), sorted(methods)
 
 
 def test_conditional_brace_file_keeps_call_edges(
