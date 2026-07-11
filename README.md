@@ -715,13 +715,13 @@ The knowledge graph uses the following node types and relationships:
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}` |
-| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}` |
+| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |

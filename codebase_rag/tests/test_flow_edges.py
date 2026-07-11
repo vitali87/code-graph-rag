@@ -142,6 +142,37 @@ def test_untainted_arg_emits_no_flow(tmp_path: Path) -> None:
     assert not any(b.endswith("m.helper") for _, b, _ in edges)
 
 
+def test_overwrite_with_literal_kills_taint(tmp_path: Path) -> None:
+    # (H) Reassigning a tainted local to a safe literal kills its taint; the later
+    # (H) sink must not emit a resource->resource flow (no stale-taint false positive).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n    x = os.getenv('K')\n    x = 'safe'\n    print(x)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not any(
+        a.endswith("resource::ENV::K") and b.endswith("resource::STDOUT::<dynamic>")
+        for a, b, _ in edges
+    )
+
+
+def test_overwrite_with_untainted_name_kills_taint(tmp_path: Path) -> None:
+    # (H) Reassigning a tainted local from an untainted variable also kills taint.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n    x = os.getenv('K')\n    y = 1\n    x = y\n    print(x)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not any(
+        a.endswith("resource::ENV::K") and b.endswith("resource::STDOUT::<dynamic>")
+        for a, b, _ in edges
+    )
+
+
 def test_default_capture_emits_no_flow(tmp_path: Path) -> None:
     files = {"m.py": "import os\n\ndef leak():\n    x = os.getenv('K')\n    print(x)\n"}
     edges = _run_flow(tmp_path, files, capture=resolve_capture([]))

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -37,11 +39,17 @@ _SCOPE_BOUNDARIES = (
     cs.TS_PY_DECORATED_DEFINITION,
 )
 
-# (H) One collected assignment `lhs = <call>` whose callee is not a read source;
-# (H) resolved later against _returns_taint for return-flow.
-_CallAssign = tuple[str, Node, str]
-# (H) One collected call site as (node, raw callee name).
-_CallSite = tuple[Node, str]
+
+class _FlowCtx(NamedTuple):
+    # (H) Per-caller constants threaded through the source-ordered walk.
+    caller_spec: tuple[str, str, str]
+    caller_qn: str
+    module_qn: str
+    class_context: str | None
+    language: cs.SupportedLanguage
+    import_map: dict[str, str]
+    read_sinks: dict[str, IOSink]
+    write_sinks: dict[str, IOSink]
 
 
 class FlowProcessor:
@@ -86,90 +94,48 @@ class FlowProcessor:
         sinks = IO_SINKS.get(language, ())
         if not sinks:
             return
-        import_map = self._import_processor.import_mapping.get(module_qn, {})
-        read_sinks = {s.callee: s for s in sinks if s.direction == IODirection.READ}
-        write_sinks = {s.callee: s for s in sinks if s.direction == IODirection.WRITE}
+        ctx = _FlowCtx(
+            caller_spec=caller_spec,
+            caller_qn=caller_qn,
+            module_qn=module_qn,
+            class_context=class_context,
+            language=language,
+            import_map=self._import_processor.import_mapping.get(module_qn, {}),
+            read_sinks={s.callee: s for s in sinks if s.direction == IODirection.READ},
+            write_sinks={
+                s.callee: s for s in sinks if s.direction == IODirection.WRITE
+            },
+        )
 
-        plain_assigns: list[tuple[str, str]] = []
-        source_seeds: dict[str, HandleBinding] = {}
-        call_assigns: list[_CallAssign] = []
-        all_calls: list[_CallSite] = []
-        returned_names: list[str] = []
-        returned_source = False
-
-        stack = list(caller_node.children)
+        # (H) Source-ordered pre-order walk with a live taint map: push children
+        # (H) reversed so the leftmost is visited first, giving straight-line
+        # (H) statement order. Each assignment retaints or KILLS its target, so a
+        # (H) later overwrite with an untainted value removes stale taint (no
+        # (H) monotonic false positive). ponytail: not path-sensitive; a KILL on one
+        # (H) branch of an if/else drops taint conservatively -- add a CFG pass only
+        # (H) if branch precision ever matters.
+        tainted: dict[str, HandleBinding | None] = {}
+        body_returns_taint = False
+        stack = list(reversed(caller_node.children))
         while stack:
             node = stack.pop()
             node_type = node.type
             if node_type in _SCOPE_BOUNDARIES:
                 continue
-            stack.extend(node.children)
             if node_type == cs.TS_PY_ASSIGNMENT:
-                self._collect_assignment(
-                    node,
-                    import_map,
-                    read_sinks,
-                    plain_assigns,
-                    source_seeds,
-                    call_assigns,
-                )
+                self._apply_assignment(node, tainted, ctx)
             elif node_type == cs.TS_PY_CALL:
-                if (raw := call_name(node)) is not None:
-                    all_calls.append((node, raw))
+                self._apply_call(node, tainted, ctx)
             elif node_type == cs.TS_PY_RETURN_STATEMENT:
-                returned_source = (
-                    self._collect_return(node, import_map, read_sinks, returned_names)
-                    or returned_source
-                )
+                if self._return_is_tainted(node, tainted, ctx):
+                    body_returns_taint = True
+            stack.extend(reversed(node.children))
 
-        tainted: dict[str, HandleBinding | None] = dict(source_seeds)
-        return_edges: list[tuple[str, str]] = []
-        for lhs, _node, raw in call_assigns:
-            callee = self._resolve(raw, module_qn, class_context, caller_qn, language)
-            if callee is not None and callee[1] in self._returns_taint:
-                tainted.setdefault(lhs, None)
-                return_edges.append(callee)
-
-        # (H) ponytail: order-insensitive worklist to a fixpoint; a var read before its
-        # (H) assignment is over-tainted. Bodies are small; add source-order/CFG
-        # (H) sensitivity only if false positives from that ever show up.
-        changed = True
-        while changed:
-            changed = False
-            for lhs, rhs in plain_assigns:
-                if rhs in tainted and lhs not in tainted:
-                    tainted[lhs] = tainted[rhs]
-                    changed = True
-
-        self._emit_resource_flows(all_calls, write_sinks, import_map, tainted)
-        self._emit_arg_flows(
-            all_calls,
-            caller_spec,
-            tainted,
-            module_qn,
-            class_context,
-            caller_qn,
-            language,
-        )
-        for callee_type, callee_qn in return_edges:
-            self.ingestor.ensure_relationship_batch(
-                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                cs.RelationshipType.FLOWS_TO,
-                caller_spec,
-                properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
-            )
-
-        if returned_source or any(name in tainted for name in returned_names):
+        if body_returns_taint:
             self._returns_taint.add(caller_qn)
 
-    def _collect_assignment(
-        self,
-        node: Node,
-        import_map: dict[str, str],
-        read_sinks: dict[str, IOSink],
-        plain_assigns: list[tuple[str, str]],
-        source_seeds: dict[str, HandleBinding],
-        call_assigns: list[_CallAssign],
+    def _apply_assignment(
+        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
     ) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -182,12 +148,82 @@ class FlowProcessor:
             return
         lhs = left.text.decode(cs.ENCODING_UTF8)
         if right.type == cs.TS_PY_IDENTIFIER and right.text is not None:
-            plain_assigns.append((lhs, right.text.decode(cs.ENCODING_UTF8)))
-        elif right.type == cs.TS_PY_CALL and (raw := call_name(right)) is not None:
-            if seed := self._source_binding(right, raw, import_map, read_sinks):
-                source_seeds[lhs] = seed
+            rhs = right.text.decode(cs.ENCODING_UTF8)
+            if rhs in tainted:
+                tainted[lhs] = tainted[rhs]
             else:
-                call_assigns.append((lhs, right, raw))
+                tainted.pop(lhs, None)
+            return
+        if right.type == cs.TS_PY_CALL and (raw := call_name(right)) is not None:
+            if seed := self._source_binding(right, raw, ctx.import_map, ctx.read_sinks):
+                tainted[lhs] = seed
+                return
+            callee = self._resolve(
+                raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+            )
+            if callee is not None and callee[1] in self._returns_taint:
+                tainted[lhs] = None
+                self._emit_return_edge(callee, ctx.caller_spec)
+                return
+        # (H) Any other RHS (literal, expression, untainted call) leaves lhs clean.
+        tainted.pop(lhs, None)
+
+    def _apply_call(
+        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
+    ) -> None:
+        raw = call_name(node)
+        if raw is None:
+            return
+        arg_names = self._arg_names(node)
+        if not arg_names:
+            return
+        name = normalise(raw, ctx.import_map)
+        sink = ctx.write_sinks.get(name) if name else None
+        if sink is not None:
+            dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
+            for arg_name, _via in arg_names:
+                if (source := tainted.get(arg_name)) is not None:
+                    self._emit_resource_flow(source, sink.kind, dst_identity)
+            return
+        vias = [via for arg_name, via in arg_names if arg_name in tainted]
+        if not vias:
+            return
+        callee = self._resolve(
+            raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+        )
+        if callee is None:
+            return
+        callee_type, callee_qn = callee
+        for via in vias:
+            self.ingestor.ensure_relationship_batch(
+                ctx.caller_spec,
+                cs.RelationshipType.FLOWS_TO,
+                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+            )
+
+    def _return_is_tainted(
+        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
+    ) -> bool:
+        for child in node.named_children:
+            if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
+                if child.text.decode(cs.ENCODING_UTF8) in tainted:
+                    return True
+            elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
+                if self._source_binding(child, raw, ctx.import_map, ctx.read_sinks):
+                    return True
+        return False
+
+    def _emit_return_edge(
+        self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
+    ) -> None:
+        callee_type, callee_qn = callee
+        self.ingestor.ensure_relationship_batch(
+            (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+            cs.RelationshipType.FLOWS_TO,
+            caller_spec,
+            properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
+        )
 
     @staticmethod
     def _source_binding(
@@ -202,39 +238,6 @@ class FlowProcessor:
             return None
         identity = literal_target(call_node, sink.target_arg, sink.target_kw)
         return HandleBinding(kind=sink.kind, identity=identity)
-
-    def _collect_return(
-        self,
-        node: Node,
-        import_map: dict[str, str],
-        read_sinks: dict[str, IOSink],
-        returned_names: list[str],
-    ) -> bool:
-        returned_source = False
-        for child in node.named_children:
-            if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
-                returned_names.append(child.text.decode(cs.ENCODING_UTF8))
-            elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
-                if self._source_binding(child, raw, import_map, read_sinks):
-                    returned_source = True
-        return returned_source
-
-    def _emit_resource_flows(
-        self,
-        all_calls: list[_CallSite],
-        write_sinks: dict[str, IOSink],
-        import_map: dict[str, str],
-        tainted: dict[str, HandleBinding | None],
-    ) -> None:
-        for node, raw in all_calls:
-            name = normalise(raw, import_map)
-            sink = write_sinks.get(name) if name else None
-            if sink is None:
-                continue
-            dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
-            for arg_name, _via in self._arg_names(node):
-                if (source := tainted.get(arg_name)) is not None:
-                    self._emit_resource_flow(source, sink.kind, dst_identity)
 
     def _emit_resource_flow(
         self, source: HandleBinding, dst_kind: ResourceKind, dst_identity: str
@@ -259,32 +262,6 @@ class FlowProcessor:
             },
         )
         return qn
-
-    def _emit_arg_flows(
-        self,
-        all_calls: list[_CallSite],
-        caller_spec: tuple[str, str, str],
-        tainted: dict[str, HandleBinding | None],
-        module_qn: str,
-        class_context: str | None,
-        caller_qn: str,
-        language: cs.SupportedLanguage,
-    ) -> None:
-        for node, raw in all_calls:
-            vias = [via for name, via in self._arg_names(node) if name in tainted]
-            if not vias:
-                continue
-            callee = self._resolve(raw, module_qn, class_context, caller_qn, language)
-            if callee is None:
-                continue
-            callee_type, callee_qn = callee
-            for via in vias:
-                self.ingestor.ensure_relationship_batch(
-                    caller_spec,
-                    cs.RelationshipType.FLOWS_TO,
-                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-                )
 
     def _resolve(
         self,
