@@ -41,6 +41,100 @@ def process_all_method_overrides(
                     ingestor,
                     implemented_interfaces,
                 )
+    _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
+
+
+def _process_mro_shadow_overrides(
+    function_registry: FunctionRegistryTrieProtocol,
+    class_inheritance: dict[str, list[str]],
+    ingestor: IngestorProtocol,
+) -> None:
+    # (H) A mixin's method can shadow a same-name method from a SIBLING base
+    # (H) branch only in a combining subclass's MRO: django's
+    # (H) SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
+    # (H) `self._combine()` to SearchVectorCombinable._combine, yet the mixin
+    # (H) never inherits Combinable, so the per-method ancestor walk above
+    # (H) cannot see the relation. For every class, linearize its ancestry
+    # (H) left-to-right (a DFS approximation of the MRO) and link each method
+    # (H) name's FIRST provider (the runtime dispatch target for this class)
+    # (H) to every later provider; dead-code override expansion then revives
+    # (H) the shadowing method when the shadowed one has live callers.
+    # (H) Interfaces are not walked: default-method shadowing is rare and
+    # (H) Java resolves it differently. ponytail: name-exact matching only, so
+    # (H) a Java generic type-var rename across branches is not linked.
+    method_names_cache: dict[str, list[str]] = {}
+    ancestor_cache: dict[str, set[str]] = {}
+    emitted: set[tuple[str, str]] = set()
+    for class_qn in sorted(class_inheritance):
+        providers: dict[str, list[str]] = {}
+        for ancestor_qn in _linearized_ancestors(class_qn, class_inheritance):
+            if ancestor_qn not in method_names_cache:
+                method_names_cache[ancestor_qn] = _direct_method_names(
+                    ancestor_qn, function_registry
+                )
+            for name in method_names_cache[ancestor_qn]:
+                providers.setdefault(name, []).append(ancestor_qn)
+        for name, classes in providers.items():
+            # (H) Same-branch pairs (the provider inherits the shadowed class)
+            # (H) are the per-method walk's territory and already linked; this
+            # (H) pass adds only cross-branch sibling shadows.
+            if classes[0] not in ancestor_cache:
+                ancestor_cache[classes[0]] = set(
+                    _linearized_ancestors(classes[0], class_inheritance)[1:]
+                )
+            first_qn = f"{classes[0]}{cs.SEPARATOR_DOT}{name}"
+            for shadowed_class in classes[1:]:
+                if shadowed_class in ancestor_cache[classes[0]]:
+                    continue
+                pair = (first_qn, f"{shadowed_class}{cs.SEPARATOR_DOT}{name}")
+                if pair in emitted:
+                    continue
+                emitted.add(pair)
+                ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[0]),
+                    cs.RelationshipType.OVERRIDES,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[1]),
+                )
+                logger.debug(
+                    logs.CLASS_METHOD_OVERRIDE,
+                    method_qn=pair[0],
+                    parent_method_qn=pair[1],
+                )
+
+
+def _linearized_ancestors(
+    class_qn: str, class_inheritance: dict[str, list[str]]
+) -> list[str]:
+    # (H) Left-to-right depth-first ancestor order, keep-first on repeats: a
+    # (H) close-enough MRO stand-in for picking each method name's dispatch
+    # (H) provider. The class itself comes first (its own methods shadow every
+    # (H) inherited one).
+    order: list[str] = []
+    seen: set[str] = set()
+    stack = [class_qn]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        order.append(current)
+        stack.extend(reversed(class_inheritance.get(current, [])))
+    return order
+
+
+def _direct_method_names(
+    class_qn: str, function_registry: FunctionRegistryTrieProtocol
+) -> list[str]:
+    prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+    names: list[str] = []
+    for qn, node_type in function_registry.find_with_prefix(class_qn):
+        if node_type != NodeType.METHOD or not qn.startswith(prefix):
+            continue
+        leaf = qn[len(prefix) :]
+        if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
+            continue
+        names.append(leaf)
+    return names
 
 
 def _invert_implementers(
