@@ -396,9 +396,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not all(part.isidentifier() for part in candidate.split(cs.SEPARATOR_DOT)):
             return None
         if candidate == cs.PY_ANNOTATION_SELF:
-            # (H) `-> Self` names the enclosing class; a free function has none.
+            # (H) `-> Self` names the enclosing class (the method qn minus its
+            # (H) leaf, kept fully qualified so cross-module receivers resolve);
+            # (H) a free function has none.
             qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-            return qn_parts[-2] if len(qn_parts) >= 3 else None
+            if len(qn_parts) < 3:
+                return None
+            return cs.SEPARATOR_DOT.join(qn_parts[:-1])
         if cs.SEPARATOR_DOT in candidate:
             return candidate
         return self._find_class_in_scope(candidate, module_qn) or candidate
@@ -472,8 +476,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         self, class_name: str, method_qn: str, module_qn: str
     ) -> str | None:
         if class_name == cs.PY_KEYWORD_CLS:
+            # (H) `return cls(...)` names the enclosing class, fully qualified so
+            # (H) cross-module receivers resolve without a scope lookup.
             qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-            return qn_parts[-2] if len(qn_parts) >= 2 else None
+            return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 3 else None
 
         if class_name[0].isupper():
             resolved_class = self._find_class_in_scope(class_name, module_qn)

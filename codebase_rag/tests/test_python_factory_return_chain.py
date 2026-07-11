@@ -310,3 +310,37 @@ def test_factory_returning_local_variable_resolves(tmp_path: Path) -> None:
     assert ("proj.app.widgets.driver", "proj.app.widgets.Widget.run") in calls, sorted(
         c for c in calls if "run" in c[1]
     )
+
+
+def test_self_annotated_classmethod_factory_resolves(tmp_path: Path) -> None:
+    # (H) `-> Self` on a classmethod factory names the enclosing class as a full
+    # (H) qn, so a cross-module `Widget.create().run()` chain resolves without a
+    # (H) caller-scope class lookup.
+    _make(
+        tmp_path,
+        {
+            "widgets.py": (
+                f"{_DECOY}"
+                "from typing import Self\n"
+                "\n"
+                "class Widget:\n"
+                "    @classmethod\n"
+                "    def create(cls) -> Self:\n"
+                "        return cls()\n"
+                "\n"
+                "    def run(self):\n"
+                "        pass\n"
+            ),
+            "driver.py": (
+                "from app.widgets import Widget\n"
+                "\n"
+                "def driver():\n"
+                "    Widget.create().run()\n"
+            ),
+        },
+    )
+    calls = _calls(tmp_path)
+    assert ("proj.app.driver.driver", "proj.app.widgets.Widget.run") in calls, sorted(
+        c for c in calls if "run" in c[1]
+    )
+    assert ("proj.app.driver.driver", "proj.app.widgets.Aaa.run") not in calls
