@@ -257,6 +257,16 @@ def _extract_name_from_template_declaration(func_node: Node) -> str | None:
 
 
 def extract_function_name(func_node: Node) -> str | None:
+    name = _extract_function_name_by_type(func_node)
+    # (H) A reserved keyword in declarator position is an error-recovery
+    # (H) artifact (macro access-label + `const decltype(MACRO_)` members), not
+    # (H) a definition; registering it mints a phantom Method (reader.decltype).
+    if name in cs.CPP_RESERVED_DEF_NAMES:
+        return None
+    return name
+
+
+def _extract_function_name_by_type(func_node: Node) -> str | None:
     match func_node.type:
         case (
             cs.CppNodeType.FUNCTION_DEFINITION
