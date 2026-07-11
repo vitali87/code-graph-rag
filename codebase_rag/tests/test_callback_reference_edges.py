@@ -328,3 +328,45 @@ def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
     assert _has(rels, "picker.pick", REFERENCES, "picker.first")
     assert _has(rels, "picker.pick", REFERENCES, "picker.second")
     assert not _has(rels, "picker.pick", REFERENCES, "picker.check")
+
+
+def test_bound_function_argument_is_referenced(tmp_path: Path) -> None:
+    # (H) `el.addEventListener("click", handler.bind(this))` hands off `handler`;
+    # (H) the .bind call itself resolves to the Function.prototype builtin, so the
+    # (H) bound function must be referenced from the passing scope or it reports
+    # (H) dead (django admin's inlines.js inlineDeleteHandler).
+    files = {
+        "inlines.js": (
+            "function formset(row) {\n"
+            "    const inlineDeleteHandler = function (e1) {\n"
+            "        return e1;\n"
+            "    };\n"
+            '    row.addEventListener("click", inlineDeleteHandler.bind(this));\n'
+            "}\n"
+            "module.exports = formset;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(
+        rels, "inlines.formset", REFERENCES, "inlines.formset.inlineDeleteHandler"
+    ) or _has(rels, "inlines.formset", "CALLS", "inlines.formset.inlineDeleteHandler")
+
+
+def test_bound_function_assignment_rhs_is_referenced(tmp_path: Path) -> None:
+    # (H) `const bound = handler.bind(null)` stores the bound handler for later
+    # (H) invocation; the assignment walk must peel .bind like a cast so the
+    # (H) underlying function is referenced.
+    files = {
+        "store.js": (
+            "function attach() {\n"
+            "    const onSave = function (e) {\n"
+            "        return e;\n"
+            "    };\n"
+            "    const bound = onSave.bind(null);\n"
+            "    return bound;\n"
+            "}\n"
+            "module.exports = attach;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "store.attach", REFERENCES, "store.attach.onSave")
