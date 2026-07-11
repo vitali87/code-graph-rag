@@ -16,6 +16,7 @@ from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
@@ -1311,7 +1312,7 @@ class GraphUpdater:
             parser = self.queries[language].get(cs.KEY_PARSER)
             if not parser:
                 continue
-            tree = parser.parse(file_bytes)
+            tree = parse_with_preproc_recovery(parser, file_bytes, language)
             root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
@@ -1376,7 +1377,7 @@ class GraphUpdater:
         except OSError as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
             return None
-        root_node = parser.parse(file_bytes).root_node
+        root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.ast_cache[file_path] = (root_node, language)
         self.factory._func_class_captures_cache.pop(file_path, None)
         return root_node

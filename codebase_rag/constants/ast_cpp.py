@@ -173,3 +173,14 @@ CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
         *CPP_COMPOUND_TYPES,
     )
 )
+
+# (H) Preprocessor conditional directive heads, matched at line start (C allows
+# (H) whitespace around '#'). Drives the whole-file-ERROR parse recovery: a
+# (H) conditional branch whose brace count does not balance (nlohmann's
+# (H) `#ifdef __cpp_lib_byteswap ... else { #endif`) breaks tree-sitter, which
+# (H) keeps every branch's tokens.
+CPP_PREPROC_CONDITIONAL_PATTERN = (
+    rb"^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b"
+)
+CPP_PREPROC_OPEN_DIRECTIVES = frozenset({b"if", b"ifdef", b"ifndef"})
+CPP_PREPROC_SPLIT_DIRECTIVES = frozenset({b"elif", b"elifdef", b"elifndef", b"else"})

@@ -22,6 +22,7 @@ from ..types_defs import (
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
+from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
@@ -189,7 +190,7 @@ class DefinitionProcessor(
                 if not parser:
                     logger.warning(ls.DEF_NO_PARSER.format(language=language))
                     return None
-                tree = parser.parse(source_bytes)
+                tree = parse_with_preproc_recovery(parser, source_bytes, language)
                 root_node = tree.root_node
                 pre_combined_captures = None
 

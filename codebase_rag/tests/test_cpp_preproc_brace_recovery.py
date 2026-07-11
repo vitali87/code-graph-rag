@@ -102,9 +102,9 @@ def test_conditional_brace_file_keeps_class_structure(
     methods = get_qualified_names(get_nodes(mock_ingestor, "Method"))
     # (H) every method after the unbalanced branch must stay a MEMBER of
     # (H) binary_reader, not degrade to a module-level free function
-    assert "brproj.reader.binary_reader.helper_0" in methods, sorted(methods)
-    assert "brproj.reader.binary_reader.helper_9" in methods, sorted(methods)
-    assert "brproj.reader.binary_reader.read_one" in methods, sorted(methods)
+    assert "brproj.reader.detail.binary_reader.helper_0" in methods, sorted(methods)
+    assert "brproj.reader.detail.binary_reader.helper_9" in methods, sorted(methods)
+    assert "brproj.reader.detail.binary_reader.read_one" in methods, sorted(methods)
 
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "brproj.reader.helper_0" not in functions, sorted(functions)
@@ -123,10 +123,10 @@ def test_conditional_brace_file_keeps_call_edges(
         if c.args[1] == "CALLS"
     }
     assert (
-        "brcalls.reader.binary_reader.parse_bson_internal",
-        "brcalls.reader.binary_reader.read_one",
+        "brcalls.reader.detail.binary_reader.parse_bson_internal",
+        "brcalls.reader.detail.binary_reader.read_one",
     ) in calls, sorted(calls)
     assert (
-        "brcalls.reader.binary_reader.helper_3",
-        "brcalls.reader.binary_reader.read_one",
+        "brcalls.reader.detail.binary_reader.helper_3",
+        "brcalls.reader.detail.binary_reader.read_one",
     ) in calls, sorted(calls)
