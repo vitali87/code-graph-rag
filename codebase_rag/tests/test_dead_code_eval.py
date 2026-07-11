@@ -1065,7 +1065,11 @@ def test_enum_protocol_hooks_are_roots() -> None:
             _method("proj.m.TextChoices._generate_next_value_"),
             _method("proj.m.Color._missing_"),
             _method("proj.m.Color._custom_sunder_"),
+            # (H) _order_ / _ignore_ are Enum class ATTRIBUTES consumed at
+            # (H) class creation, never methods the machinery invokes; a
+            # (H) user-defined method with that name is ordinary dead code.
+            _method("proj.m.Color._order_"),
         ]
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
-    assert dead == {"proj.m.Color._custom_sunder_"}
+    assert dead == {"proj.m.Color._custom_sunder_", "proj.m.Color._order_"}
