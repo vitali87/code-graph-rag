@@ -669,13 +669,27 @@ class CallProcessor:
             # (H) that only defines functions and a table is still covered. Runs for
             # (H) every flow language with an object/array/dict literal form.
             if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
+                collection_boundaries = self._flow_scope_boundaries(
+                    queries[language][cs.QUERY_CONFIG]
+                )
+                if language == cs.SupportedLanguage.PYTHON:
+                    # (H) A Python class body executes at import time, so a
+                    # (H) dispatch table stored as a class ATTRIBUTE (django's
+                    # (H) backend `data_types = {"CharField": _get_varchar_...}`)
+                    # (H) is module-load wiring like a module-level table; the
+                    # (H) scan descends through classes and still stops at
+                    # (H) function scopes. ponytail: decorated classes stay
+                    # (H) boundaries (decorated_definition also wraps functions).
+                    collection_boundaries = collection_boundaries - frozenset(
+                        queries[language][cs.QUERY_CONFIG].class_node_types
+                    )
                 self._ingest_collection_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
                     None,
                     None,
-                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                    collection_boundaries,
                 )
                 # (H) A module-scope first-class assignment (registry_handler =
                 # (H) handle_event, module.exports.run = run) references its target
@@ -2561,18 +2575,61 @@ class CallProcessor:
                 )
             if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
-                    self._emit_callback_edge(
-                        caller_spec,
-                        value,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn=caller_qn,
-                        rel_type=cs.RelationshipType.REFERENCES,
-                    )
+                    # (H) A returned TUPLE hides its function elements one level
+                    # (H) down (`return _load_field, (...)` in django Field's
+                    # (H) __reduce__: pickle later calls the first element);
+                    # (H) expand containers so each function handed back inside
+                    # (H) one is referenced like a bare return.
+                    for expanded in self._expand_py_first_class_values(value):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            expanded,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn=caller_qn,
+                            rel_type=cs.RelationshipType.REFERENCES,
+                        )
             stack.extend(node.children)
+
+    def _expand_py_first_class_values(self, value: Node) -> list[Node]:
+        # (H) Peel Python container literals and result-position conditional
+        # (H) operands so a function stored in a tuple/list/set, a dict VALUE,
+        # (H) a bare return-tuple (expression_list), or a ternary/boolean-
+        # (H) default branch is treated like a bare first-class value; nesting
+        # (H) expands recursively. A ternary's condition is only truthiness-
+        # (H) tested, never bound, so it stays excluded. Any other node comes
+        # (H) back unchanged, so non-Python shapes are unaffected.
+        out: list[Node] = []
+        stack = [value]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type in _PY_SEQUENCE_LITERAL_TYPES
+                or node.type == cs.TS_PY_EXPRESSION_LIST
+            ):
+                stack.extend(node.named_children)
+            elif node.type == cs.TS_PY_DICTIONARY:
+                for pair in node.named_children:
+                    if (
+                        pair.type == cs.TS_PY_PAIR
+                        and (pair_value := pair.child_by_field_name(cs.FIELD_VALUE))
+                        is not None
+                    ):
+                        stack.append(pair_value)
+            elif node.type in (
+                cs.TS_PY_CONDITIONAL_EXPRESSION,
+                cs.TS_PY_BOOLEAN_OPERATOR,
+            ):
+                operands = list(node.named_children)
+                if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION and len(operands) == 3:
+                    operands = [operands[0], operands[2]]
+                stack.extend(operands)
+            else:
+                out.append(node)
+        return out
 
     def _emit_expression_body_return(
         self,
@@ -3530,17 +3587,23 @@ class CallProcessor:
         # (H) any, comes from callable-param flow).
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
-            self._emit_callback_edge(
-                caller_spec,
-                arg_node,
-                module_qn,
-                local_var_types,
-                class_context,
-                resolve_func,
-                ensure_rel,
-                caller_qn,
-                rel_type,
-            )
+            # (H) A container-literal or conditional argument
+            # (H) (`validators=[_simple_domain_name_validator]`, django's Site;
+            # (H) `... if single else local_setter_noop`, its SQLCompiler) hides
+            # (H) the passed functions one level down; each expanded value is a
+            # (H) first-class reference exactly like a bare-name argument.
+            for value_node in self._expand_py_first_class_values(arg_node):
+                self._emit_callback_edge(
+                    caller_spec,
+                    value_node,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                    caller_qn,
+                    rel_type,
+                )
 
     def _build_local_alias_map(
         self, caller_node: Node, lang_config: LanguageSpec, module_qn: str

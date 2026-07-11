@@ -36,9 +36,13 @@ def _load_field(app_label):
     return app_label
 
 
+def qualname(cls):
+    return cls.__qualname__
+
+
 class Field:
     def __reduce__(self):
-        return _load_field, (self.__class__,)
+        return _load_field, (qualname(self.__class__),)
 """
 
 CONDITIONAL_ARG_PY = """\
@@ -60,9 +64,13 @@ def compile_it(flag):
 
 
 def _references(root: Path) -> set[tuple[str, str]]:
+    # (H) Dispatch-table values keep the historical CALLS edge; argument and
+    # (H) return passes record REFERENCES. Both keep a symbol reachable.
     ingestor = _capture(root, "proj")
     return {
-        (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "REFERENCES"
+        (str(f), str(t))
+        for _fl, f, rel, _tl, t in ingestor.rels
+        if rel in ("REFERENCES", "CALLS")
     }
 
 
