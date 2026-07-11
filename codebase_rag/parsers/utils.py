@@ -797,6 +797,7 @@ def module_function_props(
     props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: function_qn,
         cs.KEY_NAME: function_name,
+        cs.KEY_MODIFIERS: [],
         cs.KEY_DECORATORS: [],
         cs.KEY_START_LINE: function_node.start_point[0] + 1,
         cs.KEY_END_LINE: function_node.end_point[0] + 1,
