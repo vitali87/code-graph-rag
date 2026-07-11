@@ -25,6 +25,9 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleInterface | `{qualified_name: string, name: string, path: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
+| Resource | `{qualified_name: string, name: string, kind: string}` |
+
+`Resource` is a synthetic node standing for an external I/O target (a file, environment variable, network endpoint, database, standard stream, socket). Its `qualified_name` has the form `resource::<KIND>::<identity>`, where `identity` is a static string literal when one is available and `<dynamic>` otherwise, and `kind` is one of `FILE`, `NETWORK`, `DATABASE`, `STDIN`, `STDOUT`, `STDERR`, `ENV`, `SOCKET`. Resource nodes are captured only when the `io` capture group is enabled (see below).
 
 ## Relationships
 
@@ -46,6 +49,23 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Function, Method | CALLS | Function, Method |
+| Module, Function, Method | READS_FROM | Resource |
+| Module, Function, Method | WRITES_TO | Resource |
+| Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
+
+## I/O and Data-Flow Edges
+
+The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.
+
+`READS_FROM` and `WRITES_TO` connect a callable to a `Resource` it reads from or writes to (for example `os.getenv("K")` reads the `ENV` resource, `print(x)` writes the `STDOUT` resource).
+
+`FLOWS_TO` records intra-procedural value flow, turning provenance questions into graph reachability. It is emitted in three shapes, distinguished by a `kind` edge property:
+
+- **resource → resource** (`kind = resource`): a value read from one resource reaches a write to another within a function body, e.g. `x = os.getenv("K"); print(x)` yields `Resource(ENV::K) -FLOWS_TO-> Resource(STDOUT)`.
+- **caller → callee** (`kind = arg`): a tainted local value is passed as an argument to a first-party callee. A `via` edge property names the conduit as `arg:<index>` or `kw:<name>`.
+- **callee → caller** (`kind = return`, `via = return`): a callee whose return value is tainted flows that value back to the assignment in its caller.
+
+Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative and intra-procedural in this phase; a tainted value is only tracked within a single function body plus one level of argument/return hand-off.
 
 ## Nested Definitions
 

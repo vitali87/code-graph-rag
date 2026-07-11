@@ -147,6 +147,7 @@ class RelationshipType(StrEnum):
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
     READS_FROM = "READS_FROM"
     WRITES_TO = "WRITES_TO"
+    FLOWS_TO = "FLOWS_TO"
 
 
 class CaptureGroup(StrEnum):
@@ -198,6 +199,7 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
         {
             RelationshipType.READS_FROM,
             RelationshipType.WRITES_TO,
+            RelationshipType.FLOWS_TO,
         }
     ),
 }

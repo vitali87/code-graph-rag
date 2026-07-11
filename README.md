@@ -771,6 +771,7 @@ The knowledge graph uses the following node types and relationships:
 | Module, Function, Method | INSTANTIATES | Class |
 | Module, Function, Method | READS_FROM | Resource |
 | Module, Function, Method | WRITES_TO | Resource |
+| Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
 <!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration
