@@ -693,6 +693,10 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
     ),
+    NodeSchema(
+        NodeLabel.RESOURCE,
+        "{qualified_name: string, name: string, kind: string}",
+    ),
 )
 
 
@@ -811,5 +815,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.INSTANTIATES,
         (NodeLabel.CLASS,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.READS_FROM,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.WRITES_TO,
+        (NodeLabel.RESOURCE,),
     ),
 )

@@ -10,6 +10,7 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import LanguageSpec
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
@@ -26,6 +27,7 @@ from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
+from .io_access import IOAccessProcessor
 from .java import utils as java_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -196,6 +198,7 @@ class CallProcessor:
         "_flow_args",
         "_returned_callables",
         "_factory_calls",
+        "_io_processor",
     )
 
     def __init__(
@@ -209,6 +212,7 @@ class CallProcessor:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
+        capture: CaptureSelection | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -241,6 +245,11 @@ class CallProcessor:
         # (H) fixpoint in finalize, so factory and call site may be in any file order.
         self._returned_callables: dict[str, set[str]] = {}
         self._factory_calls: list[_FactoryCall] = []
+        self._io_processor = IOAccessProcessor(
+            ingestor,
+            import_processor,
+            selection=capture if capture is not None else ALL_ENABLED,
+        )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
@@ -1546,6 +1555,10 @@ class CallProcessor:
             )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
+
+        self._io_processor.process_io_for_caller(
+            caller_node, caller_spec, module_qn, language
+        )
 
         caller_params: frozenset[str] = frozenset()
         ordered_params: list[str] | None = None

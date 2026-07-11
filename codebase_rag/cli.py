@@ -17,6 +17,7 @@ from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
+from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
@@ -130,6 +131,7 @@ def _sync_workspace(
     config: WorkspaceConfig,
     batch_size: int,
     exclude: list[str] | None,
+    capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
 ) -> None:
     total = len(config.repos)
@@ -163,6 +165,7 @@ def _sync_workspace(
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
+            capture=capture,
             skip_embeddings=skip_embeddings,
         )
 
@@ -186,6 +189,12 @@ def _maybe_start_stack() -> None:
         raise typer.Exit(1) from e
 
 
+def _capture_selection(capture: list[str] | None) -> CaptureSelection:
+    # (H) Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
+    # (H) a single run can override it (later tokens win in the resolver).
+    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -194,6 +203,7 @@ def _run_graph_sync(
     interactive_setup: bool,
     clean: bool = False,
     output: str | None = None,
+    capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
@@ -224,6 +234,7 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
         updater.run()
@@ -355,6 +366,11 @@ def start(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -450,6 +466,7 @@ def start(
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
+            capture=capture,
             skip_embeddings=no_embeddings or None,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
@@ -466,6 +483,7 @@ def start(
                 workspace_config,
                 effective_batch_size,
                 exclude,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
             sync_message = cs.MSG_SYNCING_WORKSPACE.format(
@@ -479,6 +497,7 @@ def start(
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
 
@@ -540,6 +559,11 @@ def index(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -573,6 +597,7 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
+            capture=_capture_selection(capture),
         )
 
         updater.run()
