@@ -2609,6 +2609,7 @@ class CallProcessor:
             if (
                 node.type in _PY_SEQUENCE_LITERAL_TYPES
                 or node.type == cs.TS_PY_EXPRESSION_LIST
+                or node.type == cs.TS_PARENTHESIZED_EXPRESSION
             ):
                 stack.extend(node.named_children)
             elif node.type == cs.TS_PY_DICTIONARY:
@@ -2698,8 +2699,25 @@ class CallProcessor:
                                 pair, value, caller_spec, module_qn, ensure_rel
                             )
                             continue
+                        # (H) A table VALUE wrapped in parens or a ternary
+                        # (H) (django SQLCompiler's `"local_setter": (partial(...)
+                        # (H) if ... else local_setter_noop)`) hides the handler
+                        # (H) candidates one level down; expand before emitting.
+                        for expanded in self._expand_py_first_class_values(value):
+                            self._emit_value_function_ref(
+                                expanded,
+                                caller_spec,
+                                module_qn,
+                                local_var_types,
+                                class_context,
+                                resolve_func,
+                                ensure_rel,
+                            )
+            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
+                for element in node.named_children:
+                    for expanded in self._expand_py_first_class_values(element):
                         self._emit_value_function_ref(
-                            value,
+                            expanded,
                             caller_spec,
                             module_qn,
                             local_var_types,
@@ -2707,17 +2725,6 @@ class CallProcessor:
                             resolve_func,
                             ensure_rel,
                         )
-            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
-                for element in node.named_children:
-                    self._emit_value_function_ref(
-                        element,
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                    )
             stack.extend(node.children)
 
     def _ingest_go_composite_function_references(
