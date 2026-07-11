@@ -182,16 +182,7 @@ class _Collector:
                 self._record_instantiation_extent(cursor)
             return None
         if self.hybrid:
-            if cursor.kind.name == fc.KIND_CALL_EXPR:
-                self._queue_expansion_call(cursor)
-            else:
-                match _classify(cursor):
-                    case fc.LABEL_TYPE:
-                        self._process_hybrid_type_alias(cursor)
-                    case fc.LABEL_FUNCTION | fc.LABEL_METHOD:
-                        self._record_usr_definition(cursor)
-            # (H) Everything else emits definition nodes or CALLS with
-            # (H) libclang-scheme qns -- tree-sitter's territory in hybrid.
+            self._process_hybrid(cursor)
             return None
         if cursor.kind.name == fc.KIND_CALL_EXPR:
             self._process_call(cursor, enclosing)
@@ -436,6 +427,20 @@ class _Collector:
             (sl, sc) <= pos <= (el, ec)
             for sl, sc, el, ec in self._instantiation_extents.get(loc.file.name, ())
         )
+
+    def _process_hybrid(self, cursor: Cursor) -> None:
+        # (H) The hybrid subset: expansion-produced calls, scope-safe type
+        # (H) aliases, and definition LOCATIONS (for cross-TU callee joins).
+        # (H) Everything else emits definition nodes or CALLS with
+        # (H) libclang-scheme qns -- tree-sitter's territory in hybrid.
+        if cursor.kind.name == fc.KIND_CALL_EXPR:
+            self._queue_expansion_call(cursor)
+            return
+        match _classify(cursor):
+            case fc.LABEL_TYPE:
+                self._process_hybrid_type_alias(cursor)
+            case fc.LABEL_FUNCTION | fc.LABEL_METHOD:
+                self._record_usr_definition(cursor)
 
     def _record_usr_definition(self, cursor: Cursor) -> None:
         # (H) No node is emitted: only the definition's location is kept so a
