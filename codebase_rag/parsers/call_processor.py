@@ -2349,6 +2349,11 @@ class CallProcessor:
                     # (H) SetState`); peel both so the bare name/arrow underneath is
                     # (H) what we reference.
                     value = self._unwrap_ts_value(value)
+                    # (H) `const bound = handler.bind(null)` stores the bound
+                    # (H) handler; .bind/.call/.apply are transparent for
+                    # (H) reference resolution like a cast.
+                    if (bound := self._unwrap_bound_function(value)) is not None:
+                        value = bound
                     # (H) A bare-name RHS names a callable; an inline arrow/function-expr
                     # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
                     # (H) function on the target for later invocation --
@@ -3311,6 +3316,12 @@ class CallProcessor:
         # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent for
         # (H) reference resolution; unwrap it so the callable underneath resolves.
         arg_node = self._unwrap_ts_cast(arg_node)
+        # (H) `fn.bind(ctx)` / `.call` / `.apply` in argument position
+        # (H) (addEventListener("click", handler.bind(this)), django admin's
+        # (H) inlines.js) hands off `fn`; the call itself resolves to the
+        # (H) Function.prototype builtin, so unwrap to the bound function.
+        if (bound := self._unwrap_bound_function(arg_node)) is not None:
+            arg_node = bound
         # (H) An arrow/function-expression passed DIRECTLY as a call argument
         # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
         # (H) registered anonymously in the enclosing scope but named after no
