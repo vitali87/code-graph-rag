@@ -155,27 +155,32 @@ def test_conditional_brace_file_keeps_call_edges(
 
 def test_blank_helper_edge_shapes() -> None:
     from codebase_rag.parsers.cpp.preproc_recovery import (
-        _blank_unbalanced_leaf_branches,
+        _blank,
+        _unbalanced_leaf_branches,
     )
 
-    # (H) balanced-only conditionals produce no rewrite
-    balanced = b"#if A\nint x = 1;\n#endif\n"
-    assert _blank_unbalanced_leaf_branches(balanced) is None
+    # (H) balanced-only conditionals produce no candidates
+    balanced = b"#if A\nint x = 1;\n#endif\n".split(b"\n")
+    assert _unbalanced_leaf_branches(balanced) == []
 
     # (H) a stray #endif with no open conditional is ignored, not a crash
-    assert _blank_unbalanced_leaf_branches(b"#endif\nint x;\n") is None
+    assert _unbalanced_leaf_branches(b"#endif\nint x;\n".split(b"\n")) == []
 
-    # (H) an #else split: only the unbalanced branch is blanked, the balanced
-    # (H) one survives verbatim; an EMPTY branch (#if directly followed by
-    # (H) #else) is skipped
-    split = b"#if A\n#else\nvoid f() {\n#endif\nint keep = 1;\n"
-    blanked = _blank_unbalanced_leaf_branches(split)
-    assert blanked is not None
+    # (H) a brace after // is prose, not structure
+    commented = b"#if DOC\n// { see design\nint y = 1;\n#endif\n".split(b"\n")
+    assert _unbalanced_leaf_branches(commented) == []
+
+    # (H) an #else split: only the unbalanced branch is a candidate (the
+    # (H) empty #if branch is skipped), and blanking is position-preserving
+    split_src = b"#if A\n#else\nvoid f() {\n#endif\nint keep = 1;\n"
+    split = split_src.split(b"\n")
+    candidates = _unbalanced_leaf_branches(split)
+    assert candidates == [(2, 2)]
+    blanked = _blank(split, candidates)
     assert b"void f() {" not in blanked
     assert b"int keep = 1;" in blanked
-    # (H) blanking is position-preserving: same byte length, same line count
-    assert len(blanked) == len(split)
-    assert blanked.count(b"\n") == split.count(b"\n")
+    assert len(blanked) == len(split_src)
+    assert blanked.count(b"\n") == split_src.count(b"\n")
 
 
 def test_parse_recovery_passthrough_shapes() -> None:

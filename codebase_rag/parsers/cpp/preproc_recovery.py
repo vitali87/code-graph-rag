@@ -9,8 +9,10 @@
 # (H) methods degrade to free functions or vanish, orphaning whole dead-code
 # (H) clusters). When a parse comes back with a catastrophic ERROR, blank the
 # (H) net-unbalanced LEAF conditional branches (space-filled, so every byte
-# (H) offset and line number of the surviving code is preserved) and re-parse;
-# (H) the retry is kept only when it strictly shrinks the worst ERROR span.
+# (H) offset and line number of the surviving code is preserved) and re-parse,
+# (H) preferring the SMALLEST blanked subset: each candidate alone first, the
+# (H) full set as a last resort, keeping the retry only when it strictly
+# (H) shrinks the worst ERROR span.
 import re
 
 from tree_sitter import Node, Parser, Tree
@@ -22,6 +24,7 @@ _CHAR_OPEN_BRACE = b"{"
 _CHAR_CLOSE_BRACE = b"}"
 _CHAR_SPACE = b" "
 _CHAR_NEWLINE = b"\n"
+_LINE_COMMENT = b"//"
 
 # (H) A branch list plus whether the conditional contains nested conditionals:
 # (H) only LEAF conditionals are candidates. An outer region (an include guard
@@ -42,9 +45,16 @@ def _max_error_span(root: Node) -> int:
     )
 
 
-def _blank_unbalanced_leaf_branches(source: bytes) -> bytes | None:
-    lines = source.split(_CHAR_NEWLINE)
-    blanks: list[tuple[int, int]] = []
+def _code_brace_delta(line: bytes) -> int:
+    # (H) a brace after `//` is prose, not structure (a doc note `// { see
+    # (H) design` must not mark its branch unbalanced); block comments and
+    # (H) string literals are left to the strict-improvement guard
+    code = line.split(_LINE_COMMENT, 1)[0]
+    return code.count(_CHAR_OPEN_BRACE) - code.count(_CHAR_CLOSE_BRACE)
+
+
+def _unbalanced_leaf_branches(lines: list[bytes]) -> list[tuple[int, int]]:
+    candidates: list[tuple[int, int]] = []
     stack: list[_Frame] = []
     for index, line in enumerate(lines):
         match = _DIRECTIVE.match(line)
@@ -69,22 +79,18 @@ def _blank_unbalanced_leaf_branches(source: bytes) -> bytes | None:
             for start, end in branches:
                 if start > end:
                     continue
-                delta = sum(
-                    lines[i].count(_CHAR_OPEN_BRACE) - lines[i].count(_CHAR_CLOSE_BRACE)
-                    for i in range(start, end + 1)
-                )
-                # (H) brace counting is textual (a brace inside a comment or
-                # (H) string literal counts too); a false trigger only blanks a
-                # (H) branch of a file that already parses as one ERROR, and
-                # (H) the strict-improvement guard below discards a bad retry
+                delta = sum(_code_brace_delta(lines[i]) for i in range(start, end + 1))
                 if delta != 0:
-                    blanks.append((start, end))
-    if not blanks:
-        return None
-    for start, end in blanks:
+                    candidates.append((start, end))
+    return candidates
+
+
+def _blank(lines: list[bytes], ranges: list[tuple[int, int]]) -> bytes:
+    out = list(lines)
+    for start, end in ranges:
         for i in range(start, end + 1):
-            lines[i] = _CHAR_SPACE * len(lines[i])
-    return _CHAR_NEWLINE.join(lines)
+            out[i] = _CHAR_SPACE * len(out[i])
+    return _CHAR_NEWLINE.join(out)
 
 
 def parse_with_preproc_recovery(
@@ -99,10 +105,25 @@ def parse_with_preproc_recovery(
     # (H) covering most of the file warrants the blank-and-retry pass
     if worst * 2 < total_lines:
         return tree
-    blanked = _blank_unbalanced_leaf_branches(source_bytes)
-    if blanked is None:
+    lines = source_bytes.split(_CHAR_NEWLINE)
+    candidates = _unbalanced_leaf_branches(lines)
+    if not candidates:
         return tree
-    retry = parser.parse(blanked)
-    if _max_error_span(retry.root_node) < worst:
-        return retry
-    return tree
+    # (H) prefer the smallest blanked subset: an unrelated branch whose textual
+    # (H) imbalance survives comment stripping (a brace in a string or macro
+    # (H) payload) must not lose its definitions when a single real offender
+    # (H) explains the collapse; the full set stays as the last resort
+    subsets: list[list[tuple[int, int]]] = [[c] for c in candidates]
+    if len(candidates) > 1:
+        subsets.append(candidates)
+    best = tree
+    best_worst = worst
+    for subset in subsets:
+        retry = parser.parse(_blank(lines, subset))
+        retry_worst = _max_error_span(retry.root_node)
+        if retry_worst < best_worst:
+            best = retry
+            best_worst = retry_worst
+        if best_worst == 0:
+            break
+    return best
