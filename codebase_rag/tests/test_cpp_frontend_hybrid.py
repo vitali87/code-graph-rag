@@ -373,12 +373,18 @@ def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
 _FLAGS_SRC = """\
 #define USE_CACHE 1
 #define HAS_MODE 2
+#define SKIPPED_FLAG 3
 int base = 1;
 #if USE_CACHE
 int cache = 1;
 #endif
 #ifdef HAS_MODE
 int mode = 1;
+#endif
+#if 0
+#if SKIPPED_FLAG
+int never = 1;
+#endif
 #endif
 int main() { return base; }
 """
@@ -401,3 +407,7 @@ def test_hybrid_directive_only_macro_use_attributes_to_module(
     calls = _calls(ingestor)
     assert ("hybdirective.conf", "hybdirective.conf.USE_CACHE") in calls, sorted(calls)
     assert ("hybdirective.conf", "hybdirective.conf.HAS_MODE") in calls, sorted(calls)
+    # (H) a condition inside a SKIPPED branch (#if 0) is never evaluated, so
+    # (H) it is never tokenized and carries no edge -- the graph mirrors the
+    # (H) build configuration
+    assert not any(t.endswith(".SKIPPED_FLAG") for _, t in calls), sorted(calls)
