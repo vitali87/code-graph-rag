@@ -26,6 +26,11 @@ def test_io_is_opt_in() -> None:
     assert sel.rel_enabled(RT.CALLS)
 
 
+def test_flows_to_is_in_io_group_and_opt_in() -> None:
+    assert not resolve_capture([]).rel_enabled(RT.FLOWS_TO)
+    assert resolve_capture(["io"]).rel_enabled(RT.FLOWS_TO)
+
+
 def test_resource_node_gated_on_io() -> None:
     assert not resolve_capture([]).node_enabled(NL.RESOURCE)
     assert resolve_capture(["io"]).node_enabled(NL.RESOURCE)
