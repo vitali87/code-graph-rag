@@ -2614,23 +2614,33 @@ class CallProcessor:
         while stack:
             node = stack.pop()
             if node.type in _PY_VALUE_WRAPPER_TYPES:
-                stack.extend(node.named_children)
+                stack.extend(reversed(node.named_children))
             elif node.type == cs.TS_PY_DICTIONARY:
-                for pair in node.named_children:
+                for pair in reversed(node.named_children):
                     if (
                         pair.type == cs.TS_PY_PAIR
                         and (pair_value := pair.child_by_field_name(cs.FIELD_VALUE))
                         is not None
                     ):
                         stack.append(pair_value)
-            elif node.type in (
-                cs.TS_PY_CONDITIONAL_EXPRESSION,
-                cs.TS_PY_BOOLEAN_OPERATOR,
-            ):
+            elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+                # (H) tree-sitter-python exposes NO field names on
+                # (H) conditional_expression (child_by_field_name returns None
+                # (H) for every operand), so the result operands are positional:
+                # (H) [body, condition, alternative]. A shape that is not
+                # (H) exactly three named operands falls back to all of them,
+                # (H) over-referencing rather than dropping a branch.
                 operands = list(node.named_children)
-                if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION and len(operands) == 3:
+                if len(operands) == 3:
                     operands = [operands[0], operands[2]]
-                stack.extend(operands)
+                stack.extend(reversed(operands))
+            elif node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if right is not None:
+                    stack.append(right)
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    stack.append(left)
             else:
                 out.append(node)
         return out
