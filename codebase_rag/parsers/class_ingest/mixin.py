@@ -31,6 +31,7 @@ from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
+    extract_modifiers_and_decorators,
     function_span_key,
     ingest_method,
     record_cpp_definition_span,
@@ -686,10 +687,15 @@ class ClassIngestMixin:
         )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
+        modifiers, decorators = extract_modifiers_and_decorators(
+            class_node, lang_queries
+        )
+
         class_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: class_qn,
             cs.KEY_NAME: class_name,
-            cs.KEY_DECORATORS: self._extract_decorators(class_node),
+            cs.KEY_MODIFIERS: modifiers,
+            cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: class_node.start_point[0] + 1,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
@@ -956,8 +962,8 @@ class ClassIngestMixin:
                 self.simple_name_lookup,
                 self._get_docstring,
                 language,
-                self._extract_decorators,
-                method_qualified_name,
+                lang_queries=lang_queries,
+                method_qualified_name=method_qualified_name,
                 file_path=file_path,
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,

@@ -12,6 +12,7 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import logs as ls
+from .capture import CaptureSelection, default_capture
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parser_fingerprint import compute_parser_fingerprint
@@ -25,7 +26,7 @@ from .parsers.cpp_frontend import (
 )
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
-from .services import IngestorProtocol, QueryProtocol
+from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
@@ -465,9 +466,17 @@ class GraphUpdater:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
+        capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
     ):
+        self.capture = capture if capture is not None else default_capture()
+        # (H) `ingestor` stays the raw object for DB queries (QueryProtocol),
+        # (H) flushes, and test introspection. `_sink` is a filtering wrapper that
+        # (H) drops disabled relationships/nodes at one choke point, so the ~20
+        # (H) parser emission sites stay untouched. All node/rel emission goes
+        # (H) through `_sink`; everything else uses `ingestor`.
         self.ingestor = ingestor
+        self._sink: IngestorProtocol = FilteringIngestor(ingestor, self.capture)
         self._single_file: Path | None = None
         if repo_path.is_file():
             resolved = repo_path.resolve()
@@ -516,7 +525,7 @@ class GraphUpdater:
         self._rehydrated_module_qns: set[str] = set()
 
         self.factory = ProcessorFactory(
-            ingestor=self.ingestor,
+            ingestor=self._sink,
             repo_path=self.repo_path,
             project_name=self.project_name,
             queries=self.queries,
@@ -525,6 +534,7 @@ class GraphUpdater:
             ast_cache=self.ast_cache,
             unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
+            capture=self.capture,
         )
 
     def _run_cpp_frontend(self) -> None:
@@ -561,7 +571,7 @@ class GraphUpdater:
                 self._pending_cpp_macro_calls,
                 self._pending_cpp_expansion_calls,
             ) = run_cpp_frontend_hybrid(
-                self.ingestor,
+                self._sink,
                 self.repo_path,
                 self.project_name,
                 compdb_dir,
@@ -579,7 +589,7 @@ class GraphUpdater:
             )
             return
         self._cpp_frontend_covered = run_cpp_frontend(
-            self.ingestor,
+            self._sink,
             self.repo_path,
             self.project_name,
             compdb_dir,
@@ -636,7 +646,7 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
@@ -672,7 +682,7 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
@@ -707,9 +717,7 @@ class GraphUpdater:
         # (H) Reset per-run parse tracking so a reused updater does not reprocess
         # (H) a previous run's files in Pass 3.
         self._parsed_files.clear()
-        self.ingestor.ensure_node_batch(
-            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
-        )
+        self._sink.ensure_node_batch(cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name})
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
         if not force and self._single_file is None:
@@ -996,7 +1004,7 @@ class GraphUpdater:
             target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
             if caller_key is None or target_key is None:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, caller_key, caller_qn),
                 rel,
                 (target_label, target_key, target_qn),
