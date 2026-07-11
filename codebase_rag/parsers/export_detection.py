@@ -113,7 +113,26 @@ def _is_script_global(node: Node) -> bool:
             return False
         root = current
         current = current.parent
-    return not any(_is_module_construct(stmt) for stmt in root.children)
+    return not _has_module_construct(root)
+
+
+# (H) 1-slot memo of the last root's module-construct scan: files are ingested
+# (H) sequentially, so consecutive symbols of one file hit the slot and the
+# (H) O(top-level statements) scan runs once per FILE instead of once per
+# (H) symbol. The slot holds the root Node itself, which keeps its tree alive,
+# (H) so the entry can never alias a recycled node address; retaining one
+# (H) parse tree is the bounded cost (an unbounded Node-keyed lru_cache would
+# (H) pin every cached tree in memory).
+_last_script_scan: tuple[Node, bool] | None = None
+
+
+def _has_module_construct(root: Node) -> bool:
+    global _last_script_scan
+    if _last_script_scan is not None and _last_script_scan[0] == root:
+        return _last_script_scan[1]
+    result = any(_is_module_construct(stmt) for stmt in root.children)
+    _last_script_scan = (root, result)
+    return result
 
 
 def _is_module_construct(statement: Node) -> bool:
