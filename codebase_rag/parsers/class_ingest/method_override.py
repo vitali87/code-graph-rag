@@ -54,9 +54,9 @@ def _process_mro_shadow_overrides(
     # (H) SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
     # (H) `self._combine()` to SearchVectorCombinable._combine, yet the mixin
     # (H) never inherits Combinable, so the per-method ancestor walk above
-    # (H) cannot see the relation. For every class, linearize its ancestry
-    # (H) left-to-right (a DFS approximation of the MRO) and link each method
-    # (H) name's FIRST provider (the runtime dispatch target for this class)
+    # (H) cannot see the relation. For every class, linearize its ancestry in
+    # (H) reverse post-order (a C3-compatible MRO stand-in) and link each
+    # (H) method name's FIRST provider (the runtime dispatch target here)
     # (H) to every later provider; dead-code override expansion then revives
     # (H) the shadowing method when the shadowed one has live callers.
     # (H) Interfaces are not walked: default-method shadowing is rare and
