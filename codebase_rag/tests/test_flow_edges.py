@@ -113,6 +113,25 @@ def test_return_value_flows_from_callee_to_caller(tmp_path: Path) -> None:
     assert _has(edges, "m.build", "m.caller", via="return", kind=FlowKind.RETURN.value)
 
 
+def test_return_taint_reaches_resource_sink(tmp_path: Path) -> None:
+    # (H) A value returned from a tainted callee carries its source resource, so a
+    # (H) later sink emits the full resource->resource flow, not just the return edge.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return os.getenv('K')\n\n"
+            "def caller():\n    v = build()\n    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_taint_propagates_through_plain_assignment(tmp_path: Path) -> None:
     files = {
         "m.py": (

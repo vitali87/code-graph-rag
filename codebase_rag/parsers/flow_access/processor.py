@@ -70,11 +70,13 @@ class FlowProcessor:
         self._resolver = resolver
         self._selection = selection
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
-        # (H) QNs whose body returns a tainted value; consulted for return-flow.
+        # (H) QN -> the source binding its body returns (None when the source is
+        # (H) itself unknown, e.g. a chained return). Consulted for return-flow so a
+        # (H) returned value keeps its origin resource through the call boundary.
         # (H) ponytail: single-pass and source-order dependent (a callee defined
         # (H) after its caller is missed), exactly like CallProcessor._returned_callables;
         # (H) a finalize/fixpoint pass is the upgrade if cross-file recall matters.
-        self._returns_taint: set[str] = set()
+        self._returns_taint: dict[str, HandleBinding | None] = {}
 
     def process_flow_for_caller(
         self,
@@ -116,6 +118,7 @@ class FlowProcessor:
         # (H) if branch precision ever matters.
         tainted: dict[str, HandleBinding | None] = {}
         body_returns_taint = False
+        body_return_source: HandleBinding | None = None
         stack = list(reversed(caller_node.children))
         while stack:
             node = stack.pop()
@@ -126,13 +129,15 @@ class FlowProcessor:
                 self._apply_assignment(node, tainted, ctx)
             elif node_type == cs.TS_PY_CALL:
                 self._apply_call(node, tainted, ctx)
-            elif node_type == cs.TS_PY_RETURN_STATEMENT:
-                if self._return_is_tainted(node, tainted, ctx):
+            elif node_type == cs.TS_PY_RETURN_STATEMENT and not body_returns_taint:
+                is_tainted, source = self._return_taint_source(node, tainted, ctx)
+                if is_tainted:
                     body_returns_taint = True
+                    body_return_source = source
             stack.extend(reversed(node.children))
 
         if body_returns_taint:
-            self._returns_taint.add(caller_qn)
+            self._returns_taint[caller_qn] = body_return_source
 
     def _apply_assignment(
         self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
@@ -162,7 +167,7 @@ class FlowProcessor:
                 raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
             )
             if callee is not None and callee[1] in self._returns_taint:
-                tainted[lhs] = None
+                tainted[lhs] = self._returns_taint[callee[1]]
                 self._emit_return_edge(callee, ctx.caller_spec)
                 return
         # (H) Any other RHS (literal, expression, untainted call) leaves lhs clean.
@@ -202,17 +207,27 @@ class FlowProcessor:
                 properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
             )
 
-    def _return_is_tainted(
+    def _return_taint_source(
         self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
-    ) -> bool:
+    ) -> tuple[bool, HandleBinding | None]:
+        # (H) Whether this return yields a tainted value and, if so, its origin
+        # (H) resource binding (None when the origin is itself unknown).
         for child in node.named_children:
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
-                if child.text.decode(cs.ENCODING_UTF8) in tainted:
-                    return True
+                name = child.text.decode(cs.ENCODING_UTF8)
+                if name in tainted:
+                    return True, tainted[name]
             elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
-                if self._source_binding(child, raw, ctx.import_map, ctx.read_sinks):
-                    return True
-        return False
+                if seed := self._source_binding(
+                    child, raw, ctx.import_map, ctx.read_sinks
+                ):
+                    return True, seed
+                callee = self._resolve(
+                    raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+                )
+                if callee is not None and callee[1] in self._returns_taint:
+                    return True, self._returns_taint[callee[1]]
+        return False, None
 
     def _emit_return_edge(
         self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
