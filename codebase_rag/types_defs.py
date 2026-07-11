@@ -583,6 +583,24 @@ class PendingMacroCall(NamedTuple):
     fallback_module_qn: str
 
 
+class PendingExpansionCall(NamedTuple):
+    """A call that exists only after macro expansion, seen by the hybrid frontend.
+
+    The call's text lives inside a macro definition body, so tree-sitter never
+    sees it at the expansion site. Both ends carry only locations: the caller
+    joins to the tightest tree-sitter definition span containing the expansion
+    site (falling back to the Module), the callee to the span containing the
+    referenced definition (dropped when none exists) -- so the emitted CALLS
+    edge is tree-sitter-scheme on both ends.
+    """
+
+    caller_rel_path: str
+    caller_line: int
+    callee_rel_path: str
+    callee_line: int
+    fallback_module_qn: str
+
+
 class DeferredCppInherit(NamedTuple):
     """C++ INHERITS edge held back until every class is registered.
 

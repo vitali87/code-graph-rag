@@ -27,10 +27,12 @@ from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
+    CppDefinitionSpan,
     EmbeddingQueryResult,
     FunctionRegistry,
     LanguageQueries,
     NodeType,
+    PendingExpansionCall,
     PendingMacroCall,
     QualifiedName,
     ResultRow,
@@ -496,6 +498,9 @@ class GraphUpdater:
         # (H) Hybrid-mode macro uses awaiting a caller: attribution needs the
         # (H) tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
+        # (H) Hybrid-mode expansion-produced calls (call text lives inside a
+        # (H) macro body): BOTH ends join to tree-sitter spans after Pass 2.
+        self._pending_cpp_expansion_calls: list[PendingExpansionCall] = []
         # (H) Files (re)parsed by Pass 2 this run: the only files whose
         # (H) definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -531,6 +536,11 @@ class GraphUpdater:
             cs.CppFrontend.HYBRID,
         ):
             return
+        if not self._repo_has_c_or_cpp_files():
+            # (H) HYBRID is the default, so a repo with no C/C++ sources must
+            # (H) skip silently instead of warning about libclang or a missing
+            # (H) compile_commands.json on every index of a Python/Go project.
+            return
         if not cpp_frontend_available():
             logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
             return
@@ -540,7 +550,10 @@ class GraphUpdater:
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self._pending_cpp_macro_calls = run_cpp_frontend_hybrid(
+            (
+                self._pending_cpp_macro_calls,
+                self._pending_cpp_expansion_calls,
+            ) = run_cpp_frontend_hybrid(
                 self.ingestor,
                 self.repo_path,
                 self.project_name,
@@ -554,6 +567,7 @@ class GraphUpdater:
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
                     count=len(self._pending_cpp_macro_calls)
+                    + len(self._pending_cpp_expansion_calls)
                 )
             )
             return
@@ -569,6 +583,17 @@ class GraphUpdater:
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
+
+    def _tightest_containing_span(
+        self, rel_path: str, line: int
+    ) -> CppDefinitionSpan | None:
+        spans = self.factory.definition_processor.cpp_definition_spans
+        containing = [
+            s for s in spans.get(rel_path, ()) if s.start_line <= line <= s.end_line
+        ]
+        if not containing:
+            return None
+        return min(containing, key=lambda s: s.end_line - s.start_line)
 
     def _resolve_hybrid_macro_calls(self) -> None:
         # (H) Attribute each hybrid macro use to the tightest enclosing
@@ -607,6 +632,52 @@ class GraphUpdater:
             )
             emitted += 1
         logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
+
+    def _resolve_hybrid_expansion_calls(self) -> None:
+        # (H) A call whose text lives inside a macro body exists only after
+        # (H) expansion, so tree-sitter never emits it. Join BOTH ends to
+        # (H) tree-sitter definition spans: the caller by expansion site
+        # (H) (Module fallback, like macro uses), the callee by its referenced
+        # (H) definition's location (dropped when no span contains it -- an
+        # (H) unindexed or template-only definition has no tree-sitter node to
+        # (H) target).
+        if not self._pending_cpp_expansion_calls:
+            return
+        emitted = 0
+        for call in self._pending_cpp_expansion_calls:
+            if call.caller_rel_path not in self._reparsed_file_keys:
+                continue
+            callee = self._tightest_containing_span(
+                call.callee_rel_path, call.callee_line
+            )
+            if callee is None:
+                continue
+            caller = self._tightest_containing_span(
+                call.caller_rel_path, call.caller_line
+            )
+            if caller is not None:
+                caller_label: str = caller.label
+                caller_qn = caller.qualified_name
+            else:
+                caller_label = cs.NodeLabel.MODULE.value
+                caller_qn = call.fallback_module_qn
+            self.ingestor.ensure_relationship_batch(
+                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
+                cs.RelationshipType.CALLS,
+                (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
+            )
+            emitted += 1
+        logger.info(ls.CPP_FRONTEND_EXPANSION_CALLS.format(count=emitted))
+
+    def _repo_has_c_or_cpp_files(self) -> bool:
+        # (H) Cheap early-exit scan: the frontend (and its warnings) only make
+        # (H) sense when there is C/C++ to index.
+        extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
+        for _root, dirs, files in os.walk(self.repo_path):
+            dirs[:] = [d for d in dirs if not d.startswith(cs.SEPARATOR_DOT)]
+            if any(Path(f).suffix.lower() in extensions for f in files):
+                return True
+        return False
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
@@ -668,6 +739,7 @@ class GraphUpdater:
         # (H) is recorded only once its class binding resolves, and a macro use
         # (H) inside such a method must attribute to it, not the Module.
         self._resolve_hybrid_macro_calls()
+        self._resolve_hybrid_expansion_calls()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:

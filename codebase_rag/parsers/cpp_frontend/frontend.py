@@ -8,6 +8,7 @@ from ...services import IngestorProtocol
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
+    PendingExpansionCall,
     PendingMacroCall,
     PropertyDict,
     SimpleNameLookup,
@@ -38,15 +39,18 @@ def cpp_frontend_available() -> bool:
 
 def find_compile_commands(start: Path) -> Path | None:
     # (H) Discover the directory holding a compile_commands.json: the indexed
-    # (H) target, a conventional build/ subdir, then walking up to the repo root.
+    # (H) target, then each ancestor -- checking the conventional build/ subdir
+    # (H) beside every level, so indexing a subdirectory (nlohmann's
+    # (H) include/nlohmann) still finds the repo root's build/.
     start = start.resolve()
     seen: set[Path] = set()
-    for candidate in (start, start / _BUILD_DIR, *start.parents):
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if (candidate / _COMPILE_COMMANDS).is_file():
-            return candidate
+    for level in (start, *start.parents):
+        for candidate in (level, level / _BUILD_DIR):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if (candidate / _COMPILE_COMMANDS).is_file():
+                return candidate
     return None
 
 
@@ -110,6 +114,17 @@ class _Collector:
         # (H) the only evidence of use -- resolved to macro -> macro CALLS at
         # (H) flush, once every macro node is known.
         self._macro_body_refs: dict[str, set[str]] = {}
+        # (H) {absolute file: [(sl, sc, el, ec)]} macro instantiation extents:
+        # (H) a CALL_EXPR whose own start lies inside one was produced by the
+        # (H) expansion (its text lives in the macro body), so tree-sitter
+        # (H) never sees it -- the one call class hybrid must emit itself.
+        # (H) Preprocessing-record cursors precede the AST among TU children,
+        # (H) so within a TU every instantiation is recorded before any
+        # (H) CALL_EXPR at its site is visited.
+        self._instantiation_extents: dict[str, list[tuple[int, int, int, int]]] = {}
+        # (H) (caller rel, caller line, callee rel, callee line): both ends
+        # (H) join to tree-sitter definition spans after Pass 2.
+        self._pending_expansion_calls: set[tuple[str, int, str, int]] = set()
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -157,9 +172,15 @@ class _Collector:
             return None
         if cursor.kind.name == fc.KIND_MACRO_INSTANTIATION:
             self._queue_macro_call(cursor)
+            if self.hybrid:
+                self._record_instantiation_extent(cursor)
             return None
         if self.hybrid:
-            # (H) Everything below emits definition nodes or CALLS with
+            if cursor.kind.name == fc.KIND_CALL_EXPR:
+                self._queue_expansion_call(cursor)
+            elif _classify(cursor) == fc.LABEL_TYPE:
+                self._process_hybrid_type_alias(cursor)
+            # (H) Everything else emits definition nodes or CALLS with
             # (H) libclang-scheme qns -- tree-sitter's territory in hybrid.
             return None
         if cursor.kind.name == fc.KIND_CALL_EXPR:
@@ -379,6 +400,73 @@ class _Collector:
         if refs:
             self._macro_body_refs.setdefault(qn, set()).update(refs)
 
+    def _record_instantiation_extent(self, cursor: Cursor) -> None:
+        if cursor.location.file is None:
+            return
+        extent = cursor.extent
+        self._instantiation_extents.setdefault(cursor.location.file.name, []).append(
+            (
+                extent.start.line,
+                extent.start.column,
+                extent.end.line,
+                extent.end.column,
+            )
+        )
+
+    def _inside_instantiation(self, cursor: Cursor) -> bool:
+        # (H) Containment of the cursor's OWN start position: a call whose
+        # (H) callee is written in the source but takes a macro argument
+        # (H) (`foo(MY_CONST)`) starts BEFORE the instantiation extent and is
+        # (H) tree-sitter's; one starting inside it was produced by expansion.
+        loc = cursor.location
+        if loc.file is None:
+            return False
+        pos = (loc.line, loc.column)
+        return any(
+            (sl, sc) <= pos <= (el, ec)
+            for sl, sc, el, ec in self._instantiation_extents.get(loc.file.name, ())
+        )
+
+    def _queue_expansion_call(self, cursor: Cursor) -> None:
+        # (H) Only expansion-produced calls: everything else is tree-sitter's.
+        # (H) Both ends are kept as locations; qns are joined to tree-sitter
+        # (H) spans after Pass 2 (libclang's own qns are wrong-scheme wherever
+        # (H) macros hide namespaces -- which is exactly where macros live).
+        if not self._inside_instantiation(cursor):
+            return
+        referenced = cursor.referenced
+        if referenced is None:
+            return
+        callee = referenced.get_definition() or referenced
+        if _classify(callee) not in (fc.LABEL_FUNCTION, fc.LABEL_METHOD):
+            return
+        if callee.location.file is None:
+            return
+        callee_rel = self.resolver.rel_path(callee.location.file.name)
+        caller_rel = self.resolver.rel_path(cursor.location.file.name)
+        if callee_rel is None or caller_rel is None:
+            return
+        self._pending_expansion_calls.add(
+            (caller_rel, cursor.location.line, callee_rel, callee.location.line)
+        )
+
+    def _process_hybrid_type_alias(self, cursor: Cursor) -> None:
+        # (H) tree-sitter emits no Type nodes for C++ using/typedef at all, so
+        # (H) namespace/file-scope aliases are a pure addition with a
+        # (H) Module-anchored DEFINES (Module qns are scheme-identical). A
+        # (H) MEMBER alias would anchor to a libclang-scheme Class qn -- a
+        # (H) phantom node in hybrid -- so it is skipped.
+        if cursor.location.file is None:
+            return
+        parent = cursor.semantic_parent
+        if parent is not None and parent.kind.name in fc.CLASS_KIND_NAMES:
+            return
+        rel = self.resolver.rel_path(cursor.location.file.name)
+        module_qn = self.resolver.module_qn(cursor.location.file.name)
+        if rel is None or module_qn is None:
+            return
+        self._process_type(cursor, rel, module_qn)
+
     def _queue_macro_call(self, cursor: Cursor) -> None:
         # (H) MACRO_INSTANTIATION.referenced is the exact MACRO_DEFINITION
         # (H) (libclang resolved it); the caller needs span containment over the
@@ -549,6 +637,24 @@ class _Collector:
                         target_qn,
                     )
 
+    def pending_expansion_calls(self) -> list[PendingExpansionCall]:
+        # (H) Same deferral as pending_macro_calls: the Module fallback is
+        # (H) pre-resolved for the caller end; a caller file with no module qn
+        # (H) can never carry an edge.
+        pending: list[PendingExpansionCall] = []
+        for caller_rel, caller_line, callee_rel, callee_line in sorted(
+            self._pending_expansion_calls
+        ):
+            module_qn = self.resolver.module_qn_for_rel(caller_rel)
+            if module_qn is None:
+                continue
+            pending.append(
+                PendingExpansionCall(
+                    caller_rel, caller_line, callee_rel, callee_line, module_qn
+                )
+            )
+        return pending
+
     def pending_macro_calls(self) -> list[PendingMacroCall]:
         # (H) Hybrid: callers are unknowable until the tree-sitter pass has
         # (H) recorded its definition spans, so hand the uses back with the
@@ -636,16 +742,17 @@ def run_cpp_frontend_hybrid(
     function_registry: FunctionRegistryTrieProtocol | None = None,
     simple_name_lookup: SimpleNameLookup | None = None,
     structural_elements: dict[Path, str | None] | None = None,
-) -> list[PendingMacroCall]:
-    """Layer libclang's macro and include facts onto a tree-sitter index.
+) -> tuple[list[PendingMacroCall], list[PendingExpansionCall]]:
+    """Layer libclang's macro, alias, and include facts onto a tree-sitter index.
 
     Parses every translation unit like :func:`run_cpp_frontend` but emits ONLY
-    macro Function nodes (with their Module DEFINES) and ``#include`` IMPORTS
-    edges -- the facts whose qns are scheme-identical between libclang and
-    tree-sitter. No definition nodes and no CALLS are emitted: tree-sitter
-    remains the backbone and covers every file, so nothing is skipped. Returns
-    the macro uses it saw; the caller attributes each to the tightest enclosing
-    tree-sitter definition span after Pass 2.
+    macro Function nodes (with their Module DEFINES), namespace/file-scope Type
+    aliases, and ``#include`` IMPORTS edges -- the facts whose qns are
+    scheme-identical between libclang and tree-sitter or that tree-sitter does
+    not model at all. No definition nodes and no direct CALLS are emitted:
+    tree-sitter remains the backbone and covers every file, so nothing is
+    skipped. Returns the macro uses and the expansion-produced calls it saw;
+    the caller joins each to tree-sitter definition spans after Pass 2.
     """
     collector = _Collector(
         CppQnResolver(repo_path, project_name),
@@ -656,7 +763,7 @@ def run_cpp_frontend_hybrid(
     )
     _parse_and_collect(collector, compdb_dir)
     collector.flush(ingestor)
-    return collector.pending_macro_calls()
+    return collector.pending_macro_calls(), collector.pending_expansion_calls()
 
 
 def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:

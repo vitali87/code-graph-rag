@@ -334,7 +334,7 @@ def test_hybrid_drops_macro_uses_in_ignored_directories(temp_repo: Path) -> None
     (root / "calc.cpp").write_text(
         '#include "build/gen.h"\n' + _CALC_SRC, encoding="utf-8"
     )
-    pending = run_cpp_frontend_hybrid(MagicMock(), root, root.name, root)
+    pending, _expansion = run_cpp_frontend_hybrid(MagicMock(), root, root.name, root)
     # (H) build/ is an ignored directory: its files carry no module qn, so a
     # (H) macro use there has no possible Module fallback and must be dropped
     assert all(p.rel_path != "build/gen.h" for p in pending), pending
@@ -347,7 +347,7 @@ def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
     root = temp_repo / "hybunit"
     _write_calc(root)
     ingestor = MagicMock()
-    pending = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
+    pending, _expansion = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
     # (H) macros only: no definition nodes, no CALLS (callers are unknowable
     # (H) until the tree-sitter pass has run), includes still emitted
     functions = get_qualified_names(get_nodes(ingestor, "Function"))
@@ -540,9 +540,22 @@ def test_frontend_skips_repo_without_c_or_cpp_files(
 
     def _spy(start: Path) -> None:
         probed.append(start)
-        return None
 
     monkeypatch.setattr(gu, "find_compile_commands", _spy)
     ingestor = MagicMock()
     run_updater(root, ingestor)
     assert probed == [], probed
+
+
+def test_find_compile_commands_checks_parent_build_dirs(tmp_path: Path) -> None:
+    # (H) Indexing a subdirectory (nlohmann's include/nlohmann) must discover
+    # (H) the repo root's conventional build/compile_commands.json: bare
+    # (H) parents were checked but never their build/ subdirs, so the default
+    # (H) hybrid frontend silently fell back to pure tree-sitter.
+    from codebase_rag.parsers.cpp_frontend import find_compile_commands
+
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "compile_commands.json").write_text("[]", encoding="utf-8")
+    target = tmp_path / "include" / "proj"
+    target.mkdir(parents=True)
+    assert find_compile_commands(target) == tmp_path / "build"
