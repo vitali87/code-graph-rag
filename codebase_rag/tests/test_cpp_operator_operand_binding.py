@@ -40,9 +40,9 @@ def test_enum_comparison_does_not_bind_unrelated_operator(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     calls = _calls(tmp_path)
-    assert not any(
-        "json_pointer.operator_equal" in callee for _, callee in calls
-    ), sorted(c for c in calls if "operator" in c[1])
+    assert not any("json_pointer.operator_equal" in callee for _, callee in calls), (
+        sorted(c for c in calls if "operator" in c[1])
+    )
 
 
 def test_typed_operand_binds_its_own_operator(tmp_path: Path) -> None:
