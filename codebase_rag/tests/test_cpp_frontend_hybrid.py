@@ -361,3 +361,43 @@ def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
     assert "hybunit.calc.h.SQUARE" in pending_callees, pending
     assert "hybunit.calc.h.MAX_SIZE" in pending_callees, pending
     assert all(p.rel_path == "calc.cpp" for p in pending), pending
+
+
+# (H) A config macro consumed ONLY by preprocessor conditionals (fmt's
+# (H) FMT_USE_FULL_CACHE_DRAGONBOX shape): libclang reports a
+# (H) MACRO_INSTANTIATION for every EVALUATED directive condition (#if X,
+# (H) #ifdef X, #if defined(X), a reached #elif), and the use sits outside
+# (H) every definition span, so it must attribute to the Module and keep the
+# (H) macro reachable. A condition in a SKIPPED branch is never evaluated and
+# (H) carries no edge -- the graph mirrors the build configuration.
+_FLAGS_SRC = """\
+#define USE_CACHE 1
+#define HAS_MODE 2
+int base = 1;
+#if USE_CACHE
+int cache = 1;
+#endif
+#ifdef HAS_MODE
+int mode = 1;
+#endif
+int main() { return base; }
+"""
+
+
+def _write_flags(root: Path) -> None:
+    root.mkdir()
+    (root / "conf.cpp").write_text(_FLAGS_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "conf.cpp")]), encoding="utf-8"
+    )
+
+
+def test_hybrid_directive_only_macro_use_attributes_to_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybdirective"
+    _write_flags(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    calls = _calls(ingestor)
+    assert ("hybdirective.conf", "hybdirective.conf.USE_CACHE") in calls, sorted(calls)
+    assert ("hybdirective.conf", "hybdirective.conf.HAS_MODE") in calls, sorted(calls)
