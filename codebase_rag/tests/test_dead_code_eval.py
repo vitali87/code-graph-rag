@@ -1115,3 +1115,31 @@ def test_property_family_decorated_methods_are_roots() -> None:
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, config)
     assert dead == {"proj.m.Options.undecorated", "proj.m.Options.custom"}
+
+
+def test_duplicate_variant_leaf_still_matches_name_roots() -> None:
+    # (H) Go allows several init() in ONE file; the duplicate-qn machinery
+    # (H) renames the second to `init@51`, whose leaf failed the name-based
+    # (H) root checks and reported the runtime-invoked initializer dead
+    # (H) (kubernetes pkg.apis.abac register.init@51). The marker suffix is a
+    # (H) registration artifact, never part of the written name -- strip it
+    # (H) before every name-scoped root rule.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.register"),
+                {cs.KEY_QUALIFIED_NAME: "proj.register", cs.KEY_PATH: "register.go"},
+            ),
+            _fn("proj.register.init", path="register.go"),
+            _fn("proj.register.init@51", path="register.go"),
+            _fn("proj.register.helper@60", path="register.go"),
+            _method("proj.frame.Frame.fmt@12", "frame.rs"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.register.init" not in dead
+    assert "proj.register.init@51" not in dead
+    assert "proj.frame.Frame.fmt@12" not in dead
+    # (H) a non-root name keeps its variant dead -- stripping the marker must
+    # (H) not accidentally widen any rule
+    assert "proj.register.helper@60" in dead
