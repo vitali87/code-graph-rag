@@ -346,3 +346,31 @@ def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
     exported = _run(tmp_path, {"core.js": BLOCK_SCRIPT_JS_SRC})
     assert _one(exported, "core.String.strptime") is True
     assert _one(exported, "core.helper") is True
+
+
+def test_script_module_scan_runs_once_per_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (H) The module-construct scan walks every top-level statement; it must
+    # (H) run once per FILE (memoized on the tree root), not once per symbol,
+    # (H) or export detection on a bundle with thousands of top-level
+    # (H) declarations goes quadratic.
+    from unittest.mock import patch
+
+    from codebase_rag import constants as cs
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers import export_detection
+
+    parsers, _ = load_parsers()
+    tree = parsers[cs.SupportedLanguage.JS].parse(b"function a() {}\nfunction b() {}\n")
+    declarations = [
+        c for c in tree.root_node.children if c.type == cs.TS_FUNCTION_DECLARATION
+    ]
+    with patch.object(
+        export_detection,
+        "_is_module_construct",
+        wraps=export_detection._is_module_construct,
+    ) as spy:
+        for declaration in declarations:
+            assert export_detection._is_script_global(declaration) is True
+    assert spy.call_count <= len(declarations)
