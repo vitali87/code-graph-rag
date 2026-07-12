@@ -1,5 +1,4 @@
-"""C# Phase 1: definition extraction (namespaces, types, members, FQNs)."""
-
+# (H) C# Phase 1: definition extraction (namespaces, types, members, FQNs).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -39,7 +38,7 @@ def test_file_scoped_and_block_namespace_fold_identically(
     methods = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # Both spellings must place the type under the Foo.Bar namespace.
+    # (H) Both spellings must place the type under the Foo.Bar namespace.
     assert _endswith_any(classes, "Foo.Bar.Widget")
     assert _endswith_any(classes, "Foo.Bar.Gadget")
     assert _endswith_any(methods, "Foo.Bar.Widget.Run")
@@ -61,8 +60,8 @@ public record struct RS(int Z);
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # class, struct and records map to Class; interface -> Interface; enum -> Enum
-    # (C# reuses the existing node-type -> label mapping in determine_node_type).
+    # (H) class, struct and records map to Class; interface -> Interface;
+    # (H) enum -> Enum (C# reuses determine_node_type's node-type mapping).
     classes = get_node_names(mock_ingestor, NodeType.CLASS)
     for name in ("N.C", "N.S", "N.R", "N.RS"):
         assert _endswith_any(classes, name), f"missing type {name}: {classes}"
@@ -92,11 +91,11 @@ public class Box<T> {
     members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # Generic type parameters must not leak into names.
+    # (H) Generic type parameters must not leak into names.
     assert _endswith_any(classes, "N.Box")
     assert _endswith_any(members, "N.Box.Get")
     assert _endswith_any(members, "N.Box.Size")
-    # Constructor is named after the type; destructor is distinct from it.
+    # (H) Constructor is named after the type; destructor is distinct from it.
     assert _endswith_any(members, "N.Box.Box")
 
 

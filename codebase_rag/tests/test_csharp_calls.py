@@ -1,5 +1,4 @@
-"""C# Phase 1: intra-file call resolution."""
-
+# (H) C# Phase 1: intra-file call resolution.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -41,8 +40,8 @@ public class Svc {
 def test_static_method_call_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Same-class static helper call, resolved via the trie/simple-name lookup.
-    # (Typed receiver-driven and new->constructor resolution land in Phase 3.)
+    # (H) Same-class static helper call, resolved via the trie/simple-name
+    # (H) lookup (typed receiver and new->ctor resolution land in Phase 3).
     (csharp_project / "Calc.cs").write_text(
         """
 namespace N;
