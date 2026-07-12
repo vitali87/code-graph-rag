@@ -43,6 +43,7 @@ EXT_C = ".c"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
 EXT_CS = ".cs"
+EXT_DART = ".dart"
 
 # (H) File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
@@ -70,6 +71,7 @@ CPP_EXTENSIONS = (
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
+DART_EXTENSIONS = (EXT_DART,)
 
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -78,6 +80,7 @@ PKG_CMAKE_LISTS = "CMakeLists.txt"
 PKG_MAKEFILE = "Makefile"
 PKG_VCXPROJ_GLOB = "*.vcxproj"
 PKG_CONANFILE = "conanfile.txt"
+PKG_PUBSPEC_YAML = "pubspec.yaml"
 
 
 class CppFrontend(StrEnum):
@@ -140,6 +143,7 @@ class SupportedLanguage(StrEnum):
     PHP = "php"
     LUA = "lua"
     CSHARP = "c_sharp"
+    DART = "dart"
 
 
 class LanguageStatus(StrEnum):
@@ -219,6 +223,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives",
         "C#",
     ),
+    SupportedLanguage.DART: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies",
+        "Dart",
+    ),
 }
 
 # (H) Index file names
@@ -260,6 +269,7 @@ class TreeSitterModule(StrEnum):
     LUA = "tree_sitter_lua"
     PHP = "tree_sitter_php"
     CSHARP = "tree_sitter_c_sharp"
+    DART = "tree_sitter_dart"
 
 
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
