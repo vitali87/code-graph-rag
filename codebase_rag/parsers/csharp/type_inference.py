@@ -81,9 +81,7 @@ class CSharpTypeInferenceEngine:
 
     # (H) --- variable/field/parameter type map -------------------------------
 
-    def build_variable_type_map(
-        self, scope_node: Node, module_qn: str
-    ) -> dict[str, str]:
+    def build_variable_type_map(self, scope_node: Node) -> dict[str, str]:
         types: dict[str, str] = {}
         self._collect_parameters(scope_node, types)
         self._collect_locals(scope_node, types)
@@ -112,28 +110,38 @@ class CSharpTypeInferenceEngine:
         # (H) block-scoped precision needs the Roslyn semantic model (follow-up).
         conflicted: set[str] = set()
         for decl in self._local_variable_declarations(scope_node):
-            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
-            declared: str | None = None
-            if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
-                if type_text := safe_decode_text(type_node):
-                    declared = _normalize_type_name(type_text)
+            declared = self._declared_type_name(decl)
             for declarator in decl.children:
-                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
-                    continue
-                var_name = safe_decode_text(
-                    declarator.child_by_field_name(cs.FIELD_NAME)
-                )
-                if not var_name or var_name in conflicted:
-                    continue
-                var_type = declared or self._infer_initializer_type(declarator)
-                if not var_type:
-                    continue
-                existing = types.get(var_name)
-                if existing is not None and existing != var_type:
-                    del types[var_name]
-                    conflicted.add(var_name)
-                else:
-                    types[var_name] = var_type
+                if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+                    self._record_local(declarator, declared, types, conflicted)
+
+    def _declared_type_name(self, decl: Node) -> str | None:
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
+            return None
+        if type_text := safe_decode_text(type_node):
+            return _normalize_type_name(type_text)
+        return None
+
+    def _record_local(
+        self,
+        declarator: Node,
+        declared: str | None,
+        types: dict[str, str],
+        conflicted: set[str],
+    ) -> None:
+        var_name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+        if not var_name or var_name in conflicted:
+            return
+        var_type = declared or self._infer_initializer_type(declarator)
+        if not var_type:
+            return
+        existing = types.get(var_name)
+        if existing is not None and existing != var_type:
+            del types[var_name]
+            conflicted.add(var_name)
+        else:
+            types[var_name] = var_type
 
     def _infer_initializer_type(self, declarator: Node) -> str | None:
         # (H) `var x = new T(...)` -> T (the object_creation `type` field). Other
@@ -215,7 +223,7 @@ class CSharpTypeInferenceEngine:
         )
         if receiver_class_qn is None:
             return None
-        method_qn = self._find_method(receiver_class_qn, method_name, arg_count, set())
+        method_qn = self._find_method(receiver_class_qn, method_name, arg_count)
         if method_qn is None:
             return None
         return cs.NodeLabel.METHOD.value, method_qn
@@ -290,7 +298,7 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _find_method(
-        self, class_qn: str, method_name: str, arg_count: int, seen: set[str]
+        self, class_qn: str, method_name: str, arg_count: int
     ) -> str | None:
         # (H) An exact-arity match ANYWHERE up the hierarchy wins before any
         # (H) same-name fallback, so an inherited correct-arity overload

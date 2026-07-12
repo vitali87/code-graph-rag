@@ -440,9 +440,7 @@ class TypeInferenceEngine:
                     caller_node, module_qn
                 )
             case cs.SupportedLanguage.CSHARP:
-                return self.csharp_type_inference.build_variable_type_map(
-                    caller_node, module_qn
-                )
+                return self.csharp_type_inference.build_variable_type_map(caller_node)
             case cs.SupportedLanguage.LUA:
                 return self.lua_type_inference.build_local_variable_type_map(
                     caller_node, module_qn
