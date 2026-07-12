@@ -1,6 +1,7 @@
 # (H) Application constants, re-exported from themed submodules.
 
 from .ast_cpp import *  # noqa: F403
+from .ast_csharp import *  # noqa: F403
 from .ast_go import *  # noqa: F403
 from .ast_java import *  # noqa: F403
 from .ast_js import *  # noqa: F403

@@ -391,6 +391,8 @@ class ImportProcessor:
                     self._parse_lua_imports(captures, module_qn)
                 case cs.SupportedLanguage.PHP:
                     self._parse_php_imports(captures, module_qn)
+                case cs.SupportedLanguage.CSHARP:
+                    self._parse_csharp_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
@@ -1195,6 +1197,31 @@ class ImportProcessor:
                             name=imported_name,
                             path=resolved_path,
                         )
+
+    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
+        name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                continue
+            # (H) `using Alias = Target;` marks the alias with a `name` field; the
+            # (H) imported path is then the OTHER name node. Plain/static/global
+            # (H) forms have no `name` field, so the sole name node is the path.
+            alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+            target = None
+            for child in import_node.children:
+                if child.type in name_types and child != alias_node:
+                    target = child
+            if target is None:
+                continue
+            imported_path = safe_decode_with_fallback(target)
+            if not imported_path:
+                continue
+            if alias_node is not None and alias_node.text:
+                local_name = safe_decode_with_fallback(alias_node)
+            else:
+                local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
+            self.import_mapping[module_qn][local_name] = imported_path
+            logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

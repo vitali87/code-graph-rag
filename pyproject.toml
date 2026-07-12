@@ -106,6 +106,7 @@ treesitter-full = [
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
+    "tree-sitter-c-sharp>=0.23.5",
 ]
 
 semantic = [
