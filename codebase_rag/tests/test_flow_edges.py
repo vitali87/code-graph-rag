@@ -113,6 +113,21 @@ def test_return_value_flows_from_callee_to_caller(tmp_path: Path) -> None:
     assert _has(edges, "m.build", "m.caller", via="return", kind=FlowKind.RETURN.value)
 
 
+def test_direct_return_of_tainted_callee_emits_return_edge(tmp_path: Path) -> None:
+    # (H) `return inner()` consumes inner's tainted return just as `v = inner()`
+    # (H) does, so the callee->caller return edge must fire at the direct-return
+    # (H) site too, not only at assignment sites.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def inner():\n    return os.getenv('K')\n\n"
+            "def outer():\n    return inner()\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(edges, "m.inner", "m.outer", via="return", kind=FlowKind.RETURN.value)
+
+
 def test_return_taint_reaches_resource_sink(tmp_path: Path) -> None:
     # (H) A value returned from a tainted callee carries its source resource, so a
     # (H) later sink emits the full resource->resource flow, not just the return edge.

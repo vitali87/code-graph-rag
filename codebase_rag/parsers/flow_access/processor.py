@@ -11,6 +11,7 @@ from ..call_resolver import CallResolver
 from ..import_processor import ImportProcessor
 from ..io_access import (
     IO_SINKS,
+    PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
     HandleBinding,
     IODirection,
@@ -30,14 +31,6 @@ from .constants import (
 )
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
-
-# (H) Nested defs/classes are separate callers processed on their own; pruning them
-# (H) keeps a nested body's taint out of this caller's flow.
-_SCOPE_BOUNDARIES = (
-    cs.TS_PY_FUNCTION_DEFINITION,
-    cs.TS_PY_CLASS_DEFINITION,
-    cs.TS_PY_DECORATED_DEFINITION,
-)
 
 
 class _FlowCtx(NamedTuple):
@@ -123,15 +116,18 @@ class FlowProcessor:
         while stack:
             node = stack.pop()
             node_type = node.type
-            if node_type in _SCOPE_BOUNDARIES:
+            if node_type in PY_SCOPE_BOUNDARIES:
                 continue
             if node_type == cs.TS_PY_ASSIGNMENT:
                 self._apply_assignment(node, tainted, ctx)
             elif node_type == cs.TS_PY_CALL:
                 self._apply_call(node, tainted, ctx)
-            elif node_type == cs.TS_PY_RETURN_STATEMENT and not body_returns_taint:
+            elif node_type == cs.TS_PY_RETURN_STATEMENT:
+                # (H) Always process so every `return callee()` emits its own
+                # (H) callee->caller edge; only the first tainted return sets the
+                # (H) body's own returned source.
                 is_tainted, source = self._return_taint_source(node, tainted, ctx)
-                if is_tainted:
+                if is_tainted and not body_returns_taint:
                     body_returns_taint = True
                     body_return_source = source
             stack.extend(reversed(node.children))
@@ -226,6 +222,9 @@ class FlowProcessor:
                     raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
                 )
                 if callee is not None and callee[1] in self._returns_taint:
+                    # (H) A directly-returned tainted callee flows into this caller
+                    # (H) exactly like an assigned one, so emit its return edge.
+                    self._emit_return_edge(callee, ctx.caller_spec)
                     return True, self._returns_taint[callee[1]]
         return False, None
 
