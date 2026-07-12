@@ -75,6 +75,27 @@ def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     return f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
 
 
+def registry_match[T](
+    mapping: dict[str, T], raw_name: str | None, import_map: dict[str, str]
+) -> T | None:
+    # (H) Match a call against an I/O registry keyed by canonical dotted names
+    # (H) (`sqlite3.connect`, `os.getenv`). Try the import-normalised name first;
+    # (H) if that misses AND the raw callee is module-qualified (has a dot), fall
+    # (H) back to the raw name. That recovers a stdlib module re-exported under its
+    # (H) own name (`from .utils import sqlite3`, which remaps the head off
+    # (H) `sqlite3`), which is common in real projects. A bare callee gets NO raw
+    # (H) fallback: a remapped bare name (`from .myio import open`) must stay
+    # (H) shadowed rather than hit the `open` sink.
+    if raw_name is None:
+        return None
+    name = normalise(raw_name, import_map)
+    if name is not None and (hit := mapping.get(name)) is not None:
+        return hit
+    if cs.SEPARATOR_DOT in raw_name:
+        return mapping.get(raw_name)
+    return None
+
+
 def string_literal(arg: Node | None) -> str:
     if arg is None or arg.type != cs.TS_PY_STRING:
         return DYNAMIC_TARGET
