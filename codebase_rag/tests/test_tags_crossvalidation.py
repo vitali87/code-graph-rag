@@ -3,7 +3,7 @@
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import _create_tags_query, load_parsers
-from codebase_rag.parsers.tags_crossvalidate import crossvalidate
+from codebase_rag.parsers.tags_crossvalidate import crossvalidate, crossvalidate_calls
 from codebase_rag.tests.test_function_ingest import parse_code
 
 # (H) definitions sit on lines 1 (f), 4 (g), 7 (C), all 1-indexed
@@ -61,6 +61,35 @@ def test_crossvalidate_flags_cgr_over_capture() -> None:
 
     assert missed == set()
     assert extra == {("ghost", 99)}
+
+
+# (H) call sites: g@2, method@3 (attribute callee), h@4 and nested k@4
+_PY_CALLS = "def f():\n    g()\n    obj.method()\n    h(k())\n"
+
+
+def test_crossvalidate_calls_flags_missed_call() -> None:
+    parsers, _ = load_parsers()
+    root = parse_code(_PY_CALLS, cs.SupportedLanguage.PYTHON, parsers)
+
+    # (H) cgr resolved g() but dropped the obj.method() call site.
+    cgr_calls = {("g", 2), ("h", 4), ("k", 4)}
+
+    missed, extra = crossvalidate_calls(root, _tags_query(), cgr_calls)
+
+    assert missed == {("method", 3)}
+    assert extra == set()
+
+
+def test_crossvalidate_calls_parity_reports_nothing() -> None:
+    parsers, _ = load_parsers()
+    root = parse_code(_PY_CALLS, cs.SupportedLanguage.PYTHON, parsers)
+
+    cgr_calls = {("g", 2), ("method", 3), ("h", 4), ("k", 4)}
+
+    missed, extra = crossvalidate_calls(root, _tags_query(), cgr_calls)
+
+    assert missed == set()
+    assert extra == set()
 
 
 def test_tags_query_uses_community_oracle() -> None:
