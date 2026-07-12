@@ -75,6 +75,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |--------|------|----------|---------|---------------|-------|-----------------|-------------------|
 | C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
+| C# | Fully Supported | .cs | ✓ | ✓ | ✓ | - | Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
 | Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
@@ -85,7 +86,6 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| C# | In Development | .cs | ✓ | ✓ | ✓ | - | Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, using directives |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
@@ -734,6 +734,7 @@ The knowledge graph uses the following node types and relationships:
 
 <!-- SECTION:language_mappings -->
 - **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
+- **C#**: `class_declaration`, `constructor_declaration`, `conversion_operator_declaration`, `destructor_declaration`, `enum_declaration`, `interface_declaration`, `local_function_statement`, `method_declaration`, `operator_declaration`, `property_declaration`, `record_declaration`, `struct_declaration`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
 - **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
@@ -744,7 +745,6 @@ The knowledge graph uses the following node types and relationships:
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `macro_definition`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
-- **C#**: `class_declaration`, `constructor_declaration`, `conversion_operator_declaration`, `destructor_declaration`, `enum_declaration`, `interface_declaration`, `local_function_statement`, `method_declaration`, `operator_declaration`, `property_declaration`, `record_declaration`, `struct_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 

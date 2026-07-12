@@ -283,3 +283,38 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
         "Readable",
     }
 )
+
+# (H) C# base class library / framework roots. A qualified name under one of
+# (H) these namespaces (`System.Collections.Generic.List`, `System.Linq.Enumerable`)
+# (H) is external stdlib, not first-party code, so stdlib extraction folds the
+# (H) trailing PascalCase type into its namespace path.
+CSHARP_STDLIB_PREFIXES = (
+    "System.",
+    "Microsoft.",
+    "Windows.",
+    "Mono.",
+)
+
+# (H) Bare System namespace root (`System` itself), plus the ubiquitous top-level
+# (H) primitives/aliases that appear without the `System.` prefix.
+CSHARP_STDLIB_CLASSES = frozenset(
+    {
+        "Object",
+        "String",
+        "Int32",
+        "Int64",
+        "Boolean",
+        "Double",
+        "Decimal",
+        "Guid",
+        "DateTime",
+        "TimeSpan",
+        "Exception",
+        "Task",
+        "Nullable",
+        "IDisposable",
+        "IEnumerable",
+        "IList",
+        "IDictionary",
+    }
+)

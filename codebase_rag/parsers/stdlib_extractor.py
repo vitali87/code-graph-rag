@@ -171,6 +171,8 @@ class StdlibExtractor:
                 return self._extract_cpp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.JAVA:
                 return self._extract_java_stdlib_path(full_qualified_name)
+            case cs.SupportedLanguage.CSHARP:
+                return self._extract_csharp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.LUA:
                 return self._extract_lua_stdlib_path(full_qualified_name)
             case _:
@@ -583,6 +585,35 @@ func main() {
             cs.SupportedLanguage.JAVA, full_qualified_name, full_qualified_name
         )
         return full_qualified_name
+
+    def _extract_csharp_stdlib_path(self, full_qualified_name: str) -> str:
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.CSHARP, full_qualified_name
+        )
+        if cached_result is not None:
+            return cached_result
+
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
+        result = full_qualified_name
+        if len(parts) >= 2:
+            entity_name = parts[-1]
+            # (H) A C# type is PascalCase; interfaces start `I<Upper>`. Fold the
+            # (H) trailing type into its namespace path so the external node is the
+            # (H) namespace (`System.Collections.Generic`), matching the Java model.
+            is_type = (
+                entity_name[:1].isupper() or entity_name in cs.CSHARP_STDLIB_CLASSES
+            )
+            if full_qualified_name.startswith(cs.CSHARP_STDLIB_PREFIXES):
+                result = (
+                    cs.SEPARATOR_DOT.join(parts[:-1])
+                    if is_type
+                    else full_qualified_name
+                )
+            elif is_type:
+                result = cs.SEPARATOR_DOT.join(parts[:-1])
+
+        _cache_stdlib_result(cs.SupportedLanguage.CSHARP, full_qualified_name, result)
+        return result
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)

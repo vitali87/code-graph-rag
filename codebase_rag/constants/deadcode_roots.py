@@ -139,6 +139,45 @@ JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# (H) C# attributes that mark a method as invoked by a framework/runtime rather
+# (H) than a first-party call the graph can see -- so an attributed method is a
+# (H) reachability root, gated by the .cs extension. Test runners invoke [Fact]/
+# (H) [Theory]/[Test]/... ; ASP.NET routes to [HttpGet]/[Route]/... ; the
+# (H) serialization runtime invokes [OnDeserialized]/... callbacks reflectively.
+# (H) Names are the lowercased, argument-stripped form _norm_decorator produces.
+CSHARP_ROOT_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "fact",
+        "theory",
+        "test",
+        "testmethod",
+        "testcase",
+        "setup",
+        "teardown",
+        "onetimesetup",
+        "onetimeteardown",
+        "globalsetup",
+        "apicontroller",
+        "route",
+        "httpget",
+        "httppost",
+        "httpput",
+        "httpdelete",
+        "httppatch",
+        "httphead",
+        "httpoptions",
+        "ondeserialized",
+        "ondeserializing",
+        "onserialized",
+        "onserializing",
+    }
+)
+
+# (H) IDisposable methods the runtime invokes at the close of a `using` block (or
+# (H) `await using`), never through a named call -- reachability roots, gated by
+# (H) the .cs extension and method-ness (name-scoped, like the Java hooks above).
+CSHARP_DISPOSE_METHOD_NAMES: frozenset[str] = frozenset({"Dispose", "DisposeAsync"})
+
 # (H) Base classes that mark a class as a structural interface: its method stubs
 # (H) are never call targets themselves (callers resolve to the implementations),
 # (H) so dead-code analysis roots every method the class defines.

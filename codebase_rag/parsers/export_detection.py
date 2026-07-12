@@ -31,6 +31,13 @@ _JS_TS_FUNCTION_SCOPE_TYPES = frozenset(
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
+_CSHARP_PUBLIC_MODIFIERS = frozenset(
+    {
+        cs.TS_CSHARP_MODIFIER_PUBLIC,
+        cs.TS_CSHARP_MODIFIER_INTERNAL,
+        cs.TS_CSHARP_MODIFIER_PROTECTED,
+    }
+)
 _PY_FUNCTION_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 
@@ -48,6 +55,8 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _js_ts_exported(node, name)
         case cs.SupportedLanguage.JAVA:
             return _java_exported(node)
+        case cs.SupportedLanguage.CSHARP:
+            return _csharp_exported(node)
         case cs.SupportedLanguage.RUST:
             return _rust_exported(node)
         case cs.SupportedLanguage.CPP:
@@ -216,6 +225,17 @@ def _java_exported(node: Node) -> bool:
     if modifiers is None:
         return False
     return any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children)
+
+
+def _csharp_exported(node: Node) -> bool:
+    # (H) C# has no modifiers container; visibility is individual `modifier`
+    # (H) children. public/internal/protected are external API surface; a member
+    # (H) with no visibility modifier defaults to private, so it is not exported.
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_MODIFIER and child.text is not None:
+            if child.text.decode(cs.ENCODING_UTF8) in _CSHARP_PUBLIC_MODIFIERS:
+                return True
+    return False
 
 
 def _rust_exported(node: Node) -> bool:

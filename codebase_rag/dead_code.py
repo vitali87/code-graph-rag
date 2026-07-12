@@ -102,6 +102,26 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     )
 
 
+def _is_csharp_attribute_root(props: PropertyDict, path: str) -> bool:
+    # (H) A C# method carrying a framework/runtime attribute ([Fact], [HttpGet],
+    # (H) [OnDeserialized], ...) is invoked reflectively, never by a call the
+    # (H) graph sees, so it is a reachability root. Gated to .cs; the decorator
+    # (H) set is matched via the normalized (lowercased, arg-stripped) form.
+    return path.endswith(cs.EXT_CS) and _has_root_decorator(
+        props, cs.CSHARP_ROOT_ATTRIBUTES
+    )
+
+
+def _is_csharp_dispose_root(name: str, is_method: bool, path: str) -> bool:
+    # (H) `Dispose`/`DisposeAsync` are invoked by a `using` block's teardown, not
+    # (H) a named call; a reachability root on a .cs method (like the Java hooks).
+    return (
+        is_method
+        and path.endswith(cs.EXT_CS)
+        and name in cs.CSHARP_DISPOSE_METHOD_NAMES
+    )
+
+
 def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
     # (H) Match test-path patterns against a leading-slash-normalized path so a dir
     # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
@@ -247,6 +267,14 @@ def dead_code_from_graph(
         elif _is_cpp_operator_root(leaf, str(props.get(cs.KEY_PATH, ""))):
             roots.add(qn)
         elif _is_java_serialization_root(
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
+            qn in method_qns,
+            str(props.get(cs.KEY_PATH, "")),
+        ):
+            roots.add(qn)
+        elif _is_csharp_attribute_root(props, str(props.get(cs.KEY_PATH, ""))):
+            roots.add(qn)
+        elif _is_csharp_dispose_root(
             leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
             qn in method_qns,
             str(props.get(cs.KEY_PATH, "")),
