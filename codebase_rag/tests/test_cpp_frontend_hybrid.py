@@ -334,7 +334,7 @@ def test_hybrid_drops_macro_uses_in_ignored_directories(temp_repo: Path) -> None
     (root / "calc.cpp").write_text(
         '#include "build/gen.h"\n' + _CALC_SRC, encoding="utf-8"
     )
-    pending = run_cpp_frontend_hybrid(MagicMock(), root, root.name, root)
+    pending, _expansion = run_cpp_frontend_hybrid(MagicMock(), root, root.name, root)
     # (H) build/ is an ignored directory: its files carry no module qn, so a
     # (H) macro use there has no possible Module fallback and must be dropped
     assert all(p.rel_path != "build/gen.h" for p in pending), pending
@@ -347,7 +347,7 @@ def test_run_hybrid_emits_only_macros_and_returns_pending_calls(
     root = temp_repo / "hybunit"
     _write_calc(root)
     ingestor = MagicMock()
-    pending = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
+    pending, _expansion = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
     # (H) macros only: no definition nodes, no CALLS (callers are unknowable
     # (H) until the tree-sitter pass has run), includes still emitted
     functions = get_qualified_names(get_nodes(ingestor, "Function"))
@@ -411,3 +411,210 @@ def test_hybrid_directive_only_macro_use_attributes_to_module(
     # (H) it is never tokenized and carries no edge -- the graph mirrors the
     # (H) build configuration
     assert not any(t.endswith(".SKIPPED_FLAG") for _, t in calls), sorted(calls)
+
+
+# (H) B3 fixtures. Aliases: tree-sitter emits NO Type nodes for C++
+# (H) using/typedef at all, so namespace/file-scope aliases are a fact libclang
+# (H) can add; a MEMBER alias would need a Class parent whose libclang qn
+# (H) diverges from tree-sitter's wherever macros hide namespaces, so member
+# (H) aliases stay out. Post-expansion calls: a call written INSIDE a macro
+# (H) body exists only after expansion, invisible to tree-sitter; both its
+# (H) caller (expansion site) and callee (referenced definition) join to
+# (H) tree-sitter spans by location, so the emitted edge carries tree-sitter
+# (H) scheme qns end to end.
+_B3_H = """\
+#ifndef B3_H
+#define B3_H
+namespace ui {
+using Handle = int;
+struct Widget { using Member = char; };
+}
+typedef long FileScope;
+int target(int v);
+int decoy_target(int v);
+#define CALL_TARGET(v) target(v)
+#endif
+"""
+
+_B3_SRC = """\
+#include "b3.h"
+int target(int v) { return v + 1; }
+int decoy_target(int v) { return v + 2; }
+int driver(int v) { return CALL_TARGET(v); }
+int module_level = CALL_TARGET(3);
+"""
+
+
+def _write_b3(root: Path) -> None:
+    root.mkdir()
+    (root / "b3.h").write_text(_B3_H, encoding="utf-8")
+    (root / "b3.cpp").write_text(_B3_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "b3.cpp")]), encoding="utf-8"
+    )
+
+
+def _defines(ingestor: MagicMock) -> set[tuple[str, str]]:
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in ingestor.ensure_relationship_batch.call_args_list
+        if c.args[1] == "DEFINES"
+    }
+
+
+def test_hybrid_emits_namespace_and_file_scope_type_aliases(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybalias"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    types = get_qualified_names(get_nodes(ingestor, "Type"))
+    assert "hybalias.b3.h.ui.Handle" in types, sorted(types)
+    assert "hybalias.b3.h.FileScope" in types, sorted(types)
+    defines = _defines(ingestor)
+    assert ("hybalias.b3.h", "hybalias.b3.h.ui.Handle") in defines
+    assert ("hybalias.b3.h", "hybalias.b3.h.FileScope") in defines
+
+
+def test_hybrid_skips_member_type_aliases(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) A member alias would anchor to a libclang-scheme Class qn -- a
+    # (H) phantom node in hybrid -- so it is not emitted at all.
+    root = temp_repo / "hybmember"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    types = get_qualified_names(get_nodes(ingestor, "Type"))
+    assert not any(qn.endswith(".Member") for qn in types), sorted(types)
+
+
+def test_hybrid_macro_body_call_resolves_post_expansion(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `CALL_TARGET(v)` expands to `target(v)`: the call to target exists
+    # (H) only post-expansion. Both ends location-join to tree-sitter spans, so
+    # (H) driver -> target lands with tree-sitter qns; decoy_target never does.
+    root = temp_repo / "hybexp"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    calls = _calls(ingestor)
+    assert ("hybexp.b3.driver", "hybexp.b3.target") in calls, sorted(calls)
+    assert not any(callee == "hybexp.b3.decoy_target" for _, callee in calls), sorted(
+        calls
+    )
+
+
+def test_hybrid_module_scope_expansion_call_attributes_to_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `int module_level = CALL_TARGET(3);` expands outside every span:
+    # (H) the caller falls back to the Module, mirroring the macro-use rule.
+    root = temp_repo / "hybexpmod"
+    _write_b3(root)
+    ingestor = _run_hybrid(root, monkeypatch)
+    assert ("hybexpmod.b3", "hybexpmod.b3.target") in _calls(ingestor), sorted(
+        _calls(ingestor)
+    )
+
+
+def test_hybrid_is_default_frontend() -> None:
+    # (H) HYBRID degrades to pure tree-sitter when libclang or a compdb is
+    # (H) missing, so it is safe as the default and strictly better with one.
+    from codebase_rag.config import AppConfig
+
+    default = AppConfig.model_fields["CPP_FRONTEND"].default
+    assert default == cs.CppFrontend.HYBRID, default
+
+
+def test_frontend_skips_repo_without_c_or_cpp_files(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) With HYBRID as the default every non-C++ repo would otherwise warn
+    # (H) about a missing compile_commands.json on every index; the frontend
+    # (H) must not even look for one when the repo has no C/C++ sources.
+    root = temp_repo / "pyonly"
+    root.mkdir()
+    (root / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    probed: list[Path] = []
+
+    def _spy(start: Path) -> None:
+        probed.append(start)
+
+    monkeypatch.setattr(gu, "find_compile_commands", _spy)
+    ingestor = MagicMock()
+    run_updater(root, ingestor)
+    assert probed == [], probed
+
+
+def test_find_compile_commands_checks_parent_build_dirs(tmp_path: Path) -> None:
+    # (H) Indexing a subdirectory (nlohmann's include/nlohmann) must discover
+    # (H) the repo root's conventional build/compile_commands.json: bare
+    # (H) parents were checked but never their build/ subdirs, so the default
+    # (H) hybrid frontend silently fell back to pure tree-sitter.
+    from codebase_rag.parsers.cpp_frontend import find_compile_commands
+
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "compile_commands.json").write_text("[]", encoding="utf-8")
+    target = tmp_path / "include" / "proj"
+    target.mkdir(parents=True)
+    assert find_compile_commands(target) == tmp_path / "build"
+
+
+def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) Incremental gap: editing only the CALLER file re-parses it (fresh
+    # (H) spans) while the callee's file stays unchanged (no spans this run);
+    # (H) the expansion call's callee join must fall back to spans rehydrated
+    # (H) from the graph, or the re-emitted edge silently drops until a forced
+    # (H) rebuild.
+    root = temp_repo / "hybincexp"
+    root.mkdir()
+    (root / "tgt.h").write_text(
+        "#ifndef TGT_H\n"
+        "#define TGT_H\n"
+        "int target(int v);\n"
+        "#define CALL_TARGET(v) target(v)\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    (root / "tgt.cpp").write_text(
+        '#include "tgt.h"\nint target(int v) { return v + 1; }\n', encoding="utf-8"
+    )
+    (root / "drv.cpp").write_text(
+        '#include "tgt.h"\nint driver(int v) { return CALL_TARGET(v); }\n',
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                _compdb_entry(root, root / "tgt.cpp"),
+                _compdb_entry(root, root / "drv.cpp"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+
+    (root / "drv.cpp").write_text(
+        '#include "tgt.h"\n'
+        "int driver(int v) { return CALL_TARGET(v); }\n"
+        "int extra() { return 0; }\n",
+        encoding="utf-8",
+    )
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+
+    calls = {
+        (str(from_val), str(to_val))
+        for _fl, from_val, rel_type, _tl, to_val in store.edges
+        if rel_type == cs.RelationshipType.CALLS.value
+    }
+    assert ("hybincexp.drv.driver", "hybincexp.tgt.target") in calls, sorted(calls)

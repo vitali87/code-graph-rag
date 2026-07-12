@@ -26,6 +26,7 @@ CPP_FRONTEND_HYBRID_PENDING = (
     "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
 )
 CPP_FRONTEND_MACRO_CALLS = "Resolved {count} hybrid macro CALLS edge(s)"
+CPP_FRONTEND_EXPANSION_CALLS = "Resolved {count} hybrid expansion CALLS edge(s)"
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )

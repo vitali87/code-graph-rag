@@ -184,7 +184,10 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
-    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.TREESITTER
+    # (H) HYBRID degrades to pure tree-sitter when libclang or a
+    # (H) compile_commands.json is missing, so it is safe as the default and
+    # (H) strictly better (macros, includes, expansion calls) with one.
+    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
