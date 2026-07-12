@@ -11,6 +11,7 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |----------|--------|------------|-----------|-----------------|---------|-------------------|---------------------|
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | Yes | Yes | Yes | Yes | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
+| Dart | Fully Supported | .dart | Yes | Yes | Yes | Yes | Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies |
 | Java | Fully Supported | .java | Yes | Yes | Yes | No | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | Yes | Yes | Yes | No | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | Yes | No | Yes | No | Local/global functions, metatables, closures, coroutines |

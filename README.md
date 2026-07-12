@@ -77,6 +77,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
 | C# | Fully Supported | .cs | ✓ | ✓ | ✓ | - | Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
+| Dart | Fully Supported | .dart | ✓ | ✓ | ✓ | - | Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies |
 | Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
@@ -736,6 +737,7 @@ The knowledge graph uses the following node types and relationships:
 - **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 - **C#**: `class_declaration`, `constructor_declaration`, `conversion_operator_declaration`, `destructor_declaration`, `enum_declaration`, `interface_declaration`, `local_function_statement`, `method_declaration`, `operator_declaration`, `property_declaration`, `record_declaration`, `struct_declaration`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Dart**: `class_definition`, `constant_constructor_signature`, `constructor_signature`, `enum_declaration`, `extension_declaration`, `extension_type_declaration`, `factory_constructor_signature`, `function_signature`, `getter_signature`, `mixin_declaration`, `setter_signature`
 - **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
@@ -764,7 +766,7 @@ The knowledge graph uses the following node types and relationships:
 | Module | EXPORTS_MODULE | ModuleInterface |
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |
 | Class, Interface, Function | INHERITS | Class, Interface, Function, ExternalModule |
-| Class, Enum | IMPLEMENTS | Interface, ExternalModule |
+| Class, Enum | IMPLEMENTS | Interface, Class, Enum, ExternalModule |
 | Method, Function | OVERRIDES | Method |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |

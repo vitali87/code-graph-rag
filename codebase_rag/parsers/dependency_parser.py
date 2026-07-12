@@ -264,6 +264,44 @@ class CsprojParser(DependencyParser):
         return dependencies
 
 
+class PubspecYamlParser(DependencyParser):
+    __slots__ = ()
+
+    def parse(self, file_path: Path) -> list[Dependency]:
+        # (H) pubspec.yaml is flat enough that a line scanner beats adding a YAML
+        # (H) dependency: track the current top-level key by zero indentation and
+        # (H) collect the `name: spec` lines indented under dependencies blocks. A
+        # (H) nested block (`sdk: flutter`, `git:`) has no scalar value on the key
+        # (H) line, so it is recorded name-only (spec = "").
+        dependencies: list[Dependency] = []
+        try:
+            in_deps = False
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+                for raw in f:
+                    line = raw.rstrip()
+                    if not line or line.lstrip().startswith(cs.PUBSPEC_COMMENT_PREFIX):
+                        continue
+                    indent = len(line) - len(line.lstrip())
+                    stripped = line.strip()
+                    if indent == 0:
+                        key = stripped.split(cs.PUBSPEC_KEY_SEP, 1)[0]
+                        in_deps = key in cs.PUBSPEC_DEP_KEYS
+                        continue
+                    if not in_deps or cs.PUBSPEC_KEY_SEP not in stripped:
+                        continue
+                    # (H) Only first-level entries (a package name); deeper indented
+                    # (H) lines are the nested block's own keys (sdk:, git:, path:).
+                    if indent > 2:
+                        continue
+                    name, _, spec = stripped.partition(cs.PUBSPEC_KEY_SEP)
+                    name = name.strip()
+                    if name:
+                        dependencies.append(Dependency(name, spec.strip()))
+        except Exception as e:
+            logger.error(ls.DEP_PARSE_ERROR_PUBSPEC.format(path=file_path, error=e))
+        return dependencies
+
+
 def parse_dependencies(file_path: Path) -> list[Dependency]:
     file_name = file_path.name.lower()
 
@@ -282,6 +320,8 @@ def parse_dependencies(file_path: Path) -> list[Dependency]:
             return GemfileParser().parse(file_path)
         case cs.DEP_FILE_COMPOSER:
             return ComposerJsonParser().parse(file_path)
+        case cs.DEP_FILE_PUBSPEC:
+            return PubspecYamlParser().parse(file_path)
         case _ if file_path.suffix.lower() == cs.CSPROJ_SUFFIX:
             return CsprojParser().parse(file_path)
         case _:

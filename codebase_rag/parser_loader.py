@@ -180,6 +180,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.CSHARP,
         ),
+        LanguageImport(
+            cs.SupportedLanguage.DART,
+            cs.TreeSitterModule.DART,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.DART,
+        ),
     ]
 
     loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
