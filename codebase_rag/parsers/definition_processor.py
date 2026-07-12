@@ -8,7 +8,7 @@ from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
-from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES, _create_tags_query
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -27,6 +27,7 @@ from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
+from .tags_crossvalidate import crossvalidate
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -302,10 +303,53 @@ class DefinitionProcessor(
                 # (H) need their held-back registration.
                 self._flush_deferred_js_anonymous()
 
+            self._crossvalidate_definitions(
+                root_node, language, queries, combined_captures, relative_path_str
+            )
             return (root_node, language)
 
         except Exception as e:
             logger.error(ls.DEF_PARSE_FAILED.format(path=file_path, error=e))
+            return None
+
+    def _crossvalidate_definitions(
+        self,
+        root_node: ASTNode,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None,
+        path: str,
+    ) -> None:
+        # (H) Diagnostic only (issue #524), no graph mutation. Diffs cgr's own
+        # (H) func/class query captures against the community tags.scm oracle and warns
+        # (H) on real drift. Module-level constants are excluded: cgr does not model them
+        # (H) as nodes, so they are expected disagreements, not extraction gaps.
+        if not combined_captures:
+            return
+        lang_queries = queries.get(language)
+        if lang_queries is None:
+            return
+        tags_query = _create_tags_query(lang_queries["language"], language)
+        if tags_query is None:
+            return
+        cgr_defs: set[tuple[str, int]] = set()
+        for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+            for node in combined_captures.get(key, []):
+                name_node = node.child_by_field_name(cs.FIELD_NAME)
+                if name_node is None:
+                    continue
+                text = safe_decode_with_fallback(name_node)
+                if text:
+                    cgr_defs.add((text, name_node.start_point[0] + 1))
+        missed, extra = crossvalidate(
+            root_node, tags_query, cgr_defs, exclude_kinds=cs.TAGS_UNMODELED_DEF_KINDS
+        )
+        if missed or extra:
+            logger.warning(
+                ls.DEF_CROSSVAL.format(
+                    path=path, missed=sorted(missed), extra=sorted(extra)
+                )
+            )
             return None
 
     def process_dependencies(self, filepath: Path) -> None:

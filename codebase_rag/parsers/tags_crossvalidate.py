@@ -13,13 +13,23 @@ _CALL_CAPTURE = "reference.call"
 _NAME_CAPTURE = "name"
 
 
-def _tag_sites(root: ASTNode, tags_query: Query, tag_prefix: str) -> set[tuple[str, int]]:
+def _tag_sites(
+    root: ASTNode,
+    tags_query: Query,
+    tag_prefix: str,
+    exclude_kinds: frozenset[str] = frozenset(),
+) -> set[tuple[str, int]]:
     # (H) Every @name under a match carrying a capture that starts with tag_prefix,
     # (H) paired with its 1-indexed start line. Nested calls yield separate matches.
+    # (H) A match whose kind suffix (e.g. "constant" from "definition.constant") is in
+    # (H) exclude_kinds is skipped, so callers can drop kinds cgr does not model.
     cursor = get_query_cursor(tags_query)
     sites: set[tuple[str, int]] = set()
     for _pattern_index, caps in cursor.matches(root):
-        if not any(name.startswith(tag_prefix) for name in caps):
+        kinds = [name for name in caps if name.startswith(tag_prefix)]
+        if not kinds:
+            continue
+        if any(kind[len(tag_prefix) :] in exclude_kinds for kind in kinds):
             continue
         for node in caps.get(_NAME_CAPTURE, []):
             text = safe_decode_text(node)
@@ -29,15 +39,19 @@ def _tag_sites(root: ASTNode, tags_query: Query, tag_prefix: str) -> set[tuple[s
 
 
 def crossvalidate(
-    root: ASTNode, tags_query: Query, cgr_defs: set[tuple[str, int]]
+    root: ASTNode,
+    tags_query: Query,
+    cgr_defs: set[tuple[str, int]],
+    exclude_kinds: frozenset[str] = frozenset(),
 ) -> tuple[set[tuple[str, int]], set[tuple[str, int]]]:
     """Return (missed, extra) as sets of (name, start_line).
 
     `cgr_defs` is the (name, 1-indexed start line) of every definition cgr already
     emitted for this file. `missed` is what tags.scm found and cgr did not; `extra`
-    is what cgr emitted and tags.scm does not mark.
+    is what cgr emitted and tags.scm does not mark. `exclude_kinds` drops tags
+    definition kinds cgr does not model (e.g. "constant"), so they are not false drift.
     """
-    tag_defs = _tag_sites(root, tags_query, _DEFINITION_PREFIX)
+    tag_defs = _tag_sites(root, tags_query, _DEFINITION_PREFIX, exclude_kinds)
     return tag_defs - cgr_defs, cgr_defs - tag_defs
 
 

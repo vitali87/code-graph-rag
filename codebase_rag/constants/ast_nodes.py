@@ -125,6 +125,10 @@ CAPTURE_KEYWORD = "keyword"
 CAPTURE_ATTRIBUTE = "attribute"
 CAPTURE_FUNCTION_DECORATOR = "function.decorator"
 
+# (H) tags.scm @definition.* kinds cgr does not model as graph nodes; excluded from the
+# (H) definition cross-check so they are not reported as false drift (issue #524).
+TAGS_UNMODELED_DEF_KINDS = frozenset({"constant"})
+
 # (H) Modifier extraction
 EXCLUDED_KEYWORDS = frozenset(
     {
