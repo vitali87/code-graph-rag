@@ -264,6 +264,35 @@ Within a function body, taint moves and disappears by these rules:
   call produces no `FLOWS_TO` edge. Reading `ENV::K` in the same function that
   calls `helper(u)` with an untainted `u` does not connect the two.
 
+### How a chain is resolved (the forward pass)
+
+A multi-hop chain like `a = getenv(...); b = a; c = b; print(c)` might look as if
+it needs a backward search from the sink (`print`) down through `c → b → a` to
+the source. It does not. The analyzer makes a **single forward pass**, top to
+bottom, carrying one live table:
+
+> `tainted` = { variable name → the **origin resource** it currently carries }
+
+The table's value is the *origin resource*, not a pointer to the previous
+variable, so each assignment copies the origin forward:
+
+```
+a = os.getenv("K")   # getenv is a source     → tainted = { a: ENV::K }
+b = a                # 'a' is tainted, copy it → tainted = { a: ENV::K, b: ENV::K }
+c = b                # 'b' is tainted, copy it → tainted = { a: ENV::K, b: ENV::K, c: ENV::K }
+print(c)             # sink; look up 'c' → ENV::K → emit  ENV::K → STDOUT
+```
+
+By the time the sink is reached, the origin is already known by an O(1) lookup —
+there is no sink-to-source traversal. The intermediate variables `a`, `b`, `c`
+are **not** graph nodes; they exist only in this table, and the chain collapses
+to a single edge between the two resource endpoints it connects.
+
+Because the origin rides forward at every `=`, chain length is irrelevant — one
+hop or fifty, it is still one sweep and one edge. And if any hop is overwritten
+with something clean, that variable drops out of the table (the **kill** rule
+above), so the sink finds nothing and no edge is drawn.
+
 ## Scope attribution
 
 Each function, method, and nested definition is analysed as its own unit. A
