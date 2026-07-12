@@ -21,9 +21,7 @@ def _call_targets(mock_ingestor: MagicMock) -> set[str]:
     return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
 
 
-def test_intra_file_method_call(
-    csharp_project: Path, mock_ingestor: MagicMock
-) -> None:
+def test_intra_file_method_call(csharp_project: Path, mock_ingestor: MagicMock) -> None:
     (csharp_project / "Svc.cs").write_text(
         """
 namespace N;

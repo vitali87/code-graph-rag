@@ -46,9 +46,7 @@ def test_file_scoped_and_block_namespace_fold_identically(
     assert _endswith_any(methods, "Foo.Bar.Gadget.Run")
 
 
-def test_type_declaration_kinds(
-    csharp_project: Path, mock_ingestor: MagicMock
-) -> None:
+def test_type_declaration_kinds(csharp_project: Path, mock_ingestor: MagicMock) -> None:
     (csharp_project / "Types.cs").write_text(
         """
 namespace N;
