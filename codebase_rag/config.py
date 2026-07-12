@@ -45,6 +45,11 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "url": "https://portal.azure.com/",
         "name": "Azure OpenAI",
     },
+    cs.Provider.MINIMAX: {
+        "env_var": "MINIMAX_API_KEY",
+        "url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+        "name": "MiniMax",
+    },
 }
 
 
@@ -116,6 +121,7 @@ class ModelConfig:
         provider_env_keys = {
             cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
             cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+            cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
         }
         env_key = provider_env_keys.get(provider_lower)
         if (

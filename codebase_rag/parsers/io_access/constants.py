@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from ... import constants as cs
+
+# (H) Python nested-scope boundaries. The per-caller IO/flow DFS must not descend
+# (H) into these: a nested def/class is its own caller and is walked separately,
+# (H) so a read/write/flow is attributed to its immediate scope only (matching
+# (H) how CALLS is attributed). Single source of truth for io_access + flow_access.
+PY_SCOPE_BOUNDARIES = (
+    cs.TS_PY_FUNCTION_DEFINITION,
+    cs.TS_PY_CLASS_DEFINITION,
+    cs.TS_PY_DECORATED_DEFINITION,
+)
+
 
 class ResourceKind(StrEnum):
     FILE = "FILE"

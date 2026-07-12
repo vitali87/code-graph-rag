@@ -5,6 +5,58 @@ from tree_sitter import Node
 from ... import constants as cs
 from .constants import DYNAMIC_TARGET
 
+# (H) Definition nodes whose BODY is a separate scope but whose HEADER (default
+# (H) arg values, annotations, base classes, decorators) executes in the
+# (H) enclosing scope at definition time.
+_PY_DEFINITION_TYPES = (
+    cs.TS_PY_FUNCTION_DEFINITION,
+    cs.TS_PY_CLASS_DEFINITION,
+    cs.TS_PY_DECORATED_DEFINITION,
+)
+
+
+def _definition_body(node: Node) -> Node | None:
+    if node.type == cs.TS_PY_DECORATED_DEFINITION:
+        inner = node.child_by_field_name(cs.FIELD_DEFINITION)
+        return _definition_body(inner) if inner is not None else None
+    if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+        return node.child_by_field_name(cs.FIELD_BODY)
+    return None
+
+
+def scope_seed_nodes(caller_node: Node) -> list[Node]:
+    # (H) The top-level nodes of the caller's OWN scope. For a function/class the
+    # (H) own scope is just its body block; its header (params/decorators/bases)
+    # (H) belongs to the enclosing scope. For a module it is every child.
+    body = _definition_body(caller_node)
+    return list(body.children) if body is not None else list(caller_node.children)
+
+
+def definition_header_nodes(node: Node) -> list[Node]:
+    # (H) The parts of a nested definition that execute in the ENCLOSING scope at
+    # (H) definition time: default arg values, return/parameter annotations, base
+    # (H) classes, and decorators. The body block (own scope) is excluded, so the
+    # (H) enclosing DFS descends into these but never into the nested body.
+    if node.type == cs.TS_PY_DECORATED_DEFINITION:
+        out = [c for c in node.children if c.type == cs.TS_PY_DECORATOR]
+        inner = node.child_by_field_name(cs.FIELD_DEFINITION)
+        if inner is not None:
+            out.extend(definition_header_nodes(inner))
+        return out
+    if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+        return [
+            n
+            for n in (
+                node.child_by_field_name(cs.FIELD_PARAMETERS),
+                node.child_by_field_name(cs.FIELD_RETURN_TYPE),
+            )
+            if n is not None
+        ]
+    if node.type == cs.TS_PY_CLASS_DEFINITION:
+        supers = node.child_by_field_name(cs.FIELD_SUPERCLASSES)
+        return [supers] if supers is not None else []
+    return []
+
 
 def call_name(call_node: Node) -> str | None:
     fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
