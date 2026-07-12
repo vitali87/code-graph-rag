@@ -329,13 +329,36 @@ MATCH (fn)-[:READS_FROM]->(r:Resource {qualified_name: 'resource::ENV::K'})
 RETURN fn.qualified_name;
 ```
 
+## Cross-scope handle resolution
+
+A resource handle bound in one scope and used in another is resolved against the
+scope that constructed it, so the I/O is credited to the scope that runs it:
+
+- **Instance attributes.** `self.conn = sqlite3.connect(...)` in `__init__` (or any
+  method) is visible to every other method, so `self.conn.execute(...)` in a
+  different method emits the DATABASE edge on *that* method.
+- **Enclosing locals.** A module-level or outer-function `conn = sqlite3.connect(...)`
+  is visible to nested functions that use it. A same-named local rebind shadows the
+  inherited handle.
+
+## Re-exported modules
+
+Source and handle detection matches the canonical dotted callee even when the
+module is re-exported under its own name. A project that does
+`from .utils import sqlite3` (a common stdlib/`pysqlite3` shim) still has its
+`sqlite3.connect(...)` recognised as a DATABASE handle.
+
 ## Scope of the current phase
 
 `FLOWS_TO` is intentionally conservative and intra-procedural in this phase:
 
-- Value flow is tracked within a single function body plus one level of
-  argument/return hand-off. It is not path-sensitive (a kill on one branch of an
-  `if`/`else` drops taint conservatively).
+- Value flow is tracked within a function body plus one level of argument/return
+  hand-off. A callee returning **different** sources on different branches carries
+  every origin to its callers. It is not path-sensitive: a kill on one branch of an
+  `if`/`else` drops taint conservatively.
+- Return-taint propagation is a single source-order pass, so a callee whose body is
+  processed **after** its caller (typically cross-file) is not yet known to return a
+  tainted value at the caller's site.
 - Sources and sinks are direct I/O calls from the registry; there are no
   `Parameter` nodes and no SSA-level precision.
 - The source/sink registry is Python-only in this phase; other languages need

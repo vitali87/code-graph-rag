@@ -46,5 +46,27 @@ MODE_READ_CHAR = "r"
 MODE_UPDATE_CHAR = "+"
 
 # (H) SQL leading keywords used to refine a DB handle execute() into read vs write.
-SQL_READ_KEYWORDS = ("SELECT",)
-SQL_WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER")
+# (H) An unlisted first keyword falls back to the method's declared direction
+# (H) (execute -> READ_WRITE), so only add keywords whose direction is unambiguous
+# (H) from the first token. WITH/PRAGMA are intentionally omitted (a CTE or pragma
+# (H) can be either), keeping the fallback rather than guessing.
+SQL_READ_KEYWORDS = ("SELECT", "EXPLAIN", "VALUES")
+SQL_WRITE_KEYWORDS = (
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "CREATE",
+    "DROP",
+    "ALTER",
+    "REPLACE",
+    "TRUNCATE",
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE",
+    "BEGIN",
+    "VACUUM",
+    "REINDEX",
+    "ATTACH",
+    "DETACH",
+)
