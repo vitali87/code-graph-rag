@@ -50,9 +50,40 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
 
-# (H) Call forms.
+# (H) Parameter shapes for the method-qn signature. Each `parameter` exposes a
+# (H) `type` field; a `params object[]` tail is an unwrapped `array_type` child
+# (H) of the parameter_list (grammar quirk), captured directly.
+TS_CSHARP_PARAMETER = "parameter"
+TS_CSHARP_ARRAY_TYPE = "array_type"
+
+# (H) Local/field declarations for type inference. A local is a
+# (H) variable_declaration (type field + variable_declarator[s]); `var` makes the
+# (H) type field an implicit_type, so the type is inferred from the initializer.
+# (H) A field_declaration wraps a variable_declaration; a property_declaration
+# (H) exposes `type` and `name` fields directly.
+TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
+TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
+TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
+TS_CSHARP_FIELD_DECLARATION = "field_declaration"
+
+# (H) Call forms. A member call `recv.Method(...)` is an invocation_expression
+# (H) whose `function` field is a member_access_expression (`expression` receiver
+# (H) + `name` method); `this` is its own node type; args are `argument` nodes.
 TS_CSHARP_INVOCATION_EXPRESSION = "invocation_expression"
 TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
+TS_CSHARP_FIELD_EXPRESSION = "expression"
+TS_CSHARP_THIS = "this"
+TS_CSHARP_ARGUMENT = "argument"
+
+# (H) Nested scopes that own their own locals; the variable-type walk stops at
+# (H) these so a lambda/local-function local cannot leak into (or shadow) the
+# (H) enclosing method's type map.
+TS_CSHARP_NESTED_SCOPE_TYPES = (
+    "lambda_expression",
+    "anonymous_method_expression",
+    "local_function_statement",
+)
 
 # (H) Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"

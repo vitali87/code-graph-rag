@@ -10,6 +10,7 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from .cpp import CppTypeInferenceEngine
+from .csharp.type_inference import CSharpTypeInferenceEngine
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -37,6 +38,7 @@ class TypeInferenceEngine:
         "class_field_guard_inner",
         "method_return_types",
         "_java_type_inference",
+        "_csharp_type_inference",
         "_lua_type_inference",
         "_js_type_inference",
         "_python_type_inference",
@@ -90,6 +92,7 @@ class TypeInferenceEngine:
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
+        self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
         self._lua_type_inference: LuaTypeInferenceEngine | None = None
         self._js_type_inference: JsTypeInferenceEngine | None = None
         self._python_type_inference: PythonTypeInferenceEngine | None = None
@@ -130,6 +133,23 @@ class TypeInferenceEngine:
                 simple_name_lookup=self.simple_name_lookup,
             )
         return self._java_type_inference
+
+    @property
+    def csharp_type_inference(self) -> CSharpTypeInferenceEngine:
+        if self._csharp_type_inference is None:
+            self._csharp_type_inference = CSharpTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ast_cache=self.ast_cache,
+                queries=self.queries,
+                module_qn_to_file_path=self.module_qn_to_file_path,
+                class_inheritance=self.class_inheritance,
+                simple_name_lookup=self.simple_name_lookup,
+                class_field_types=self.class_field_types,
+            )
+        return self._csharp_type_inference
 
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
@@ -420,6 +440,8 @@ class TypeInferenceEngine:
                 return self.java_type_inference.build_variable_type_map(
                     caller_node, module_qn
                 )
+            case cs.SupportedLanguage.CSHARP:
+                return self.csharp_type_inference.build_variable_type_map(caller_node)
             case cs.SupportedLanguage.LUA:
                 return self.lua_type_inference.build_local_variable_type_map(
                     caller_node, module_qn

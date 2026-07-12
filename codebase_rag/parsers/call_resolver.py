@@ -2052,3 +2052,14 @@ class CallResolver:
             )
 
         return result
+
+    def resolve_csharp_method_call(
+        self,
+        call_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        caller_qn: str | None = None,
+    ) -> tuple[str, str] | None:
+        return self.type_inference.csharp_type_inference.resolve_csharp_method_call(
+            call_node, local_var_types, module_qn, caller_qn
+        )
