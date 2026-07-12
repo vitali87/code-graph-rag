@@ -1,8 +1,5 @@
-"""Diff cgr's own definitions against a tags.scm `@definition.*` oracle (issue #524).
-
-Pure diagnostic: no graph mutation. `crossvalidate` returns the definitions tags.scm
-saw that cgr missed, and the ones cgr emitted that tags.scm did not see.
-"""
+# (H) Diff cgr's own definitions against a tags.scm @definition.* oracle (issue #524);
+# (H) pure diagnostic, no graph mutation. See crossvalidate below.
 
 from __future__ import annotations
 
