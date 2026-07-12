@@ -174,6 +174,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.LANG_ATTR_PHP,
             cs.SupportedLanguage.PHP,
         ),
+        LanguageImport(
+            cs.SupportedLanguage.CSHARP,
+            cs.TreeSitterModule.CSHARP,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.CSHARP,
+        ),
     ]
 
     loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
@@ -284,6 +290,24 @@ def _create_highlights_query(
         )
 
     return None
+
+
+def _create_tags_query(
+    language: Language, lang_name: cs.SupportedLanguage
+) -> Query | None:
+    # (H) Vendored-only oracle for definition cross-validation (issue #524);
+    # (H) TSX shares the TypeScript grammar, like highlights.
+    query_lang_name = (
+        cs.SupportedLanguage.TS if lang_name == cs.SupportedLanguage.TSX else lang_name
+    )
+    path = Path(__file__).parent / "queries" / "tags" / f"{query_lang_name}.scm"
+    if not path.exists():
+        return None
+    try:
+        return Query(language, path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.debug(f"Failed to load tags query for {query_lang_name}: {e}")
+        return None
 
 
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}

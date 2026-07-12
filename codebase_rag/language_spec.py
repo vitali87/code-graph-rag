@@ -160,6 +160,44 @@ def _cpp_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
+def _csharp_get_name(node: Node) -> str | None:
+    # (H) A file-scoped `namespace N;` is a SIBLING of the declarations it
+    # (H) governs, not their ancestor, so it never appears in a type's ancestor
+    # (H) walk. compilation_unit IS every top-level type's ancestor, so fold the
+    # (H) file-scoped namespace in here. Block `namespace N { }` is an ordinary
+    # (H) ancestor and needs no shim (compilation_unit then has no such child).
+    if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
+        for child in node.children:
+            if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+                name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                if name_node and name_node.text:
+                    return name_node.text.decode(cs.ENCODING_UTF8)
+        return None
+    # (H) Operators expose no `name` field; synthesize a stable qn segment from
+    # (H) the operator symbol (or conversion target type) so the node still gets
+    # (H) a qn instead of being dropped.
+    if node.type == cs.TS_CSHARP_OPERATOR_DECLARATION:
+        op_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_OPERATOR)
+        if op_node and op_node.text:
+            return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + op_node.text.decode(
+                cs.ENCODING_UTF8
+            )
+        return None
+    if node.type == cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION:
+        type_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+        if type_node and type_node.text:
+            return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + type_node.text.decode(
+                cs.ENCODING_UTF8
+            )
+        return None
+    # (H) A ctor and dtor both take the type's name; prefix `~` on the dtor so
+    # (H) `Foo()` and `~Foo()` don't collapse onto one qn.
+    if node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
+        base = _generic_get_name(node)
+        return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + base if base else None
+    return _generic_get_name(node)
+
+
 PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
@@ -237,6 +275,13 @@ PHP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_php_file_to_module,
 )
 
+CSHARP_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_CSHARP_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_CSHARP_FUNCTION_TYPES),
+    get_name=_csharp_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -250,6 +295,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.GO: GO_FQN_SPEC,
     cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
+    cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
 }
 
 
@@ -529,6 +575,38 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         module_node_types=cs.SPEC_LUA_MODULE_TYPES,
         call_node_types=cs.SPEC_LUA_CALL_TYPES,
         import_node_types=cs.SPEC_LUA_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.CSHARP: LanguageSpec(
+        language=cs.SupportedLanguage.CSHARP,
+        file_extensions=cs.CS_EXTENSIONS,
+        function_node_types=cs.SPEC_CSHARP_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CSHARP_CLASS_TYPES,
+        module_node_types=cs.SPEC_CSHARP_MODULE_TYPES,
+        call_node_types=cs.SPEC_CSHARP_CALL_TYPES,
+        import_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
+        # (H) Bare captures (like C/C++): names come from _csharp_get_name, since
+        # (H) operators/ctors/dtors have no uniform `name` field.
+        function_query="""
+        (method_declaration) @function
+        (constructor_declaration) @function
+        (destructor_declaration) @function
+        (local_function_statement) @function
+        (operator_declaration) @function
+        (conversion_operator_declaration) @function
+        (property_declaration) @function
+        """,
+        class_query="""
+        (class_declaration) @class
+        (struct_declaration) @class
+        (record_declaration) @class
+        (interface_declaration) @class
+        (enum_declaration) @class
+        """,
+        call_query="""
+        (invocation_expression) @call
+        (object_creation_expression) @call
+        """,
     ),
 }
 

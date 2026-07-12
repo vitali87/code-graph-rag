@@ -42,6 +42,7 @@ EXT_CCM = ".ccm"
 EXT_C = ".c"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
+EXT_CS = ".cs"
 
 # (H) File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
@@ -68,6 +69,7 @@ CPP_EXTENSIONS = (
 )
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
+CS_EXTENSIONS = (EXT_CS,)
 
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -137,6 +139,7 @@ class SupportedLanguage(StrEnum):
     CPP = "cpp"
     PHP = "php"
     LUA = "lua"
+    CSHARP = "c_sharp"
 
 
 class LanguageStatus(StrEnum):
@@ -211,6 +214,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
         "PHP",
     ),
+    SupportedLanguage.CSHARP: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, using directives",
+        "C#",
+    ),
 }
 
 # (H) Index file names
@@ -251,6 +259,7 @@ class TreeSitterModule(StrEnum):
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
     PHP = "tree_sitter_php"
+    CSHARP = "tree_sitter_c_sharp"
 
 
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)

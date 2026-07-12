@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.307"
+version = "0.0.309"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -106,6 +106,7 @@ treesitter-full = [
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
+    "tree-sitter-c-sharp>=0.23.5",
 ]
 
 semantic = [
