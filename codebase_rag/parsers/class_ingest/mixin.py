@@ -25,6 +25,7 @@ from ...types_defs import (
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
+from ..csharp import utils as csharp_utils
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..py import external_stdlib_base_method_names, resolve_class_name
@@ -955,6 +956,16 @@ class ClassIngestMixin:
                         f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
                     )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
+            elif language == cs.SupportedLanguage.CSHARP:
+                # (H) Give C# methods/constructors a parameter signature so
+                # (H) overloads and overloaded constructors stay distinct nodes
+                # (H) (without it two `Widget(...)` ctors collide and the second
+                # (H) gets an `@line` suffix). Zero-arg members stay bare so their
+                # (H) qn is stable and matches an unsignatured call site.
+                cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
+                if cs_name and cs_params:
+                    param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
+                    method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
 
             ingested_qn = ingest_method(
                 method_node,

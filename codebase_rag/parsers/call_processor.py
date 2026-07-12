@@ -76,6 +76,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.TS,
         cs.SupportedLanguage.TSX,
         cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.CSHARP,
         cs.SupportedLanguage.LUA,
         cs.SupportedLanguage.GO,
         cs.SupportedLanguage.CPP,
@@ -1475,6 +1476,24 @@ class CallProcessor:
                             receiver = arg.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
+                case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION if (
+                    language == cs.SupportedLanguage.CSHARP
+                ):
+                    # (H) C# member call `recv.Method(...)`: emit the `recv.Method`
+                    # (H) chain so the resolver can type `recv` and bind the method on
+                    # (H) it; a receiver whose type is unknown falls back to the bare
+                    # (H) method-name trie. `name` is the method, `expression` the
+                    # (H) receiver.
+                    name_node = func_child.child_by_field_name(cs.FIELD_NAME)
+                    expr_node = func_child.child_by_field_name(
+                        cs.TS_CSHARP_FIELD_EXPRESSION
+                    )
+                    if name_node and name_node.text:
+                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        if expr_node and expr_node.text:
+                            receiver = expr_node.text.decode(cs.ENCODING_UTF8)
+                            return f"{receiver}{cs.SEPARATOR_DOT}{method}"
+                        return method
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 
@@ -1489,10 +1508,11 @@ class CallProcessor:
                 ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
                 if ctor is not None and ctor.text is not None:
                     return ctor.text.decode(cs.ENCODING_UTF8)
-            case cs.TS_OBJECT_CREATION_EXPRESSION if (
-                language == cs.SupportedLanguage.JAVA
+            case cs.TS_OBJECT_CREATION_EXPRESSION if language in (
+                cs.SupportedLanguage.JAVA,
+                cs.SupportedLanguage.CSHARP,
             ):
-                # (H) Java `new Foo(...)` names the class via the `type` field (no
+                # (H) Java/C# `new Foo(...)` names the class via the `type` field (no
                 # (H) `function` field). Returning the base type name routes construction
                 # (H) through the normal resolve loop: the class gets INSTANTIATES and its
                 # (H) constructor(s) get CALLS. Strip generic args (`new ArrayList<T>()`
@@ -1736,6 +1756,7 @@ class CallProcessor:
             return
 
         is_java = language == cs.SupportedLanguage.JAVA
+        is_csharp = language == cs.SupportedLanguage.CSHARP
         is_js_ts = language in _JS_TS_LANGUAGES
         is_cpp = language == cs.SupportedLanguage.CPP
         # (H) Template type-parameter names in scope at this caller (`template<typename
@@ -1863,6 +1884,22 @@ class CallProcessor:
                 callee_info = resolver.resolve_java_method_call(
                     call_node, module_qn, local_var_types, caller_qn
                 )
+            elif is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+                callee_info = resolver.resolve_csharp_method_call(
+                    call_node, module_qn, call_var_types, caller_qn
+                )
+                if callee_info is None:
+                    # (H) A C# member call whose receiver could not be typed (or a
+                    # (H) bare call) falls back to the generic simple-name resolver,
+                    # (H) which keeps Phase 1 intra-file resolution working.
+                    callee_info = resolve_func(
+                        call_name,
+                        module_qn,
+                        call_var_types,
+                        class_context,
+                        caller_qn,
+                        language,
+                    )
             else:
                 callee_info = resolve_func(
                     call_name,
@@ -2080,16 +2117,16 @@ class CallProcessor:
                 )
 
             if (
-                language == cs.SupportedLanguage.JAVA
+                language in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
                 and call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
                 and callee_type != class_label
             ):
-                # (H) `new X(...)` where X resolves to a non-class -- an interface or
-                # (H) annotation implemented by an anonymous class (`new Comparator<T>(){
-                # (H) ...}`). There is no first-party constructor to call, and a bare CALLS
-                # (H) edge to a non-callable node (Interface) is not a valid relationship.
-                # (H) The anonymous class body's own methods are ingested separately, so
-                # (H) drop the edge here rather than emit an invalid one.
+                # (H) `new X(...)` where X resolves to a non-class -- a Java interface
+                # (H) or annotation implemented by an anonymous class (`new
+                # (H) Comparator<T>(){ ... }`), or a C# type the resolver could not bind
+                # (H) to a first-party class. There is no first-party constructor to
+                # (H) call, and a bare CALLS edge to a non-callable node (Interface) is
+                # (H) not a valid relationship, so drop the edge rather than emit it.
                 continue
 
             if callee_type == class_label:
@@ -2112,11 +2149,16 @@ class CallProcessor:
                         cs.RelationshipType.INSTANTIATES,
                         (class_label, qn_key, class_variant),
                     )
-                if language == cs.SupportedLanguage.JAVA:
-                    # (H) A Java constructor is a method named like its class (`Foo.Foo`),
-                    # (H) not `__init__`; `new Foo(...)` runs one, so redirect a CALLS edge
-                    # (H) to every declared constructor (overload selection is unneeded for
-                    # (H) reachability). sorted(): the target label is a hash-randomized
+                if language in (
+                    cs.SupportedLanguage.JAVA,
+                    cs.SupportedLanguage.CSHARP,
+                ):
+                    # (H) A Java/C# constructor is a method named like its class
+                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` runs one, so
+                    # (H) redirect a CALLS edge to every declared constructor (overload
+                    # (H) selection is unneeded for reachability). C# constructors use
+                    # (H) the same class-simple-name convention, so java_constructor_targets
+                    # (H) selects them too. sorted(): the target label is a hash-randomized
                     # (H) StrEnum, so sort for deterministic output.
                     for ctor_type, ctor_qn in sorted(
                         resolver.java_constructor_targets(callee_qn)

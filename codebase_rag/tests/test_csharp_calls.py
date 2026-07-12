@@ -55,4 +55,5 @@ public class Calc {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    assert any(t.endswith("N.Calc.Square") for t in targets), targets
+    # (H) Square takes one parameter, so it registers with a signature (Phase 3).
+    assert any(t.endswith("N.Calc.Square(int)") for t in targets), targets

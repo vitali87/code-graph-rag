@@ -91,12 +91,13 @@ public class Box<T> {
     members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # (H) Generic type parameters must not leak into names.
+    # (H) Generic type parameters must not leak into names; methods with
+    # (H) parameters carry a signature so overloads stay distinct (Phase 3).
     assert _endswith_any(classes, "N.Box")
-    assert _endswith_any(members, "N.Box.Get")
+    assert _endswith_any(members, "N.Box.Get(U)")
     assert _endswith_any(members, "N.Box.Size")
     # (H) Constructor is named after the type; destructor is distinct from it.
-    assert _endswith_any(members, "N.Box.Box")
+    assert _endswith_any(members, "N.Box.Box(T)")
 
 
 def test_nested_types(csharp_project: Path, mock_ingestor: MagicMock) -> None:
