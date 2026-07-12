@@ -215,8 +215,8 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "PHP",
     ),
     SupportedLanguage.CSHARP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, using directives",
+        LanguageStatus.FULL,
+        "Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives",
         "C#",
     ),
 }

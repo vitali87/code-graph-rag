@@ -283,3 +283,116 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
         "Readable",
     }
 )
+
+# (H) C# base class library / framework roots. A qualified name under one of
+# (H) these namespaces (`System.Collections.Generic.List`, `System.Linq.Enumerable`)
+# (H) is external stdlib, not first-party code, so stdlib extraction folds the
+# (H) trailing PascalCase type into its namespace path.
+CSHARP_STDLIB_PREFIXES = (
+    "System.",
+    "Microsoft.",
+    "Windows.",
+    "Mono.",
+)
+
+# (H) Recognized BCL types. ONLY a name in this set folds into its namespace
+# (H) (`System.Collections.Generic.List` -> `System.Collections.Generic`); every
+# (H) other PascalCase leaf is treated as a namespace and kept whole, because C#
+# (H) namespaces are PascalCase too and a case heuristic would misfold them
+# (H) (`Microsoft.Extensions.Logging`, `System.Text.Json`).
+CSHARP_STDLIB_CLASSES = frozenset(
+    {
+        # (H) System primitives / core types
+        "Object",
+        "String",
+        "Int32",
+        "Int64",
+        "Boolean",
+        "Double",
+        "Decimal",
+        "Single",
+        "Byte",
+        "Char",
+        "Guid",
+        "DateTime",
+        "DateTimeOffset",
+        "TimeSpan",
+        "Uri",
+        "Exception",
+        "Nullable",
+        "Type",
+        "Action",
+        "Func",
+        "Console",
+        # (H) System.Threading.Tasks
+        "Task",
+        "ValueTask",
+        "CancellationToken",
+        # (H) System.Collections.Generic
+        "List",
+        "Dictionary",
+        "HashSet",
+        "Queue",
+        "Stack",
+        "SortedList",
+        "SortedDictionary",
+        "LinkedList",
+        "IEnumerable",
+        "ICollection",
+        "IList",
+        "IDictionary",
+        "IReadOnlyList",
+        "IReadOnlyDictionary",
+        "KeyValuePair",
+        # (H) System.Linq
+        "Enumerable",
+        "IQueryable",
+        # (H) System interfaces
+        "IDisposable",
+        "IAsyncDisposable",
+        "IComparable",
+        "IEquatable",
+        # (H) Other ubiquitous BCL types (curated common set -- a complete list
+        # (H) is unbounded; the tail stays as full type paths rather than risk a
+        # (H) case heuristic that would misfold PascalCase namespaces).
+        "Math",
+        "MathF",
+        "Random",
+        "Convert",
+        "Environment",
+        "Array",
+        "Span",
+        "Memory",
+        "Tuple",
+        "Lazy",
+        "GC",
+        "StringBuilder",
+        "StringComparer",
+        "Regex",
+        "Match",
+        "Encoding",
+        "File",
+        "Directory",
+        "Path",
+        "Stream",
+        "MemoryStream",
+        "FileStream",
+        "StreamReader",
+        "StreamWriter",
+        "TextReader",
+        "TextWriter",
+        "HttpClient",
+        "HttpResponseMessage",
+        "HttpRequestMessage",
+        "JsonSerializer",
+        "Thread",
+        "Mutex",
+        "SemaphoreSlim",
+        "Stopwatch",
+        "Timer",
+        "CultureInfo",
+        "IServiceProvider",
+        "IServiceCollection",
+        "ILogger",
+    }
+)

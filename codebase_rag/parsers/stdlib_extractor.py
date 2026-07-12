@@ -171,6 +171,8 @@ class StdlibExtractor:
                 return self._extract_cpp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.JAVA:
                 return self._extract_java_stdlib_path(full_qualified_name)
+            case cs.SupportedLanguage.CSHARP:
+                return self._extract_csharp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.LUA:
                 return self._extract_lua_stdlib_path(full_qualified_name)
             case _:
@@ -583,6 +585,33 @@ func main() {
             cs.SupportedLanguage.JAVA, full_qualified_name, full_qualified_name
         )
         return full_qualified_name
+
+    def _extract_csharp_stdlib_path(self, full_qualified_name: str) -> str:
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.CSHARP, full_qualified_name
+        )
+        if cached_result is not None:
+            return cached_result
+
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
+        result = full_qualified_name
+        # (H) Fold ONLY a KNOWN stdlib type into its namespace path
+        # (H) (`System.Collections.Generic.List` -> `System.Collections.Generic`).
+        # (H) C# namespaces are PascalCase like types, so a case heuristic cannot
+        # (H) tell them apart and would misfold a namespace leaf
+        # (H) (`Microsoft.Extensions.Logging`, `System.Text.Json`); folding only a
+        # (H) recognized type never misclassifies a namespace. Gated to a stdlib
+        # (H) prefix so a first-party type sharing a BCL name is untouched. Exact
+        # (H) type-vs-namespace disambiguation needs a symbol table (Roslyn).
+        if (
+            len(parts) >= 2
+            and parts[-1] in cs.CSHARP_STDLIB_CLASSES
+            and full_qualified_name.startswith(cs.CSHARP_STDLIB_PREFIXES)
+        ):
+            result = cs.SEPARATOR_DOT.join(parts[:-1])
+
+        _cache_stdlib_result(cs.SupportedLanguage.CSHARP, full_qualified_name, result)
+        return result
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)

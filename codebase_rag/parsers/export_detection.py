@@ -31,6 +31,13 @@ _JS_TS_FUNCTION_SCOPE_TYPES = frozenset(
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
+_CSHARP_PUBLIC_MODIFIERS = frozenset(
+    {
+        cs.TS_CSHARP_MODIFIER_PUBLIC,
+        cs.TS_CSHARP_MODIFIER_INTERNAL,
+        cs.TS_CSHARP_MODIFIER_PROTECTED,
+    }
+)
 _PY_FUNCTION_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 
@@ -48,6 +55,8 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _js_ts_exported(node, name)
         case cs.SupportedLanguage.JAVA:
             return _java_exported(node)
+        case cs.SupportedLanguage.CSHARP:
+            return _csharp_exported(node)
         case cs.SupportedLanguage.RUST:
             return _rust_exported(node)
         case cs.SupportedLanguage.CPP:
@@ -216,6 +225,39 @@ def _java_exported(node: Node) -> bool:
     if modifiers is None:
         return False
     return any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children)
+
+
+def _csharp_exported(node: Node) -> bool:
+    # (H) C# has no modifiers container; visibility is individual `modifier`
+    # (H) children. public/internal/protected are external API surface.
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_MODIFIER and child.text is not None:
+            if child.text.decode(cs.ENCODING_UTF8) in _CSHARP_PUBLIC_MODIFIERS:
+                return True
+    # (H) With no explicit visibility a TOP-LEVEL type defaults to `internal`
+    # (H) (API surface -> exported); a nested type or any member defaults to
+    # (H) `private` -> not exported.
+    return _is_csharp_top_level_type(node)
+
+
+def _is_csharp_top_level_type(node: Node) -> bool:
+    if node.type not in cs.SPEC_CSHARP_CLASS_TYPES:
+        return False
+    parent = node.parent
+    if parent is None:
+        return False
+    # (H) A type directly under the file root (file-scoped namespace or no
+    # (H) namespace) or under a block namespace's declaration_list is top level;
+    # (H) a type whose declaration_list belongs to another TYPE is nested.
+    if parent.type == cs.TS_CSHARP_COMPILATION_UNIT:
+        return True
+    if parent.type == cs.TS_CSHARP_DECLARATION_LIST:
+        grandparent = parent.parent
+        return (
+            grandparent is not None
+            and grandparent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION
+        )
+    return False
 
 
 def _rust_exported(node: Node) -> bool:
