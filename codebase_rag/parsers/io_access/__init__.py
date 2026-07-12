@@ -7,7 +7,13 @@ from .constants import (
     IODirection,
     ResourceKind,
 )
-from .extract import call_name, literal_target, normalise
+from .extract import (
+    call_name,
+    definition_header_nodes,
+    literal_target,
+    normalise,
+    scope_seed_nodes,
+)
 from .models import HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
 from .registry import IO_HANDLE_CONSTRUCTORS, IO_HANDLE_METHODS, IO_SINKS
@@ -26,6 +32,8 @@ __all__ = [
     "IOSink",
     "ResourceKind",
     "call_name",
+    "definition_header_nodes",
     "literal_target",
     "normalise",
+    "scope_seed_nodes",
 ]

@@ -128,6 +128,40 @@ def test_direct_return_of_tainted_callee_emits_return_edge(tmp_path: Path) -> No
     assert _has(edges, "m.inner", "m.outer", via="return", kind=FlowKind.RETURN.value)
 
 
+def test_return_parenthesized_tainted_value_emits_flow(tmp_path: Path) -> None:
+    # (H) A returned value wrapped in parentheses is still the same tainted value;
+    # (H) the return edge and downstream resource flow must survive the wrapper.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return (os.getenv('K'))\n\n"
+            "def caller():\n    v = build()\n    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(edges, "m.build", "m.caller", via="return", kind=FlowKind.RETURN.value)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_return_tuple_with_tainted_element_emits_flow(tmp_path: Path) -> None:
+    # (H) `return a, b` wraps the values in an expression_list; a tainted element
+    # (H) must still be seen as a returned tainted value.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    t = os.getenv('K')\n    return t, 1\n\n"
+            "def caller():\n    v = build()\n    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(edges, "m.build", "m.caller", via="return", kind=FlowKind.RETURN.value)
+
+
 def test_return_taint_reaches_resource_sink(tmp_path: Path) -> None:
     # (H) A value returned from a tainted callee carries its source resource, so a
     # (H) later sink emits the full resource->resource flow, not just the return edge.

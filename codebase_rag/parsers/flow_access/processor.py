@@ -18,8 +18,10 @@ from ..io_access import (
     IOSink,
     ResourceKind,
     call_name,
+    definition_header_nodes,
     literal_target,
     normalise,
+    scope_seed_nodes,
 )
 from .constants import (
     KEY_KIND,
@@ -31,6 +33,30 @@ from .constants import (
 )
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+
+# (H) Return wrappers whose taint lives in their elements: `return (x)`,
+# (H) `return a, b`, `return [x]`. Unwrapped so a tainted identifier/call inside
+# (H) them is still seen as a returned tainted value.
+_RETURN_UNWRAP = (
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_EXPRESSION_LIST,
+    cs.TS_PY_TUPLE,
+    cs.TS_PY_LIST,
+)
+
+
+def _return_value_nodes(return_node: Node) -> list[Node]:
+    # (H) Left-to-right leaf value nodes of a return statement, unwrapping the
+    # (H) parenthesis/tuple/list wrappers above.
+    out: list[Node] = []
+    queue = list(return_node.named_children)
+    while queue:
+        child = queue.pop(0)
+        if child.type in _RETURN_UNWRAP:
+            queue[:0] = list(child.named_children)
+        else:
+            out.append(child)
+    return out
 
 
 class _FlowCtx(NamedTuple):
@@ -112,11 +138,15 @@ class FlowProcessor:
         tainted: dict[str, HandleBinding | None] = {}
         body_returns_taint = False
         body_return_source: HandleBinding | None = None
-        stack = list(reversed(caller_node.children))
+        # (H) Seed from the caller's own scope; on a nested def descend into its
+        # (H) header only (default args/decorators/bases run in THIS scope, its
+        # (H) body is a separate caller). Same scoping as io_access.
+        stack = list(reversed(scope_seed_nodes(caller_node)))
         while stack:
             node = stack.pop()
             node_type = node.type
             if node_type in PY_SCOPE_BOUNDARIES:
+                stack.extend(reversed(definition_header_nodes(node)))
                 continue
             if node_type == cs.TS_PY_ASSIGNMENT:
                 self._apply_assignment(node, tainted, ctx)
@@ -125,7 +155,11 @@ class FlowProcessor:
             elif node_type == cs.TS_PY_RETURN_STATEMENT:
                 # (H) Always process so every `return callee()` emits its own
                 # (H) callee->caller edge; only the first tainted return sets the
-                # (H) body's own returned source.
+                # (H) body's own returned source. ponytail ceiling: one origin per
+                # (H) callee, so branches returning DIFFERENT tainted sources keep
+                # (H) only the first (under-report, never a wrong edge). Upgrade is
+                # (H) set-valued taint (dict[str, set[HandleBinding]]) alongside the
+                # (H) path-sensitivity/CFG work; deferred to phase 2.
                 is_tainted, source = self._return_taint_source(node, tainted, ctx)
                 if is_tainted and not body_returns_taint:
                     body_returns_taint = True
@@ -208,7 +242,7 @@ class FlowProcessor:
     ) -> tuple[bool, HandleBinding | None]:
         # (H) Whether this return yields a tainted value and, if so, its origin
         # (H) resource binding (None when the origin is itself unknown).
-        for child in node.named_children:
+        for child in _return_value_nodes(node):
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
                 if name in tainted:

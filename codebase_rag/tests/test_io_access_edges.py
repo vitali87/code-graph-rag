@@ -239,3 +239,37 @@ def test_module_scope_read_not_credited_with_function_read(tmp_path: Path) -> No
         if r == READS_FROM and b.endswith("ENV::K") and a.endswith(".m")
     ]
     assert module_reads == []
+
+
+def test_default_argument_read_belongs_to_enclosing_scope(tmp_path: Path) -> None:
+    # (H) A default argument value is evaluated at definition time in the
+    # (H) ENCLOSING scope, not inside the function body. So a read there is the
+    # (H) module's, never the function's.
+    files = {"m.py": "import os\n\n\ndef f(x=os.getenv('K')):\n    pass\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, ".m", READS_FROM, "resource::ENV::K")
+    assert not _has(rels, "m.f", READS_FROM, "resource::ENV::K")
+
+
+def test_decorator_read_belongs_to_enclosing_scope(tmp_path: Path) -> None:
+    # (H) A decorator expression is evaluated in the enclosing scope at
+    # (H) definition time, so its read is the module's, not the function's.
+    files = {
+        "m.py": (
+            "import os\n\n\n"
+            "def deco(v):\n    return lambda fn: fn\n\n\n"
+            "@deco(os.getenv('D'))\n"
+            "def f():\n    pass\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, ".m", READS_FROM, "resource::ENV::D")
+    assert not _has(rels, "m.f", READS_FROM, "resource::ENV::D")
+
+
+def test_body_read_still_belongs_to_the_function(tmp_path: Path) -> None:
+    # (H) Guard: a genuine body read stays attributed to the function after the
+    # (H) header/body split (not accidentally pushed to the module).
+    files = {"m.py": "import os\n\n\ndef load():\n    os.getenv('K')\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.load", READS_FROM, "resource::ENV::K")

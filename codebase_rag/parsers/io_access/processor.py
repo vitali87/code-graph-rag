@@ -16,7 +16,13 @@ from .constants import (
     IODirection,
     ResourceKind,
 )
-from .extract import call_name, literal_target, normalise
+from .extract import (
+    call_name,
+    definition_header_nodes,
+    literal_target,
+    normalise,
+    scope_seed_nodes,
+)
 from .models import HandleBinding, HandleConstructor, IOSink
 from .registry import IO_HANDLE_CONSTRUCTORS, IO_HANDLE_METHODS, IO_SINKS
 
@@ -71,15 +77,18 @@ class IOAccessProcessor:
         # (H) last prior assignment. `reversed` keeps children left-to-right.
         # (H) ponytail: source-order, not path-sensitive; add a CFG pass if
         # (H) branch-precise handle resolution ever matters.
-        # (H) Start at the caller's children and prune nested defs/classes: each
-        # (H) is its own caller, so a read/write is credited to its immediate
-        # (H) scope only, never bubbled up to an enclosing function or the module
-        # (H) (matches flow_access and CALLS attribution).
+        # (H) Seed from the caller's OWN scope (a def/class contributes only its
+        # (H) body block; a module every child) and, on hitting a nested def,
+        # (H) descend into its HEADER only -- default args, annotations, bases and
+        # (H) decorators execute in THIS scope at definition time, while the
+        # (H) nested body is its own caller. So a read/write is credited to the
+        # (H) scope that actually runs it (matches flow_access and CALLS).
         handles: dict[str, HandleBinding] = {}
-        stack = list(reversed(caller_node.children))
+        stack = list(reversed(scope_seed_nodes(caller_node)))
         while stack:
             node = stack.pop()
             if node.type in PY_SCOPE_BOUNDARIES:
+                stack.extend(reversed(definition_header_nodes(node)))
                 continue
             bound = self._binding_from_node(node, import_map, ctor_by_name)
             if bound is not None:
