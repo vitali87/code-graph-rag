@@ -51,7 +51,9 @@ def test_attribute_and_dispose_methods_are_roots() -> None:
     # (H) roots on a .cs file, so they must NOT be reported dead.
     nodes = [
         _method("proj.Svc.T1", "T1", ["Fact"]),
-        _method("proj.Svc.Get", "Get", ["HttpGet"]),
+        _method("proj.Svc.Get", "Get", ['Route("api")']),
+        # (H) A bracketed form must normalize too (robust to the capture shape).
+        _method("proj.Svc.Bracketed", "Bracketed", ["[Theory]"]),
         _method("proj.Svc.Dispose", "Dispose"),
         _method("proj.Svc.Helper", "Helper"),
     ]
@@ -60,4 +62,5 @@ def test_attribute_and_dispose_methods_are_roots() -> None:
     assert "proj.Svc.Helper" in dead
     assert "proj.Svc.T1" not in dead
     assert "proj.Svc.Get" not in dead
+    assert "proj.Svc.Bracketed" not in dead
     assert "proj.Svc.Dispose" not in dead

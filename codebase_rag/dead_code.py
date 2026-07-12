@@ -50,10 +50,13 @@ def default_dead_code_config(
 
 
 def _norm_decorator(decorator: str) -> str:
-    # (H) Drop '@', take the text before '(', then the last dotted segment,
-    # (H) lowercased -> `@app.route(...)` becomes `route`.
-    head = decorator.replace(cs.DECORATOR_AT, "").split(cs.CHAR_PAREN_OPEN)[0]
-    return head.split(cs.SEPARATOR_DOT)[-1].lower()
+    # (H) Drop '@' and any surrounding attribute brackets, take the text before
+    # (H) '(', then the last dotted segment, lowercased -> `@app.route(...)` and a
+    # (H) C# `[Route("x")]` both become `route`. Bracket-stripping keeps the
+    # (H) normalization robust to whatever a highlight query captures.
+    cleaned = decorator.replace(cs.DECORATOR_AT, "").strip("[] ")
+    head = cleaned.split(cs.CHAR_PAREN_OPEN)[0]
+    return head.split(cs.SEPARATOR_DOT)[-1].strip("[]").lower()
 
 
 def _is_dunder(name: str) -> bool:
