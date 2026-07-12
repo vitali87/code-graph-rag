@@ -57,6 +57,7 @@ class CSharpTypeInferenceEngine:
         "class_inheritance",
         "simple_name_lookup",
         "class_field_types",
+        "csharp_partial_groups",
     )
 
     def __init__(
@@ -71,6 +72,7 @@ class CSharpTypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
+        csharp_partial_groups: dict[str, list[str]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -82,6 +84,9 @@ class CSharpTypeInferenceEngine:
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
         self.class_field_types = class_field_types
+        self.csharp_partial_groups = (
+            csharp_partial_groups if csharp_partial_groups is not None else {}
+        )
 
     # (H) --- variable/field/parameter type map -------------------------------
 
@@ -280,11 +285,28 @@ class CSharpTypeInferenceEngine:
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
+            # (H) Several candidates that are all parts of ONE partial class are a
+            # (H) single logical type, not a real ambiguity; return one part (method
+            # (H) resolution then spans the whole group).
+            if part := self._single_partial_group_member(candidates):
+                return part
             # (H) Prefer a candidate in the calling file's module; ambiguity across
             # (H) unrelated files is left unresolved rather than guessed.
             same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
             if len(same_module) == 1:
                 return same_module[0]
+        return None
+
+    def _single_partial_group_member(self, candidates: list[str]) -> str | None:
+        # (H) If every candidate belongs to the SAME partial-class group, they are
+        # (H) one logical type; return its lexicographically-first part (stable
+        # (H) across runs). A candidate outside the group (its group is None) means
+        # (H) a genuine cross-type ambiguity, left unresolved.
+        group = self.csharp_partial_groups.get(candidates[0])
+        if group is None:
+            return None
+        if all(self.csharp_partial_groups.get(c) is group for c in candidates):
+            return min(group)
         return None
 
     def _find_method(
@@ -295,12 +317,20 @@ class CSharpTypeInferenceEngine:
         # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
         # (H) on the derived class (`Derived.Foo(int)`). Only when no arity matches
         # (H) anywhere does the nearest lone same-name method (params-array /
-        # (H) optional args) stand in.
-        if resolved := self._find_method_by_arity(
-            class_qn, method_name, arg_count, set()
-        ):
-            return resolved
-        return self._find_method_by_name(class_qn, method_name, set())
+        # (H) optional args) stand in. For a partial class the search spans every
+        # (H) part (and each part's bases), so a member/base on another part binds.
+        roots = self.csharp_partial_groups.get(class_qn) or [class_qn]
+        seen: set[str] = set()
+        for root in roots:
+            if resolved := self._find_method_by_arity(
+                root, method_name, arg_count, seen
+            ):
+                return resolved
+        seen = set()
+        for root in roots:
+            if resolved := self._find_method_by_name(root, method_name, seen):
+                return resolved
+        return None
 
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"

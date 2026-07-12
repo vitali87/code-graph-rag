@@ -149,6 +149,8 @@ class ClassIngestMixin:
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
+    csharp_partial_groups: dict[str, list[str]]
+    _csharp_partial_index: dict[str, list[str]]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -783,6 +785,15 @@ class ClassIngestMixin:
             # (H) class_inheritance over these per-class maps).
             if field_types := csharp_utils.build_field_type_map(member_node):
                 self.class_field_types[class_qn] = field_types
+            # (H) A `partial` type is split across files into N path-distinct
+            # (H) nodes; group the parts (by namespace-qualified name) into one
+            # (H) shared list so a typed receiver resolves members and bases from
+            # (H) any part, not just the one it happened to bind to.
+            if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
+                key = class_qn[len(module_qn) + 1 :]
+                group = self._csharp_partial_index.setdefault(key, [])
+                group.append(class_qn)
+                self.csharp_partial_groups[class_qn] = group
         self._ingest_class_methods(
             member_node,
             class_qn,

@@ -125,6 +125,7 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 method_return_types=self.definition_processor.method_return_types,
+                csharp_partial_groups=self.definition_processor.csharp_partial_groups,
             )
         return self._type_inference
 

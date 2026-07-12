@@ -53,6 +53,10 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 # (H) (`override`) from an explicit `new` hide (which must not become OVERRIDES).
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
+# (H) A type split across files carries `partial` on every part; parts with the
+# (H) same namespace-qualified name are one logical type, unified for member and
+# (H) base resolution (see csharp_partial_groups).
+TS_CSHARP_MODIFIER_PARTIAL = "partial"
 
 # (H) Visibility modifiers that make a type/member external API surface (seed
 # (H) dead-code roots). `protected internal` is two separate modifier children.

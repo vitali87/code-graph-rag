@@ -86,6 +86,14 @@ class DefinitionProcessor(
         # (H) interface implementations need no modifier and are unaffected.
         self.csharp_methods: set[str] = set()
         self.csharp_override_methods: set[str] = set()
+        # (H) C# partial-class unification. A `partial` type split across files
+        # (H) becomes N path-distinct Class nodes; parts sharing a
+        # (H) namespace-qualified name are one logical type. Each part qn maps to
+        # (H) the SHARED list of all its part qns (grows as parts are ingested),
+        # (H) so member/base resolution on any part spans the whole group. The
+        # (H) private index groups parts by their namespace-qualified key.
+        self.csharp_partial_groups: dict[str, list[str]] = {}
+        self._csharp_partial_index: dict[str, list[str]] = {}
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a
