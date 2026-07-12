@@ -273,3 +273,124 @@ def test_body_read_still_belongs_to_the_function(tmp_path: Path) -> None:
     files = {"m.py": "import os\n\n\ndef load():\n    os.getenv('K')\n"}
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.load", READS_FROM, "resource::ENV::K")
+
+
+# (H) Cross-scope handle recall: a handle bound in one scope (an instance
+# (H) attribute set in __init__, or a module/enclosing-scope local) and used in
+# (H) another must attribute the I/O to the USING scope.
+def test_self_attr_db_handle_used_in_other_method(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "class DB:\n"
+            "    def __init__(self):\n"
+            "        self.conn = sqlite3.connect('app.db')\n\n"
+            "    def run(self, sql):\n"
+            "        self.conn.execute(sql)\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    # (H) execute() with dynamic SQL stays READ_WRITE -> both edges, credited to
+    # (H) run (not __init__).
+    assert _has(rels, "m.DB.run", READS_FROM, "resource::DATABASE::app.db")
+    assert _has(rels, "m.DB.run", WRITES_TO, "resource::DATABASE::app.db")
+    assert not _has(rels, "m.DB.__init__", READS_FROM, "resource::DATABASE::app.db")
+
+
+def test_self_attr_file_handle_write(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "class Log:\n"
+            "    def __init__(self, p):\n"
+            "        self.f = open(p, 'w')\n\n"
+            "    def emit(self, msg):\n"
+            "        self.f.write(msg)\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.Log.emit", WRITES_TO, "resource::FILE::<dynamic>")
+
+
+def test_module_level_handle_used_in_function(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "conn = sqlite3.connect('app.db')\n\n"
+            "def run():\n"
+            "    conn.executemany('INSERT INTO t VALUES (?)', [])\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    # (H) executemany() is WRITE, credited to the function that uses the handle.
+    assert _has(rels, "m.run", WRITES_TO, "resource::DATABASE::app.db")
+
+
+def test_enclosing_function_handle_used_in_nested(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "def outer(path):\n"
+            "    f = open(path, 'w')\n\n"
+            "    def inner():\n"
+            "        f.write('x')\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.outer.inner", WRITES_TO, "resource::FILE::<dynamic>")
+
+
+def test_reexported_stdlib_module_handle_recognized(tmp_path: Path) -> None:
+    # (H) A stdlib module re-exported under its own name (`from .utils import
+    # (H) sqlite3`, as sqlite-utils does) remaps the local head away from the
+    # (H) registry key; the raw dotted callee must still match `sqlite3.connect`.
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/utils.py": "import sqlite3  # noqa: F401\n",
+        "pkg/db.py": (
+            "from .utils import sqlite3\n\n"
+            "def run(sql):\n"
+            "    conn = sqlite3.connect('app.db')\n"
+            "    conn.execute(sql)\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "pkg.db.run", READS_FROM, "resource::DATABASE::app.db")
+    assert _has(rels, "pkg.db.run", WRITES_TO, "resource::DATABASE::app.db")
+
+
+def test_local_rebind_shadows_inherited_handle_before_assignment(
+    tmp_path: Path,
+) -> None:
+    # (H) Any assignment to `conn` in the body makes it local for the WHOLE
+    # (H) function (Python scoping), so a use BEFORE that assignment is an
+    # (H) UnboundLocalError at runtime and must NOT resolve to the inherited
+    # (H) module-level handle. The later local rebind governs uses after it.
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "conn = sqlite3.connect('mod.db')\n\n"
+            "def run(sql):\n"
+            "    conn.execute(sql)\n"
+            "    conn = sqlite3.connect('local.db')\n"
+            "    conn.execute(sql)\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.run", READS_FROM, "resource::DATABASE::mod.db")
+    assert not _has(rels, "m.run", WRITES_TO, "resource::DATABASE::mod.db")
+    assert _has(rels, "m.run", READS_FROM, "resource::DATABASE::local.db")
+
+
+def test_sql_commit_is_write_only(tmp_path: Path) -> None:
+    # (H) COMMIT/ROLLBACK/SAVEPOINT/REPLACE etc. are writes; without them the
+    # (H) first-keyword heuristic falls back to READ_WRITE and over-reports a read.
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def tx():\n"
+            "    conn = sqlite3.connect('db.sqlite')\n"
+            "    conn.execute('COMMIT')\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.tx", WRITES_TO, "resource::DATABASE::db.sqlite")
+    assert not _has(rels, "m.tx", READS_FROM, "resource::DATABASE::db.sqlite")

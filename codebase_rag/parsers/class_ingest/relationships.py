@@ -100,8 +100,16 @@ def create_class_relationships(
             )
 
     # (H) A class OR an enum can `implements` interfaces; both expose them via the
-    # (H) `interfaces` field (a super_interfaces clause), so handle both.
-    if class_node.type in (cs.TS_CLASS_DECLARATION, cs.TS_ENUM_DECLARATION):
+    # (H) `interfaces` field (a super_interfaces clause), so handle both. C#
+    # (H) struct/record types implement interfaces through their base_list too
+    # (H) (a C# class reuses the class_declaration node type already listed);
+    # (H) a C# interface's base_list is inheritance, so it is excluded here.
+    if class_node.type in (
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+    ):
         for interface_qn in pe.extract_implemented_interfaces(
             class_node, module_qn, resolve_to_qn
         ):

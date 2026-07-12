@@ -12,6 +12,7 @@ from .extract import (
     definition_header_nodes,
     literal_target,
     normalise,
+    registry_match,
     scope_seed_nodes,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
@@ -35,5 +36,6 @@ __all__ = [
     "definition_header_nodes",
     "literal_target",
     "normalise",
+    "registry_match",
     "scope_seed_nodes",
 ]

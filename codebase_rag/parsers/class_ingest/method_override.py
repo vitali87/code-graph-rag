@@ -20,6 +20,8 @@ def process_all_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
     interface_implementers: dict[str, set[str]] | None = None,
+    csharp_methods: set[str] | None = None,
+    csharp_override_methods: set[str] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -40,6 +42,8 @@ def process_all_method_overrides(
                     class_inheritance,
                     ingestor,
                     implemented_interfaces,
+                    csharp_methods,
+                    csharp_override_methods,
                 )
     _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
 
@@ -222,10 +226,23 @@ def check_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
     implemented_interfaces: dict[str, list[str]] | None = None,
+    csharp_methods: set[str] | None = None,
+    csharp_override_methods: set[str] | None = None,
 ) -> None:
     implemented = implemented_interfaces or {}
     if class_qn not in class_inheritance and class_qn not in implemented:
         return
+
+    # (H) A C# method overrides a base CLASS member only with the explicit
+    # (H) `override` modifier; a `new`/implicit-hide member must not. Interface
+    # (H) members need no modifier, so gate only class-parent matches.
+    csharp_gated = (
+        csharp_methods is not None
+        and method_qn in csharp_methods
+        and (
+            csharp_override_methods is None or method_qn not in csharp_override_methods
+        )
+    )
 
     queue = deque([class_qn])
     visited = {class_qn}
@@ -250,17 +267,27 @@ def check_method_overrides(
             # (H) its name with the nested CLASS registered at parent.name, and
             # (H) an OVERRIDES onto that class qn is a label-mismatched phantom.
             if function_registry.get(parent_method_qn) == NodeType.METHOD:
-                ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
-                    cs.RelationshipType.OVERRIDES,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
+                # (H) Skip a gated C# member's CLASS-parent match, but keep
+                # (H) walking: it may still implement an interface member deeper.
+                parent_is_interface = (
+                    function_registry.get(current_class) == NodeType.INTERFACE
                 )
-                logger.debug(
-                    logs.CLASS_METHOD_OVERRIDE,
-                    method_qn=method_qn,
-                    parent_method_qn=parent_method_qn,
-                )
-                return
+                if not (csharp_gated and not parent_is_interface):
+                    ingestor.ensure_relationship_batch(
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+                        cs.RelationshipType.OVERRIDES,
+                        (
+                            cs.NodeLabel.METHOD,
+                            cs.KEY_QUALIFIED_NAME,
+                            parent_method_qn,
+                        ),
+                    )
+                    logger.debug(
+                        logs.CLASS_METHOD_OVERRIDE,
+                        method_qn=method_qn,
+                        parent_method_qn=parent_method_qn,
+                    )
+                    return
 
         # (H) Superclasses first: when both a base class and an interface declare
         # (H) the method, the edge lands on the base, matching Java resolution.

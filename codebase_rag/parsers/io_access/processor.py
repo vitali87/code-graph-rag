@@ -20,7 +20,7 @@ from .extract import (
     call_name,
     definition_header_nodes,
     literal_target,
-    normalise,
+    registry_match,
     scope_seed_nodes,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
@@ -83,7 +83,21 @@ class IOAccessProcessor:
         # (H) decorators execute in THIS scope at definition time, while the
         # (H) nested body is its own caller. So a read/write is credited to the
         # (H) scope that actually runs it (matches flow_access and CALLS).
-        handles: dict[str, HandleBinding] = {}
+        # (H) Seed with handles bound in ENCLOSING scopes -- an instance attribute
+        # (H) set in another method (`self.conn = sqlite3.connect(...)` in __init__)
+        # (H) or a module/outer-function local -- so a handle method here resolves
+        # (H) against the scope that constructed it, not only same-body bindings. A
+        # (H) local rebind in this body shadows the inherited one (DFS overwrites).
+        # (H) But Python makes a name local for the WHOLE function if it is assigned
+        # (H) anywhere in the body, so an inherited plain-name handle is invisible
+        # (H) even before that assignment (a use before it is UnboundLocalError).
+        # (H) Drop inherited plain names rebound locally; the DFS re-adds them at the
+        # (H) assignment, so uses after it still resolve. Attribute keys (self.x) are
+        # (H) never locals, so they are unaffected.
+        handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
+        for name in self._locally_assigned_names(caller_node):
+            if cs.SEPARATOR_DOT not in name:
+                handles.pop(name, None)
         stack = list(reversed(scope_seed_nodes(caller_node)))
         while stack:
             node = stack.pop()
@@ -118,22 +132,118 @@ class IOAccessProcessor:
             target = alias.children[0] if alias and alias.children else None
         else:
             return None
+        # (H) `f = open(...)` binds a plain name; `self.f = open(...)` binds an
+        # (H) attribute -- keep the full dotted text ("self.f") as the handle key so
+        # (H) a later `self.f.write(...)` resolves against it.
         if (
             target is None
             or call is None
-            or target.type != cs.TS_PY_IDENTIFIER
+            or target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
             or call.type != cs.TS_PY_CALL
             or target.text is None
         ):
             return None
-        name = normalise(call_name(call), import_map)
-        ctor = ctor_by_name.get(name) if name else None
+        ctor = registry_match(ctor_by_name, call_name(call), import_map)
         if ctor is None:
             return None
         identity = literal_target(call, ctor.target_arg, ctor.target_kw)
         return target.text.decode(cs.ENCODING_UTF8), HandleBinding(
             kind=ctor.kind, identity=identity
         )
+
+    def _inherited_handles(
+        self,
+        caller_node: Node,
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+    ) -> dict[str, HandleBinding]:
+        # (H) Handle bindings visible from ENCLOSING scopes, walked innermost-first
+        # (H) so a nearer scope shadows a farther one (setdefault keeps the first
+        # (H) seen). An enclosing class contributes its `self.<attr>` handles (set in
+        # (H) any method); an enclosing function/module contributes its top-level
+        # (H) local handles. Nested scopes are pruned -- their locals are not visible.
+        handles: dict[str, HandleBinding] = {}
+        class_scanned = False
+        node = caller_node.parent
+        while node is not None:
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                if not class_scanned:
+                    class_scanned = True
+                    self._collect_self_attr_handles(
+                        node, import_map, ctor_by_name, handles
+                    )
+            elif node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_MODULE):
+                self._collect_scope_var_handles(node, import_map, ctor_by_name, handles)
+            node = node.parent
+        return handles
+
+    def _locally_assigned_names(self, caller_node: Node) -> set[str]:
+        # (H) Plain identifiers assigned anywhere in this scope's OWN body (nested
+        # (H) defs/classes pruned): assignment / with-as / for targets. Any such name
+        # (H) is local for the whole function, so an inherited handle of that name is
+        # (H) shadowed. Dotted attribute targets (self.x) are not locals -- skipped.
+        names: set[str] = set()
+        stack = list(scope_seed_nodes(caller_node))
+        while stack:
+            node = stack.pop()
+            if node.type in PY_SCOPE_BOUNDARIES:
+                continue
+            target: Node | None = None
+            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+                target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            elif node.type == cs.TS_PY_AS_PATTERN:
+                alias = next(
+                    (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+                    None,
+                )
+                target = alias.children[0] if alias and alias.children else None
+            if (
+                target is not None
+                and target.type == cs.TS_PY_IDENTIFIER
+                and target.text is not None
+            ):
+                names.add(target.text.decode(cs.ENCODING_UTF8))
+            stack.extend(node.children)
+        return names
+
+    def _collect_scope_var_handles(
+        self,
+        scope_node: Node,
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+        handles: dict[str, HandleBinding],
+    ) -> None:
+        # (H) Top-level handle bindings of one scope's OWN body; nested defs/classes
+        # (H) are pruned (their locals belong to their own scope, not this one).
+        stack = list(scope_seed_nodes(scope_node))
+        while stack:
+            node = stack.pop()
+            if node.type in PY_SCOPE_BOUNDARIES:
+                continue
+            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            if bound is not None:
+                handles.setdefault(bound[0], bound[1])
+            stack.extend(node.children)
+
+    def _collect_self_attr_handles(
+        self,
+        class_node: Node,
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+        handles: dict[str, HandleBinding],
+    ) -> None:
+        # (H) `self.<attr> = <constructor>()` bindings anywhere in the class body
+        # (H) (descending method bodies, since __init__ is the usual site); nested
+        # (H) classes are skipped because their `self` is a different object.
+        stack = list(scope_seed_nodes(class_node))
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                continue
+            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
+                handles.setdefault(bound[0], bound[1])
+            stack.extend(node.children)
 
     def _emit_call(
         self,
@@ -148,8 +258,7 @@ class IOAccessProcessor:
             return
         if self._emit_handle_method(node, caller_spec, raw, handles):
             return
-        normalised = normalise(raw, import_map)
-        sink = sink_by_name.get(normalised) if normalised else None
+        sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
             return
         mode = (

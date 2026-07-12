@@ -271,3 +271,33 @@ def test_flow_only_capture_still_ensures_resource_nodes(tmp_path: Path) -> None:
     node_qns = _node_qns(mock)
     assert "resource::ENV::K" in node_qns
     assert "resource::STDOUT::<dynamic>" in node_qns
+
+
+def test_multiple_returns_distinct_sources_all_flow(tmp_path: Path) -> None:
+    # (H) A callee returning DIFFERENT tainted sources on different branches must
+    # (H) carry ALL origins to the caller's sink, not just the first-seen one.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build(flag):\n"
+            "    if flag:\n"
+            "        return os.getenv('A')\n"
+            "    return os.getenv('B')\n\n"
+            "def caller(flag):\n"
+            "    v = build(flag)\n"
+            "    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::A",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+    assert _has(
+        edges,
+        "resource::ENV::B",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )

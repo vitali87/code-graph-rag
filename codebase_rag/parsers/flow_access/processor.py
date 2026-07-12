@@ -20,7 +20,7 @@ from ..io_access import (
     call_name,
     definition_header_nodes,
     literal_target,
-    normalise,
+    registry_match,
     scope_seed_nodes,
 )
 from .constants import (
@@ -89,13 +89,16 @@ class FlowProcessor:
         self._resolver = resolver
         self._selection = selection
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
-        # (H) QN -> the source binding its body returns (None when the source is
-        # (H) itself unknown, e.g. a chained return). Consulted for return-flow so a
-        # (H) returned value keeps its origin resource through the call boundary.
+        # (H) QN -> the SET of source bindings its body can return (empty set = it
+        # (H) returns a tainted value of unknown origin, e.g. a chained return;
+        # (H) absent = it returns nothing tainted). A set, not one binding, so a
+        # (H) callee returning DIFFERENT sources on different branches carries every
+        # (H) origin across the call boundary. Consulted for return-flow so a
+        # (H) returned value keeps its origin resource(s) through the call.
         # (H) ponytail: single-pass and source-order dependent (a callee defined
         # (H) after its caller is missed), exactly like CallProcessor._returned_callables;
         # (H) a finalize/fixpoint pass is the upgrade if cross-file recall matters.
-        self._returns_taint: dict[str, HandleBinding | None] = {}
+        self._returns_taint: dict[str, frozenset[HandleBinding]] = {}
 
     def process_flow_for_caller(
         self,
@@ -135,9 +138,9 @@ class FlowProcessor:
         # (H) monotonic false positive). ponytail: not path-sensitive; a KILL on one
         # (H) branch of an if/else drops taint conservatively -- add a CFG pass only
         # (H) if branch precision ever matters.
-        tainted: dict[str, HandleBinding | None] = {}
+        tainted: dict[str, frozenset[HandleBinding]] = {}
         body_returns_taint = False
-        body_return_source: HandleBinding | None = None
+        body_return_sources: set[HandleBinding] = set()
         # (H) Seed from the caller's own scope; on a nested def descend into its
         # (H) header only (default args/decorators/bases run in THIS scope, its
         # (H) body is a separate caller). Same scoping as io_access.
@@ -153,24 +156,21 @@ class FlowProcessor:
             elif node_type == cs.TS_PY_CALL:
                 self._apply_call(node, tainted, ctx)
             elif node_type == cs.TS_PY_RETURN_STATEMENT:
-                # (H) Always process so every `return callee()` emits its own
-                # (H) callee->caller edge; only the first tainted return sets the
-                # (H) body's own returned source. ponytail ceiling: one origin per
-                # (H) callee, so branches returning DIFFERENT tainted sources keep
-                # (H) only the first (under-report, never a wrong edge). Upgrade is
-                # (H) set-valued taint (dict[str, set[HandleBinding]]) alongside the
-                # (H) path-sensitivity/CFG work; deferred to phase 2.
-                is_tainted, source = self._return_taint_source(node, tainted, ctx)
-                if is_tainted and not body_returns_taint:
+                # (H) Process every return: each `return callee()` emits its own
+                # (H) callee->caller edge, and the body's returned-source set is the
+                # (H) UNION over all returns, so branches returning DIFFERENT tainted
+                # (H) sources each carry to callers of this function.
+                sources = self._return_taint_source(node, tainted, ctx)
+                if sources is not None:
                     body_returns_taint = True
-                    body_return_source = source
+                    body_return_sources |= sources
             stack.extend(reversed(node.children))
 
         if body_returns_taint:
-            self._returns_taint[caller_qn] = body_return_source
+            self._returns_taint[caller_qn] = frozenset(body_return_sources)
 
     def _apply_assignment(
-        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
+        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
     ) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -191,7 +191,7 @@ class FlowProcessor:
             return
         if right.type == cs.TS_PY_CALL and (raw := call_name(right)) is not None:
             if seed := self._source_binding(right, raw, ctx.import_map, ctx.read_sinks):
-                tainted[lhs] = seed
+                tainted[lhs] = frozenset({seed})
                 return
             callee = self._resolve(
                 raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
@@ -204,7 +204,7 @@ class FlowProcessor:
         tainted.pop(lhs, None)
 
     def _apply_call(
-        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
+        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
     ) -> None:
         raw = call_name(node)
         if raw is None:
@@ -212,12 +212,13 @@ class FlowProcessor:
         arg_names = self._arg_names(node)
         if not arg_names:
             return
-        name = normalise(raw, ctx.import_map)
-        sink = ctx.write_sinks.get(name) if name else None
+        sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
         if sink is not None:
             dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
             for arg_name, _via in arg_names:
-                if (source := tainted.get(arg_name)) is not None:
+                # (H) One resource->resource edge per known origin of the tainted
+                # (H) arg; an empty set (tainted, unknown origin) emits nothing.
+                for source in tainted.get(arg_name, frozenset()):
                     self._emit_resource_flow(source, sink.kind, dst_identity)
             return
         vias = [via for arg_name, via in arg_names if arg_name in tainted]
@@ -238,20 +239,26 @@ class FlowProcessor:
             )
 
     def _return_taint_source(
-        self, node: Node, tainted: dict[str, HandleBinding | None], ctx: _FlowCtx
-    ) -> tuple[bool, HandleBinding | None]:
-        # (H) Whether this return yields a tainted value and, if so, its origin
-        # (H) resource binding (None when the origin is itself unknown).
+        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
+    ) -> frozenset[HandleBinding] | None:
+        # (H) The origin set this return yields, or None if it returns nothing
+        # (H) tainted. An empty set means tainted-but-unknown-origin. `return a, b`
+        # (H) unwraps to several value nodes; their origins union.
+        sources: set[HandleBinding] = set()
+        tainted_here = False
         for child in _return_value_nodes(node):
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
                 if name in tainted:
-                    return True, tainted[name]
+                    tainted_here = True
+                    sources |= tainted[name]
             elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
                 if seed := self._source_binding(
                     child, raw, ctx.import_map, ctx.read_sinks
                 ):
-                    return True, seed
+                    tainted_here = True
+                    sources.add(seed)
+                    continue
                 callee = self._resolve(
                     raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
                 )
@@ -259,8 +266,9 @@ class FlowProcessor:
                     # (H) A directly-returned tainted callee flows into this caller
                     # (H) exactly like an assigned one, so emit its return edge.
                     self._emit_return_edge(callee, ctx.caller_spec)
-                    return True, self._returns_taint[callee[1]]
-        return False, None
+                    tainted_here = True
+                    sources |= self._returns_taint[callee[1]]
+        return frozenset(sources) if tainted_here else None
 
     def _emit_return_edge(
         self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
@@ -280,8 +288,7 @@ class FlowProcessor:
         import_map: dict[str, str],
         read_sinks: dict[str, IOSink],
     ) -> HandleBinding | None:
-        name = normalise(raw_name, import_map)
-        sink = read_sinks.get(name) if name else None
+        sink = registry_match(read_sinks, raw_name, import_map)
         if sink is None:
             return None
         identity = literal_target(call_node, sink.target_arg, sink.target_kw)
