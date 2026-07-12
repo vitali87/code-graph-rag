@@ -76,6 +76,15 @@ TS_CSHARP_FIELD_EXPRESSION = "expression"
 TS_CSHARP_THIS = "this"
 TS_CSHARP_ARGUMENT = "argument"
 
+# (H) Nested scopes that own their own locals; the variable-type walk stops at
+# (H) these so a lambda/local-function local cannot leak into (or shadow) the
+# (H) enclosing method's type map.
+TS_CSHARP_NESTED_SCOPE_TYPES = (
+    "lambda_expression",
+    "anonymous_method_expression",
+    "local_function_statement",
+)
+
 # (H) Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"
 

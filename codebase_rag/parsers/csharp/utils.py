@@ -25,7 +25,7 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     for child in param_list.children:
         type_node: Node | None = None
         if child.type == cs.TS_CSHARP_PARAMETER:
-            type_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+            type_node = child.child_by_field_name(cs.FIELD_TYPE)
         elif child.type == cs.TS_CSHARP_ARRAY_TYPE:
             type_node = child
         if type_node is not None and type_node.text:

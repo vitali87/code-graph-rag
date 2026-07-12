@@ -99,6 +99,56 @@ public class App {
     )
 
 
+def test_explicit_this_field_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "G.cs").write_text(
+        """
+namespace N;
+public class Widget { public void Area() {} }
+public class Other { public void Area() {} }
+public class App {
+    private Widget _w;
+    public void Run() { this._w.Area(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) `this._w.Area()` must resolve through the typed field to Widget, not the
+    # (H) decoy Other.Area (a bare-name fallback could not disambiguate the two).
+    assert any(t.endswith("N.Widget.Area") for t in targets), targets
+    assert not any(t.endswith("N.Other.Area") for t in targets), targets
+
+
+def test_nested_scope_local_does_not_shadow_outer(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "H.cs").write_text(
+        """
+namespace N;
+public class Widget { public void Area() {} }
+public class Gadget { public void Area() {} }
+public class App {
+    public void Run() {
+        var x = new Widget();
+        System.Action a = () => { var x = new Gadget(); x.Area(); };
+        x.Area();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) The outer `x` is a Widget; a lambda-local `x` of another type must not
+    # (H) clobber it in the outer method's type map.
+    assert any(t.endswith("N.Widget.Area") for t in targets), targets
+
+
 def test_static_call_through_type_name_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

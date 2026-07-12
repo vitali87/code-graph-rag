@@ -97,21 +97,14 @@ class CSharpTypeInferenceEngine:
         for child in param_list.children:
             if child.type != cs.TS_CSHARP_PARAMETER:
                 continue
-            name = safe_decode_text(child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME))
-            type_text = safe_decode_text(
-                child.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
-            )
+            name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+            type_text = safe_decode_text(child.child_by_field_name(cs.FIELD_TYPE))
             if name and type_text:
                 types[name] = _normalize_type_name(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
-        for decl in self._descendants_of_type(
-            scope_node, cs.TS_CSHARP_VARIABLE_DECLARATION
-        ):
-            # (H) A field's variable_declaration is reached via _collect_fields; here
-            # (H) we want method-body locals, but scanning the whole scope subtree also
-            # (H) catches nested-block locals, which is what we want.
-            type_node = decl.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+        for decl in self._local_variable_declarations(scope_node):
+            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
             declared: str | None = None
             if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
                 if type_text := safe_decode_text(type_node):
@@ -120,7 +113,7 @@ class CSharpTypeInferenceEngine:
                 if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     continue
                 var_name = safe_decode_text(
-                    declarator.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                    declarator.child_by_field_name(cs.FIELD_NAME)
                 )
                 if not var_name:
                     continue
@@ -131,13 +124,16 @@ class CSharpTypeInferenceEngine:
     def _infer_initializer_type(self, declarator: Node) -> str | None:
         # (H) `var x = new T(...)` -> T (the object_creation `type` field). Other
         # (H) initializers (method calls, literals) are left untyped; chained
-        # (H) return-type inference is Roslyn-follow-up territory.
-        for child in declarator.children:
-            if child.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
-                if type_text := safe_decode_text(
-                    child.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
-                ):
-                    return _normalize_type_name(type_text)
+        # (H) return-type inference is Roslyn-follow-up territory. The initializer
+        # (H) may be a direct child of the declarator or wrapped in an
+        # (H) equals_value_clause depending on grammar version, so search the
+        # (H) declarator's own subtree (a lambda body would be a separate scope,
+        # (H) but an initializer expression is small and self-contained).
+        for node in self._descendants_of_type(
+            declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+        ):
+            if type_text := safe_decode_text(node.child_by_field_name(cs.FIELD_TYPE)):
+                return _normalize_type_name(type_text)
         return None
 
     def _collect_fields(self, scope_node: Node, types: dict[str, str]) -> None:
@@ -151,10 +147,8 @@ class CSharpTypeInferenceEngine:
             if member.type == cs.TS_CSHARP_FIELD_DECLARATION:
                 self._collect_field_declaration(member, types)
             elif member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
-                name = safe_decode_text(
-                    member.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-                )
-                type_node = member.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+                name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
+                type_node = member.child_by_field_name(cs.FIELD_TYPE)
                 if name and type_node and type_node.text:
                     self._record_field(types, name, type_node)
 
@@ -165,15 +159,13 @@ class CSharpTypeInferenceEngine:
         )
         if var_decl is None:
             return
-        type_node = var_decl.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+        type_node = var_decl.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or not type_node.text:
             return
         for declarator in var_decl.children:
             if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
                 continue
-            name = safe_decode_text(
-                declarator.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            )
+            name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
             if name:
                 self._record_field(types, name, type_node)
 
@@ -198,9 +190,7 @@ class CSharpTypeInferenceEngine:
         if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             # (H) A bare `Foo(...)` is resolved by the generic simple-name path.
             return None
-        method_name = safe_decode_text(
-            func.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-        )
+        method_name = safe_decode_text(func.child_by_field_name(cs.FIELD_NAME))
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
             return None
@@ -231,6 +221,13 @@ class CSharpTypeInferenceEngine:
     ) -> str | None:
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
+        # (H) A member-access receiver (`this._w`, `a.b`) is looked up by its full
+        # (H) written text, which is exactly the key _record_field stores for a
+        # (H) `this.field` access; without this an explicit `this.field.M()` call
+        # (H) loses its typed edge and falls back to ambiguous bare-name matching.
+        recv_text = safe_decode_text(receiver)
+        if recv_text and (mapped := local_var_types.get(recv_text)) is not None:
+            return self._type_name_to_qn(mapped, module_qn)
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             name = safe_decode_text(receiver)
             if not name:
@@ -254,6 +251,10 @@ class CSharpTypeInferenceEngine:
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
 
     def _type_name_to_qn(self, type_name: str, module_qn: str) -> str | None:
+        # (H) An already-qualified name that IS a registered type resolves directly,
+        # (H) skipping the ambiguous simple-name sweep.
+        if self.function_registry.get(type_name) in _TYPE_DECLS:
+            return type_name
         simple = type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map and (mapped := import_map.get(simple)):
@@ -319,6 +320,22 @@ class CSharpTypeInferenceEngine:
         while stack:
             current = stack.pop()
             if current.type == node_type:
+                found.append(current)
+            stack.extend(current.children)
+        return found
+
+    def _local_variable_declarations(self, scope_node: Node) -> list[Node]:
+        # (H) Every variable_declaration lexically in this method's own scope,
+        # (H) pruning nested callables (lambdas, local functions, anonymous
+        # (H) methods): their locals belong to a separate scope and must not leak
+        # (H) into -- or shadow -- the enclosing method's type map.
+        found: list[Node] = []
+        stack = list(scope_node.children)
+        while stack:
+            current = stack.pop()
+            if current.type in cs.TS_CSHARP_NESTED_SCOPE_TYPES:
+                continue
+            if current.type == cs.TS_CSHARP_VARIABLE_DECLARATION:
                 found.append(current)
             stack.extend(current.children)
         return found
