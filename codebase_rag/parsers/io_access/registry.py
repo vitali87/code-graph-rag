@@ -77,6 +77,49 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         target_arg=0,
         target_kw="url",
     ),
+    # (H) httpx module-level calls mirror requests.*: GET/HEAD read, the rest write.
+    IOSink(
+        "httpx.get",
+        ResourceKind.NETWORK,
+        IODirection.READ,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "httpx.head",
+        ResourceKind.NETWORK,
+        IODirection.READ,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "httpx.post",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "httpx.put",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "httpx.patch",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
+    IOSink(
+        "httpx.delete",
+        ResourceKind.NETWORK,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="url",
+    ),
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
@@ -91,6 +134,16 @@ _PYTHON_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
         "sqlite3.connect", ResourceKind.DATABASE, target_arg=0, target_kw="database"
     ),
     HandleConstructor("socket.socket", ResourceKind.SOCKET),
+    # (H) A pathlib.Path is a FILE handle: read_text/write_text on the bound var
+    # (H) attribute to the path literal passed to Path(...). Non-I/O methods
+    # (H) (.exists, .parent) simply aren't in IO_HANDLE_METHODS, so no false edge.
+    HandleConstructor("pathlib.Path", ResourceKind.FILE, target_arg=0),
+    # (H) httpx/aiohttp client objects are NETWORK handles; later client.get/post
+    # (H) resolve through cross-scope handle resolution (the URL is on the method
+    # (H) call, not the constructor, so the resource identity is <dynamic>).
+    HandleConstructor("httpx.Client", ResourceKind.NETWORK),
+    HandleConstructor("httpx.AsyncClient", ResourceKind.NETWORK),
+    HandleConstructor("aiohttp.ClientSession", ResourceKind.NETWORK),
 )
 
 IO_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, tuple[HandleConstructor, ...]] = {
@@ -103,8 +156,21 @@ IO_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
         "read": IODirection.READ,
         "readline": IODirection.READ,
         "readlines": IODirection.READ,
+        "read_text": IODirection.READ,
+        "read_bytes": IODirection.READ,
         "write": IODirection.WRITE,
         "writelines": IODirection.WRITE,
+        "write_text": IODirection.WRITE,
+        "write_bytes": IODirection.WRITE,
+    },
+    ResourceKind.NETWORK: {
+        "get": IODirection.READ,
+        "head": IODirection.READ,
+        "options": IODirection.READ,
+        "post": IODirection.WRITE,
+        "put": IODirection.WRITE,
+        "patch": IODirection.WRITE,
+        "delete": IODirection.WRITE,
     },
     ResourceKind.DATABASE: {
         "execute": IODirection.READ_WRITE,
