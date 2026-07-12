@@ -129,6 +129,15 @@ _FLOW_ARG_REF_TYPES = frozenset(
 # (H) Qualified-name prefix marking a resolved callee as a builtin rather than a
 # (H) first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# (H) C/C++ expression nodes whose call name is a synthesized operator_* --
+# (H) the ones whose operand type may direct (or suppress) the binding.
+_CPP_OPERATOR_EXPRESSION_TYPES = frozenset(
+    {
+        cs.TS_CPP_BINARY_EXPRESSION,
+        cs.TS_CPP_UNARY_EXPRESSION,
+        cs.TS_CPP_UPDATE_EXPRESSION,
+    }
+)
 # (H) Transparent wrappers a bound arrow may sit behind in its declarator:
 # (H) parens and TS casts (`const f = ((x) => ...) as T`). Climbed when
 # (H) recovering the arrow's binding name so the wrapped form is not treated
@@ -1345,6 +1354,21 @@ class CallProcessor:
             return local_var_types
         return {**local_var_types, base: best[1]}
 
+    def _cpp_operator_operand_name(self, call_node: Node) -> str | None:
+        # (H) The receiver-analog operand of an operator expression: the LEFT
+        # (H) side of a binary op, the sole argument of a unary/update op. Only
+        # (H) a bare identifier is returned -- anything more complex stays with
+        # (H) the legacy paths.
+        field = (
+            cs.FIELD_LEFT
+            if call_node.type == cs.TS_CPP_BINARY_EXPRESSION
+            else cs.TS_FIELD_ARGUMENT
+        )
+        operand = call_node.child_by_field_name(field)
+        if operand is None or operand.type != cs.TS_IDENTIFIER:
+            return None
+        return safe_decode_text(operand)
+
     def _macro_call_name(self, ident: Node) -> str | None:
         # (H) Reconstruct a `<recv>.method` chain from a macro token stream by walking
         # (H) the method identifier's preceding siblings over `("." <ident|self>)*`.
@@ -1801,7 +1825,29 @@ class CallProcessor:
                             caller_spec, calls_rel, (target_type, qn_key, variant)
                         )
 
-            if is_java and call_node.type == method_invocation_type:
+            cpp_operand_type_qn: str | None = None
+            if (
+                is_cpp
+                and call_node.type in _CPP_OPERATOR_EXPRESSION_TYPES
+                and call_name.startswith(cs.OPERATOR_PREFIX)
+            ):
+                cpp_operand_type_qn = resolver.cpp_operand_class_qn(
+                    self._cpp_operator_operand_name(call_node),
+                    call_var_types,
+                    module_qn,
+                )
+            if cpp_operand_type_qn is not None:
+                # (H) The operand's type is KNOWN: the operator binds to that
+                # (H) type's own overload or, when it has none, to nothing at
+                # (H) all (a builtin enum/int operation) -- never rebound by
+                # (H) bare name to an unrelated class's overload set. Only an
+                # (H) untyped operand falls through to the legacy paths below.
+                callee_info = resolver.cpp_operator_for_type(
+                    call_name, cpp_operand_type_qn
+                )
+                if callee_info is None:
+                    continue
+            elif is_java and call_node.type == method_invocation_type:
                 callee_info = resolver.resolve_java_method_call(
                     call_node, module_qn, local_var_types, caller_qn
                 )

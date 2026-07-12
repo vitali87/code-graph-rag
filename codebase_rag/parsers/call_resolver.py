@@ -1541,6 +1541,51 @@ class CallResolver:
 
         return None
 
+    def cpp_operator_for_type(
+        self, call_name: str, operand_type_qn: str
+    ) -> tuple[str, str] | None:
+        # (H) Operand-type-directed operator binding: the overload is either a
+        # (H) member of the operand's own class or a free overload in that
+        # (H) class's module (the beside-the-class convention). A typed operand
+        # (H) with NEITHER is a builtin operation (enum/int comparison) with no
+        # (H) first-party callee -- nlohmann's `token == token_type::x` must
+        # (H) not rebind to an unrelated class's operator== and fan out to all
+        # (H) its overload variants.
+        # (H) _try_resolve_method covers both the direct member and one
+        # (H) INHERITED from a base (Derived : Base with Base::operator==).
+        if member := self._try_resolve_method(operand_type_qn, call_name):
+            return member
+        # (H) ADL: a free overload may live in ANY enclosing namespace of the
+        # (H) operand's type, not only its immediate parent scope.
+        parts = operand_type_qn.split(cs.SEPARATOR_DOT)
+        for depth in range(len(parts) - 1, 0, -1):
+            scope = cs.SEPARATOR_DOT.join(parts[:depth])
+            free_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+            if free_qn in self.function_registry:
+                return (self.function_registry[free_qn], free_qn)
+        return None
+
+    def cpp_operand_class_qn(
+        self,
+        operand_name: str | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> str | None:
+        # (H) A bare-identifier operand with a locally inferred type resolves
+        # (H) to a REGISTERED first-party type qn, or nothing: only a known
+        # (H) type may direct (or suppress) the operator binding; anything
+        # (H) uninferable keeps the caller on the legacy best-candidate path.
+        if not operand_name or not local_var_types:
+            return None
+        var_type = local_var_types.get(operand_name)
+        if not var_type:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        resolved = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        if resolved and resolved in self.function_registry:
+            return resolved
+        return None
+
     def resolve_cpp_operator_call(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:

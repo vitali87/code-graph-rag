@@ -184,3 +184,28 @@ CPP_PREPROC_CONDITIONAL_PATTERN = (
 )
 CPP_PREPROC_OPEN_DIRECTIVES = frozenset({b"if", b"ifdef", b"ifndef"})
 CPP_PREPROC_SPLIT_DIRECTIVES = frozenset({b"elif", b"elifdef", b"elifndef", b"else"})
+
+# (H) Reserved keywords that error recovery can leave in declarator position
+# (H) (nlohmann: a macro access-label followed by `const decltype(MACRO_)`
+# (H) members parses as a function declaration NAMED decltype). None can ever
+# (H) name a real C/C++ function or method, so extraction rejects them.
+CPP_RESERVED_DEF_NAMES = frozenset(
+    {
+        "decltype",
+        "sizeof",
+        "alignof",
+        "alignas",
+        "typeid",
+        "static_assert",
+        "noexcept",
+        "typename",
+        "template",
+        "requires",
+        "if",
+        "for",
+        "while",
+        "switch",
+        "return",
+        "catch",
+    }
+)
