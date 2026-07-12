@@ -199,11 +199,19 @@ def build_merge_relationship_query(
     to_label: str,
     to_key: str,
     has_props: bool = False,
+    merge_key_props: tuple[str, ...] = (),
 ) -> str:
+    # (H) merge_key_props: properties that distinguish parallel edges between the
+    # (H) same node pair (e.g. FLOWS_TO's `via`). Including them in the MERGE
+    # (H) pattern keeps each variant as its own edge instead of collapsing them
+    # (H) into one (issue #722). Every row in the batch must carry these keys.
+    key_map = ""
+    if merge_key_props:
+        key_map = " {" + ", ".join(f"{p}: row.props.{p}" for p in merge_key_props) + "}"
     query = (
         f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
         f"(b:{to_label} {{{to_key}: row.to_val}})\n"
-        f"MERGE (a)-[r:{rel_type}]->(b)\n"
+        f"MERGE (a)-[r:{rel_type}{key_map}]->(b)\n"
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query

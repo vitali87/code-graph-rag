@@ -92,6 +92,14 @@ def _text(value: PropertyValue) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _int(value: PropertyValue) -> int | None:
+    # (H) start_line / end_line are always integral; narrow the general
+    # (H) PropertyValue (whose list[str] member is invariant-incompatible with
+    # (H) ResultValue) so the row matches the ResultValue shape. bool is an int
+    # (H) subclass but line numbers are never bool, so the guard is exact.
+    return value if isinstance(value, int) else None
+
+
 class _StatefulIngestor:
     # (H) A faithful in-memory stand-in for the persistent graph store. Unlike
     # (H) _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
@@ -170,8 +178,8 @@ class _StatefulIngestor:
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                        cs.KEY_START_LINE: props.get(cs.KEY_START_LINE),
-                        cs.KEY_END_LINE: props.get(cs.KEY_END_LINE),
+                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
                     }
                     defs.append(row)
                 return defs

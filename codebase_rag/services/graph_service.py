@@ -28,6 +28,7 @@ from ..constants import (
     KEY_PROJECT_NAME,
     KEY_PROPS,
     KEY_TO_VAL,
+    MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
@@ -454,15 +455,38 @@ class MemgraphIngestor:
         conn: mgclient.Connection | None = None,
     ) -> tuple[int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
-        build_rel_query = (
-            build_merge_relationship_query
-            if self._use_merge
-            else build_create_relationship_query
-        )
         has_props = any(p[KEY_PROPS] for p in params_list)
-        query = build_rel_query(
-            from_label, from_key, rel_type, to_label, to_key, has_props
-        )
+        if self._use_merge:
+            candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+            by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
+            for row in params_list:
+                props = row[KEY_PROPS] or {}
+                by_keys[tuple(p for p in candidate if p in props)].append(row)
+            if len(by_keys) > 1:
+                # (H) Rows for the same endpoints may carry different distinguishing
+                # (H) props (issue #722); flush each merge-key signature on its own so
+                # (H) a prop absent from one row is not dropped from the key for the
+                # (H) rest, which would re-collapse the parallel provenance edges.
+                # (H) Pass `conn` through unchanged to preserve the lock semantics.
+                totals = [
+                    self._flush_rel_pattern_group(pattern, rows, conn=conn)
+                    for rows in by_keys.values()
+                ]
+                return sum(t for t, _ in totals), sum(s for _, s in totals)
+            merge_key_props = next(iter(by_keys), ())
+            query = build_merge_relationship_query(
+                from_label,
+                from_key,
+                rel_type,
+                to_label,
+                to_key,
+                has_props,
+                merge_key_props=merge_key_props,
+            )
+        else:
+            query = build_create_relationship_query(
+                from_label, from_key, rel_type, to_label, to_key, has_props
+            )
 
         target_conn = conn or self.conn
         if not target_conn:
