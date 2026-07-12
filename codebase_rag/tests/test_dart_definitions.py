@@ -179,6 +179,37 @@ mixin Diver on StatefulWidget {}
     assert ("Fish", "Comparable") in implements, implements
 
 
+def test_generic_supertypes_strip_type_arguments(
+    dart_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A generic supertype's `type_arguments` (`State<HomePage>`) is a sibling
+    # (H) of the base `type_identifier`, so extraction yields the bare base name
+    # (H) (State/Comparable) - the common Flutter `extends State<T>` pattern.
+    (dart_project / "gen.dart").write_text(
+        """
+class State<T> {}
+class HomePage {}
+class Comparable<T> {}
+class Mix {}
+class _HomePageState extends State<HomePage> with Mix implements Comparable<int> {}
+""",
+        encoding="utf-8",
+    )
+    run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = {
+        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        for c in get_relationships(mock_ingestor, "INHERITS")
+    }
+    implements = {
+        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        for c in get_relationships(mock_ingestor, "IMPLEMENTS")
+    }
+    assert ("_HomePageState", "State") in inherits, inherits
+    assert ("_HomePageState", "Mix") in inherits, inherits
+    assert ("_HomePageState", "Comparable") in implements, implements
+
+
 def test_enum_implements_interface(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
