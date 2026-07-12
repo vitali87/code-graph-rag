@@ -107,6 +107,25 @@ public struct Val : IShape { }
     assert _has(implements, "N.Val", "N.IShape"), implements
 
 
+def test_qualified_generic_base_strips_type_arguments(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Gen.cs").write_text(
+        """
+namespace N;
+public class C : System.Collections.Generic.List<int> { }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    # (H) The generic type arguments must not leak into the base's qn, or it
+    # (H) can never match the registered (generic-free) List type.
+    assert _has(inherits, "N.C", "System.Collections.Generic.List"), inherits
+    assert not any("<" in parent for _, parent in inherits), inherits
+
+
 def test_enum_underlying_type_is_not_inheritance(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

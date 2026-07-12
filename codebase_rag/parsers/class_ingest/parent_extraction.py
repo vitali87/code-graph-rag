@@ -34,16 +34,20 @@ def php_base_simple_name(node: Node) -> str | None:
 def _csharp_base_written_name(node: Node) -> str | None:
     # (H) The written base name for resolution: bare identifier, a generic base
     # (H) stripped to its identifier (`List<int>` -> `List`), a dotted
-    # (H) qualified_name kept whole (`System.Exception`), or a record positional
-    # (H) base unwrapped to its type. predefined_type (an enum's underlying type)
-    # (H) and punctuation (`:`, `,`) yield None so they are dropped.
+    # (H) qualified_name (`System.Exception`), or a record positional base
+    # (H) unwrapped to its type. predefined_type (an enum's underlying type) and
+    # (H) punctuation (`:`, `,`) yield None so they are dropped.
     if node.type == cs.TS_CSHARP_IDENTIFIER and node.text:
         return safe_decode_text(node)
     if node.type == cs.TS_CSHARP_GENERIC_NAME:
         ident = find_child_by_type(node, cs.TS_CSHARP_IDENTIFIER)
         return safe_decode_text(ident) if ident and ident.text else None
     if node.type == cs.TS_CSHARP_QUALIFIED_NAME and node.text:
-        return safe_decode_text(node)
+        # (H) A qualified generic base (`System.Collections.Generic.List<int>`)
+        # (H) is one qualified_name whose text carries the type arguments; strip
+        # (H) them so the written name matches the registered, generic-free qn.
+        text = safe_decode_text(node)
+        return text.split(cs.CHAR_ANGLE_OPEN, 1)[0] if text else None
     if node.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
         for child in node.children:
             if name := _csharp_base_written_name(child):

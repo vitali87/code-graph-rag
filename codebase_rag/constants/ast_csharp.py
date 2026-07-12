@@ -44,12 +44,11 @@ TS_CSHARP_GENERIC_NAME = "generic_name"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 
-# (H) A `modifier` child wraps a single keyword token (`public`, `override`,
-# (H) `new`, `virtual`). Override detection reads these to tell a real override
-# (H) (`override`) from an explicit hide (`new`).
+# (H) A `modifier` child wraps a single keyword (`public`, `override`, `new`,
+# (H) `virtual`). Override detection reads it to tell a real override
+# (H) (`override`) from an explicit `new` hide (which must not become OVERRIDES).
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
-TS_CSHARP_MODIFIER_NEW = "new"
 
 # (H) Call forms.
 TS_CSHARP_INVOCATION_EXPRESSION = "invocation_expression"
