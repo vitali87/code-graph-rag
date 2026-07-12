@@ -149,6 +149,34 @@ public class App {
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
 
 
+def test_conflicting_sibling_locals_still_resolve_unique_calls(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "K.cs").write_text(
+        """
+namespace N;
+public class Widget { public void Alpha() {} }
+public class Gadget { public void Beta() {} }
+public class App {
+    public void Run() {
+        { var x = new Widget(); }
+        { var x = new Gadget(); }
+        var y = new Widget();
+        y.Alpha();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    # (H) The conflicting `x` (Widget vs Gadget in sibling blocks) is dropped from
+    # (H) the type map without disturbing an unrelated, unambiguously-typed `y`.
+    assert any(t.endswith("N.Widget.Alpha") for t in _call_targets(mock_ingestor)), (
+        _call_targets(mock_ingestor)
+    )
+
+
 def test_nullable_typed_receiver_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

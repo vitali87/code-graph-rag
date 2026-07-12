@@ -103,6 +103,14 @@ class CSharpTypeInferenceEngine:
                 types[name] = _normalize_type_name(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
+        # (H) One type map per method (as every language engine here builds), so
+        # (H) sibling blocks are not distinguished: two `{ var x = ... }` blocks
+        # (H) that declare `x` as DIFFERENT types cannot both be modelled. Rather
+        # (H) than let the last declaration win and confidently misbind the other
+        # (H) block's calls, a name seen with conflicting types is dropped so it
+        # (H) falls back to (correct-when-unambiguous) bare-name resolution. Full
+        # (H) block-scoped precision needs the Roslyn semantic model (follow-up).
+        conflicted: set[str] = set()
         for decl in self._local_variable_declarations(scope_node):
             type_node = decl.child_by_field_name(cs.FIELD_TYPE)
             declared: str | None = None
@@ -115,10 +123,16 @@ class CSharpTypeInferenceEngine:
                 var_name = safe_decode_text(
                     declarator.child_by_field_name(cs.FIELD_NAME)
                 )
-                if not var_name:
+                if not var_name or var_name in conflicted:
                     continue
                 var_type = declared or self._infer_initializer_type(declarator)
-                if var_type:
+                if not var_type:
+                    continue
+                existing = types.get(var_name)
+                if existing is not None and existing != var_type:
+                    del types[var_name]
+                    conflicted.add(var_name)
+                else:
                     types[var_name] = var_type
 
     def _infer_initializer_type(self, declarator: Node) -> str | None:
