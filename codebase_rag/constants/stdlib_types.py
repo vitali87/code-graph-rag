@@ -295,6 +295,35 @@ CSHARP_STDLIB_PREFIXES = (
     "Mono.",
 )
 
+# (H) Common BCL namespaces. C# namespaces are PascalCase like types, so the
+# (H) case heuristic cannot tell a bare namespace reference (`using
+# (H) System.Text.Json;`) from a type; a name that IS one of these is kept whole
+# (H) instead of being folded into its parent as if its leaf were a type.
+CSHARP_STDLIB_NAMESPACES = frozenset(
+    {
+        "System",
+        "System.Collections",
+        "System.Collections.Generic",
+        "System.Collections.Concurrent",
+        "System.Collections.ObjectModel",
+        "System.Linq",
+        "System.Text",
+        "System.Text.Json",
+        "System.Text.RegularExpressions",
+        "System.Threading",
+        "System.Threading.Tasks",
+        "System.IO",
+        "System.Net",
+        "System.Net.Http",
+        "System.Reflection",
+        "System.Runtime",
+        "System.Runtime.Serialization",
+        "System.Globalization",
+        "System.Diagnostics",
+        "System.ComponentModel",
+    }
+)
+
 # (H) Bare System namespace root (`System` itself), plus the ubiquitous top-level
 # (H) primitives/aliases that appear without the `System.` prefix.
 CSHARP_STDLIB_CLASSES = frozenset(

@@ -595,11 +595,14 @@ func main() {
 
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         result = full_qualified_name
-        if len(parts) >= 2:
+        if len(parts) >= 2 and full_qualified_name not in cs.CSHARP_STDLIB_NAMESPACES:
             entity_name = parts[-1]
             # (H) A C# type is PascalCase; interfaces start `I<Upper>`. Fold the
             # (H) trailing type into its namespace path so the external node is the
             # (H) namespace (`System.Collections.Generic`), matching the Java model.
+            # (H) C# namespaces are PascalCase too, so the case heuristic is only
+            # (H) applied AFTER excluding a name that IS a known namespace above
+            # (H) (exact disambiguation would need a symbol table / Roslyn).
             is_type = (
                 entity_name[:1].isupper() or entity_name in cs.CSHARP_STDLIB_CLASSES
             )
