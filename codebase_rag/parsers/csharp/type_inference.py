@@ -283,50 +283,45 @@ class CSharpTypeInferenceEngine:
         if not candidates:
             return None
         recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        # (H) Extension binding matches on the receiver's SIMPLE type name (the
-        # (H) stored `this`-param type may be unqualified). If that simple name
-        # (H) maps to more than one registered first-party type (`N1.Widget` vs
-        # (H) `N2.Widget`), a simple-name match is ambiguous across namespaces and
-        # (H) could bind an extension declared on the WRONG type -- refuse to guess
-        # (H) rather than emit a wrong edge. A BCL receiver (`string`) is not
-        # (H) registered, so it never trips this and still binds.
-        registered = [
-            qn
-            for qn in self.simple_name_lookup.get(recv_simple, set())
-            if self.function_registry.get(qn) in _TYPE_DECLS
-        ]
-        if len(registered) > 1:
-            return None
-        # (H) When the receiver type is namespace-qualified (`N1.Widget`) but the
-        # (H) single registered same-name type is in a DIFFERENT namespace, the
-        # (H) indexed extension targets that other type -- refuse to bind. Guards
-        # (H) the case where the receiver's own type is external/unregistered so
-        # (H) the count check above cannot see the collision.
-        if (
-            len(registered) == 1
-            and cs.SEPARATOR_DOT in receiver_type_name
-            and not registered[0].endswith(receiver_type_name)
-        ):
-            return None
-        matches = [
-            qn
-            for qn, recv_type in candidates
-            # (H) The `this` receiver counts as the first parameter, so the
-            # (H) extension method's arity is the call's arg count + 1. `_arity`
-            # (H) reads the first `(`/last `)`, so pass the whole qn -- a leaf-split
-            # (H) on `.` would land inside a qualified param type (`System.Exception`).
-            if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] == recv_simple
-            and _arity(qn) == arg_count + 1
-            # (H) A QUALIFIED extension receiver (`this N2.Widget`) cannot be
-            # (H) confirmed against an UNqualified call receiver (`Widget`, whose
-            # (H) namespace is unknown without a semantic model) -- binding it
-            # (H) risks a wrong cross-namespace edge, so skip it (accept the
-            # (H) occasional miss over a false positive).
-            and not (
-                cs.SEPARATOR_DOT in recv_type
-                and cs.SEPARATOR_DOT not in receiver_type_name
+        recv_qualified = cs.SEPARATOR_DOT in receiver_type_name
+        # (H) An UNqualified receiver whose simple name maps to more than one
+        # (H) registered first-party type (`N1.Widget` vs `N2.Widget`) is
+        # (H) genuinely ambiguous -- we can't tell which one it is, so an
+        # (H) unqualified-vs-unqualified match must not guess. A qualified receiver
+        # (H) or a BCL name (not registered) is not affected.
+        ambiguous_unqualified = not recv_qualified and (
+            len(
+                [
+                    qn
+                    for qn in self.simple_name_lookup.get(recv_simple, set())
+                    if self.function_registry.get(qn) in _TYPE_DECLS
+                ]
             )
-        ]
+            > 1
+        )
+        matches: list[str] = []
+        for qn, recv_type in candidates:
+            # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
+            # (H) leaf-split on `.` would land inside a qualified param type.
+            if _arity(qn) != arg_count + 1:
+                continue
+            if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] != recv_simple:
+                continue
+            cand_qualified = cs.SEPARATOR_DOT in recv_type
+            # (H) Namespace consistency between the call receiver and the stored
+            # (H) `this` type: both qualified -> require the SAME fully-qualified
+            # (H) name (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
+            # (H) one qualified and the other not -> the unqualified side's
+            # (H) namespace is unknown without a semantic model, so don't guess;
+            # (H) both unqualified -> match by simple name unless it's ambiguous.
+            if recv_qualified and cand_qualified:
+                if recv_type != receiver_type_name:
+                    continue
+            elif recv_qualified != cand_qualified:
+                continue
+            elif ambiguous_unqualified:
+                continue
+            matches.append(qn)
         # (H) Bind only on a unique match; an ambiguous name across static classes
         # (H) is left unresolved rather than guessed.
         return matches[0] if len(matches) == 1 else None

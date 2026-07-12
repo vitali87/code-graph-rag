@@ -210,6 +210,37 @@ namespace App {
     assert not any("WidgetExt.Poke" in t for t in targets), targets
 
 
+def test_qualified_receiver_binds_exact_extension_despite_same_name_type(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A qualified receiver `N1.Widget` with an exact `this N1.Widget`
+    # (H) extension must still bind even though another `N2.Widget` is registered:
+    # (H) the ambiguity guard must not drop a valid exact qualified match. (Decoy
+    # (H) blocks the generic fallback so only the extension path can bind it.)
+    (csharp_project / "J.cs").write_text(
+        """
+namespace N2 {
+    public class Widget { }
+    public class Decoy { public void Poke() { } }
+}
+namespace N1 {
+    public class Widget { }
+    public static class WidgetExt {
+        public static void Poke(this N1.Widget w) { }
+    }
+    public class App6 { public void Run(N1.Widget w) { w.Poke(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(
+        t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets
+    ), targets
+
+
 def test_unqualified_receiver_does_not_bind_qualified_extension(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
