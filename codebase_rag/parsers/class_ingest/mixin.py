@@ -149,6 +149,7 @@ class ClassIngestMixin:
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
+    csharp_extension_methods: dict[str, list[tuple[str, str]]]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -1006,6 +1007,16 @@ class ClassIngestMixin:
                 self.csharp_methods.add(ingested_qn)
                 if csharp_has_override_modifier(method_node):
                     self.csharp_override_methods.add(ingested_qn)
+                # (H) Index extension methods by simple name + receiver type so a
+                # (H) `recv.Ext()` call binds to the static method even though it
+                # (H) lives on an unrelated static class (not in recv's hierarchy).
+                if receiver_type := csharp_utils.extension_receiver_type(method_node):
+                    leaf = ingested_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
+                        cs.CHAR_PAREN_OPEN, 1
+                    )[0]
+                    self.csharp_extension_methods.setdefault(leaf, []).append(
+                        (ingested_qn, receiver_type)
+                    )
             # (H) A Java method declared inside an anonymous class body
             # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
             # (H) class but really overrides the anon class's base type. Record it so a

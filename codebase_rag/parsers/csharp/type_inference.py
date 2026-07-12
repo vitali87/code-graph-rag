@@ -57,6 +57,7 @@ class CSharpTypeInferenceEngine:
         "class_inheritance",
         "simple_name_lookup",
         "class_field_types",
+        "csharp_extension_methods",
     )
 
     def __init__(
@@ -71,6 +72,7 @@ class CSharpTypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
+        csharp_extension_methods: dict[str, list[tuple[str, str]]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -82,6 +84,9 @@ class CSharpTypeInferenceEngine:
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
         self.class_field_types = class_field_types
+        self.csharp_extension_methods = (
+            csharp_extension_methods if csharp_extension_methods is not None else {}
+        )
 
     # (H) --- variable/field/parameter type map -------------------------------
 
@@ -205,12 +210,75 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
-        if receiver_class_qn is None:
+        if receiver_class_qn is not None:
+            method_qn = self._find_method(receiver_class_qn, method_name, arg_count)
+            if method_qn is not None:
+                return cs.NodeLabel.METHOD.value, method_qn
+        # (H) Not found on the receiver's own type hierarchy: try an extension
+        # (H) method (`static M(this T x, ...)` on an unrelated static class) whose
+        # (H) `this` receiver type matches the call's receiver. This is the only
+        # (H) path that can bind `x.M()` to a method not in x's hierarchy.
+        if self.csharp_extension_methods:
+            type_name = self._receiver_type_name(
+                receiver, local_var_types or {}, caller_qn
+            )
+            if type_name and (
+                ext := self._find_extension_method(type_name, method_name, arg_count)
+            ):
+                return cs.NodeLabel.METHOD.value, ext
+        return None
+
+    def _receiver_type_name(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        caller_qn: str | None,
+    ) -> str | None:
+        # (H) The receiver's declared type NAME (not its class qn), needed for the
+        # (H) extension-method fallback: extensions frequently target BCL types
+        # (H) (`string`, `int`) that are never registered as classes, so the raw
+        # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
+        # (H) branches but stops at the name.
+        if receiver.type == cs.TS_CSHARP_THIS:
+            qn = self._containing_class_qn(caller_qn)
+            return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if qn else None
+        if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+            field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
+            if expr is not None and expr.type == cs.TS_CSHARP_THIS and field:
+                if class_qn := self._containing_class_qn(caller_qn):
+                    return self._field_type(class_qn, field)
             return None
-        method_qn = self._find_method(receiver_class_qn, method_name, arg_count)
-        if method_qn is None:
+        if receiver.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(receiver)
+            if not name:
+                return None
+            if (type_name := local_var_types.get(name)) is not None:
+                return type_name
+            if class_qn := self._containing_class_qn(caller_qn):
+                if ftype := self._field_type(class_qn, name):
+                    return ftype
+            return name
+        return None
+
+    def _find_extension_method(
+        self, receiver_type_name: str, method_name: str, arg_count: int
+    ) -> str | None:
+        candidates = self.csharp_extension_methods.get(method_name)
+        if not candidates:
             return None
-        return cs.NodeLabel.METHOD.value, method_qn
+        recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        matches = [
+            qn
+            for qn, recv_type in candidates
+            # (H) The `this` receiver counts as the first parameter, so the
+            # (H) extension method's arity is the call's arg count + 1.
+            if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] == recv_simple
+            and _arity(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]) == arg_count + 1
+        ]
+        # (H) Bind only on a unique match; an ambiguous name across static classes
+        # (H) is left unresolved rather than guessed.
+        return matches[0] if len(matches) == 1 else None
 
     def _count_arguments(self, call_node: Node) -> int:
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
