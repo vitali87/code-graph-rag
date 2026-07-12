@@ -15,6 +15,7 @@ class Provider(StrEnum):
     GOOGLE = "google"
     AZURE = "azure"
     LITELLM_PROXY = "litellm_proxy"
+    MINIMAX = "minimax"
 
 
 DEFAULT_MODEL_ROLE = "model"
@@ -29,6 +30,7 @@ ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
 ENV_AZURE_API_KEY = "AZURE_API_KEY"
 ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
 ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
+ENV_MINIMAX_API_KEY = "MINIMAX_API_KEY"
 
 
 class GoogleProviderType(StrEnum):
@@ -38,6 +40,8 @@ class GoogleProviderType(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
+MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
@@ -78,6 +82,8 @@ ANTHROPIC_COUNT_TIMEOUT_S = 10.0
 
 DEFAULT_CONTEXT_WINDOW = 200_000
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "MiniMax-M3": 1_000_000,
+    "MiniMax-M2.7": 204_800,
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 200_000,
     "claude-opus-4-5": 200_000,

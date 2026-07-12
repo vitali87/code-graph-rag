@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from loguru import logger
@@ -256,12 +256,49 @@ class AzureOpenAIProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class MiniMaxProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint")
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_MINIMAX_API_KEY)
+        self.endpoint = endpoint or cs.MINIMAX_DEFAULT_ENDPOINT
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.MINIMAX
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.MINIMAX_NO_KEY)
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel | AnthropicModel:
+        self.validate_config()
+        # (H) api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        if urlsplit(self.endpoint).path.rstrip("/") == cs.MINIMAX_ANTHROPIC_SDK_PATH:
+            anthropic_provider = PydanticAnthropicProvider(
+                api_key=self.api_key, base_url=self.endpoint
+            )
+            return AnthropicModel(model_id, provider=anthropic_provider)
+        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
     cs.Provider.ANTHROPIC: AnthropicProvider,
     cs.Provider.AZURE: AzureOpenAIProvider,
+    cs.Provider.MINIMAX: MiniMaxProvider,
 }
 
 # (H) Import LiteLLM provider after base classes are defined to avoid circular import
