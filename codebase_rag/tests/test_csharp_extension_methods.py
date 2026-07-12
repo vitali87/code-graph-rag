@@ -119,6 +119,38 @@ public class App {
     assert not any(t.endswith("N.C.Foo") for t in targets), targets
 
 
+def test_cross_namespace_same_name_receiver_does_not_bind(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "G.cs").write_text(
+        """
+namespace N1 { public class Widget { } }
+namespace N2 {
+    public class Widget { }
+    public static class WidgetExt {
+        public static void Poke(this Widget w) { }
+    }
+}
+namespace N3 {
+    public class Decoy { public void Poke() { } }
+    public class App3 {
+        public void Run(N1.Widget w) { w.Poke(); }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    # (H) `w` is an `N1.Widget`, but the only indexed `Poke` extension is on
+    # (H) `N2.Widget`. Matching on the simple name `Widget` would bind it across
+    # (H) namespaces -- wrong. With `Widget` registered in two namespaces the match
+    # (H) is ambiguous and must be refused. (Decoy.Poke blocks the generic fallback
+    # (H) so only the extension path could produce the edge.)
+    targets = _call_targets(mock_ingestor)
+    assert not any("WidgetExt.Poke" in t for t in targets), targets
+
+
 def test_type_name_receiver_does_not_bind_extension(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

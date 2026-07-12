@@ -283,6 +283,20 @@ class CSharpTypeInferenceEngine:
         if not candidates:
             return None
         recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        # (H) Extension binding matches on the receiver's SIMPLE type name (the
+        # (H) stored `this`-param type may be unqualified). If that simple name
+        # (H) maps to more than one registered first-party type (`N1.Widget` vs
+        # (H) `N2.Widget`), a simple-name match is ambiguous across namespaces and
+        # (H) could bind an extension declared on the WRONG type -- refuse to guess
+        # (H) rather than emit a wrong edge. A BCL receiver (`string`) is not
+        # (H) registered, so it never trips this and still binds.
+        registered = [
+            qn
+            for qn in self.simple_name_lookup.get(recv_simple, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        if len(registered) > 1:
+            return None
         matches = [
             qn
             for qn, recv_type in candidates
