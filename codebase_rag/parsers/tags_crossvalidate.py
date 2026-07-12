@@ -1,5 +1,5 @@
-# (H) Diff cgr's own definitions against a tags.scm @definition.* oracle (issue #524);
-# (H) pure diagnostic, no graph mutation. See crossvalidate below.
+# (H) Diff cgr's own graph against a tags.scm oracle (issue #524); pure diagnostic,
+# (H) no graph mutation. crossvalidate covers @definition.*, crossvalidate_calls @reference.call.
 
 from __future__ import annotations
 
@@ -9,7 +9,23 @@ from codebase_rag.parsers.utils import get_query_cursor, safe_decode_text
 from codebase_rag.types_defs import ASTNode
 
 _DEFINITION_PREFIX = "definition."
+_CALL_CAPTURE = "reference.call"
 _NAME_CAPTURE = "name"
+
+
+def _tag_sites(root: ASTNode, tags_query: Query, tag_prefix: str) -> set[tuple[str, int]]:
+    # (H) Every @name under a match carrying a capture that starts with tag_prefix,
+    # (H) paired with its 1-indexed start line. Nested calls yield separate matches.
+    cursor = get_query_cursor(tags_query)
+    sites: set[tuple[str, int]] = set()
+    for _pattern_index, caps in cursor.matches(root):
+        if not any(name.startswith(tag_prefix) for name in caps):
+            continue
+        for node in caps.get(_NAME_CAPTURE, []):
+            text = safe_decode_text(node)
+            if text:
+                sites.add((text, node.start_point[0] + 1))
+    return sites
 
 
 def crossvalidate(
@@ -21,17 +37,18 @@ def crossvalidate(
     emitted for this file. `missed` is what tags.scm found and cgr did not; `extra`
     is what cgr emitted and tags.scm does not mark.
     """
-    cursor = get_query_cursor(tags_query)
-    tag_defs: set[tuple[str, int]] = set()
-    for _pattern_index, caps in cursor.matches(root):
-        if not any(name.startswith(_DEFINITION_PREFIX) for name in caps):
-            continue
-        name_nodes = caps.get(_NAME_CAPTURE)
-        if not name_nodes:
-            continue
-        node = name_nodes[0]
-        text = safe_decode_text(node)
-        if text:
-            tag_defs.add((text, node.start_point[0] + 1))
-
+    tag_defs = _tag_sites(root, tags_query, _DEFINITION_PREFIX)
     return tag_defs - cgr_defs, cgr_defs - tag_defs
+
+
+def crossvalidate_calls(
+    root: ASTNode, tags_query: Query, cgr_calls: set[tuple[str, int]]
+) -> tuple[set[tuple[str, int]], set[tuple[str, int]]]:
+    """Return (missed, extra) call sites as sets of (callee_name, start_line).
+
+    `cgr_calls` is the (callee name, 1-indexed line) of every call cgr resolved for
+    this file. `missed` is what tags.scm marks and cgr did not resolve; `extra` is
+    what cgr emitted and tags.scm does not mark.
+    """
+    tag_calls = _tag_sites(root, tags_query, _CALL_CAPTURE)
+    return tag_calls - cgr_calls, cgr_calls - tag_calls

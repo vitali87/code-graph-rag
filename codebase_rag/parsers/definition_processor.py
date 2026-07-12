@@ -78,6 +78,14 @@ class DefinitionProcessor(
         # (H) enclosing class with no OVERRIDES edge and look dead. Recorded at method
         # (H) ingestion, resolved to OVERRIDES edges once every base type is registered.
         self.java_anon_overrides: list[tuple[str, str, str, str]] = []
+        # (H) C# override tracking. `csharp_methods` is every C# method qn;
+        # (H) `csharp_override_methods` the subset carrying the `override` modifier.
+        # (H) C# base-CLASS overrides require `override` (a `new`/implicit-hide
+        # (H) member is not an override), so the shared override walk emits a
+        # (H) class-parent match only for C# methods in the override subset;
+        # (H) interface implementations need no modifier and are unaffected.
+        self.csharp_methods: set[str] = set()
+        self.csharp_override_methods: set[str] = set()
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a

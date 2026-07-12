@@ -31,6 +31,77 @@ def php_base_simple_name(node: Node) -> str | None:
     return None
 
 
+def _csharp_base_written_name(node: Node) -> str | None:
+    # (H) The written base name for resolution: bare identifier, a generic base
+    # (H) stripped to its identifier (`List<int>` -> `List`), a dotted
+    # (H) qualified_name (`System.Exception`), or a record positional base
+    # (H) unwrapped to its type. predefined_type (an enum's underlying type) and
+    # (H) punctuation (`:`, `,`) yield None so they are dropped.
+    if node.type == cs.TS_CSHARP_IDENTIFIER and node.text:
+        return safe_decode_text(node)
+    if node.type == cs.TS_CSHARP_GENERIC_NAME:
+        ident = find_child_by_type(node, cs.TS_CSHARP_IDENTIFIER)
+        return safe_decode_text(ident) if ident and ident.text else None
+    if node.type == cs.TS_CSHARP_QUALIFIED_NAME and node.text:
+        # (H) A qualified generic base (`System.Collections.Generic.List<int>`)
+        # (H) is one qualified_name whose text carries the type arguments; strip
+        # (H) them so the written name matches the registered, generic-free qn.
+        text = safe_decode_text(node)
+        return text.split(cs.CHAR_ANGLE_OPEN, 1)[0] if text else None
+    if node.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
+        for child in node.children:
+            if name := _csharp_base_written_name(child):
+                return name
+    return None
+
+
+def _csharp_looks_like_interface(simple_name: str) -> bool:
+    # (H) The C# `I`-prefix convention (IShape, IDisposable) is the only signal
+    # (H) available at parse time to tell an interface from the base class inside
+    # (H) one base_list. Exact class-vs-interface binding is Phase 3 / Roslyn work.
+    return len(simple_name) >= 2 and simple_name[0] == "I" and simple_name[1].isupper()
+
+
+def split_csharp_bases(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> tuple[list[str], list[str]]:
+    # (H) Return (inherited_qns, implemented_qns). C# folds the base class and all
+    # (H) interfaces into one base_list; the base class, if any, is the FIRST entry
+    # (H) (grammar-enforced) and must not look like an interface. An interface's
+    # (H) bases are all inheritance; a struct/record/class implements the rest.
+    if class_node.type == cs.TS_CSHARP_ENUM_DECLARATION:
+        return [], []
+    base_list = find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST)
+    if base_list is None:
+        return [], []
+
+    written = [
+        name
+        for child in base_list.children
+        if (name := _csharp_base_written_name(child))
+    ]
+    is_interface = class_node.type == cs.TS_CSHARP_INTERFACE_DECLARATION
+    is_struct = class_node.type == cs.TS_CSHARP_STRUCT_DECLARATION
+
+    inherited: list[str] = []
+    implemented: list[str] = []
+    for index, name in enumerate(written):
+        resolved = resolve_to_qn(name, module_qn)
+        if is_interface:
+            inherited.append(resolved)
+        elif (
+            index == 0
+            and not is_struct
+            and not _csharp_looks_like_interface(name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        ):
+            inherited.append(resolved)
+        else:
+            implemented.append(resolved)
+    return inherited, implemented
+
+
 def extract_parent_classes(
     class_node: Node,
     module_qn: str,
@@ -39,6 +110,14 @@ def extract_parent_classes(
 ) -> list[str]:
     if class_node.type in cs.CPP_CLASS_TYPES:
         return extract_cpp_parent_classes(class_node, module_qn)
+
+    # (H) C# base_list (unique to C#): the base class, or an interface's base
+    # (H) interfaces, are INHERITS; the implemented interfaces are handled by
+    # (H) extract_implemented_interfaces. Return early so the Java/TS clause
+    # (H) walks below never touch a C# node (class_declaration is shared).
+    if find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST) is not None:
+        inherited, _ = split_csharp_bases(class_node, module_qn, resolve_to_qn)
+        return inherited
 
     parent_classes: list[str] = []
 
@@ -397,6 +476,13 @@ def extract_implemented_interfaces(
     module_qn: str,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
+    # (H) C# implemented interfaces come from the shared base_list (the base
+    # (H) class, if any, is stripped by split_csharp_bases). Return early so the
+    # (H) Java/TS/PHP clause walks never run on a C# node.
+    if find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST) is not None:
+        _, implemented = split_csharp_bases(class_node, module_qn, resolve_to_qn)
+        return implemented
+
     implemented_interfaces: list[str] = []
 
     interfaces_node = class_node.child_by_field_name(cs.FIELD_INTERFACES)
