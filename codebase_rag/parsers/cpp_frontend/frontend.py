@@ -188,6 +188,9 @@ class _Collector:
         if cursor.kind.name == fc.KIND_CALL_EXPR:
             self._process_call(cursor, enclosing)
             return None
+        return self._process_definition(cursor)
+
+    def _process_definition(self, cursor: Cursor) -> _Scope:
         label = _classify(cursor)
         if label is None or cursor.location.file is None:
             return None
