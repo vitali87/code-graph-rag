@@ -1011,9 +1011,13 @@ class ClassIngestMixin:
                 # (H) `recv.Ext()` call binds to the static method even though it
                 # (H) lives on an unrelated static class (not in recv's hierarchy).
                 if receiver_type := csharp_utils.extension_receiver_type(method_node):
-                    leaf = ingested_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                        cs.CHAR_PAREN_OPEN, 1
-                    )[0]
+                    # (H) Strip the parameter signature BEFORE taking the leaf: a
+                    # (H) qualified param type (`Poke(N2.Widget)`) contains dots, so
+                    # (H) an rsplit-then-strip would key on `Widget)` instead of the
+                    # (H) method name `Poke` and the extension would never match.
+                    leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(
+                        cs.SEPARATOR_DOT, 1
+                    )[-1]
                     self.csharp_extension_methods.setdefault(leaf, []).append(
                         (ingested_qn, receiver_type)
                     )

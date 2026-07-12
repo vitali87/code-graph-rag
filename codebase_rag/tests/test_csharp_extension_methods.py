@@ -119,6 +119,35 @@ public class App {
     assert not any(t.endswith("N.C.Foo") for t in targets), targets
 
 
+def test_extension_with_qualified_param_type_is_indexed(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The method qn signature contains a dotted (qualified) parameter type
+    # (H) (`System.Exception`); the index key must be the method name `Log`, not a
+    # (H) fragment of the signature. A decoy `Log` blocks the generic fallback so
+    # (H) only correct indexing can produce the edge.
+    (csharp_project / "Q.cs").write_text(
+        """
+namespace N;
+public class Widget { }
+public static class WidgetExt {
+    public static void Log(this Widget w, System.Exception e) { }
+}
+public class Decoy { public void Log(System.Exception e) { } }
+public class App {
+    public void Run(Widget w, System.Exception e) { w.Log(e); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(
+        t.endswith("N.WidgetExt.Log(Widget, System.Exception)") for t in targets
+    ), targets
+
+
 def test_cross_namespace_same_name_receiver_does_not_bind(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -147,6 +176,36 @@ namespace N3 {
     # (H) namespaces -- wrong. With `Widget` registered in two namespaces the match
     # (H) is ambiguous and must be refused. (Decoy.Poke blocks the generic fallback
     # (H) so only the extension path could produce the edge.)
+    targets = _call_targets(mock_ingestor)
+    assert not any("WidgetExt.Poke" in t for t in targets), targets
+
+
+def test_qualified_receiver_in_other_namespace_does_not_bind(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The receiver is a qualified `N1.Widget` whose own type is NOT declared
+    # (H) here (external), while the only registered `Widget` -- and the only
+    # (H) indexed extension -- is `N2.Widget`. Simple-name matching would bind the
+    # (H) N2 extension to the N1 receiver; the namespace check must reject it.
+    (csharp_project / "H.cs").write_text(
+        """
+namespace N2 {
+    public class Widget { }
+    public static class WidgetExt {
+        public static void Poke(this N2.Widget w) { }
+    }
+    public class Decoy { public void Poke() { } }
+}
+namespace App {
+    public class App4 {
+        public void Run(N1.Widget w) { w.Poke(); }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
     targets = _call_targets(mock_ingestor)
     assert not any("WidgetExt.Poke" in t for t in targets), targets
 

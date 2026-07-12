@@ -297,13 +297,26 @@ class CSharpTypeInferenceEngine:
         ]
         if len(registered) > 1:
             return None
+        # (H) When the receiver type is namespace-qualified (`N1.Widget`) but the
+        # (H) single registered same-name type is in a DIFFERENT namespace, the
+        # (H) indexed extension targets that other type -- refuse to bind. Guards
+        # (H) the case where the receiver's own type is external/unregistered so
+        # (H) the count check above cannot see the collision.
+        if (
+            len(registered) == 1
+            and cs.SEPARATOR_DOT in receiver_type_name
+            and not registered[0].endswith(receiver_type_name)
+        ):
+            return None
         matches = [
             qn
             for qn, recv_type in candidates
             # (H) The `this` receiver counts as the first parameter, so the
-            # (H) extension method's arity is the call's arg count + 1.
+            # (H) extension method's arity is the call's arg count + 1. `_arity`
+            # (H) reads the first `(`/last `)`, so pass the whole qn -- a leaf-split
+            # (H) on `.` would land inside a qualified param type (`System.Exception`).
             if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] == recv_simple
-            and _arity(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]) == arg_count + 1
+            and _arity(qn) == arg_count + 1
         ]
         # (H) Bind only on a unique match; an ambiguous name across static classes
         # (H) is left unresolved rather than guessed.
