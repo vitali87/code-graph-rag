@@ -25,6 +25,7 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
@@ -208,6 +209,7 @@ class CallProcessor:
         "_returned_callables",
         "_factory_calls",
         "_io_processor",
+        "_flow_processor",
     )
 
     def __init__(
@@ -254,10 +256,17 @@ class CallProcessor:
         # (H) fixpoint in finalize, so factory and call site may be in any file order.
         self._returned_callables: dict[str, set[str]] = {}
         self._factory_calls: list[_FactoryCall] = []
+        selection = capture if capture is not None else ALL_ENABLED
         self._io_processor = IOAccessProcessor(
             ingestor,
             import_processor,
-            selection=capture if capture is not None else ALL_ENABLED,
+            selection=selection,
+        )
+        self._flow_processor = FlowProcessor(
+            ingestor,
+            import_processor,
+            self._resolver,
+            selection=selection,
         )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
@@ -1582,6 +1591,9 @@ class CallProcessor:
 
         self._io_processor.process_io_for_caller(
             caller_node, caller_spec, module_qn, language
+        )
+        self._flow_processor.process_flow_for_caller(
+            caller_node, caller_spec, caller_qn, module_qn, language, class_context
         )
 
         caller_params: frozenset[str] = frozenset()
