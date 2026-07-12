@@ -74,11 +74,34 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
     return fields
 
 
-def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
-    # (H) (method name, parameter type names). The name is the `name` field, the
-    # (H) same leaf ingest_method registers, so the signatured qn stays consistent.
-    # (H) Operators/destructors have no `name` field -> (None, ...), and the
-    # (H) caller leaves them with their bare synthesized name.
+def synthesize_method_name(method_node: Node) -> str | None:
+    # (H) The registered leaf name for a C# member. Operators expose no `name`
+    # (H) field, so synthesize `operator_<symbol>` (binary/unary operators) or
+    # (H) `operator_<target-type>` (conversion operators). A destructor HAS a
+    # (H) `name` field equal to the type name, which would collide with the
+    # (H) constructor, so prefix `~`. Everything else uses the plain `name` leaf.
+    # (H) Kept identical to _csharp_get_name so the FQN scope walk and the node
+    # (H) qn agree.
+    if method_node.type == cs.TS_CSHARP_OPERATOR_DECLARATION:
+        op_node = method_node.child_by_field_name(cs.TS_CSHARP_FIELD_OPERATOR)
+        symbol = safe_decode_text(op_node) if op_node and op_node.text else None
+        return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + symbol if symbol else None
+    if method_node.type == cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION:
+        type_node = method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
+        target = safe_decode_text(type_node) if type_node and type_node.text else None
+        return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + target if target else None
     name_node = method_node.child_by_field_name(cs.FIELD_NAME)
     name = safe_decode_text(name_node) if name_node and name_node.text else None
-    return name, extract_parameter_type_names(method_node)
+    if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
+        return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + name
+    return name
+
+
+def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
+    # (H) (method name, parameter type names). The name matches the leaf
+    # (H) ingest_method registers (synthesized for operators/destructors), so the
+    # (H) signatured qn stays consistent. Overloaded operators (`operator +` on
+    # (H) two operand types) still get distinct qns via the parameter signature.
+    return synthesize_method_name(method_node), extract_parameter_type_names(
+        method_node
+    )

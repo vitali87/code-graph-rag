@@ -705,6 +705,15 @@ def ingest_method(
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return None
+    elif language == cs.SupportedLanguage.CSHARP:
+        # (H) Operators expose no `name` field (they would be dropped) and a
+        # (H) destructor's `name` field collides with the constructor; synthesize
+        # (H) the leaf so both register with the same name the FQN walk uses.
+        from .csharp import utils as csharp_utils
+
+        method_name = csharp_utils.synthesize_method_name(method_node)
+        if not method_name:
+            return None
     elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # (H) field on the function node; take the binding name from the enclosing

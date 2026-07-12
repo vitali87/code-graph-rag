@@ -98,6 +98,42 @@ public class Box<T> {
     assert _endswith_any(members, "N.Box.Size")
     # (H) Constructor is named after the type; destructor is distinct from it.
     assert _endswith_any(members, "N.Box.Box(T)")
+    # (H) Operators and destructors must register as members too. The operator
+    # (H) has no `name` field (synthesize `operator_<symbol>` + signature so
+    # (H) overloaded operators stay distinct); the destructor's identifier
+    # (H) collides with the ctor unless prefixed with `~`.
+    assert _endswith_any(members, "N.Box.operator_+(Box, Box)")
+    assert _endswith_any(members, "N.Box.~Box")
+
+
+def test_operator_overloads_and_conversions_are_distinct(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Ops.cs").write_text(
+        """
+namespace N;
+public struct Vec {
+    public int X;
+    public static Vec operator +(Vec a, Vec b) => a;
+    public static Vec operator +(Vec a, int b) => a;
+    public static explicit operator int(Vec v) => v.X;
+    public static implicit operator string(Vec v) => "";
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
+        mock_ingestor, NodeType.FUNCTION
+    )
+    # (H) Two `operator +` overloads differ only by parameter type, so the
+    # (H) signature must keep them as two nodes (not one @line-suffixed collision).
+    assert _endswith_any(members, "N.Vec.operator_+(Vec, Vec)")
+    assert _endswith_any(members, "N.Vec.operator_+(Vec, int)")
+    # (H) Conversion operators are named by their target type.
+    assert _endswith_any(members, "N.Vec.operator_int(Vec)")
+    assert _endswith_any(members, "N.Vec.operator_string(Vec)")
 
 
 def test_nested_types(csharp_project: Path, mock_ingestor: MagicMock) -> None:

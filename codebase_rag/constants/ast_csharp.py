@@ -34,6 +34,16 @@ TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
+# (H) Members whose registered leaf name is synthesized (no usable `name` field,
+# (H) or one that collides), routed through csharp.utils.synthesize_method_name.
+CSHARP_SYNTHESIZED_NAME_TYPES = frozenset(
+    {
+        TS_CSHARP_OPERATOR_DECLARATION,
+        TS_CSHARP_CONVERSION_OPERATOR_DECLARATION,
+        TS_CSHARP_DESTRUCTOR_DECLARATION,
+    }
+)
+
 # (H) Base spec: `class C : Base, IShape` / `interface I : IOther` /
 # (H) `enum E : byte`. A single base_list lumps the base class and interfaces
 # (H) together (unlike Java's separate superclass/super_interfaces clauses), so

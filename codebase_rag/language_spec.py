@@ -173,28 +173,14 @@ def _csharp_get_name(node: Node) -> str | None:
                 if name_node and name_node.text:
                     return name_node.text.decode(cs.ENCODING_UTF8)
         return None
-    # (H) Operators expose no `name` field; synthesize a stable qn segment from
-    # (H) the operator symbol (or conversion target type) so the node still gets
-    # (H) a qn instead of being dropped.
-    if node.type == cs.TS_CSHARP_OPERATOR_DECLARATION:
-        op_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_OPERATOR)
-        if op_node and op_node.text:
-            return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + op_node.text.decode(
-                cs.ENCODING_UTF8
-            )
-        return None
-    if node.type == cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION:
-        type_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
-        if type_node and type_node.text:
-            return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + type_node.text.decode(
-                cs.ENCODING_UTF8
-            )
-        return None
-    # (H) A ctor and dtor both take the type's name; prefix `~` on the dtor so
-    # (H) `Foo()` and `~Foo()` don't collapse onto one qn.
-    if node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
-        base = _generic_get_name(node)
-        return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + base if base else None
+    # (H) Operators expose no `name` field and a destructor's `name` collides
+    # (H) with the constructor; delegate to the shared synthesizer so the FQN
+    # (H) scope walk and the registered node qn agree. Local import avoids a
+    # (H) module-load cycle (csharp.utils -> parsers.utils).
+    if node.type in cs.CSHARP_SYNTHESIZED_NAME_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
+        return csharp_utils.synthesize_method_name(node)
     return _generic_get_name(node)
 
 
