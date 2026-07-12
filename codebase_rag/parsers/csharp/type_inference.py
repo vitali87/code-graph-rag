@@ -210,14 +210,19 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
+        # (H) Resolution order matters: an EXACT-ARITY instance method wins, then
+        # (H) an (always arity-exact) extension method, and only then the instance
+        # (H) name-only fallback. Trying the name-only fallback before extensions
+        # (H) would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
+        # (H) arity-correct `static Foo(this C, int)` extension.
         if receiver_class_qn is not None:
-            method_qn = self._find_method(receiver_class_qn, method_name, arg_count)
-            if method_qn is not None:
-                return cs.NodeLabel.METHOD.value, method_qn
-        # (H) Not found on the receiver's own type hierarchy: try an extension
-        # (H) method (`static M(this T x, ...)` on an unrelated static class) whose
-        # (H) `this` receiver type matches the call's receiver. This is the only
-        # (H) path that can bind `x.M()` to a method not in x's hierarchy.
+            if arity_hit := self._find_method_by_arity(
+                receiver_class_qn, method_name, arg_count, set()
+            ):
+                return cs.NodeLabel.METHOD.value, arity_hit
+        # (H) An extension method (`static M(this T x, ...)` on an unrelated static
+        # (H) class) whose `this` receiver type matches the call's receiver -- the
+        # (H) only path that binds `x.M()` to a method not in x's hierarchy.
         if self.csharp_extension_methods:
             type_name = self._receiver_type_name(
                 receiver, local_var_types or {}, caller_qn
@@ -226,6 +231,11 @@ class CSharpTypeInferenceEngine:
                 ext := self._find_extension_method(type_name, method_name, arg_count)
             ):
                 return cs.NodeLabel.METHOD.value, ext
+        if receiver_class_qn is not None:
+            if name_hit := self._find_method_by_name(
+                receiver_class_qn, method_name, set()
+            ):
+                return cs.NodeLabel.METHOD.value, name_hit
         return None
 
     def _receiver_type_name(
@@ -360,20 +370,12 @@ class CSharpTypeInferenceEngine:
                 return same_module[0]
         return None
 
-    def _find_method(
-        self, class_qn: str, method_name: str, arg_count: int
-    ) -> str | None:
-        # (H) An exact-arity match ANYWHERE up the hierarchy wins before any
-        # (H) same-name fallback, so an inherited correct-arity overload
-        # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
-        # (H) on the derived class (`Derived.Foo(int)`). Only when no arity matches
-        # (H) anywhere does the nearest lone same-name method (params-array /
-        # (H) optional args) stand in.
-        if resolved := self._find_method_by_arity(
-            class_qn, method_name, arg_count, set()
-        ):
-            return resolved
-        return self._find_method_by_name(class_qn, method_name, set())
+    # (H) An exact-arity match ANYWHERE up the hierarchy (_find_method_by_arity)
+    # (H) wins before any same-name fallback, so an inherited correct-arity
+    # (H) overload (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name
+    # (H) method (`Derived.Foo(int)`). resolve_csharp_method_call sequences the
+    # (H) two around the extension-method lookup so an arity-correct extension is
+    # (H) preferred over a lone-same-name instance fallback.
 
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"

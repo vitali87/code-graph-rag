@@ -91,6 +91,34 @@ public class App {
     ), targets
 
 
+def test_extension_wins_over_lone_same_name_instance_overload(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "E.cs").write_text(
+        """
+namespace N;
+public class C { public void Foo() { } }
+public static class CExt {
+    public static void Foo(this C c, int x) { }
+}
+public class App {
+    public void Run(C c) { c.Foo(5); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    # (H) `c.Foo(5)` (one argument) is arity-compatible only with the extension
+    # (H) `Foo(this C, int)`, not the zero-arg instance `C.Foo()`. The extension
+    # (H) must win: instance name-only fallback runs AFTER the extension lookup,
+    # (H) so a lone same-name instance method can't shadow an arity-correct
+    # (H) extension.
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.CExt.Foo(C, int)") for t in targets), targets
+    assert not any(t.endswith("N.C.Foo") for t in targets), targets
+
+
 def test_type_name_receiver_does_not_bind_extension(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
