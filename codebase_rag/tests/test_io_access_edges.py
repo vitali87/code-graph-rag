@@ -357,6 +357,29 @@ def test_reexported_stdlib_module_handle_recognized(tmp_path: Path) -> None:
     assert _has(rels, "pkg.db.run", WRITES_TO, "resource::DATABASE::app.db")
 
 
+def test_local_rebind_shadows_inherited_handle_before_assignment(
+    tmp_path: Path,
+) -> None:
+    # (H) Any assignment to `conn` in the body makes it local for the WHOLE
+    # (H) function (Python scoping), so a use BEFORE that assignment is an
+    # (H) UnboundLocalError at runtime and must NOT resolve to the inherited
+    # (H) module-level handle. The later local rebind governs uses after it.
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "conn = sqlite3.connect('mod.db')\n\n"
+            "def run(sql):\n"
+            "    conn.execute(sql)\n"
+            "    conn = sqlite3.connect('local.db')\n"
+            "    conn.execute(sql)\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.run", READS_FROM, "resource::DATABASE::mod.db")
+    assert not _has(rels, "m.run", WRITES_TO, "resource::DATABASE::mod.db")
+    assert _has(rels, "m.run", READS_FROM, "resource::DATABASE::local.db")
+
+
 def test_sql_commit_is_write_only(tmp_path: Path) -> None:
     # (H) COMMIT/ROLLBACK/SAVEPOINT/REPLACE etc. are writes; without them the
     # (H) first-keyword heuristic falls back to READ_WRITE and over-reports a read.

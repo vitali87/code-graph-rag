@@ -88,7 +88,16 @@ class IOAccessProcessor:
         # (H) or a module/outer-function local -- so a handle method here resolves
         # (H) against the scope that constructed it, not only same-body bindings. A
         # (H) local rebind in this body shadows the inherited one (DFS overwrites).
+        # (H) But Python makes a name local for the WHOLE function if it is assigned
+        # (H) anywhere in the body, so an inherited plain-name handle is invisible
+        # (H) even before that assignment (a use before it is UnboundLocalError).
+        # (H) Drop inherited plain names rebound locally; the DFS re-adds them at the
+        # (H) assignment, so uses after it still resolve. Attribute keys (self.x) are
+        # (H) never locals, so they are unaffected.
         handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
+        for name in self._locally_assigned_names(caller_node):
+            if cs.SEPARATOR_DOT not in name:
+                handles.pop(name, None)
         stack = list(reversed(scope_seed_nodes(caller_node)))
         while stack:
             node = stack.pop()
@@ -167,6 +176,35 @@ class IOAccessProcessor:
                 self._collect_scope_var_handles(node, import_map, ctor_by_name, handles)
             node = node.parent
         return handles
+
+    def _locally_assigned_names(self, caller_node: Node) -> set[str]:
+        # (H) Plain identifiers assigned anywhere in this scope's OWN body (nested
+        # (H) defs/classes pruned): assignment / with-as / for targets. Any such name
+        # (H) is local for the whole function, so an inherited handle of that name is
+        # (H) shadowed. Dotted attribute targets (self.x) are not locals -- skipped.
+        names: set[str] = set()
+        stack = list(scope_seed_nodes(caller_node))
+        while stack:
+            node = stack.pop()
+            if node.type in PY_SCOPE_BOUNDARIES:
+                continue
+            target: Node | None = None
+            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+                target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            elif node.type == cs.TS_PY_AS_PATTERN:
+                alias = next(
+                    (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+                    None,
+                )
+                target = alias.children[0] if alias and alias.children else None
+            if (
+                target is not None
+                and target.type == cs.TS_PY_IDENTIFIER
+                and target.text is not None
+            ):
+                names.add(target.text.decode(cs.ENCODING_UTF8))
+            stack.extend(node.children)
+        return names
 
     def _collect_scope_var_handles(
         self,
