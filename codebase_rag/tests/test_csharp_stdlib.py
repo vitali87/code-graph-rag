@@ -23,6 +23,12 @@ def test_system_types_fold_into_namespace() -> None:
     assert _path("System.Collections.Generic.List") == "System.Collections.Generic"
     assert _path("System.Linq.Enumerable") == "System.Linq"
     assert _path("System.Threading.Tasks.Task") == "System.Threading.Tasks"
+    assert (
+        _path("System.Text.RegularExpressions.Regex")
+        == "System.Text.RegularExpressions"
+    )
+    assert _path("System.Math") == "System"
+    assert _path("System.Text.StringBuilder") == "System.Text"
 
 
 def test_non_type_member_keeps_full_path() -> None:
