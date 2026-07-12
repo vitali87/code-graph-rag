@@ -30,6 +30,26 @@ TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
+# (H) Base spec: `class C : Base, IShape` / `interface I : IOther` /
+# (H) `enum E : byte`. A single base_list lumps the base class and interfaces
+# (H) together (unlike Java's separate superclass/super_interfaces clauses), so
+# (H) the split is heuristic. base_list is unique to C# among the grammars, so
+# (H) its presence identifies a C# type node without a language argument.
+TS_CSHARP_BASE_LIST = "base_list"
+# (H) A base type may be a bare `identifier`, a `generic_name` (`List<int>` ->
+# (H) strip type args to the identifier), a `qualified_name` (`System.Exception`),
+# (H) a record positional base `primary_constructor_base_type` (`Animal(Name)`),
+# (H) or a `predefined_type` (an enum's underlying integral type -> not a base).
+TS_CSHARP_GENERIC_NAME = "generic_name"
+TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
+TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
+
+# (H) A `modifier` child wraps a single keyword (`public`, `override`, `new`,
+# (H) `virtual`). Override detection reads it to tell a real override
+# (H) (`override`) from an explicit `new` hide (which must not become OVERRIDES).
+TS_CSHARP_MODIFIER = "modifier"
+TS_CSHARP_MODIFIER_OVERRIDE = "override"
+
 # (H) Call forms.
 TS_CSHARP_INVOCATION_EXPRESSION = "invocation_expression"
 TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"

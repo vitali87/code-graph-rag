@@ -43,6 +43,7 @@ from . import identity as id_
 from . import method_override as mo
 from . import node_type as nt
 from . import relationships as rel
+from .utils import csharp_has_override_modifier
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -145,6 +146,8 @@ class ClassIngestMixin:
     class_inheritance: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
+    csharp_methods: set[str]
+    csharp_override_methods: set[str]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -978,6 +981,13 @@ class ClassIngestMixin:
                     cs.NodeLabel.METHOD.value,
                     ingested_qn,
                 )
+            # (H) Track C# methods (and the `override`-modified subset) so the
+            # (H) override walk gates class-parent matches: an implicit hide or a
+            # (H) `new` shadow is not an override, unlike an interface impl.
+            if language == cs.SupportedLanguage.CSHARP and ingested_qn is not None:
+                self.csharp_methods.add(ingested_qn)
+                if csharp_has_override_modifier(method_node):
+                    self.csharp_override_methods.add(ingested_qn)
             # (H) A Java method declared inside an anonymous class body
             # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
             # (H) class but really overrides the anon class's base type. Record it so a
@@ -1089,6 +1099,8 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
             self.interface_implementers,
+            self.csharp_methods,
+            self.csharp_override_methods,
         )
         self._resolve_java_anon_overrides()
 
