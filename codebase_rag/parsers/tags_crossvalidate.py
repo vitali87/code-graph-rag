@@ -13,7 +13,9 @@ _CALL_CAPTURE = "reference.call"
 _NAME_CAPTURE = "name"
 
 
-def _tag_sites(root: ASTNode, tags_query: Query, tag_prefix: str) -> set[tuple[str, int]]:
+def _tag_sites(
+    root: ASTNode, tags_query: Query, tag_prefix: str
+) -> set[tuple[str, int]]:
     # (H) Every @name under a match carrying a capture that starts with tag_prefix,
     # (H) paired with its 1-indexed start line. Nested calls yield separate matches.
     cursor = get_query_cursor(tags_query)
