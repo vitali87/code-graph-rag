@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -55,6 +56,7 @@ class CSharpTypeInferenceEngine:
         "module_qn_to_file_path",
         "class_inheritance",
         "simple_name_lookup",
+        "class_field_types",
     )
 
     def __init__(
@@ -68,6 +70,7 @@ class CSharpTypeInferenceEngine:
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
+        class_field_types: dict[str, dict[str, str]],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -78,14 +81,18 @@ class CSharpTypeInferenceEngine:
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
+        self.class_field_types = class_field_types
 
     # (H) --- variable/field/parameter type map -------------------------------
 
     def build_variable_type_map(self, scope_node: Node) -> dict[str, str]:
+        # (H) Parameters and locals only. Field types are looked up at resolve
+        # (H) time against class_field_types (keyed by class qn), which also
+        # (H) reaches fields inherited from a base class in another file -- the
+        # (H) enclosing class qn is not known here, only at the call site.
         types: dict[str, str] = {}
         self._collect_parameters(scope_node, types)
         self._collect_locals(scope_node, types)
-        self._collect_fields(scope_node, types)
         return types
 
     def _collect_parameters(self, scope_node: Node, types: dict[str, str]) -> None:
@@ -158,46 +165,23 @@ class CSharpTypeInferenceEngine:
                 return _normalize_type_name(type_text)
         return None
 
-    def _collect_fields(self, scope_node: Node, types: dict[str, str]) -> None:
-        class_node = self._containing_class(scope_node)
-        if class_node is None:
-            return
-        body = class_node.child_by_field_name(cs.FIELD_BODY)
-        if body is None:
-            return
-        for member in body.children:
-            if member.type == cs.TS_CSHARP_FIELD_DECLARATION:
-                self._collect_field_declaration(member, types)
-            elif member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
-                name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
-                type_node = member.child_by_field_name(cs.FIELD_TYPE)
-                if name and type_node and type_node.text:
-                    self._record_field(types, name, type_node)
-
-    def _collect_field_declaration(self, member: Node, types: dict[str, str]) -> None:
-        var_decl = next(
-            (c for c in member.children if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION),
-            None,
-        )
-        if var_decl is None:
-            return
-        type_node = var_decl.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None or not type_node.text:
-            return
-        for declarator in var_decl.children:
-            if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+    def _field_type(self, class_qn: str, field_name: str) -> str | None:
+        # (H) The declared type of `field_name` on class_qn or any base class,
+        # (H) read from the per-class maps recorded at ingestion (so it reaches a
+        # (H) field inherited from a base in another file). BFS with a visited
+        # (H) guard so a malformed inheritance cycle cannot loop.
+        seen: set[str] = set()
+        queue = deque([class_qn])
+        while queue:
+            current = queue.popleft()
+            if current in seen:
                 continue
-            name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
-            if name:
-                self._record_field(types, name, type_node)
-
-    def _record_field(self, types: dict[str, str], name: str, type_node: Node) -> None:
-        # (H) Register both the bare field name and `this.field` so either access
-        # (H) form resolves; a local of the same name (already set) wins, matching
-        # (H) C# shadowing, so never overwrite an existing entry.
-        type_name = _normalize_type_name(safe_decode_text(type_node) or "")
-        types.setdefault(name, type_name)
-        types.setdefault(f"{cs.TS_CSHARP_THIS}{cs.SEPARATOR_DOT}{name}", type_name)
+            seen.add(current)
+            fields = self.class_field_types.get(current)
+            if fields and field_name in fields:
+                return fields[field_name]
+            queue.extend(self.class_inheritance.get(current, []))
+        return None
 
     # (H) --- typed method-call resolution ------------------------------------
 
@@ -243,23 +227,29 @@ class CSharpTypeInferenceEngine:
     ) -> str | None:
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
-        # (H) A member-access receiver (`this._w`, `a.b`) is looked up by its full
-        # (H) written text, which is exactly the key _record_field stores for a
-        # (H) `this.field` access; without this an explicit `this.field.M()` call
-        # (H) loses its typed edge and falls back to ambiguous bare-name matching.
-        recv_text = safe_decode_text(receiver)
-        if recv_text and (mapped := local_var_types.get(recv_text)) is not None:
-            return self._type_name_to_qn(mapped, module_qn)
+        # (H) An explicit `this.field` receiver: the field's (possibly inherited)
+        # (H) type on the enclosing class.
+        if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+            field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
+            if expr is not None and expr.type == cs.TS_CSHARP_THIS and field:
+                if class_qn := self._containing_class_qn(caller_qn):
+                    if ftype := self._field_type(class_qn, field):
+                        return self._type_name_to_qn(ftype, module_qn)
+            return None
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             name = safe_decode_text(receiver)
             if not name:
                 return None
-            # (H) A local/parameter/field of a known type resolves via its type;
-            # (H) otherwise the receiver may itself be a type name (a static call
-            # (H) `Foo.Bar()`), so try to bind it as a type directly.
+            # (H) A local/parameter of a known type resolves via its type; else a
+            # (H) bare (possibly inherited) field of the enclosing class; else the
+            # (H) receiver may itself be a type name (a static call `Foo.Bar()`).
             type_name = local_var_types.get(name)
             if type_name is not None:
                 return self._type_name_to_qn(type_name, module_qn)
+            if class_qn := self._containing_class_qn(caller_qn):
+                if ftype := self._field_type(class_qn, name):
+                    return self._type_name_to_qn(ftype, module_qn)
             return self._type_name_to_qn(name, module_qn)
         return None
 
@@ -359,14 +349,6 @@ class CSharpTypeInferenceEngine:
         return None
 
     # (H) --- ast helpers ------------------------------------------------------
-
-    def _containing_class(self, node: Node) -> Node | None:
-        current = node.parent
-        while current is not None:
-            if current.type in cs.SPEC_CSHARP_CLASS_TYPES:
-                return current
-            current = current.parent
-        return None
 
     def _descendants_of_type(self, node: Node, node_type: str) -> list[Node]:
         found: list[Node] = []

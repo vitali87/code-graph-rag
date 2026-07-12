@@ -147,6 +147,7 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
+                class_field_types=self.class_field_types,
             )
         return self._csharp_type_inference
 

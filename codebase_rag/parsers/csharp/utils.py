@@ -36,6 +36,44 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     return types
 
 
+def build_field_type_map(class_node: Node) -> dict[str, str]:
+    # (H) {field-or-property name: type name} for members declared directly on
+    # (H) this class body, recorded at ingestion so a receiver typed to a field
+    # (H) (`_w.M()`) resolves -- including a field inherited from a base class in
+    # (H) another file, reached by walking class_inheritance over these maps.
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return {}
+    fields: dict[str, str] = {}
+    for member in body.children:
+        if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+            name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
+            type_text = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
+            if name and type_text:
+                fields[name] = _normalize_type_name(type_text)
+        elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
+            var_decl = next(
+                (
+                    c
+                    for c in member.children
+                    if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION
+                ),
+                None,
+            )
+            if var_decl is None:
+                continue
+            type_text = safe_decode_text(var_decl.child_by_field_name(cs.FIELD_TYPE))
+            if not type_text:
+                continue
+            for declarator in var_decl.children:
+                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+                    continue
+                name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+                if name:
+                    fields[name] = _normalize_type_name(type_text)
+    return fields
+
+
 def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
     # (H) (method name, parameter type names). The name is the `name` field, the
     # (H) same leaf ingest_method registers, so the signatured qn stays consistent.

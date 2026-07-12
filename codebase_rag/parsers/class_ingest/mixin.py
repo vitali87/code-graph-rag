@@ -776,6 +776,13 @@ class ClassIngestMixin:
                 self.class_field_types[class_qn] = field_types
             if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
                 self.class_field_guard_inner[class_qn] = guard_inner
+        elif language == cs.SupportedLanguage.CSHARP:
+            # (H) Record C# field/property types so a field-typed receiver
+            # (H) (`_w.M()`, `this._w.M()`) resolves, including a field inherited
+            # (H) from a base class in another file (the resolver walks
+            # (H) class_inheritance over these per-class maps).
+            if field_types := csharp_utils.build_field_type_map(member_node):
+                self.class_field_types[class_qn] = field_types
         self._ingest_class_methods(
             member_node,
             class_qn,

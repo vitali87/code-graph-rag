@@ -225,6 +225,34 @@ public class App { public void Run() { var d = new Derived(); d.Foo(1, 2); } }
     assert not any(t.endswith("N.Derived.Foo(int)") for t in targets), targets
 
 
+def test_inherited_field_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "base.cs").write_text(
+        """
+namespace N;
+public class Widget { public void Area() {} }
+public class Other { public void Area() {} }
+public class Base { protected Widget _w; }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "derived.cs").write_text(
+        """
+namespace N;
+public class Derived : Base { public void Run() { _w.Area(); } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) `_w` is inherited from Base (a different file); the receiver must still
+    # (H) type to Widget, not the decoy Other.Area.
+    assert any(t.endswith("N.Widget.Area") for t in targets), targets
+    assert not any(t.endswith("N.Other.Area") for t in targets), targets
+
+
 def test_static_call_through_type_name_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
