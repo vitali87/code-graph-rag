@@ -786,11 +786,22 @@ class ClassIngestMixin:
             if field_types := csharp_utils.build_field_type_map(member_node):
                 self.class_field_types[class_qn] = field_types
             # (H) A `partial` type is split across files into N path-distinct
-            # (H) nodes; group the parts (by namespace-qualified name) into one
-            # (H) shared list so a typed receiver resolves members and bases from
-            # (H) any part, not just the one it happened to bind to.
+            # (H) nodes; group the parts into one shared list so a typed receiver
+            # (H) resolves members and bases from any part. The key is the
+            # (H) declaring DIRECTORY (module_qn minus the file stem) plus the
+            # (H) namespace-qualified name, NOT the bare namespace name: two
+            # (H) independent projects that both declare `N.Widget` live in
+            # (H) different directories and must not be merged across assembly
+            # (H) boundaries. Parts in different directories of one project fall
+            # (H) back to generic resolution (safe under-merge) rather than risk a
+            # (H) cross-project wrong edge.
             if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-                key = class_qn[len(module_qn) + 1 :]
+                directory = (
+                    module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                    if cs.SEPARATOR_DOT in module_qn
+                    else module_qn
+                )
+                key = f"{directory}{cs.SEPARATOR_DOT}{class_qn[len(module_qn) + 1 :]}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)
                 self.csharp_partial_groups[class_qn] = group

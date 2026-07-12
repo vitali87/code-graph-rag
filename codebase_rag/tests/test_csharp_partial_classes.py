@@ -111,3 +111,34 @@ public partial class Widget { private Helper helper; }
     # (H) fallback ambiguous, so only the field-typed receiver can bind Helper.Run.
     assert any(t.endswith(".Helper.Run") for t in targets), targets
     assert not any(t.endswith(".Decoy.Run") for t in targets), targets
+
+
+def test_same_name_partial_in_different_projects_not_merged(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Two independent projects (directories) both declare `partial class
+    # (H) Widget` in namespace N. They are DIFFERENT types; grouping them would
+    # (H) resolve a call in one project to the other's member across the assembly
+    # (H) boundary. The group key is directory-scoped so they stay separate.
+    (csharp_project / "proj1").mkdir()
+    (csharp_project / "proj2").mkdir()
+    (csharp_project / "proj1" / "A.cs").write_text(
+        """
+namespace N;
+public partial class Widget { public void Alpha() { } }
+public class Decoy { public void Beta() { } }
+public class App { public void Run() { var w = new Widget(); w.Beta(); } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "proj2" / "B.cs").write_text(
+        "namespace N;\npublic partial class Widget { public void Beta() { } }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) proj1's Widget has no Beta, so any `Widget.Beta` edge would be proj2's,
+    # (H) reached across the project boundary. (Decoy.Beta blocks the generic
+    # (H) fallback, so only the partial-group path could produce it.)
+    assert not any(t.endswith(".Widget.Beta") for t in targets), targets
