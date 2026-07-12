@@ -89,3 +89,32 @@ public class App {
     assert any(
         t.endswith("N.RequestExt.AddHeader(Request, string)") for t in targets
     ), targets
+
+
+def test_type_name_receiver_does_not_bind_extension(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "D.cs").write_text(
+        """
+namespace N;
+public class Widget { }
+public static class WidgetExt {
+    public static void Poke(this Widget w) { }
+}
+public class Decoy { public void Poke() { } }
+public class App {
+    public void Run() { Widget.Poke(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    # (H) `Widget.Poke()` is a static call on the TYPE, which C# does not permit
+    # (H) for an extension method (it binds on an instance only). The extension
+    # (H) resolver must not treat the type-name receiver as an instance and bind
+    # (H) it. The Decoy.Poke keeps the generic name-only fallback from resolving
+    # (H) it either, so a WidgetExt.Poke edge could only come from the extension
+    # (H) path this test guards.
+    targets = _call_targets(mock_ingestor)
+    assert not any(t.endswith("N.WidgetExt.Poke(Widget)") for t in targets), targets

@@ -258,7 +258,12 @@ class CSharpTypeInferenceEngine:
             if class_qn := self._containing_class_qn(caller_qn):
                 if ftype := self._field_type(class_qn, name):
                     return ftype
-            return name
+            # (H) An unknown bare identifier is a TYPE name (a static call
+            # (H) `Widget.M()`), not an instance -- extension methods bind on
+            # (H) instances only, so do NOT treat it as an extension receiver
+            # (H) (else `Widget.Poke()` would wrongly bind `static Poke(this
+            # (H) Widget)`, a call C# does not allow).
+            return None
         return None
 
     def _find_extension_method(
