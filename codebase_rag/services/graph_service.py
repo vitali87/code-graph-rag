@@ -28,6 +28,7 @@ from ..constants import (
     KEY_PROJECT_NAME,
     KEY_PROPS,
     KEY_TO_VAL,
+    MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
@@ -454,15 +455,25 @@ class MemgraphIngestor:
         conn: mgclient.Connection | None = None,
     ) -> tuple[int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
-        build_rel_query = (
-            build_merge_relationship_query
-            if self._use_merge
-            else build_create_relationship_query
-        )
         has_props = any(p[KEY_PROPS] for p in params_list)
-        query = build_rel_query(
-            from_label, from_key, rel_type, to_label, to_key, has_props
-        )
+        if self._use_merge:
+            candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+            merge_key_props = tuple(
+                p for p in candidate if all(p in row[KEY_PROPS] for row in params_list)
+            )
+            query = build_merge_relationship_query(
+                from_label,
+                from_key,
+                rel_type,
+                to_label,
+                to_key,
+                has_props,
+                merge_key_props=merge_key_props,
+            )
+        else:
+            query = build_create_relationship_query(
+                from_label, from_key, rel_type, to_label, to_key, has_props
+            )
 
         target_conn = conn or self.conn
         if not target_conn:

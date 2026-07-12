@@ -90,6 +90,26 @@ class TestBuildMergeRelationshipQueryUnit:
         )
         assert result == expected
 
+    def test_flows_to_with_merge_key_props(self) -> None:
+        result = build_merge_relationship_query(
+            "Function",
+            "qualified_name",
+            "FLOWS_TO",
+            "Function",
+            "qualified_name",
+            has_props=True,
+            merge_key_props=("via", "kind"),
+        )
+
+        expected = (
+            "MATCH (a:Function {qualified_name: row.from_val}), "
+            "(b:Function {qualified_name: row.to_val})\n"
+            "MERGE (a)-[r:FLOWS_TO {via: row.props.via, kind: row.props.kind}]->(b)\n"
+            "SET r += row.props\n"
+            "RETURN count(r) as created"
+        )
+        assert result == expected
+
 
 class TestBuildNodesByIdsQueryUnit:
     def test_single_node_id(self) -> None:
@@ -725,3 +745,34 @@ class TestBuildNodesByIdsQueryIntegration:
         results = memgraph_ingestor._execute_query(query, params)
 
         assert len(results) == 0
+
+
+@pytest.mark.integration
+class TestFlowsToParallelProvenanceIntegration:
+    """#722: multiple tainted args to the same callee must keep one FLOWS_TO
+    edge per `via`, not collapse into a single edge under MERGE."""
+
+    def test_parallel_via_edges_survive_merge(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        memgraph_ingestor._execute_query(
+            "CREATE (a:Function {qualified_name: 'mod.caller', name: 'caller'}), "
+            "(b:Function {qualified_name: 'mod.callee', name: 'callee'})"
+        )
+
+        for via in ("kw:username", "kw:password"):
+            memgraph_ingestor.ensure_relationship_batch(
+                ("Function", "qualified_name", "mod.caller"),
+                "FLOWS_TO",
+                ("Function", "qualified_name", "mod.callee"),
+                properties={"via": via, "kind": "arg"},
+            )
+        memgraph_ingestor.flush_all()
+
+        rows = memgraph_ingestor._execute_query(
+            "MATCH (:Function {qualified_name: 'mod.caller'})"
+            "-[r:FLOWS_TO]->(:Function {qualified_name: 'mod.callee'}) "
+            "RETURN r.via as via ORDER BY via"
+        )
+
+        assert [r["via"] for r in rows] == ["kw:password", "kw:username"]

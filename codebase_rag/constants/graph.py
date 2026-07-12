@@ -395,6 +395,15 @@ KEY_TARGET_QN = "target_qn"
 
 REL_TYPE_CALLS = "CALLS"
 
+# (H) Rel types where multiple semantically-distinct edges may exist between the
+# (H) same node pair; these props join the MERGE key so parallel edges are not
+# (H) collapsed at write time (issue #722). Props absent from a batch's rows are
+# (H) dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
+# (H) still dedups on endpoints.
+MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
+    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+}
+
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
