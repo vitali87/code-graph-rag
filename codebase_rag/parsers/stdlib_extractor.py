@@ -595,25 +595,20 @@ func main() {
 
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         result = full_qualified_name
-        if len(parts) >= 2 and full_qualified_name not in cs.CSHARP_STDLIB_NAMESPACES:
-            entity_name = parts[-1]
-            # (H) A C# type is PascalCase; interfaces start `I<Upper>`. Fold the
-            # (H) trailing type into its namespace path so the external node is the
-            # (H) namespace (`System.Collections.Generic`), matching the Java model.
-            # (H) C# namespaces are PascalCase too, so the case heuristic is only
-            # (H) applied AFTER excluding a name that IS a known namespace above
-            # (H) (exact disambiguation would need a symbol table / Roslyn).
-            is_type = (
-                entity_name[:1].isupper() or entity_name in cs.CSHARP_STDLIB_CLASSES
-            )
-            if full_qualified_name.startswith(cs.CSHARP_STDLIB_PREFIXES):
-                result = (
-                    cs.SEPARATOR_DOT.join(parts[:-1])
-                    if is_type
-                    else full_qualified_name
-                )
-            elif is_type:
-                result = cs.SEPARATOR_DOT.join(parts[:-1])
+        # (H) Fold ONLY a KNOWN stdlib type into its namespace path
+        # (H) (`System.Collections.Generic.List` -> `System.Collections.Generic`).
+        # (H) C# namespaces are PascalCase like types, so a case heuristic cannot
+        # (H) tell them apart and would misfold a namespace leaf
+        # (H) (`Microsoft.Extensions.Logging`, `System.Text.Json`); folding only a
+        # (H) recognized type never misclassifies a namespace. Gated to a stdlib
+        # (H) prefix so a first-party type sharing a BCL name is untouched. Exact
+        # (H) type-vs-namespace disambiguation needs a symbol table (Roslyn).
+        if (
+            len(parts) >= 2
+            and parts[-1] in cs.CSHARP_STDLIB_CLASSES
+            and full_qualified_name.startswith(cs.CSHARP_STDLIB_PREFIXES)
+        ):
+            result = cs.SEPARATOR_DOT.join(parts[:-1])
 
         _cache_stdlib_result(cs.SupportedLanguage.CSHARP, full_qualified_name, result)
         return result

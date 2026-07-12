@@ -30,10 +30,13 @@ def test_non_type_member_keeps_full_path() -> None:
     assert _path("System.Console.writeLine") == "System.Console.writeLine"
 
 
-def test_known_namespace_is_not_folded_as_a_type() -> None:
+def test_namespace_is_not_folded_as_a_type() -> None:
     # (H) C# namespaces are PascalCase like types, so a bare namespace reference
     # (H) must not be folded into its parent (a `using System.Text.Json;` names a
-    # (H) namespace, not a `Json` type in System.Text).
+    # (H) namespace, not a `Json` type). Only recognized BCL types fold, so an
+    # (H) unknown PascalCase leaf -- including under Microsoft.* -- stays whole.
     assert _path("System.Text.Json") == "System.Text.Json"
     assert _path("System.Collections.Generic") == "System.Collections.Generic"
     assert _path("System.Threading.Tasks") == "System.Threading.Tasks"
+    assert _path("Microsoft.Extensions.Logging") == "Microsoft.Extensions.Logging"
+    assert _path("Microsoft.AspNetCore.Mvc") == "Microsoft.AspNetCore.Mvc"
