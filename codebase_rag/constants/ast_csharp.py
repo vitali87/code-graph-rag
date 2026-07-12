@@ -10,6 +10,10 @@ TS_CSHARP_COMPILATION_UNIT = "compilation_unit"
 # (H) `namespace N;` does not (handled via the compilation_unit shim).
 TS_CSHARP_NAMESPACE_DECLARATION = "namespace_declaration"
 TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION = "file_scoped_namespace_declaration"
+# (H) A type/member body; a block namespace also nests its top-level types under
+# (H) one. Used to tell a top-level type (default `internal`) from a nested type
+# (H) or member (default `private`) for export detection.
+TS_CSHARP_DECLARATION_LIST = "declaration_list"
 
 # (H) Type declarations -> Class nodes.
 TS_CSHARP_CLASS_DECLARATION = "class_declaration"

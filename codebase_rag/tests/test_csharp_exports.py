@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_nodes, run_updater
 from codebase_rag.types_defs import NodeType
 
 SKIP = "c_sharp"
@@ -56,3 +56,41 @@ public class C {
     assert flag("N.C.Priv") is False
     # (H) No visibility modifier on a class member defaults to private.
     assert flag("N.C.Implicit") is False
+
+
+def _class_exported(mock_ingestor: MagicMock) -> dict[str, bool]:
+    result: dict[str, bool] = {}
+    for call in get_nodes(mock_ingestor, NodeType.CLASS):
+        props = call[0][1]
+        result[props["qualified_name"]] = props.get("is_exported", False)
+    return result
+
+
+def test_top_level_type_defaults_internal_nested_defaults_private(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "T.cs").write_text(
+        """
+namespace N;
+class TopLevel { class Nested {} }
+public class Exposed {}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    exported = _class_exported(mock_ingestor)
+
+    def flag(suffix: str) -> bool:
+        return next(v for qn, v in exported.items() if qn.endswith(suffix))
+
+    # (H) A top-level type with no modifier is internal (API surface); a nested
+    # (H) type with no modifier is private; an explicit `public` is exported.
+    assert flag("N.TopLevel") is True
+    assert flag("N.TopLevel.Nested") is False
+    assert flag("N.Exposed") is True
+    # (H) Sanity: the nested type actually registered.
+    assert any(
+        qn.endswith("N.TopLevel.Nested")
+        for qn in get_node_names(mock_ingestor, NodeType.CLASS)
+    )
