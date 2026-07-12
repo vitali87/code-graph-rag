@@ -225,7 +225,7 @@ class CSharpTypeInferenceEngine:
         # (H) only path that binds `x.M()` to a method not in x's hierarchy.
         if self.csharp_extension_methods:
             type_name = self._receiver_type_name(
-                receiver, local_var_types or {}, caller_qn
+                receiver, local_var_types or {}, module_qn, caller_qn
             )
             if type_name and (
                 ext := self._find_extension_method(type_name, method_name, arg_count)
@@ -242,6 +242,7 @@ class CSharpTypeInferenceEngine:
         self,
         receiver: Node,
         local_var_types: dict[str, str],
+        module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
         # (H) The receiver's declared type NAME (not its class qn), needed for the
@@ -251,7 +252,16 @@ class CSharpTypeInferenceEngine:
         # (H) branches but stops at the name.
         if receiver.type == cs.TS_CSHARP_THIS:
             qn = self._containing_class_qn(caller_qn)
-            return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if qn else None
+            if qn is None:
+                return None
+            # (H) `this` names the exact containing class, so keep its
+            # (H) namespace-qualified form (`N1.Widget`, module prefix stripped)
+            # (H) rather than the bare simple name: that lets the matcher bind an
+            # (H) exact `this N1.Widget` extension even when another `N2.Widget`
+            # (H) exists, instead of dropping it as ambiguous/mixed-qualified.
+            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+                return qn[len(module_qn) + 1 :]
+            return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
             field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))

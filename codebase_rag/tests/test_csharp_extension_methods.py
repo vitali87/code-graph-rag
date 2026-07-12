@@ -210,6 +210,36 @@ namespace App {
     assert not any("WidgetExt.Poke" in t for t in targets), targets
 
 
+def test_this_receiver_binds_exact_extension_despite_same_name_type(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A `this.Poke()` call inside N1.Widget names the exact containing class,
+    # (H) so it must bind the `this N1.Widget` extension even though N2.Widget is
+    # (H) also registered -- the qualification of `this` must be preserved, not
+    # (H) reduced to a bare `Widget`. (Decoy blocks the generic fallback.)
+    (csharp_project / "K.cs").write_text(
+        """
+namespace N2 {
+    public class Widget { }
+    public class Decoy { public void Poke() { } }
+}
+namespace N1 {
+    public static class WidgetExt {
+        public static void Poke(this N1.Widget w) { }
+    }
+    public class Widget { public void Use() { this.Poke(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(
+        t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets
+    ), targets
+
+
 def test_qualified_receiver_binds_exact_extension_despite_same_name_type(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
