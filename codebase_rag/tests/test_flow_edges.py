@@ -290,10 +290,14 @@ def test_multiple_returns_distinct_sources_all_flow(tmp_path: Path) -> None:
     }
     edges = _run_flow(tmp_path, files)
     assert _has(
-        edges, "resource::ENV::A", "resource::STDOUT::<dynamic>",
+        edges,
+        "resource::ENV::A",
+        "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
     )
     assert _has(
-        edges, "resource::ENV::B", "resource::STDOUT::<dynamic>",
+        edges,
+        "resource::ENV::B",
+        "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
     )
