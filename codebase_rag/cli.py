@@ -17,6 +17,7 @@ from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
+from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
@@ -40,7 +41,7 @@ from .stack.constants import StackState
 from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
-from .types_defs import DeadCodeRow, PropertyValue, ResultRow
+from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -130,6 +131,8 @@ def _sync_workspace(
     config: WorkspaceConfig,
     batch_size: int,
     exclude: list[str] | None,
+    capture: list[str] | None = None,
+    skip_embeddings: bool | None = None,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -162,6 +165,8 @@ def _sync_workspace(
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
+            capture=capture,
+            skip_embeddings=skip_embeddings,
         )
 
 
@@ -184,6 +189,12 @@ def _maybe_start_stack() -> None:
         raise typer.Exit(1) from e
 
 
+def _capture_selection(capture: list[str] | None) -> CaptureSelection:
+    # (H) Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
+    # (H) a single run can override it (later tokens win in the resolver).
+    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -192,6 +203,8 @@ def _run_graph_sync(
     interactive_setup: bool,
     clean: bool = False,
     output: str | None = None,
+    capture: list[str] | None = None,
+    skip_embeddings: bool | None = None,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
@@ -221,6 +234,8 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            capture=_capture_selection(capture),
+            skip_embeddings=skip_embeddings,
         )
         updater.run()
         cgr_state.record_sync(project_name)
@@ -258,8 +273,8 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
-    dir_mtimes_path = repo_path / cs.DIR_MTIMES_FILENAME
-    dir_mtimes_path.unlink(missing_ok=True)
+    (repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
+    (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
 
 
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:
@@ -351,6 +366,11 @@ def start(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -376,6 +396,11 @@ def start(
         False,
         "--no-sync",
         help=ch.HELP_NO_SYNC,
+    ),
+    no_embeddings: bool = typer.Option(
+        False,
+        "--no-embeddings",
+        help=ch.HELP_NO_EMBEDDINGS,
     ),
     projects: str | None = typer.Option(
         None,
@@ -441,6 +466,8 @@ def start(
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
+            capture=capture,
+            skip_embeddings=no_embeddings or None,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
@@ -452,7 +479,12 @@ def start(
     if not no_sync:
         if workspace_config is not None:
             sync_task = partial(
-                _sync_workspace, workspace_config, effective_batch_size, exclude
+                _sync_workspace,
+                workspace_config,
+                effective_batch_size,
+                exclude,
+                capture=capture,
+                skip_embeddings=no_embeddings or None,
             )
             sync_message = cs.MSG_SYNCING_WORKSPACE.format(
                 name=workspace_config.name, count=len(workspace_config.repos)
@@ -465,6 +497,8 @@ def start(
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
+                capture=capture,
+                skip_embeddings=no_embeddings or None,
             )
 
     if workspace_config is not None:
@@ -525,6 +559,11 @@ def index(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
+    ),
     interactive_setup: bool = typer.Option(
         False,
         "--interactive-setup",
@@ -558,6 +597,7 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
+            capture=_capture_selection(capture),
         )
 
         updater.run()
@@ -922,24 +962,25 @@ def _resolve_dead_code_project(
     return None
 
 
-def _dead_code_params(
-    project_name: str,
+def _dead_code_config(
+    include_tests: bool,
+    include_classes: bool,
     entry_points: list[str],
     decorator_roots: list[str],
-) -> dict[str, PropertyValue]:
-    root_decorators = sorted(
-        {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
-        | {d.lower() for d in decorator_roots}
-    )
-    # (H) test_patterns is always passed: with tests included it makes test
+) -> DeadCodeConfig:
+    # (H) test_patterns is always set: with tests included it makes test
     # (H) functions roots; with tests excluded it filters test modules out of the
-    # (H) module-load root clause so test-only code is not kept alive.
-    return {
-        "project_prefix": f"{project_name}{cs.SEPARATOR_DOT}",
-        "root_decorators": root_decorators,
-        "entry_points": list(entry_points),
-        "test_patterns": list(cs.TEST_PATH_PATTERNS),
-    }
+    # (H) module-load roots so test-only code is not kept alive.
+    return DeadCodeConfig(
+        include_tests=include_tests,
+        include_classes=include_classes,
+        root_decorators=frozenset(
+            {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
+            | {d.lower() for d in decorator_roots}
+        ),
+        entry_points=tuple(entry_points),
+        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
+    )
 
 
 def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
@@ -1066,7 +1107,7 @@ def dead_code(
         False, "--fail-on-found", help=ch.HELP_DEADCODE_FAIL_ON_FOUND
     ),
 ) -> None:
-    from .cypher_queries import build_dead_code_query
+    from .dead_code import collect_dead_code
 
     show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
     if show_progress:
@@ -1081,9 +1122,12 @@ def dead_code(
             resolved = _resolve_dead_code_project(project_name, projects)
             if resolved is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows = ingestor.fetch_all(
-                    build_dead_code_query(include_tests, include_classes),
-                    _dead_code_params(resolved, entry_point, decorator_root),
+                rows = collect_dead_code(
+                    ingestor,
+                    resolved,
+                    _dead_code_config(
+                        include_tests, include_classes, entry_point, decorator_root
+                    ),
                 )
     except Exception as e:
         app_context.console.print(

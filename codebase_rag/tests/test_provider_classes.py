@@ -4,10 +4,16 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
-from codebase_rag.constants import GoogleProviderType, Provider
+from codebase_rag.constants import (
+    ENV_MINIMAX_API_KEY,
+    MODEL_CONTEXT_WINDOWS,
+    GoogleProviderType,
+    Provider,
+)
 from codebase_rag.providers.base import (
     AnthropicProvider,
     AzureOpenAIProvider,
@@ -326,6 +332,10 @@ class TestAzureOpenAIProvider:
 
 
 class TestMiniMaxProvider:
+    @pytest.fixture(autouse=True)
+    def clear_minimax_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(ENV_MINIMAX_API_KEY, raising=False)
+
     def test_minimax_configuration(self) -> None:
         provider = MiniMaxProvider(
             api_key="mm-test-key",
@@ -337,7 +347,7 @@ class TestMiniMaxProvider:
         provider.validate_config()
 
     def test_minimax_default_endpoint(self) -> None:
-        provider = MiniMaxProvider(api_key="test-key")
+        provider = MiniMaxProvider(api_key="test-key", endpoint=None)
         assert provider.endpoint == "https://api.minimax.io/v1"
 
     def test_minimax_validation_error(self) -> None:
@@ -346,13 +356,13 @@ class TestMiniMaxProvider:
             provider.validate_config()
 
     def test_minimax_api_key_from_env(self) -> None:
-        with patch.dict("os.environ", {"MINIMAX_API_KEY": "env-mm-key"}):
+        with patch.dict("os.environ", {ENV_MINIMAX_API_KEY: "env-mm-key"}):
             provider = MiniMaxProvider()
             assert provider.api_key == "env-mm-key"
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
     @patch("codebase_rag.providers.base.OpenAIChatModel")
-    def test_minimax_model_creation(
+    def test_minimax_openai_model_creation(
         self, mock_chat_model: Any, mock_openai_provider: Any
     ) -> None:
         provider = MiniMaxProvider(api_key="mm-test-key")
@@ -368,6 +378,33 @@ class TestMiniMaxProvider:
             "MiniMax-M3", provider=mock_openai_provider.return_value
         )
         assert result == mock_model
+
+    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
+    @patch("codebase_rag.providers.base.AnthropicModel")
+    def test_minimax_anthropic_model_creation(
+        self, mock_anthropic_model: Any, mock_anthropic_provider: Any
+    ) -> None:
+        endpoint = "https://api.minimaxi.com/anthropic"
+        provider = MiniMaxProvider(api_key="mm-test-key", endpoint=endpoint)
+        mock_model = MagicMock(spec=AnthropicModel)
+        mock_anthropic_model.return_value = mock_model
+
+        result = provider.create_model("MiniMax-M2.7")
+
+        mock_anthropic_provider.assert_called_once_with(
+            api_key="mm-test-key", base_url=endpoint
+        )
+        mock_anthropic_model.assert_called_once_with(
+            "MiniMax-M2.7", provider=mock_anthropic_provider.return_value
+        )
+        assert result == mock_model
+
+    @pytest.mark.parametrize(
+        ("model_id", "context_window"),
+        [("MiniMax-M3", 1_000_000), ("MiniMax-M2.7", 204_800)],
+    )
+    def test_minimax_context_windows(self, model_id: str, context_window: int) -> None:
+        assert MODEL_CONTEXT_WINDOWS[model_id] == context_window
 
     def test_get_minimax_provider(self) -> None:
         provider = get_provider(Provider.MINIMAX, api_key="test-key")

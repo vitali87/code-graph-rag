@@ -76,8 +76,13 @@ class PythonTypeInferenceEngine(
         self._method_return_type_cache: dict[str, str | None] = {}
         self._type_inference_in_progress: set[str] = set()
         self._available_classes_cache: dict[str, list[str]] = {}
-        self._return_stmt_cache: dict[int, list] = {}
-        self._self_assignment_cache: dict[tuple[int, str], dict[str, str] | None] = {}
+        # (H) Keyed by the Node itself, never id(node): Node hashes by its
+        # (H) underlying tree-sitter identity, while a freed wrapper's id() is
+        # (H) reused by unrelated nodes, producing stale hits that vary with
+        # (H) memory layout (nondeterministic graphs, caught by the determinism
+        # (H) test). Keys hold the node, so an alive entry can never collide.
+        self._return_stmt_cache: dict[Node, list] = {}
+        self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
     def build_local_variable_type_map(

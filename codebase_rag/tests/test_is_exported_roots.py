@@ -238,3 +238,139 @@ def test_js_hash_private_method_of_exported_class_is_not_exported(
     exported = _run(tmp_path, {"store.js": JS_CLASS_HASH_PRIVATE_SRC})
     assert _one(exported, ".Store.read") is True
     assert _one(exported, ".Store.#load") is False
+
+
+SCRIPT_JS_SRC = """\
+class MapWidget {
+    constructor(options) {
+        this.options = options;
+    }
+
+    createMap() {
+        return 1;
+    }
+}
+
+function quickElement() {
+    return 1;
+}
+
+function pageInit() {
+    const localFn = function () {
+        return 2;
+    };
+    return localFn();
+}
+"""
+
+COMMONJS_SRC = """\
+const util = require("./util");
+
+function helper() {
+    return util;
+}
+"""
+
+
+def test_browser_script_top_level_symbols_are_exported(tmp_path: Path) -> None:
+    # (H) A JS file with no import/export/require runs in page scope: every
+    # (H) top-level declaration (and its class members) is a page-global the
+    # (H) HTML can call, so it is a reachability root (django's OLMapWidget).
+    exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
+    assert _one(exported, "widget.MapWidget.constructor") is True
+    assert _one(exported, "widget.MapWidget.createMap") is True
+    assert _one(exported, "widget.quickElement") is True
+    assert _one(exported, "widget.pageInit") is True
+
+
+def test_browser_script_function_locals_stay_private(tmp_path: Path) -> None:
+    # (H) Declarations inside a function body are locals reached only through
+    # (H) their enclosing scope, even in a page-scope script.
+    exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
+    assert _one(exported, "pageInit.localFn") is False
+
+
+def test_commonjs_module_symbols_stay_private(tmp_path: Path) -> None:
+    # (H) A require() call marks the file as a CommonJS module, so an
+    # (H) unexported top-level function is module-private, not a page-global.
+    exported = _run(tmp_path, {"mod.js": COMMONJS_SRC})
+    assert _one(exported, "mod.helper") is False
+
+
+PROTO_SCRIPT_JS_SRC = """\
+String.prototype.strptime = function (format) {
+    return format;
+};
+"""
+
+PROTO_COMMONJS_SRC = """\
+const util = require("./util");
+
+String.prototype.strptime = function (format) {
+    return util.parse(format);
+};
+"""
+
+
+def test_browser_script_prototype_method_is_exported(tmp_path: Path) -> None:
+    # (H) A prototype-assigned method in a page-scope script (django admin's
+    # (H) core.js String.prototype.strptime) extends a global builtin, so it is
+    # (H) callable from any other script or template: a reachability root.
+    exported = _run(tmp_path, {"core.js": PROTO_SCRIPT_JS_SRC})
+    assert _one(exported, "core.String.strptime") is True
+
+
+def test_commonjs_prototype_method_stays_private(tmp_path: Path) -> None:
+    exported = _run(tmp_path, {"mod.js": PROTO_COMMONJS_SRC})
+    assert _one(exported, "mod.String.strptime") is False
+
+
+BLOCK_SCRIPT_JS_SRC = """\
+{
+    String.prototype.strptime = function (format) {
+        return format;
+    };
+}
+
+function helper() {
+    return 1;
+}
+"""
+
+
+def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
+    # (H) django admin's core.js wraps its prototype extensions in bare
+    # (H) top-level `{ ... }` blocks. A block is not a function scope: the
+    # (H) prototype mutation still lands on the page-global builtin, so the
+    # (H) method must stay a reachability root.
+    exported = _run(tmp_path, {"core.js": BLOCK_SCRIPT_JS_SRC})
+    assert _one(exported, "core.String.strptime") is True
+    assert _one(exported, "core.helper") is True
+
+
+def test_script_module_scan_runs_once_per_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (H) The module-construct scan walks every top-level statement; it must
+    # (H) run once per FILE (memoized on the tree root), not once per symbol,
+    # (H) or export detection on a bundle with thousands of top-level
+    # (H) declarations goes quadratic.
+    from unittest.mock import patch
+
+    from codebase_rag import constants as cs
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers import export_detection
+
+    parsers, _ = load_parsers()
+    tree = parsers[cs.SupportedLanguage.JS].parse(b"function a() {}\nfunction b() {}\n")
+    declarations = [
+        c for c in tree.root_node.children if c.type == cs.TS_FUNCTION_DECLARATION
+    ]
+    with patch.object(
+        export_detection,
+        "_is_module_construct",
+        wraps=export_detection._is_module_construct,
+    ) as spy:
+        for declaration in declarations:
+            assert export_detection._is_script_global(declaration) is True
+    assert spy.call_count <= len(declarations)

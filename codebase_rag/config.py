@@ -45,6 +45,11 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "url": "https://portal.azure.com/",
         "name": "Azure OpenAI",
     },
+    cs.Provider.MINIMAX: {
+        "env_var": "MINIMAX_API_KEY",
+        "url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+        "name": "MiniMax",
+    },
 }
 
 
@@ -185,7 +190,10 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
-    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.TREESITTER
+    # (H) HYBRID degrades to pure tree-sitter when libclang or a
+    # (H) compile_commands.json is missing, so it is safe as the default and
+    # (H) strictly better (macros, includes, expansion calls) with one.
+    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
@@ -263,6 +271,10 @@ class AppConfig(BaseSettings):
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
+    SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")
+    EMBEDDING_DEVICE: cs.EmbeddingDevice | None = Field(
+        None, validation_alias="CGR_EMBEDDING_DEVICE"
+    )
 
     FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
     FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
@@ -284,6 +296,8 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
     MCP_HTTP_HOST: str = "0.0.0.0"
     MCP_HTTP_PORT: int = 8080

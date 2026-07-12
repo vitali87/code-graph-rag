@@ -1,0 +1,151 @@
+# (H) A C++ chained call on a factory-call receiver (`parser(ia, cb).parse(true, r)`,
+# (H) nlohmann/json's basic_json::parse -> detail::parser) has the return of a factory
+# (H) function/method as its receiver. Without inferring that return type the final
+# (H) method binds to nothing and the whole returned-class cluster (parser.parse/accept/
+# (H) sax_parse) reports as dead. cgr must type the factory's recorded return type and
+# (H) resolve the chained method on it.
+from pathlib import Path
+
+from evals.cgr_graph import _capture
+
+
+def _calls(tmp_path: Path) -> set[tuple[str, str]]:
+    ingestor = _capture(tmp_path, "crate")
+    return {
+        (str(from_val), str(to_val))
+        for _fl, from_val, rel, _tl, to_val in ingestor.rels
+        if rel == "CALLS"
+    }
+
+
+def _make(root: Path, body: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "f.hpp").write_text(body, encoding="utf-8")
+
+
+def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
+    # (H) `make().run()` where `make` is a free function returning Widget must reach
+    # (H) Widget.run, not drop or mis-bind. Aaa.run is an alphabetical decoy: a bare
+    # (H) trie fallback would pick it, so a passing test proves real return typing.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void run() {}\n"
+        "};\n"
+        "struct Widget {\n"
+        "    void run() {}\n"
+        "};\n"
+        "Widget make() { return Widget(); }\n"
+        "void driver() {\n"
+        "    make().run();\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Widget.run") in calls, sorted(
+        c for c in calls if "run" in c[1]
+    )
+    assert ("crate.f.driver", "crate.f.Aaa.run") not in calls
+
+
+def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
+    # (H) nlohmann shape: a static factory METHOD on Owner returns a DIFFERENT class,
+    # (H) called as `parser(...).parse(...)` from inside Owner. The factory name is a
+    # (H) callable (Owner.parser), distinct from the returned class (Parser). Aaa.parse
+    # (H) is an alphabetical decoy the bare fallback would wrongly pick.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Parser {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Owner {\n"
+        "    static Parser parser(int x) { return Parser(); }\n"
+        "    void parse_impl() {\n"
+        "        parser(1).parse(true);\n"
+        "    }\n"
+        "};\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.Owner.parse_impl", "crate.f.Parser.parse") in calls, sorted(
+        c for c in calls if "parse" in c[1]
+    )
+    assert ("crate.f.Owner.parse_impl", "crate.f.Aaa.parse") not in calls
+
+
+def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> None:
+    # (H) `make()` returns Widget (recorded), but Widget has NO `run`. The bare-method
+    # (H) C/C++ fallback must NOT fire once the receiver type is known -- binding
+    # (H) `make().run()` to an unrelated alphabetical `Aaa.run` is a false edge. When the
+    # (H) type is inferred and lacks the method, the chain drops (returns nothing).
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void run() {}\n"
+        "};\n"
+        "struct Widget {\n"
+        "    void other() {}\n"
+        "};\n"
+        "Widget make() { return Widget(); }\n"
+        "void driver() {\n"
+        "    make().run();\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Aaa.run") not in calls, sorted(
+        c for c in calls if "run" in c[1]
+    )
+
+
+def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
+    # (H) The header/impl split shape: the factory method is DECLARED in the class body
+    # (H) but DEFINED out-of-class (`Parser Owner::parser(...) { ... }`). Its return type
+    # (H) must still be recorded (the out-of-class path returns before the free-function
+    # (H) recording runs) so `parser(1).parse(true)` types the receiver as Parser rather
+    # (H) than drop or mis-bind to the alphabetical decoy Aaa.parse.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Parser {\n"
+        "    void parse(bool strict) {}\n"
+        "};\n"
+        "struct Owner {\n"
+        "    static Parser parser(int x);\n"
+        "    void parse_impl();\n"
+        "};\n"
+        "Parser Owner::parser(int x) { return Parser(); }\n"
+        "void Owner::parse_impl() {\n"
+        "    parser(1).parse(true);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.Owner.parse_impl", "crate.f.Parser.parse") in calls, sorted(
+        c for c in calls if "parse" in c[1]
+    )
+    assert ("crate.f.Owner.parse_impl", "crate.f.Aaa.parse") not in calls
+
+
+def test_return_type_path_normalizes_template_qualified_scope() -> None:
+    # (H) A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
+    # (H) reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
+    # (H) leaks the `<T>` template arguments, which no class QN carries.
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp.utils import extract_return_type_name
+
+    parsers, _ = load_parsers()
+    tree = parsers["cpp"].parse(b"Outer<T>::Inner make() { return {}; }\n")
+
+    def find_fn(node):
+        if node.type == "function_definition":
+            return node
+        for child in node.children:
+            if (found := find_fn(child)) is not None:
+                return found
+        return None
+
+    fn = find_fn(tree.root_node)
+    assert fn is not None
+    assert extract_return_type_name(fn) == "Outer.Inner"

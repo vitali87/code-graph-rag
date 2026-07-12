@@ -182,3 +182,39 @@ class TestDuplicateQualifiedNameMethodsInOneClass:
             and props.get(cs.KEY_START_LINE) is not None
         )
         assert run_start_lines == [8, 13], run_start_lines
+
+
+FACTORY_SRC = """def factory(value):
+    if callable(value):
+
+        def handler(arg):
+            return value()
+
+    else:
+
+        def handler(arg):
+            return value
+
+    return handler
+"""
+
+
+class TestDuplicateQualifiedNameReturnedClosures:
+    def test_returned_closure_links_both_duplicate_definitions(
+        self, tmp_path: Path
+    ) -> None:
+        # (H) `return handler` hands back whichever branch defined handler, so the
+        # (H) producer edge must link BOTH twins; linking one leaves the other
+        # (H) unreachable and falsely dead (django's SET.set_on_delete@60).
+        cap = _build(tmp_path, FACTORY_SRC)
+        returned_edges = sorted(
+            str(target)
+            for (_fl, from_val, rel_type, _tl, target) in cap.rels
+            if rel_type == cs.RelationshipType.CALLS
+            and str(from_val).endswith(".factory")
+            and ".handler" in str(target)
+        )
+        assert returned_edges == [
+            f"{PROJECT}.m.factory.handler",
+            f"{PROJECT}.m.factory.handler{cs.DUP_QN_MARKER}9",
+        ], returned_edges

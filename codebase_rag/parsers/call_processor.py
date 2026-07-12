@@ -10,22 +10,32 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import LanguageSpec
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
-from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from ..types_defs import (
+    FunctionLocation,
+    FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
+    LanguageQueries,
+    NodeType,
+)
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
+from .io_access import IOAccessProcessor
 from .java import utils as java_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    function_span_key,
     get_function_captures,
     go_parameter_names,
     is_method_node,
@@ -69,6 +79,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.LUA,
         cs.SupportedLanguage.GO,
         cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.RUST,
     }
 )
 
@@ -93,6 +104,13 @@ _PY_SEQUENCE_LITERAL_TYPES = frozenset({cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TU
 # (H) (positional elements). All use the `pair`/named-child shapes handled below.
 _DICT_LIKE_COLLECTION_TYPES = frozenset({cs.TS_PY_DICTIONARY, cs.TS_OBJECT})
 _SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_ARRAY})
+# (H) Python nodes that transparently wrap first-class values one level down:
+# (H) sequence literals, a bare multi-value return (expression_list), and
+# (H) parentheses. Dict pairs and ternaries need field-aware handling and are
+# (H) matched separately in _expand_py_first_class_values.
+_PY_VALUE_WRAPPER_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset(
+    {cs.TS_PY_EXPRESSION_LIST, cs.TS_PARENTHESIZED_EXPRESSION}
+)
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -112,19 +130,44 @@ _FLOW_ARG_REF_TYPES = frozenset(
 # (H) Qualified-name prefix marking a resolved callee as a builtin rather than a
 # (H) first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# (H) C/C++ expression nodes whose call name is a synthesized operator_* --
+# (H) the ones whose operand type may direct (or suppress) the binding.
+_CPP_OPERATOR_EXPRESSION_TYPES = frozenset(
+    {
+        cs.TS_CPP_BINARY_EXPRESSION,
+        cs.TS_CPP_UNARY_EXPRESSION,
+        cs.TS_CPP_UPDATE_EXPRESSION,
+    }
+)
+# (H) Transparent wrappers a bound arrow may sit behind in its declarator:
+# (H) parens and TS casts (`const f = ((x) => ...) as T`). Climbed when
+# (H) recovering the arrow's binding name so the wrapped form is not treated
+# (H) as anonymous.
+_TS_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
 # (H) Assignment node type -> RHS field, per language family: Python `assignment`
 # (H) and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
 # (H) `right`; a JS/TS `variable_declarator` (const cb = handler) carries it in
-# (H) `value`.
+# (H) `value`. Go binds a func value the same way (`var preExecHookFn = preExecHook`,
+# (H) `hook := preExecHook`, `x = fn`); its RHS sits behind an expression_list,
+# (H) unwrapped in the walker.
 _ASSIGNMENT_RHS_FIELDS = {
     cs.TS_PY_ASSIGNMENT: cs.TS_FIELD_RIGHT,
     cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
+    cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
+    cs.TS_GO_SHORT_VAR_DECLARATION: cs.TS_FIELD_RIGHT,
+    cs.TS_GO_ASSIGNMENT_STATEMENT: cs.TS_FIELD_RIGHT,
 }
 # (H) RHS node types that name a callable value: a bare identifier, a Python
-# (H) attribute (mod.fn), or a JS/TS member expression (handlers.run).
+# (H) attribute (mod.fn), a JS/TS member expression (handlers.run), or a Go
+# (H) selector (pkg.Fn).
 _ASSIGNMENT_RHS_REF_TYPES = frozenset(
-    {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_MEMBER_EXPRESSION}
+    {
+        cs.TS_PY_IDENTIFIER,
+        cs.TS_PY_ATTRIBUTE,
+        cs.TS_MEMBER_EXPRESSION,
+        cs.TS_GO_SELECTOR_EXPRESSION,
+    }
 )
 # (H) JSX nodes that carry a component name (self-closing and opening; a
 # (H) closing element repeats the name, so a paired element emits once).
@@ -138,16 +181,35 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
 
 
+def _scope_qn_candidates(scope_qn: str) -> list[str]:
+    # (H) The scope itself plus its duplicate-variant-stripped form (`useStore@27`
+    # (H) -> `useStore`): the def pass registers nested/anon members under the
+    # (H) NATURAL qn while the caller may carry the variant suffix. Registry-guarded
+    # (H) at every use, so a scope without a twin adds nothing.
+    last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    if cs.DUP_QN_MARKER not in last:
+        return [scope_qn]
+    natural = scope_qn[: len(scope_qn) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+    return [scope_qn, natural]
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
         "repo_path",
         "project_name",
+        "module_qn_to_file_path",
+        "_path_to_module_qn",
+        "cpp_out_of_class_methods",
+        "function_locations",
+        "macro_qns",
         "_resolver",
         "_flow_param_names",
         "_flow_args",
         "_returned_callables",
         "_factory_calls",
+        "_io_processor",
+        "_flow_processor",
     )
 
     def __init__(
@@ -161,10 +223,20 @@ class CallProcessor:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
+        capture: CaptureSelection | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
+        cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        macro_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
+        self.module_qn_to_file_path = module_qn_to_file_path or {}
+        self._path_to_module_qn: dict[Path, str] | None = None
+        self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
+        self.function_locations = function_locations or {}
+        self.macro_qns = macro_qns if macro_qns is not None else set()
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -184,6 +256,18 @@ class CallProcessor:
         # (H) fixpoint in finalize, so factory and call site may be in any file order.
         self._returned_callables: dict[str, set[str]] = {}
         self._factory_calls: list[_FactoryCall] = []
+        selection = capture if capture is not None else ALL_ENABLED
+        self._io_processor = IOAccessProcessor(
+            ingestor,
+            import_processor,
+            selection=selection,
+        )
+        self._flow_processor = FlowProcessor(
+            ingestor,
+            import_processor,
+            self._resolver,
+            selection=selection,
+        )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
@@ -311,7 +395,19 @@ class CallProcessor:
                         (callee[0], qn_key, callee[1]),
                     )
 
-    def _module_qn(self, relative_path: Path, file_name: str) -> str:
+    def _module_qn(self, file_path: Path, relative_path: Path) -> str:
+        # (H) The definition pass is the single source of truth for module qns:
+        # (H) same-stem siblings (Aggregator.cpp / Aggregator.h) get a
+        # (H) collision-disambiguated qn there, and recomputing from the path
+        # (H) here attributed every caller inside such a header to a module qn
+        # (H) with no node, silently dropping its CALLS (issue #652).
+        if self._path_to_module_qn is None:
+            self._path_to_module_qn = {
+                path: qn for qn, path in self.module_qn_to_file_path.items()
+            }
+        if registered := self._path_to_module_qn.get(file_path):
+            return registered
+        file_name = file_path.name
         if file_name in (cs.INIT_PY, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.parent.parts)
@@ -339,7 +435,7 @@ class CallProcessor:
             return
         try:
             module_qn = self._module_qn(
-                cached_relative_path(file_path, self.repo_path), file_path.name
+                file_path, cached_relative_path(file_path, self.repo_path)
             )
             resolver = self._resolver
             self._collect_ctor_field_metadata(root_node, module_qn)
@@ -549,7 +645,7 @@ class CallProcessor:
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
-            module_qn = self._module_qn(relative_path, file_path.name)
+            module_qn = self._module_qn(file_path, relative_path)
 
             call_name_cache: dict[int, str | None] = {}
 
@@ -607,7 +703,33 @@ class CallProcessor:
             # (H) that only defines functions and a table is still covered. Runs for
             # (H) every flow language with an object/array/dict literal form.
             if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
+                collection_boundaries = self._flow_scope_boundaries(
+                    queries[language][cs.QUERY_CONFIG]
+                )
+                if language == cs.SupportedLanguage.PYTHON:
+                    # (H) A Python class body executes at import time, so a
+                    # (H) dispatch table stored as a class ATTRIBUTE (django's
+                    # (H) backend `data_types = {"CharField": _get_varchar_...}`)
+                    # (H) is module-load wiring like a module-level table; the
+                    # (H) scan descends through classes and still stops at
+                    # (H) function scopes. ponytail: decorated classes stay
+                    # (H) boundaries (decorated_definition also wraps functions).
+                    collection_boundaries = collection_boundaries - frozenset(
+                        queries[language][cs.QUERY_CONFIG].class_node_types
+                    )
                 self._ingest_collection_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    collection_boundaries,
+                )
+                # (H) A module-scope first-class assignment (registry_handler =
+                # (H) handle_event, module.exports.run = run) references its target
+                # (H) even in a file with no call expressions, so scan before the
+                # (H) no-calls early return.
+                self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
@@ -615,10 +737,21 @@ class CallProcessor:
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
-                # (H) A module-scope first-class assignment (registry_handler =
-                # (H) handle_event, module.exports.run = run) references its target
-                # (H) even in a file with no call expressions, so scan before the
-                # (H) no-calls early return.
+            if language == cs.SupportedLanguage.GO:
+                # (H) A module-scope Go func map/slice (var funcMap = map[...]{...})
+                # (H) keeps its function entries reachable; scan before the no-calls
+                # (H) early return so a file that only defines funcs and a table counts.
+                self._ingest_go_composite_function_references(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    None,
+                    None,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
+                # (H) A module-scope Go var bound to a bare function value
+                # (H) (var preExecHookFn = preExecHook) references it even in a file
+                # (H) with no calls, so scan before the no-calls early return.
                 self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
@@ -667,8 +800,20 @@ class CallProcessor:
                 func_node_starts=func_node_starts,
             )
             if sorted_func_nodes and call_starts is not None:
+                # (H) JS/TS: exclude only calls owned by ATTRIBUTABLE functions, so a
+                # (H) call nested purely in anonymous scopes (`create((set) => ({
+                # (H) inc: () => set((state) => ...) }))`, zustand's store shape) is
+                # (H) processed at module scope instead of by nobody -- an anon arrow
+                # (H) gets no caller pass, and a call inside a NAMED function is
+                # (H) still excluded here because that function's flat filter owns
+                # (H) it (no double-processing).
+                exclusion_nodes = (
+                    self._attributable_func_nodes(sorted_func_nodes, language)
+                    if language in _JS_TS_LANGUAGES
+                    else sorted_func_nodes
+                )
                 module_calls = self._filter_top_level_calls(
-                    all_call_nodes, call_starts, sorted_func_nodes
+                    all_call_nodes, call_starts, exclusion_nodes
                 )
             else:
                 module_calls = all_call_nodes
@@ -708,6 +853,12 @@ class CallProcessor:
             lang_config, captures = result
             func_nodes = captures.get(cs.CAPTURE_FUNCTION, [])
             has_classes = bool(captures.get(cs.CAPTURE_CLASS))
+        # (H) Rust only: calls inside a NAMED nested `fn` (which gets its own caller
+        # (H) node) must be owned by that nested fn, not double-counted onto the
+        # (H) enclosing free function. Anonymous closures (not attributable) stay
+        # (H) excluded from this set so their calls still bubble up. Other languages
+        # (H) keep the flat _filter_calls_in_node behavior their flow-tracing relies on.
+        owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
         for func_node in func_nodes:
             if has_classes and self._is_method(func_node, lang_config):
                 continue
@@ -732,6 +883,51 @@ class CallProcessor:
                     accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
                 )
             if not func_name:
+                # (H) A nameless JS/TS function expression that a NAMED pass
+                # (H) registered (`exports.f = function`, `x: function`) has a
+                # (H) real node; its body's calls belong to that node, not the
+                # (H) module, so adopt the record's simple name and fall
+                # (H) through (the recorded-caller branch below reuses the
+                # (H) registered qn). A GENERATED record (anonymous callback,
+                # (H) IIFE) keeps the historical bubble-to-module attribution.
+                if (
+                    language not in _JS_TS_LANGUAGES
+                    or (recorded := self._recorded_caller(func_node, module_qn)) is None
+                    or not recorded.is_named
+                ):
+                    continue
+                func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            # (H) The definition pass records where every function/method node
+            # (H) landed; reuse that qn/label instead of re-deriving them from
+            # (H) the AST -- the walks diverge on preprocessor-distorted C++
+            # (H) class bodies, TS declaration merging, and duplicate-suffixed
+            # (H) qns, and every divergence is a phantom caller (issue #652).
+            if loc := self._recorded_caller(func_node, module_qn):
+                # (H) Same ownership rule as the unrecorded path: a Rust named
+                # (H) nested fn owns its body's calls, so the enclosing
+                # (H) function's slice must exclude it rather than take the
+                # (H) whole byte range.
+                if all_call_nodes is None or call_starts is None:
+                    filtered = None
+                elif language == cs.SupportedLanguage.RUST:
+                    filtered = self._calls_owned_by(
+                        func_node, owned_func_nodes, all_call_nodes, call_starts
+                    )
+                else:
+                    filtered = self._filter_calls_in_node(
+                        all_call_nodes, call_starts, func_node
+                    )
+                self._ingest_function_calls(
+                    func_node,
+                    loc.qualified_name,
+                    loc.label,
+                    module_qn,
+                    language,
+                    queries,
+                    loc.container_qn,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
                 continue
             # (H) An out-of-line C++ method definition (`Ret Class::method() {...}`
             # (H) at namespace/file scope) is bound by the definition pass to its
@@ -802,11 +998,16 @@ class CallProcessor:
                 )
             )
             if func_qn:
-                filtered = (
-                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
-                    if all_call_nodes is not None and call_starts is not None
-                    else None
-                )
+                if all_call_nodes is None or call_starts is None:
+                    filtered = None
+                elif language == cs.SupportedLanguage.RUST:
+                    filtered = self._calls_owned_by(
+                        func_node, owned_func_nodes, all_call_nodes, call_starts
+                    )
+                else:
+                    filtered = self._filter_calls_in_node(
+                        all_call_nodes, call_starts, func_node
+                    )
                 self._ingest_function_calls(
                     func_node,
                     func_qn,
@@ -839,6 +1040,16 @@ class CallProcessor:
             return caller_qn, container_qn
         return None
 
+    def _recorded_caller(
+        self, func_node: Node, module_qn: str
+    ) -> FunctionLocation | None:
+        # (H) The registry membership check guards incremental runs, where an
+        # (H) unchanged file's locations were not re-recorded this run.
+        loc = self.function_locations.get(function_span_key(module_qn, func_node))
+        if loc is None or loc.qualified_name not in self._resolver.function_registry:
+            return None
+        return loc
+
     def _cpp_out_of_class_method_caller(
         self, func_node: Node, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -850,6 +1061,16 @@ class CallProcessor:
         # (H) actually exists before overriding the default attribution.
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return None
+        # (H) The definition pass already bound this exact definition (keyed by
+        # (H) module + start line); reuse its decision so the caller qn matches
+        # (H) the registered Method node by construction.
+        recorded = self.cpp_out_of_class_methods.get(
+            (module_qn, func_node.start_point[0] + 1)
+        )
+        if recorded is not None:
+            method_qn, class_qn = recorded
+            if method_qn in self._resolver.function_registry:
+                return method_qn, class_qn
         class_name = cpp_utils.extract_class_name_from_out_of_class_method(func_node)
         if not class_name:
             return None
@@ -911,7 +1132,7 @@ class CallProcessor:
         # (H) Only functions that get their own caller node exclude their calls from
         # (H) the enclosing scope; anonymous arrows (skipped below) must not, so
         # (H) their calls bubble up instead of dropping.
-        owned_func_nodes = self._js_ts_attributable_nodes(method_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(method_nodes, language)
         for method_node in method_nodes:
             # (H) The body byte-range slice also captures functions of a NESTED
             # (H) class (Outer body contains Inner.run); those belong to the
@@ -932,9 +1153,18 @@ class CallProcessor:
             # (H) qn through the enclosing-function chain (Class.method.nested, not
             # (H) the method-dropping Class.nested) and label a nested function
             # (H) FUNCTION, so the CALLS edge joins the real node.
-            caller_qn, caller_label = self._class_member_qn_and_label(
-                method_node, class_qn, method_name, lang_config, language
-            )
+            class_context = class_qn
+            if loc := self._recorded_caller(method_node, module_qn):
+                # (H) Reuse the definition pass's recorded qn/label; the class
+                # (H) walk's structural derivation diverges from it on
+                # (H) preprocessor-distorted C++ class bodies and on TS
+                # (H) declaration merging (issue #652).
+                caller_qn, caller_label = loc.qualified_name, loc.label
+                class_context = loc.container_qn or class_qn
+            else:
+                caller_qn, caller_label = self._class_member_qn_and_label(
+                    method_node, class_qn, method_name, lang_config, language
+                )
             filtered = (
                 self._calls_owned_by(
                     method_node, owned_func_nodes, all_call_nodes, call_starts
@@ -949,7 +1179,7 @@ class CallProcessor:
                 module_qn,
                 language,
                 queries,
-                class_qn,
+                class_context,
                 call_nodes=filtered,
                 call_name_cache=call_name_cache,
             )
@@ -1108,13 +1338,79 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
+    def _overlay_match_arm_binding(
+        self,
+        call_name: str,
+        call_node: Node,
+        local_var_types: dict[str, str] | None,
+        match_arm_bindings: list[tuple[int, int, str, str]],
+    ) -> dict[str, str] | None:
+        # (H) If the call's receiver base is a match-arm binding whose arm range
+        # (H) contains this call, overlay that arm's variant type (shadowing the flat
+        # (H) map's last-arm value) so `cmd.apply()` dispatches to the arm's variant.
+        # (H) The innermost (smallest) containing arm wins for nested matches.
+        if local_var_types is None or cs.SEPARATOR_DOT not in call_name:
+            return local_var_types
+        base = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        pos = call_node.start_byte
+        best: tuple[int, str] | None = None
+        for start, end, name, variant_type in match_arm_bindings:
+            if name == base and start <= pos < end:
+                span = end - start
+                if best is None or span < best[0]:
+                    best = (span, variant_type)
+        if best is None or local_var_types.get(base) == best[1]:
+            return local_var_types
+        return {**local_var_types, base: best[1]}
+
+    def _cpp_operator_operand_name(self, call_node: Node) -> str | None:
+        # (H) The receiver-analog operand of an operator expression: the LEFT
+        # (H) side of a binary op, the sole argument of a unary/update op. Only
+        # (H) a bare identifier is returned -- anything more complex stays with
+        # (H) the legacy paths.
+        field = (
+            cs.FIELD_LEFT
+            if call_node.type == cs.TS_CPP_BINARY_EXPRESSION
+            else cs.TS_FIELD_ARGUMENT
+        )
+        operand = call_node.child_by_field_name(field)
+        if operand is None or operand.type != cs.TS_IDENTIFIER:
+            return None
+        return safe_decode_text(operand)
+
+    def _macro_call_name(self, ident: Node) -> str | None:
+        # (H) Reconstruct a `<recv>.method` chain from a macro token stream by walking
+        # (H) the method identifier's preceding siblings over `("." <ident|self>)*`.
+        # (H) `server . run` -> "server.run"; `self . shutdown . recv` ->
+        # (H) "self.shutdown.recv". A method with no preceding `.` stays bare.
+        if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
+            return None
+        parts = [method]
+        cur = ident.prev_sibling
+        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
+            if (recv := cur.prev_sibling) is None or (
+                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
+            ):
+                break
+            if not recv.text:
+                break
+            parts.append(recv.text.decode(cs.ENCODING_UTF8))
+            cur = recv.prev_sibling
+        parts.reverse()
+        return cs.SEPARATOR_DOT.join(parts)
+
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
         # (H) A macro-internal call (Rust `name(args)` inside a token_tree) is
-        # (H) captured as the bare identifier node; its text is the callee name.
+        # (H) captured as the bare identifier node; its text is the callee name. A
+        # (H) macro tokenizes `server.run()` into loose tokens (`server . run ( )`),
+        # (H) dropping the field_expression, so reconstruct any `<recv>.method`
+        # (H) receiver chain from the preceding sibling tokens -- else the bare method
+        # (H) mis-resolves (`server.run()` in tokio::select! -> the same-module free
+        # (H) fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            return call_node.text.decode(cs.ENCODING_UTF8)
+            return self._macro_call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -1133,6 +1429,15 @@ class CallProcessor:
                     inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
                     if inner and inner.text:
                         return inner.text.decode(cs.ENCODING_UTF8)
+                case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
+                    # (H) Rust member call `a.b.method()`: use the full dotted receiver
+                    # (H) chain as the call name so the resolver can map the receiver to
+                    # (H) its inferred type (`self.shutdown.is_shutdown`,
+                    # (H) `cmd.apply`). A chain containing a call (`x.f().g`) is left to
+                    # (H) the chained-call path; a paren-free chain still ends at the
+                    # (H) bare-method trie fallback when the receiver type is unknown.
+                    if (text := func_child.text) is not None:
+                        return text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:
@@ -1151,11 +1456,52 @@ class CallProcessor:
                         ):
                             receiver = arg.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
+                        # (H) A factory-call receiver (`parser(ia, cb).parse(...)`,
+                        # (H) nlohmann's basic_json::parse) is a call_expression on a
+                        # (H) bare identifier: emit the chain form so the resolver can
+                        # (H) type the factory's return and bind the method on it. Only
+                        # (H) a simple-identifier callee qualifies -- deeper receiver
+                        # (H) chains keep the bare method-name trie fallback.
+                        if (
+                            arg is not None
+                            and arg.type == cs.TS_CPP_CALL_EXPRESSION
+                            and (
+                                callee := arg.child_by_field_name(cs.TS_FIELD_FUNCTION)
+                            )
+                            is not None
+                            and callee.type == cs.TS_IDENTIFIER
+                            and arg.text
+                        ):
+                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 
         match call_node.type:
+            case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
+                # (H) JS/TS `new Foo(...)` names the class via the `constructor` field
+                # (H) (there is no `function` field). Returning the constructor name
+                # (H) routes construction through the normal resolve loop: a first-party
+                # (H) class gets INSTANTIATES (+ CALLS to its constructor), and an inline
+                # (H) callback argument (a Promise executor, `new CancelablePromise(cb)`)
+                # (H) is referenced so it is not reported as dead.
+                ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+                if ctor is not None and ctor.text is not None:
+                    return ctor.text.decode(cs.ENCODING_UTF8)
+            case cs.TS_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.JAVA
+            ):
+                # (H) Java `new Foo(...)` names the class via the `type` field (no
+                # (H) `function` field). Returning the base type name routes construction
+                # (H) through the normal resolve loop: the class gets INSTANTIATES and its
+                # (H) constructor(s) get CALLS. Strip generic args (`new ArrayList<T>()`
+                # (H) -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
+                type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
+                if type_node is not None and type_node.text is not None:
+                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
             case (
                 cs.TS_CPP_BINARY_EXPRESSION
                 | cs.TS_CPP_UNARY_EXPRESSION
@@ -1187,6 +1533,14 @@ class CallProcessor:
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
                     return operator_node.text.decode(cs.ENCODING_UTF8)
+            # (H) Rust `square!(3)`: the callee lives in the `macro` field (no
+            # (H) `function`/`name` field), so the invocation was captured as a
+            # (H) call but dropped nameless here -- unresolvable even now that
+            # (H) macro_rules! definitions register as Function nodes.
+            case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
+                macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
+                if macro_node is not None and macro_node.text is not None:
+                    return macro_node.text.decode(cs.ENCODING_UTF8)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
@@ -1224,7 +1578,23 @@ class CallProcessor:
         else:
             local_var_types = None
 
+        # (H) Rust match arms often reuse one binding name (`cmd`) for different variant
+        # (H) types; the flat map keeps only the last arm's type. These per-arm scoped
+        # (H) bindings let each call inside an arm resolve against ITS arm's type.
+        match_arm_bindings: list[tuple[int, int, str, str]] = []
+        if language == cs.SupportedLanguage.RUST and local_var_types is not None:
+            match_arm_bindings = self._resolver.type_inference.rust_type_inference.collect_match_arm_bindings(
+                caller_node
+            )
+
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
+
+        self._io_processor.process_io_for_caller(
+            caller_node, caller_spec, module_qn, language
+        )
+        self._flow_processor.process_flow_for_caller(
+            caller_node, caller_spec, caller_qn, module_qn, language, class_context
+        )
 
         caller_params: frozenset[str] = frozenset()
         ordered_params: list[str] | None = None
@@ -1274,7 +1644,11 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
-        if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
+        if (
+            language == cs.SupportedLanguage.PYTHON
+            or language in _JS_TS_LANGUAGES
+            or language == cs.SupportedLanguage.GO
+        ):
             self._ingest_assignment_function_references(
                 caller_node,
                 caller_spec,
@@ -1294,6 +1668,29 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+            # (H) A DEFAULT PARAMETER value naming a function (`useStore(api,
+            # (H) selector = identity as any)`, zustand) references it: the default
+            # (H) is invoked through the parameter when the caller omits the
+            # (H) argument, never by a visible call.
+            self._ingest_default_param_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+            )
+        # (H) A function handed back bare (`return defaultUsageFunc`) is a first-class
+        # (H) value invoked by whoever receives it, never by a visible call -- Go leans
+        # (H) on this for factories/getters (cobra's getUsageFunc), Python on returned
+        # (H) bound methods (django GEOSCoordSeq `return self._get_point_2d`).
+        # (H) Reference it so the returned function is reachable. These languages share
+        # (H) the `return_statement` node type and the emit path resolves bare names
+        # (H) and self-attributes alike.
+        if language in _JS_TS_LANGUAGES or language in (
+            cs.SupportedLanguage.GO,
+            cs.SupportedLanguage.PYTHON,
+        ):
             self._ingest_returned_function_references(
                 caller_node,
                 caller_spec,
@@ -1317,6 +1714,15 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
+        if language == cs.SupportedLanguage.GO and caller_type != cs.NodeLabel.MODULE:
+            self._ingest_go_composite_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -1332,6 +1738,16 @@ class CallProcessor:
         is_java = language == cs.SupportedLanguage.JAVA
         is_js_ts = language in _JS_TS_LANGUAGES
         is_cpp = language == cs.SupportedLanguage.CPP
+        # (H) Template type-parameter names in scope at this caller (`template<typename
+        # (H) SAX>` -> {"SAX"}): a receiver typed to one has no concrete type here, so the
+        # (H) dispatch fan-out treats it like an untyped receiver rather than an external.
+        cpp_template_params = (
+            self._resolver.type_inference.cpp_type_inference.collect_template_param_names(
+                caller_node
+            )
+            if is_cpp
+            else frozenset()
+        )
         method_invocation_type = cs.TS_METHOD_INVOCATION
         resolver = self._resolver
         resolve_func = resolver.resolve_function_call
@@ -1364,17 +1780,107 @@ class CallProcessor:
                 call_name = get_target(call_node, language)
                 if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
+            # (H) An inline function ARGUMENT is handed to the callee regardless of
+            # (H) whether the callee resolves -- an external/param callee
+            # (H) (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
+            # (H) cast-wrapped one (`;(set as NamedSet)((state) => reducer(...))`)
+            # (H) still consumes it. Reference each inline arg from this scope, BEFORE
+            # (H) the no-name bail (a cast-wrapped callee yields no call name).
+            # (H) Registry-guarded and idempotent with the callable-params path.
+            if is_js_ts and call_node.type == cs.TS_CALL_EXPRESSION:
+                self._ingest_inline_call_arg_references(
+                    call_node, caller_spec, ensure_rel, caller_qn, module_qn
+                )
             if not call_name:
+                # (H) A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
+                # (H) or otherwise yields no name still consumes its arguments through
+                # (H) whatever callable it produced; reference first-party functions
+                # (H) passed to it or dead-code flags every django-style view
+                # (H) decorator wrapper.
+                if is_flow_lang:
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                        cs.RelationshipType.REFERENCES,
+                    )
                 continue
 
-            if is_java and call_node.type == method_invocation_type:
+            call_var_types = local_var_types
+            if match_arm_bindings:
+                call_var_types = self._overlay_match_arm_binding(
+                    call_name, call_node, local_var_types, match_arm_bindings
+                )
+
+            if is_cpp:
+                # (H) A C++ member call through a template-parameter receiver has no
+                # (H) concrete type, so precise resolution fails and the external-receiver
+                # (H) guard drops the edge entirely, orphaning every structural interface
+                # (H) implementer (json_sax_* visitors dispatched via `sax->start_object()`).
+                # (H) Fan such a call out to the method on every class defining it. Runs
+                # (H) before the primary resolution/continue below so it fires even when
+                # (H) that edge is dropped; a concretely-typed receiver is skipped inside
+                # (H) the resolver. sorted(): the target label is a StrEnum whose set
+                # (H) iteration order is hash-randomized, so sort for deterministic output.
+                for target_type, target_qn in sorted(
+                    resolver.cpp_dispatch_targets(
+                        call_name, call_var_types, cpp_template_params
+                    )
+                ):
+                    for variant in resolver.function_registry.variants(target_qn):
+                        ensure_rel(
+                            caller_spec, calls_rel, (target_type, qn_key, variant)
+                        )
+
+            cpp_operand_type_qn: str | None = None
+            if (
+                is_cpp
+                and call_node.type in _CPP_OPERATOR_EXPRESSION_TYPES
+                and call_name.startswith(cs.OPERATOR_PREFIX)
+            ):
+                cpp_operand_type_qn = resolver.cpp_operand_class_qn(
+                    self._cpp_operator_operand_name(call_node),
+                    call_var_types,
+                    module_qn,
+                )
+            if cpp_operand_type_qn is not None:
+                # (H) The operand's type is KNOWN: the operator binds to that
+                # (H) type's own overload or, when it has none, to nothing at
+                # (H) all (a builtin enum/int operation) -- never rebound by
+                # (H) bare name to an unrelated class's overload set. Only an
+                # (H) untyped operand falls through to the legacy paths below.
+                callee_info = resolver.cpp_operator_for_type(
+                    call_name, cpp_operand_type_qn
+                )
+                if callee_info is None:
+                    continue
+            elif is_java and call_node.type == method_invocation_type:
                 callee_info = resolver.resolve_java_method_call(
-                    call_node, module_qn, local_var_types
+                    call_node, module_qn, local_var_types, caller_qn
                 )
             else:
                 callee_info = resolve_func(
-                    call_name, module_qn, local_var_types, class_context, caller_qn
+                    call_name,
+                    module_qn,
+                    call_var_types,
+                    class_context,
+                    caller_qn,
+                    language,
                 )
+            if callee_info and language == cs.SupportedLanguage.RUST:
+                # (H) Rust macros and functions live in SEPARATE namespaces:
+                # (H) a macro invocation (write!) must not bind a same-named fn
+                # (H) (std-prelude macro names collide with common fn names and
+                # (H) the false edge revives dead code), and a fn call must not
+                # (H) bind a same-named macro.
+                is_macro_target = callee_info[1] in self.macro_qns
+                if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
+                    callee_info = None
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
@@ -1466,24 +1972,27 @@ class CallProcessor:
             # (H) A callee that resolved to a builtin (e.g. JS setTimeout(target))
             # (H) has no first-party body to follow into, so pass-through flow is
             # (H) pointless; but a first-party callback handed to it is still invoked,
-            # (H) so record a reference edge from this scope to keep it reachable. The
-            # (H) builtin call edge itself is still emitted by the normal path below.
-            callee_is_builtin = is_flow_lang and callee_qn.startswith(
-                _BUILTIN_QN_PREFIX
-            )
+            # (H) so record a reference edge from this scope to keep it reachable.
+            # (H) The synthetic builtin.* qn never has a node, so emitting a CALLS
+            # (H) edge to it would only mint a phantom the database drops (issue
+            # (H) #652: 485 across the fixture suite) -- mirror the C++ builtin
+            # (H) operator rule and emit no edge at all.
+            callee_is_builtin = callee_qn.startswith(_BUILTIN_QN_PREFIX)
             if callee_is_builtin:
-                self._ingest_argument_function_references(
-                    call_node,
-                    caller_spec,
-                    module_qn,
-                    local_var_types,
-                    class_context,
-                    resolve_func,
-                    ensure_rel,
-                    caller_qn,
-                )
+                if is_flow_lang:
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                    )
+                continue
 
-            if is_flow_lang and not callee_is_builtin:
+            if is_flow_lang:
                 self._collect_callable_flow(
                     call_node,
                     callee_qn,
@@ -1570,6 +2079,19 @@ class CallProcessor:
                     caller_qn,
                 )
 
+            if (
+                language == cs.SupportedLanguage.JAVA
+                and call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
+                and callee_type != class_label
+            ):
+                # (H) `new X(...)` where X resolves to a non-class -- an interface or
+                # (H) annotation implemented by an anonymous class (`new Comparator<T>(){
+                # (H) ...}`). There is no first-party constructor to call, and a bare CALLS
+                # (H) edge to a non-callable node (Interface) is not a valid relationship.
+                # (H) The anonymous class body's own methods are ingested separately, so
+                # (H) drop the edge here rather than emit an invalid one.
+                continue
+
             if callee_type == class_label:
                 # (H) Record construction as INSTANTIATES -> the class node (keeps
                 # (H) CALLS function/method-only). When the class defines __init__,
@@ -1577,11 +2099,33 @@ class CallProcessor:
                 # (H) it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
                 # (H) the only edge.
                 for class_variant in resolver.function_registry.variants(callee_qn):
+                    # (H) A duplicate-suffixed variant may be a DIFFERENT kind
+                    # (H) of node (a merged TS namespace registers as a class,
+                    # (H) a colliding function as a Function); only class-typed
+                    # (H) variants are instantiable, and a mismatched label is
+                    # (H) a phantom the database drops (issue #652).
+                    variant_type = resolver.function_registry.get(class_variant)
+                    if variant_type is not None and variant_type != NodeType.CLASS:
+                        continue
                     ensure_rel(
                         caller_spec,
                         cs.RelationshipType.INSTANTIATES,
                         (class_label, qn_key, class_variant),
                     )
+                if language == cs.SupportedLanguage.JAVA:
+                    # (H) A Java constructor is a method named like its class (`Foo.Foo`),
+                    # (H) not `__init__`; `new Foo(...)` runs one, so redirect a CALLS edge
+                    # (H) to every declared constructor (overload selection is unneeded for
+                    # (H) reachability). sorted(): the target label is a hash-randomized
+                    # (H) StrEnum, so sort for deterministic output.
+                    for ctor_type, ctor_qn in sorted(
+                        resolver.java_constructor_targets(callee_qn)
+                    ):
+                        for variant in resolver.function_registry.variants(ctor_qn):
+                            ensure_rel(
+                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
+                            )
+                    continue
                 init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
                 if init_qn not in resolver.function_registry:
                     continue
@@ -1589,11 +2133,97 @@ class CallProcessor:
                 callee_qn = init_qn
 
             for target_qn in resolver.function_registry.variants(callee_qn):
+                # (H) A duplicate-suffixed variant may be a DIFFERENT kind of
+                # (H) node (a TS namespace merged onto a function registers as
+                # (H) a class); only callable variants take a CALLS edge, and
+                # (H) emitting the primary's label onto a differently-typed
+                # (H) node is a phantom the database drops (issue #652). An
+                # (H) unregistered target keeps its edge (resolver-derived
+                # (H) callees like an unwrapped fn.call base may not register).
+                target_type = resolver.function_registry.get(target_qn)
+                if target_type is not None and target_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ):
+                    continue
                 ensure_rel(
                     caller_spec,
                     calls_rel,
                     (callee_type, qn_key, target_qn),
                 )
+
+            if (
+                language == cs.SupportedLanguage.GO
+                and callee_type == cs.NodeLabel.FUNCTION
+            ):
+                # (H) A bare Go call resolves to one file's copy of a package-level
+                # (H) function; same-package same-name siblings are mutually-exclusive
+                # (H) build-tag variants (gin's `validate`), so emit an edge to each so
+                # (H) no build variant is reported dead. sorted(): the target label is a
+                # (H) StrEnum whose set iteration order is hash-randomized, so sort for
+                # (H) deterministic output (mirrors cpp_dispatch_targets).
+                for sibling_type, sibling_qn in sorted(
+                    resolver.go_package_sibling_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(sibling_qn):
+                        ensure_rel(
+                            caller_spec, calls_rel, (sibling_type, qn_key, variant)
+                        )
+
+            if callee_type == cs.NodeLabel.METHOD:
+                # (H) A call bound to an interface/trait method (the static callee;
+                # (H) removing its declaration breaks the call) with exactly ONE
+                # (H) implementer also runs the concrete method, so edge both. The
+                # (H) old REPLACING redirect orphaned the interface stub (gson's
+                # (H) FieldNamingStrategy.translateName reported dead); sorted():
+                # (H) the target label is a hash-randomized StrEnum.
+                for impl_type, impl_qn in sorted(
+                    resolver.interface_sole_impl_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(impl_qn):
+                        ensure_rel(caller_spec, calls_rel, (impl_type, qn_key, variant))
+
+            if (
+                is_js_ts
+                and cs.SEPARATOR_DOT in call_name
+                and callee_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            ):
+                # (H) A JS member call that bound one twin of a double-registered
+                # (H) prototype method (`this.lookup()` -> module-flat `view.lookup`,
+                # (H) leaving `View.lookup` dead) edges the same-module same-name
+                # (H) member twin too (duplicate-QN keep-both design; revive-only).
+                for twin_type, twin_qn in sorted(
+                    resolver.js_member_twin_targets(callee_qn)
+                ):
+                    for variant in resolver.function_registry.variants(twin_qn):
+                        ensure_rel(caller_spec, calls_rel, (twin_type, qn_key, variant))
+
+            if (
+                is_python
+                and callee_type == cs.NodeLabel.FUNCTION
+                and cs.SEPARATOR_DOT not in call_name
+            ):
+                # (H) A platform-conditional import with a local fallback def (click's
+                # (H) `if WIN: from ._winconsole import X ... else: def X(...)`) is
+                # (H) statically undecidable; the call resolves to the import, so the
+                # (H) mutually-exclusive local def looks dead. When the name was bound
+                # (H) by a CONDITIONAL import and the CURRENT module also defines it,
+                # (H) fan the call out to the local twin too -- mirrors the Go
+                # (H) build-variant fan-out. An UNCONDITIONAL import shadowing a local
+                # (H) def is plain shadowing: the local stays dead, so no edge.
+                local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{call_name}"
+                if (
+                    local_qn != callee_qn
+                    and call_name
+                    in resolver.import_processor.conditional_imports.get(module_qn, ())
+                    and resolver.function_registry.get(local_qn) == NodeType.FUNCTION
+                ):
+                    for variant in resolver.function_registry.variants(local_qn):
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (cs.NodeLabel.FUNCTION, qn_key, variant),
+                        )
 
     def _ingest_operator_dispatch_calls(
         self,
@@ -1763,36 +2393,161 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types:
+            # (H) Continue THROUGH an unowned anonymous arrow (zustand's curried
+            # (H) middleware body `(config) => (set, get, api) => { api.setState =
+            # (H) ... }`): it gets no caller pass of its own, so its assignments
+            # (H) would otherwise be scanned by nobody and the stored functions
+            # (H) report dead. Named nested scopes still own their own pass.
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
-                # (H) `export const persist = persistImpl as unknown as Persist`
-                # (H) wraps the aliased impl in TS casts; unwrap them so the bare
-                # (H) name/arrow underneath is what we reference.
-                if right is not None:
-                    right = self._unwrap_ts_cast(right)
-                # (H) A bare-name RHS names a callable; an inline arrow/function-expr
-                # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
-                # (H) function on the target for later invocation -- _emit_callback_edge
-                # (H) references it by position. A named arrow-const RHS is registered
-                # (H) by its name, so the by-position lookup simply finds nothing.
-                if right is not None and (
-                    right.type in _ASSIGNMENT_RHS_REF_TYPES
-                    or right.type in _INLINE_FUNC_VALUE_TYPES
-                ):
-                    self._emit_callback_edge(
-                        caller_spec,
-                        right,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn,
-                        cs.RelationshipType.REFERENCES,
-                    )
+                # (H) Go wraps every assignment RHS in an expression_list
+                # (H) (`var f = fn`, `a, b = g, h`); scan each value so the bare
+                # (H) func name(s) underneath are referenced. Other languages
+                # (H) carry a lone RHS node.
+                values = (
+                    list(right.named_children)
+                    if right is not None and right.type == cs.TS_GO_EXPRESSION_LIST
+                    else [right]
+                )
+                for value in values:
+                    if value is None:
+                        continue
+                    # (H) `export const persist = persistImpl as unknown as Persist`
+                    # (H) wraps the aliased impl in TS casts -- and devtools' shape
+                    # (H) interleaves parens (`api.setState = ((s, r) => {...}) as
+                    # (H) SetState`); peel both so the bare name/arrow underneath is
+                    # (H) what we reference.
+                    # (H) `const bound = handler.bind(null)` stores the bound
+                    # (H) handler; .bind/.call/.apply are transparent for
+                    # (H) reference resolution like a cast.
+                    value = self._peel_bound_callable(value, peel_parens=True)
+                    # (H) A bare-name RHS names a callable; an inline arrow/function-expr
+                    # (H) RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
+                    # (H) function on the target for later invocation --
+                    # (H) _emit_callback_edge references it by position. A named
+                    # (H) arrow-const RHS is registered by its name, so the by-position
+                    # (H) lookup simply finds nothing.
+                    # (H) A LOGICAL DEFAULT RHS (`done = done || function (err,
+                    # (H) str) {...}`, express's render) hides the stored function
+                    # (H) one level down; scan the binary operands too.
+                    if value.type == cs.TS_BINARY_EXPRESSION:
+                        for operand in value.named_children:
+                            operand = self._unwrap_ts_value(operand)
+                            if operand.type in _INLINE_FUNC_VALUE_TYPES:
+                                self._emit_callback_edge(
+                                    caller_spec,
+                                    operand,
+                                    module_qn,
+                                    local_var_types,
+                                    class_context,
+                                    resolve_func,
+                                    ensure_rel,
+                                    caller_qn,
+                                    cs.RelationshipType.REFERENCES,
+                                )
+                        continue
+                    # (H) A Python TERNARY / BOOLEAN-DEFAULT RHS (`get_response =
+                    # (H) self._async if is_async else self._sync`, django's
+                    # (H) BaseHandler; `f = handler or fallback`) binds one of its
+                    # (H) RESULT operands as the value; each result operand naming
+                    # (H) a callable is a possible referent. A ternary's condition
+                    # (H) is only truthiness-tested, never bound, so it is excluded;
+                    # (H) both boolean operands are possible results.
+                    if value.type in (
+                        cs.TS_PY_CONDITIONAL_EXPRESSION,
+                        cs.TS_PY_BOOLEAN_OPERATOR,
+                    ):
+                        operands = list(value.named_children)
+                        if (
+                            value.type == cs.TS_PY_CONDITIONAL_EXPRESSION
+                            and len(operands) == 3
+                        ):
+                            operands = [operands[0], operands[2]]
+                        for operand in operands:
+                            operand = self._unwrap_ts_value(operand)
+                            if (
+                                operand.type in _ASSIGNMENT_RHS_REF_TYPES
+                                or operand.type in _INLINE_FUNC_VALUE_TYPES
+                            ):
+                                self._emit_callback_edge(
+                                    caller_spec,
+                                    operand,
+                                    module_qn,
+                                    local_var_types,
+                                    class_context,
+                                    resolve_func,
+                                    ensure_rel,
+                                    caller_qn,
+                                    cs.RelationshipType.REFERENCES,
+                                )
+                        continue
+                    if (
+                        value.type in _ASSIGNMENT_RHS_REF_TYPES
+                        or value.type in _INLINE_FUNC_VALUE_TYPES
+                    ):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            value,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn,
+                            cs.RelationshipType.REFERENCES,
+                        )
+                        # (H) A member-assigned inline function (`api.setState =
+                        # (H) (s, r) => {...}`) is ALSO registered by the def pass
+                        # (H) under the PROPERTY name (scope.setState), which the
+                        # (H) by-position anonymous candidate above never matches;
+                        # (H) reference that registration too or it reports dead.
+                        if value.type in _INLINE_FUNC_VALUE_TYPES:
+                            self._emit_assigned_name_ref(
+                                node, caller_spec, ensure_rel, caller_qn
+                            )
             stack.extend(node.children)
+
+    def _emit_assigned_name_ref(
+        self,
+        assign_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+    ) -> None:
+        # (H) Resolve the assignment target's simple name (`api.setState` ->
+        # (H) setState, `listener` -> listener) to a def-pass registration in the
+        # (H) enclosing scope. Registry-guarded: emits only when such a node exists,
+        # (H) so a plain data assignment adds nothing.
+        if assign_node.type != cs.TS_ASSIGNMENT_EXPRESSION:
+            return
+        left = assign_node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return
+        name_node = (
+            left.child_by_field_name(cs.FIELD_PROPERTY)
+            if left.type == cs.TS_MEMBER_EXPRESSION
+            else left
+        )
+        if name_node is None or name_node.type not in (
+            cs.TS_IDENTIFIER,
+            cs.TS_PROPERTY_IDENTIFIER,
+        ):
+            return
+        if not (name := safe_decode_text(name_node)):
+            return
+        registry = self._resolver.function_registry
+        scope_qn = caller_qn or caller_spec[2]
+        candidate = f"{scope_qn}{cs.SEPARATOR_DOT}{name}"
+        for target_qn in registry.variants(candidate):
+            if registry.get(target_qn) is None:
+                continue
+            ensure_rel(
+                caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _ingest_jsx_component_references(
         self,
@@ -1882,25 +2637,104 @@ class CallProcessor:
         # (H) nested functions, which own their returns.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
+        # (H) An expression-bodied arrow (`const persistImpl = (config) =>
+        # (H) (set, get, api) => {...}`, zustand's curried middleware shape) has NO
+        # (H) return_statement -- its body IS the implicit return. Reference the inner
+        # (H) function directly, both on the caller itself and on any unowned anon
+        # (H) arrow the walk continues through (deeper currying bubbles here too).
+        self._emit_expression_body_return(
+            caller_node, caller_spec, ensure_rel, caller_qn
+        )
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
-                continue
+            if node.type in boundary_types:
+                if not self._is_unowned_js_scope(node):
+                    continue
+                self._emit_expression_body_return(
+                    node, caller_spec, ensure_rel, caller_qn
+                )
             if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
-                    self._emit_callback_edge(
-                        caller_spec,
-                        value,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn=caller_qn,
-                        rel_type=cs.RelationshipType.REFERENCES,
-                    )
+                    # (H) A returned TUPLE hides its function elements one level
+                    # (H) down (`return _load_field, (...)` in django Field's
+                    # (H) __reduce__: pickle later calls the first element);
+                    # (H) expand containers so each function handed back inside
+                    # (H) one is referenced like a bare return.
+                    for expanded in self._expand_py_first_class_values(value):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            expanded,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn=caller_qn,
+                            rel_type=cs.RelationshipType.REFERENCES,
+                        )
             stack.extend(node.children)
+
+    def _expand_py_first_class_values(self, value: Node) -> list[Node]:
+        # (H) Peel Python container literals and result-position conditional
+        # (H) operands so a function stored in a tuple/list/set, a dict VALUE,
+        # (H) a bare return-tuple (expression_list), or a ternary/boolean-
+        # (H) default branch is treated like a bare first-class value; nesting
+        # (H) expands recursively. A ternary's condition is only truthiness-
+        # (H) tested, never bound, so it stays excluded. Any other node comes
+        # (H) back unchanged, so non-Python shapes are unaffected.
+        out: list[Node] = []
+        stack = [value]
+        while stack:
+            node = stack.pop()
+            if node.type in _PY_VALUE_WRAPPER_TYPES:
+                stack.extend(reversed(node.named_children))
+            elif node.type == cs.TS_PY_DICTIONARY:
+                for pair in reversed(node.named_children):
+                    if (
+                        pair.type == cs.TS_PY_PAIR
+                        and (pair_value := pair.child_by_field_name(cs.FIELD_VALUE))
+                        is not None
+                    ):
+                        stack.append(pair_value)
+            elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+                # (H) tree-sitter-python exposes NO field names on
+                # (H) conditional_expression (child_by_field_name returns None
+                # (H) for every operand), so the result operands are positional:
+                # (H) [body, condition, alternative]. A shape that is not
+                # (H) exactly three named operands falls back to all of them,
+                # (H) over-referencing rather than dropping a branch.
+                operands = list(node.named_children)
+                if len(operands) == 3:
+                    operands = [operands[0], operands[2]]
+                stack.extend(reversed(operands))
+            elif node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if right is not None:
+                    stack.append(right)
+                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    stack.append(left)
+            else:
+                out.append(node)
+        return out
+
+    def _emit_expression_body_return(
+        self,
+        func_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+    ) -> None:
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        if body is not None and body.type in _INLINE_FUNC_VALUE_TYPES:
+            self._emit_inline_arg_function_ref(
+                body,
+                caller_spec,
+                ensure_rel,
+                caller_qn,
+                cs.RelationshipType.REFERENCES,
+            )
 
     def _ingest_collection_function_references(
         self,
@@ -1917,16 +2751,31 @@ class CallProcessor:
         # (H) call site is not statically resolvable. Treat each such reference as a call
         # (H) from the enclosing scope so the handler is reachable. The walk stops at
         # (H) nested function/class boundaries, so a table built inside a nested scope
-        # (H) is attributed to that scope's own pass, not this one.
+        # (H) is attributed to that scope's own pass, not this one -- EXCEPT an unowned
+        # (H) JS/TS arrow (a Promise executor, a `.forEach` callback), which gets no
+        # (H) caller pass of its own; its calls bubble to this scope, so its object
+        # (H) tables (a `defineProperty` getter descriptor) must be scanned here too or
+        # (H) the callbacks inside it are orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in boundary_types:
+            if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
+                    # (H) An object-literal SHORTHAND METHOD (`return { then(x)
+                    # (H) {...}, catch(x) {...} }`, persist's thenable) is a stored
+                    # (H) callable exactly like a pair value, but it is a
+                    # (H) method_definition node, not a pair -- reference it by name
+                    # (H) so it is not dead unless the repo never calls it AND never
+                    # (H) hands the object out (it cannot know the consumer).
+                    if pair.type == cs.TS_METHOD_DEFINITION:
+                        self._emit_shorthand_method_ref(
+                            pair, caller_spec, module_qn, ensure_rel
+                        )
+                        continue
                     if (
                         pair.type == cs.TS_PY_PAIR
                         and (value := pair.child_by_field_name(cs.FIELD_VALUE))
@@ -1934,11 +2783,28 @@ class CallProcessor:
                     ):
                         if value.type in _INLINE_FUNC_VALUE_TYPES:
                             self._emit_inline_value_function_ref(
-                                pair, value, caller_spec, ensure_rel
+                                pair, value, caller_spec, module_qn, ensure_rel
                             )
                             continue
+                        # (H) A table VALUE wrapped in parens or a ternary
+                        # (H) (django SQLCompiler's `"local_setter": (partial(...)
+                        # (H) if ... else local_setter_noop)`) hides the handler
+                        # (H) candidates one level down; expand before emitting.
+                        for expanded in self._expand_py_first_class_values(value):
+                            self._emit_value_function_ref(
+                                expanded,
+                                caller_spec,
+                                module_qn,
+                                local_var_types,
+                                class_context,
+                                resolve_func,
+                                ensure_rel,
+                            )
+            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
+                for element in node.named_children:
+                    for expanded in self._expand_py_first_class_values(element):
                         self._emit_value_function_ref(
-                            value,
+                            expanded,
                             caller_spec,
                             module_qn,
                             local_var_types,
@@ -1946,10 +2812,45 @@ class CallProcessor:
                             resolve_func,
                             ensure_rel,
                         )
-            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
+            stack.extend(node.children)
+
+    def _ingest_go_composite_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # (H) A Go function placed as a value in a composite literal -- a func map
+        # (H) (`map[string]any{"rpad": rpad}`) or a func slice (`[]Handler{a, b}`) -- is
+        # (H) a dispatch table invoked later by key, never by a visible call, so its
+        # (H) entries look dead. Reference each from the enclosing scope. Go's literal
+        # (H) shape differs from the JS/Py pair form: composite_literal > literal_value >
+        # (H) {keyed_element(value=literal_element) | literal_element}, and the element
+        # (H) wraps the bare identifier one level down, so unwrap before resolving.
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types:
+                continue
+            if node.type == cs.TS_GO_LITERAL_VALUE:
                 for element in node.named_children:
+                    value = (
+                        element.child_by_field_name(cs.FIELD_VALUE)
+                        if element.type == cs.TS_GO_KEYED_ELEMENT
+                        else element
+                    )
+                    if value is None or value.type != cs.TS_GO_LITERAL_ELEMENT:
+                        continue
+                    inner = value.named_children[0] if value.named_children else None
+                    if inner is None:
+                        continue
                     self._emit_value_function_ref(
-                        element,
+                        inner,
                         caller_spec,
                         module_qn,
                         local_var_types,
@@ -1970,14 +2871,10 @@ class CallProcessor:
         ensure_rel,
     ) -> None:
         # (H) A value cast for typing (`persistImpl as unknown as Persist`) is
-        # (H) transparent for reference resolution; unwrap it first.
-        node = self._unwrap_ts_cast(node)
-        # (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` in value position
-        # (H) (onError: handleError.bind(toast)) hands off `fn`; the call resolves to
-        # (H) the Function.prototype builtin, so unwrap to the bound function and
-        # (H) reference it instead, or it reports as dead.
-        if (bound := self._unwrap_bound_function(node)) is not None:
-            node = bound
+        # (H) transparent for reference resolution, and `fn.bind(ctx)` /
+        # (H) `fn.call(...)` / `fn.apply(...)` in value position (onError:
+        # (H) handleError.bind(toast)) hands off `fn`; peel both to a fixpoint.
+        node = self._peel_bound_callable(node)
         # (H) Only a bare name / attribute / member-expression in value position names
         # (H) a function; a call, comprehension or literal is not a reference to a
         # (H) callable itself. Reuses the flow-arg ref types (identifier, Python
@@ -1994,6 +2891,17 @@ class CallProcessor:
             ensure_rel,
         )
 
+    def _unwrap_ts_value(self, node: Node) -> Node:
+        # (H) Peel TS casts AND parens, interleaved (`((s) => {...}) as SetState`),
+        # (H) down to the wrapped value.
+        current = node
+        while current.type in _TS_BINDING_WRAPPER_TYPES:
+            inner = current.named_child(0)
+            if inner is None:
+                break
+            current = inner
+        return current
+
     def _unwrap_ts_cast(self, node: Node) -> Node:
         # (H) Peel TS cast wrappers (`x as T`, `x satisfies T`, `x!`) to the wrapped
         # (H) value; they are transparent for reference resolution. The wrapped value
@@ -2005,6 +2913,22 @@ class CallProcessor:
                 break
             current = inner
         return current
+
+    def _peel_bound_callable(self, node: Node, peel_parens: bool = False) -> Node:
+        # (H) Iterate cast (and optionally paren) unwraps with the bound-call
+        # (H) unwrap to a FIXPOINT: `(handler as any).bind(null)` interleaves a
+        # (H) cast INSIDE the bind receiver and `h.bind(a).bind(b)` chains, so
+        # (H) a single pass of either unwrap leaves a wrapper behind.
+        while True:
+            node = (
+                self._unwrap_ts_value(node)
+                if peel_parens
+                else self._unwrap_ts_cast(node)
+            )
+            bound = self._unwrap_bound_function(node)
+            if bound is None:
+                return node
+            node = bound
 
     def _unwrap_bound_function(self, node: Node) -> Node | None:
         # (H) For `fn.bind(ctx)` (a call_expression whose function is `fn.bind`),
@@ -2029,6 +2953,7 @@ class CallProcessor:
         pair: Node,
         value: Node,
         caller_spec: tuple[str, str, str],
+        module_qn: str,
         ensure_rel,
     ) -> None:
         # (H) An inline arrow/function-expression object value is registered by the
@@ -2050,6 +2975,22 @@ class CallProcessor:
             and (key := safe_decode_text(key_node))
         ):
             candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{key}")
+            # (H) A value nested under ANOTHER pair-arrow (`{ onCreated: (s) => {
+            # (H) s.setEvents({ compute: ... }) } }`) registers under the pair-key
+            # (H) PATH (scope.onCreated.compute); prefix the ancestor pair keys so
+            # (H) the candidate matches the def pass's qn.
+            if pair_path := self._ancestor_pair_key_path(pair):
+                candidates.add(
+                    f"{scope_qn}{cs.SEPARATOR_DOT}{pair_path}{cs.SEPARATOR_DOT}{key}"
+                )
+        # (H) A NAMED function expression value (`get: function getrouter() {...}`,
+        # (H) express) registers by its OWN name -- neither the key nor the
+        # (H) position form matches it; try the name under the scope and
+        # (H) module-flat (where the def pass puts it).
+        name_node = value.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and (own := safe_decode_text(name_node)):
+            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{own}")
+            candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{own}")
         for candidate in candidates:
             for target_qn in registry.variants(candidate):
                 if registry.get(target_qn) is None:
@@ -2060,6 +3001,122 @@ class CallProcessor:
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    def _ancestor_pair_key_path(self, pair: Node) -> str | None:
+        # (H) Dotted key path of the ENCLOSING pairs above this one (`compute` inside
+        # (H) `onCreated: (s) => ...` -> "onCreated"), outermost first; None when the
+        # (H) pair has no pair ancestors. Registry-guarded by the caller, so an
+        # (H) over-collected path (ancestors above the scanning scope) just misses.
+        keys: list[str] = []
+        current = pair.parent
+        while current is not None:
+            if current.type == cs.TS_PY_PAIR:
+                key_node = current.child_by_field_name(cs.FIELD_KEY)
+                if (
+                    key_node is not None
+                    and key_node.type in (cs.TS_PROPERTY_IDENTIFIER, cs.TS_IDENTIFIER)
+                    and (key := safe_decode_text(key_node))
+                ):
+                    keys.append(key)
+            current = current.parent
+        if not keys:
+            return None
+        keys.reverse()
+        return cs.SEPARATOR_DOT.join(keys)
+
+    def _emit_shorthand_method_ref(
+        self,
+        method_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        ensure_rel,
+    ) -> None:
+        # (H) The def pass registers a shorthand method by NAME at MODULE scope
+        # (H) (persist's thenable `catch` -> `...middleware.persist.catch`), while
+        # (H) this scan runs per enclosing caller; try both scopes, plus the
+        # (H) position form used when the name is taken.
+        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+        registry = self._resolver.function_registry
+        scope_qn = caller_spec[2]
+        candidates = {
+            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+            f"{method_node.start_point[0]}_{method_node.start_point[1]}"
+        }
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{name}")
+            candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+        for candidate in candidates:
+            for target_qn in registry.variants(candidate):
+                if registry.get(target_qn) is None:
+                    continue
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _ingest_default_param_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+    ) -> None:
+        params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            return
+        resolve_func = self._resolver.resolve_function_call
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for param in params.named_children:
+            # (H) TS carries a param default in required_parameter's `value` field;
+            # (H) plain JS wraps the param in an assignment_pattern whose default
+            # (H) sits under `right`. Scan both forms.
+            value = param.child_by_field_name(
+                cs.FIELD_VALUE
+            ) or param.child_by_field_name(cs.FIELD_RIGHT)
+            if value is None:
+                continue
+            value = self._unwrap_ts_value(value)
+            if (
+                value.type in _ASSIGNMENT_RHS_REF_TYPES
+                or value.type in _INLINE_FUNC_VALUE_TYPES
+            ):
+                self._emit_callback_edge(
+                    caller_spec,
+                    value,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                    caller_qn,
+                    cs.RelationshipType.REFERENCES,
+                )
+
+    def _ingest_inline_call_arg_references(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+        module_qn: str | None = None,
+    ) -> None:
+        args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if args is None:
+            return
+        for arg in args.named_children:
+            value = self._unwrap_ts_value(arg)
+            if value.type in _INLINE_FUNC_VALUE_TYPES:
+                self._emit_inline_arg_function_ref(
+                    value,
+                    caller_spec,
+                    ensure_rel,
+                    caller_qn,
+                    cs.RelationshipType.REFERENCES,
+                    module_qn=module_qn,
+                )
+
     def _emit_inline_arg_function_ref(
         self,
         arg_node: Node,
@@ -2067,6 +3124,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
+        module_qn: str | None = None,
     ) -> None:
         # (H) An inline arrow/function-expression call argument is registered by the
         # (H) definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
@@ -2075,18 +3133,35 @@ class CallProcessor:
         # (H) callable-param path). Registry guard skips unregistered names.
         registry = self._resolver.function_registry
         scope_qn = caller_qn or source_spec[2]
-        candidate = (
-            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+        suffixes = [
+            f"{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
             f"{arg_node.start_point[0]}_{arg_node.start_point[1]}"
-        )
-        for target_qn in registry.variants(candidate):
-            if registry.get(target_qn) is None:
-                continue
-            ensure_rel(
-                source_spec,
-                rel_type,
-                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+        ]
+        # (H) A NAMED function expression argument (`this.on('mount', function
+        # (H) onmount(parent) {...})`, express) registers by its own NAME -- the
+        # (H) position form never matches it, so try the name too, both under the
+        # (H) caller scope and module-flat (where the def pass puts it).
+        name_node = arg_node.child_by_field_name(cs.FIELD_NAME)
+        named = safe_decode_text(name_node) if name_node is not None else None
+        if named:
+            suffixes.append(f"{cs.SEPARATOR_DOT}{named}")
+        # (H) A duplicate-variant caller (a TS overload implementation registers as
+        # (H) `useStore@27`) owns anons the def pass registers under the NATURAL qn
+        # (H) (`useStore.anonymous_R_C`); try the variant-stripped scope too.
+        scopes = _scope_qn_candidates(scope_qn)
+        if named and module_qn is not None and module_qn not in scopes:
+            scopes = [*scopes, module_qn]
+        for scope in scopes:
+            for suffix in suffixes:
+                candidate = f"{scope}{suffix}"
+                for target_qn in registry.variants(candidate):
+                    if registry.get(target_qn) is None:
+                        continue
+                    ensure_rel(
+                        source_spec,
+                        rel_type,
+                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                    )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
@@ -2128,17 +3203,20 @@ class CallProcessor:
                     if not (name := safe_decode_text(child)):
                         continue
                     nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
+                    # (H) A duplicated name (if/else twin definitions) returns
+                    # (H) whichever branch ran, so record EVERY twin; recording one
+                    # (H) leaves the others unreachable and falsely dead.
                     if nested_qn in registry:
-                        self._returned_callables.setdefault(caller_qn, set()).add(
-                            nested_qn
+                        self._returned_callables.setdefault(caller_qn, set()).update(
+                            registry.variants(nested_qn)
                         )
                     elif (
                         resolved := resolve_func(
                             name, module_qn, local_var_types, class_context, caller_qn
                         )
                     ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
-                        self._returned_callables.setdefault(caller_qn, set()).add(
-                            resolved[1]
+                        self._returned_callables.setdefault(caller_qn, set()).update(
+                            registry.variants(resolved[1])
                         )
             stack.extend(node.children)
 
@@ -2316,9 +3394,12 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
-        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent for
-        # (H) reference resolution; unwrap it so the callable underneath resolves.
-        arg_node = self._unwrap_ts_cast(arg_node)
+        # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent
+        # (H) for reference resolution, and `fn.bind(ctx)` / `.call` / `.apply` in
+        # (H) argument position (addEventListener("click", handler.bind(this)),
+        # (H) django admin's inlines.js) hands off `fn` while the call itself
+        # (H) resolves to the Function.prototype builtin; peel both to a fixpoint.
+        arg_node = self._peel_bound_callable(arg_node)
         # (H) An arrow/function-expression passed DIRECTLY as a call argument
         # (H) (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
         # (H) registered anonymously in the enclosing scope but named after no
@@ -2345,6 +3426,12 @@ class CallProcessor:
                 return
             res_type = cs.NodeLabel.METHOD
             res_qn = init_qn
+        # (H) Only callables are meaningful callback/reference targets: a value can
+        # (H) resolve to an Interface/Type node (`selector = identity as Selector`
+        # (H) resolves the cast's TYPE name in some paths), and emitting that
+        # (H) produces schema-invalid edges.
+        if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+            return
         for target_qn in registry.variants(res_qn):
             ensure_rel(
                 source_spec,
@@ -2411,7 +3498,10 @@ class CallProcessor:
         for position, keyword_name, raw_arg in items:
             # (H) `f(callback as any)` casts the argument; unwrap so a cast callable
             # (H) argument still flows.
-            arg_node = self._unwrap_ts_cast(raw_arg)
+            # (H) `outer(handler.bind(this))` forwards the bound handler through
+            # (H) a pass-through param; peel .bind like the direct-argument path
+            # (H) or the propagated flow edge is lost.
+            arg_node = self._peel_bound_callable(raw_arg)
             if arg_node.type not in _FLOW_ARG_REF_TYPES:
                 continue
             arg_text = safe_decode_text(arg_node)
@@ -2609,17 +3699,23 @@ class CallProcessor:
         # (H) any, comes from callable-param flow).
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
-            self._emit_callback_edge(
-                caller_spec,
-                arg_node,
-                module_qn,
-                local_var_types,
-                class_context,
-                resolve_func,
-                ensure_rel,
-                caller_qn,
-                rel_type,
-            )
+            # (H) A container-literal or conditional argument
+            # (H) (`validators=[_simple_domain_name_validator]`, django's Site;
+            # (H) `... if single else local_setter_noop`, its SQLCompiler) hides
+            # (H) the passed functions one level down; each expanded value is a
+            # (H) first-class reference exactly like a bare-name argument.
+            for value_node in self._expand_py_first_class_values(arg_node):
+                self._emit_callback_edge(
+                    caller_spec,
+                    value_node,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
+                    ensure_rel,
+                    caller_qn,
+                    rel_type,
+                )
 
     def _build_local_alias_map(
         self, caller_node: Node, lang_config: LanguageSpec, module_qn: str
@@ -2725,9 +3821,9 @@ class CallProcessor:
     def _module_string_constant(self, module_qn: str, const_name: str) -> str | None:
         type_inference = self._resolver.type_inference
         file_path = type_inference.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in type_inference.ast_cache:
+        if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
             return None
-        root_node, _ = type_inference.ast_cache[file_path]
+        root_node, _ = entry
         for child in root_node.children:
             if child.type != cs.TS_PY_EXPRESSION_STATEMENT or not child.children:
                 continue
@@ -2833,10 +3929,20 @@ class CallProcessor:
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode(cs.ENCODING_UTF8))
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                if name_node is not None:
+                    if name_node.text is not None:
+                        path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+                # (H) A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has
+                # (H) no `name` field -- the name lives on the parent declarator -- so it
+                # (H) would be dropped, flattening a nested callee's qn (request.encodePair
+                # (H) instead of request.getQueryString.encodePair). Recover the binding
+                # (H) name the definition pass used so caller and node qns agree; else the
+                # (H) callee's own inline-arg/object callbacks never match and report dead.
+                elif lang_config.language in _JS_TS_LANGUAGES and (
+                    binding := self._js_ts_arrow_binding_name(current)
+                ):
+                    path_parts.append(binding)
             elif current.type in lang_config.class_node_types:
                 return None
 
@@ -2857,14 +3963,23 @@ class CallProcessor:
         # (H) destructured arrows stay unnamed (skipped), as before.
         if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return None
-        parent = func_node.parent
+        # (H) The arrow may be bound THROUGH transparent wrappers -- parens and TS
+        # (H) casts (`export const createStore = ((s) => ...) as CreateStore`,
+        # (H) zustand's public-API shape). The def pass unwraps these when naming the
+        # (H) function, so the call pass must climb them too or the arrow looks
+        # (H) anonymous and its body's calls drop at module scope.
+        node = func_node
+        parent = node.parent
+        while parent is not None and parent.type in _TS_BINDING_WRAPPER_TYPES:
+            node = parent
+            parent = node.parent
         if parent is None:
             return None
-        # (H) func_node must be the parent's value/initializer for both forms
+        # (H) node must be the parent's value/initializer for both forms
         # (H) (variable_declarator and public_field_definition), so one value check
         # (H) covers both. `==` not `is`: py-tree-sitter returns a fresh Node wrapper
         # (H) per access, so identity comparison always fails (Node `==` compares id).
-        if parent.child_by_field_name(cs.FIELD_VALUE) != func_node:
+        if parent.child_by_field_name(cs.FIELD_VALUE) != node:
             return None
         name_node = parent.child_by_field_name(cs.FIELD_NAME)
         if name_node is None or name_node.type not in (
@@ -2874,7 +3989,7 @@ class CallProcessor:
             return None
         return safe_decode_text(name_node)
 
-    def _js_ts_attributable_nodes(
+    def _attributable_func_nodes(
         self, func_nodes: list[Node], language: cs.SupportedLanguage
     ) -> list[Node]:
         # (H) The func nodes that will get their own caller node: named functions
@@ -2886,6 +4001,13 @@ class CallProcessor:
         # (H) with this callback pattern). Returning only attributable nodes as the
         # (H) exclusion set lets an anonymous arrow's calls bubble up to the nearest
         # (H) named function/method, matching where the oracle attributes them.
+        if language == cs.SupportedLanguage.RUST:
+            # (H) A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,
+            # (H) so the call loop skips it (no caller node); like JS/TS anon arrows its
+            # (H) calls must bubble to the enclosing fn/method (which holds the captured
+            # (H) locals' types) instead of being excluded and dropped. Named nested
+            # (H) `fn`s stay attributable and keep their own calls.
+            return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
         return [
@@ -2897,7 +4019,7 @@ class CallProcessor:
     def _is_unowned_js_scope(self, node: Node) -> bool:
         # (H) An anonymous arrow/function-expression that gets no caller node of its
         # (H) own (no name, no binding name) -- a `.map()`/`cell`/forwardRef callback.
-        # (H) Its calls bubble up to the enclosing named scope (_js_ts_attributable_nodes),
+        # (H) Its calls bubble up to the enclosing named scope (_attributable_func_nodes),
         # (H) and so must its JSX references: the enclosing JSX walk continues through it.
         if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return False

@@ -214,13 +214,19 @@ public class Oracle {
                         long endLine = lm.getLineNumber(sp.getEndPosition(unit, node));
                         emit(kind, rel, line, endLine, node.getName().toString());
                         // (H) A Method binds to its enclosing named type; an
-                        // (H) anonymous-class member (Function) has no such edge.
+                        // (H) anonymous-class member (Function) has no owner node,
+                        // (H) so cgr anchors it to the module with DEFINES (the
+                        // (H) orphan-prevention fallback) and the oracle models
+                        // (H) the same containment.
                         if (owner != null) {
                             long opos = sp.getStartPosition(unit, owner);
                             if (opos >= 0) {
                                 emitEdge("DEFINES_METHOD", rel, classKind(owner),
                                     lm.getLineNumber(opos), "Method", line);
                             }
+                        } else {
+                            emitEdge("DEFINES", rel, "Module", MODULE_LINE,
+                                "Function", line);
                         }
                     }
                     return super.visitMethod(node, p);

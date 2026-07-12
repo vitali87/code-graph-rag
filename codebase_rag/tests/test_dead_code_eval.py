@@ -38,13 +38,14 @@ def _fn(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tu
     )
 
 
-def _method(uid: str, path: str) -> tuple:
+def _method(uid: str, path: str = "m.py", decorators: list[str] | None = None) -> tuple:
     return (
         (cs.NodeLabel.METHOD.value, uid),
         {
             cs.KEY_QUALIFIED_NAME: uid,
+            cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
             cs.KEY_PATH: path,
-            cs.KEY_DECORATORS: [],
+            cs.KEY_DECORATORS: decorators or [],
             cs.KEY_IS_EXPORTED: False,
         },
     )
@@ -126,6 +127,113 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
     # (H) A method named main is not the binary entry, so it stays dead (main is
     # (H) Function-scoped; trait-method rooting is the reverse, Method-scoped).
     assert "proj.frame.Frame.main" in dead
+
+
+def test_cpp_operator_overloads_are_roots() -> None:
+    # (H) A C++ operator overload / user-defined literal (member `operator==`, free
+    # (H) `operator<<`, UDL `operator""_json`) is invoked by operator/literal SYNTAX
+    # (H) (`a == b`, `os << x`, `1_json`), never by a named call the graph can see, so
+    # (H) it is a reachability root (like Python dunders / Rust trait methods), gated
+    # (H) by a C++ file extension. A regular uncalled method stays dead, and a non-C++
+    # (H) symbol whose name merely starts with `operator` is NOT rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.json"),
+                {cs.KEY_QUALIFIED_NAME: "proj.json", cs.KEY_PATH: "json.hpp"},
+            ),
+            _method("proj.json.Json.operator_equal", "json.hpp"),
+            _method("proj.json.Json.operator_subscript", "json.hpp"),
+            _fn("proj.json.operator_left_shift", path="json.hpp"),
+            _fn('proj.json.operator_""_json', path="json.hpp"),
+            _method("proj.json.Json.push_back", "json.hpp"),
+            _fn("proj.mod.operator_equal", path="mod.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.json.Json.operator_equal" not in dead
+    assert "proj.json.Json.operator_subscript" not in dead
+    assert "proj.json.operator_left_shift" not in dead
+    assert 'proj.json.operator_""_json' not in dead
+    # (H) A regular method with no caller is still dead -- rooting is prefix-scoped
+    # (H) to `operator`, not a blanket C++ exemption.
+    assert "proj.json.Json.push_back" in dead
+    # (H) The `operator` prefix only roots on a C++ file; a .py symbol stays dead.
+    assert "proj.mod.operator_equal" in dead
+
+
+def test_java_serialization_hooks_are_roots() -> None:
+    # (H) Java serialization hooks (readObject/writeObject/writeReplace/readResolve/
+    # (H) readObjectNoData) are invoked reflectively by the java.io runtime, never by a
+    # (H) call the graph can see, so they are reachability roots (like Python dunders),
+    # (H) gated by the .java extension. The real Java QN carries a signature
+    # (H) (`readObject(ObjectInputStream)`), which must be stripped to the bare name. A
+    # (H) regular uncalled method stays dead, and a same-named symbol on a non-Java file
+    # (H) is NOT rooted.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.S"),
+                {cs.KEY_QUALIFIED_NAME: "proj.S", cs.KEY_PATH: "S.java"},
+            ),
+            _method("proj.S.S.readObject(ObjectInputStream)", "S.java"),
+            _method("proj.S.S.writeReplace()", "S.java"),
+            _method("proj.S.S.readResolve()", "S.java"),
+            _method("proj.S.S.helper()", "S.java"),
+            _method("proj.mod.C.readObject(ObjectInputStream)", "mod.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.S.S.readObject(ObjectInputStream)" not in dead
+    assert "proj.S.S.writeReplace()" not in dead
+    assert "proj.S.S.readResolve()" not in dead
+    # (H) A regular uncalled method is still dead -- rooting is name-scoped to the
+    # (H) reserved serialization hooks, not a blanket Java exemption.
+    assert "proj.S.S.helper()" in dead
+    # (H) The hook names only root on a .java file; a .py symbol stays dead.
+    assert "proj.mod.C.readObject(ObjectInputStream)" in dead
+
+
+def test_override_of_reachable_method_is_reachable() -> None:
+    # (H) A call to a base/interface method dispatches at runtime to any override, so
+    # (H) an override of a REACHABLE method is itself reachable (sound virtual dispatch).
+    # (H) The graph records OVERRIDES (overrider -> overridden) but the reachability walk
+    # (H) follows CALLS/REFERENCES only, so overrides reached solely by dispatch looked
+    # (H) dead (gson's RecordHelper strategy subclasses). A call reaches the base; the
+    # (H) override must be revived; an override of a DEAD base stays dead.
+    _OVERRIDES = cs.RelationshipType.OVERRIDES.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.java"},
+            ),
+            _fn("proj.m.entry", path="m.java"),
+            _method("proj.m.Base.run(int)", "m.java"),
+            _method("proj.m.Sub.run(int)", "m.java"),
+            _method("proj.m.SubSub.run(int)", "m.java"),
+            _method("proj.m.DeadBase.gone()", "m.java"),
+            _method("proj.m.DeadSub.gone()", "m.java"),
+        ]
+    )
+    _MTD = cs.NodeLabel.METHOD.value
+    nodes[(_FUNCTION, "proj.m.entry")][cs.KEY_IS_EXPORTED] = True
+    rels = [
+        (_FUNCTION, "proj.m.entry", _CALLS, _MTD, "proj.m.Base.run(int)"),
+        (_MTD, "proj.m.Sub.run(int)", _OVERRIDES, _MTD, "proj.m.Base.run(int)"),
+        # (H) multi-level: SubSub overrides Sub overrides Base -- all must revive.
+        (_MTD, "proj.m.SubSub.run(int)", _OVERRIDES, _MTD, "proj.m.Sub.run(int)"),
+        (_MTD, "proj.m.DeadSub.gone()", _OVERRIDES, _MTD, "proj.m.DeadBase.gone()"),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    # (H) Base is called (via exported entry) -> live; its overrides (direct and
+    # (H) transitive) are dispatch targets -> revived.
+    assert "proj.m.Base.run(int)" not in dead
+    assert "proj.m.Sub.run(int)" not in dead
+    assert "proj.m.SubSub.run(int)" not in dead
+    # (H) DeadBase is never called, so neither it nor its override is reachable.
+    assert "proj.m.DeadBase.gone()" in dead
+    assert "proj.m.DeadSub.gone()" in dead
 
 
 def test_root_level_tests_dir_is_excluded() -> None:
@@ -334,19 +442,6 @@ def test_cgr_dead_code_matches_known_dead_set(tmp_path: Path) -> None:
     assert "proj.m.orphan" not in dead
     assert "proj.m.main" not in dead
     assert "proj.m.helper" not in dead
-
-
-def _method(uid: str, path: str = "m.py") -> tuple:
-    return (
-        (cs.NodeLabel.METHOD.value, uid),
-        {
-            cs.KEY_QUALIFIED_NAME: uid,
-            cs.KEY_NAME: uid.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-            cs.KEY_PATH: path,
-            cs.KEY_DECORATORS: [],
-            cs.KEY_IS_EXPORTED: False,
-        },
-    )
 
 
 def test_dunder_root_is_limited_to_methods() -> None:
@@ -715,3 +810,336 @@ def test_cgr_dead_code_keeps_stored_callback_alive(tmp_path: Path) -> None:
     _make_callback_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
     assert not any(qn.endswith("create_context") for qn in dead)
+
+
+def test_external_override_property_is_root() -> None:
+    # (H) A method flagged `overrides_external` (subclass of a stdlib class
+    # (H) overriding one of its methods, click's textwrap.TextWrapper subclass) is
+    # (H) invoked by the external base's machinery -- a reachability root. An
+    # (H) unflagged sibling with no callers is still dead.
+    flagged = _method("proj.tw.TextWrapper._wrap_chunks", path="tw.py")
+    flagged[1][cs.KEY_OVERRIDES_EXTERNAL] = True
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.tw"),
+                {cs.KEY_QUALIFIED_NAME: "proj.tw", cs.KEY_PATH: "tw.py"},
+            ),
+            flagged,
+            _method("proj.tw.TextWrapper.unused", path="tw.py"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.tw.TextWrapper._wrap_chunks" not in dead
+    assert "proj.tw.TextWrapper.unused" in dead
+
+
+def test_singular_test_dir_is_excluded() -> None:
+    # (H) The Node.js/mocha convention keeps tests under a singular `test/` dir
+    # (H) (express: 34 of 49 dead-code reports were test helpers). With tests
+    # (H) excluded, such symbols are unconditional noise. `contest/` and
+    # (H) `latest/` must NOT match (the pattern is segment-anchored by the
+    # (H) leading-slash normalization).
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.test.helper", path="test/helper.js"),
+            _fn("proj.contest.helper", path="contest/helper.js"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.test.helper" not in dead
+    assert "proj.contest.helper" in dead
+
+
+def test_missing_decorators_property_is_not_a_root() -> None:
+    # (H) A node whose decorators property is absent (NULL in the graph) must not
+    # (H) crash root selection and must stay a dead candidate.
+    nodes = {
+        (_FUNCTION, "proj.m.bare"): {
+            cs.KEY_QUALIFIED_NAME: "proj.m.bare",
+            cs.KEY_PATH: "m.py",
+        },
+    }
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert dead == {"proj.m.bare"}
+
+
+def test_module_edge_to_non_candidate_is_ignored() -> None:
+    # (H) A module-load edge whose target is outside the candidate set (a class
+    # (H) with classes excluded) must not root anything or leak into the report.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            (
+                (_CLASS, "proj.m.Widget"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m.Widget", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.orphan"),
+        ]
+    )
+    rels = [(_MODULE, "proj.m", _CALLS, _CLASS, "proj.m.Widget")]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.orphan"}
+
+
+def test_factory_class_methods_are_dispatch_roots() -> None:
+    # (H) django-style class factory: create_manager() defines RelatedManager
+    # (H) inside itself and hands it out (return value / argument), so instances
+    # (H) surface behind dynamic receivers and no call edge ever lands on the
+    # (H) methods. Once the factory is LIVE its class's methods are dispatch
+    # (H) surface, and their callee closure revives with them.
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.create_manager"),
+            _class("proj.m.create_manager.RelatedManager"),
+            _method("proj.m.create_manager.RelatedManager.add"),
+            _method("proj.m.create_manager.RelatedManager._apply_filters"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, _FUNCTION, "proj.m.create_manager"),
+        (
+            _FUNCTION,
+            "proj.m.create_manager",
+            _DEFINES,
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager._apply_filters",
+        ),
+        (
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+            _CALLS,
+            method,
+            "proj.m.create_manager.RelatedManager._apply_filters",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == set()
+
+
+def test_dead_factory_class_methods_stay_dead() -> None:
+    # (H) The factory itself is never called: neither it nor its nested class's
+    # (H) methods may be revived (the dispatch-surface rule applies only to LIVE
+    # (H) factories).
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _fn("proj.m.create_manager"),
+            _class("proj.m.create_manager.RelatedManager"),
+            _method("proj.m.create_manager.RelatedManager.add"),
+        ]
+    )
+    rels = [
+        (
+            _FUNCTION,
+            "proj.m.create_manager",
+            _DEFINES,
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+        ),
+        (
+            _CLASS,
+            "proj.m.create_manager.RelatedManager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.create_manager.RelatedManager.add",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {
+        "proj.m.create_manager",
+        "proj.m.create_manager.RelatedManager.add",
+    }
+
+
+def test_module_level_class_methods_are_not_rooted_by_defines() -> None:
+    # (H) The dispatch-surface rule is scoped to classes nested in functions or
+    # (H) methods: a module-level class's uncalled method must stay dead.
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _class("proj.m.Plain"),
+            _method("proj.m.Plain.helper"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _DEFINES, _CLASS, "proj.m.Plain"),
+        (_MODULE, "proj.m", _CALLS, _CLASS, "proj.m.Plain"),
+        (
+            _CLASS,
+            "proj.m.Plain",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.Plain.helper",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == {"proj.m.Plain.helper"}
+
+
+def test_factory_revived_by_override_expansion_roots_its_class() -> None:
+    # (H) Interleaving: Sub.make only goes live as an OVERRIDE of the called
+    # (H) Base.make, and Sub.make is itself a class factory. The factory and
+    # (H) override expansions feed each other, so the nested class's methods
+    # (H) must still be revived (fixed point, not a fixed pass order).
+    method = cs.NodeLabel.METHOD.value
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.Base.make"),
+            _method("proj.m.Sub.make"),
+            _method("proj.m.Sub.make.Manager.run"),
+        ]
+    )
+    rels = [
+        (_MODULE, "proj.m", _CALLS, method, "proj.m.Base.make"),
+        (
+            method,
+            "proj.m.Sub.make",
+            cs.RelationshipType.OVERRIDES.value,
+            method,
+            "proj.m.Base.make",
+        ),
+        (method, "proj.m.Sub.make", _DEFINES, _CLASS, "proj.m.Sub.make.Manager"),
+        (
+            _CLASS,
+            "proj.m.Sub.make.Manager",
+            _DEFINES_METHOD,
+            method,
+            "proj.m.Sub.make.Manager.run",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
+    assert dead == set()
+
+
+def test_enum_protocol_hooks_are_roots() -> None:
+    # (H) Python's Enum machinery invokes _generate_next_value_ (on auto())
+    # (H) and _missing_ (on failed lookup) by NAME, never through a call the
+    # (H) graph can see -- runtime hooks exactly like dunders (django's
+    # (H) TextChoices._generate_next_value_). An arbitrary sunder-named
+    # (H) method is NOT in the protocol and must stay a dead candidate.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.TextChoices._generate_next_value_"),
+            _method("proj.m.Color._missing_"),
+            _method("proj.m.Color._custom_sunder_"),
+            # (H) _order_ / _ignore_ are Enum class ATTRIBUTES consumed at
+            # (H) class creation, never methods the machinery invokes; a
+            # (H) user-defined method with that name is ordinary dead code.
+            _method("proj.m.Color._order_"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert dead == {"proj.m.Color._custom_sunder_", "proj.m.Color._order_"}
+
+
+def test_property_family_decorated_methods_are_roots() -> None:
+    # (H) A @property/@cached_property/@classproperty method (and @x.setter /
+    # (H) @x.deleter) is invoked by ATTRIBUTE syntax -- a bare read like
+    # (H) `self.app_config._is_default_auto_field_overridden` produces no call
+    # (H) node, so no CALLS edge can ever land on it (django's
+    # (H) WhereNode._output_field_or_none, Expression._constructor_signature).
+    # (H) Same invisible-invocation situation as dunders: roots, not dead code.
+    # (H) Its callees revive through the normal walk.
+    config = default_dead_code_config(include_tests=False, include_classes=False)
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.m"),
+                {cs.KEY_QUALIFIED_NAME: "proj.m", cs.KEY_PATH: "m.py"},
+            ),
+            _method("proj.m.Options.plain_prop", decorators=["@property"]),
+            _method(
+                "proj.m.Options.cached",
+                decorators=["@functools.cached_property"],
+            ),
+            _method("proj.m.Expr.sig", decorators=["@classproperty"]),
+            _method("proj.m.Model.hybrid", decorators=["@hybrid_property"]),
+            _method("proj.m.Options.value", decorators=["@value.setter"]),
+            _method("proj.m.Options.gone", decorators=["@gone.deleter"]),
+            _method("proj.m.Options._helper"),
+            _method("proj.m.Options.undecorated"),
+            _method("proj.m.Options.custom", decorators=["@deprecated"]),
+        ]
+    )
+    rels = [
+        (
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Options.plain_prop",
+            _CALLS,
+            cs.NodeLabel.METHOD.value,
+            "proj.m.Options._helper",
+        ),
+    ]
+    dead = dead_code_from_graph(nodes, rels, _PREFIX, config)
+    assert dead == {"proj.m.Options.undecorated", "proj.m.Options.custom"}
+
+
+def test_duplicate_variant_leaf_still_matches_name_roots() -> None:
+    # (H) Go allows several init() in ONE file; the duplicate-qn machinery
+    # (H) renames the second to `init@51`, whose leaf failed the name-based
+    # (H) root checks and reported the runtime-invoked initializer dead
+    # (H) (kubernetes pkg.apis.abac register.init@51). The marker suffix is a
+    # (H) registration artifact, never part of the written name -- strip it
+    # (H) before every name-scoped root rule.
+    nodes = dict(
+        [
+            (
+                (_MODULE, "proj.register"),
+                {cs.KEY_QUALIFIED_NAME: "proj.register", cs.KEY_PATH: "register.go"},
+            ),
+            _fn("proj.register.init", path="register.go"),
+            _fn("proj.register.init@51", path="register.go"),
+            _fn("proj.register.helper@60", path="register.go"),
+            _method("proj.frame.Frame.fmt@12", "frame.rs"),
+        ]
+    )
+    dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
+    assert "proj.register.init" not in dead
+    assert "proj.register.init@51" not in dead
+    assert "proj.frame.Frame.fmt@12" not in dead
+    # (H) a non-root name keeps its variant dead -- stripping the marker must
+    # (H) not accidentally widen any rule
+    assert "proj.register.helper@60" in dead

@@ -8,6 +8,7 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_FIND_FILE,
     CYPHER_EXAMPLE_KEYWORD_SEARCH,
     CYPHER_EXAMPLE_LIMIT_ONE,
+    CYPHER_EXAMPLE_PROJECT_SCOPED,
     CYPHER_EXAMPLE_PYTHON_FILES,
     CYPHER_EXAMPLE_README,
     CYPHER_EXAMPLE_TASKS,
@@ -203,11 +204,46 @@ def build_rag_orchestrator_prompt(
     )
 
 
-CYPHER_SYSTEM_PROMPT = f"""
+def _cypher_literal(name: str) -> str:
+    # (H) Escape for a single-quoted Cypher literal so apostrophe names stay valid.
+    return name.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _format_cypher_project_scope(active_projects: list[str] | None) -> str:
+    if not active_projects:
+        return (
+            "\n**Project Scoping**: The database may contain multiple indexed "
+            "projects. When the user names a project, scope the query by filtering "
+            "`WHERE <var>.qualified_name STARTS WITH '<projectName>.'`.\n"
+        )
+    if len(active_projects) == 1:
+        name = active_projects[0]
+        literal = _cypher_literal(name)
+        return (
+            f"\n**Project Scoping (REQUIRED)**: All queries are scoped to the "
+            f"project `{name}`. Unless the user explicitly asks about other "
+            f"projects, ALWAYS constrain matched code nodes with "
+            f"`WHERE <var>.qualified_name STARTS WITH '{literal}.'`. For `Project` "
+            f"nodes match `(p:Project {{name: '{literal}'}})`.\n"
+        )
+    scoped = " OR ".join(
+        f"<var>.qualified_name STARTS WITH '{_cypher_literal(p)}.'"
+        for p in active_projects
+    )
+    return (
+        f"\n**Project Scoping**: The active projects are "
+        f"{', '.join(f'`{p}`' for p in active_projects)}. To restrict to one "
+        f"project, filter `<var>.qualified_name STARTS WITH '<projectName>.'`. "
+        f"To restrict to the active set, filter `({scoped})`.\n"
+    )
+
+
+def build_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
+    return f"""
 You are an expert translator that converts natural language questions about code structure into precise Neo4j Cypher queries.
 
 {GRAPH_SCHEMA_AND_RULES}
-
+{_format_cypher_project_scope(active_projects)}
 **3. Query Optimization Rules**
 
 - **LIMIT Results**: ALWAYS add `LIMIT 50` to queries that list items. This prevents overwhelming responses.
@@ -246,16 +282,27 @@ cypher// "What methods does UserService have?" or "Show me methods in UserServic
 // Use `ENDS WITH` to match the class by short name since qualified_name contains full path.
 {CYPHER_EXAMPLE_CLASS_METHODS}
 
+**Pattern: Scoping Results to a Single Project**
+cypher// "show all classes in myproject" (multi-project database)
+// Filter on the qualified_name prefix to keep results within one project.
+{CYPHER_EXAMPLE_PROJECT_SCOPED}
+
 **4. Output Format**
 Provide only the Cypher query.
 """
 
+
+# (H) Backwards-compatible default (no project scope injected)
+CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
+
+
 # (H) Stricter prompt for less capable open-source/local models (e.g., Ollama)
-LOCAL_CYPHER_SYSTEM_PROMPT = f"""
+def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
+    return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
 
 {GRAPH_SCHEMA_AND_RULES}
-
+{_format_cypher_project_scope(active_projects)}
 **CRITICAL RULES FOR QUERY GENERATION:**
 1.  **NO `UNION`**: Never use the `UNION` clause. Generate a single, simple `MATCH` query.
 2.  **BIND and ALIAS**: You must bind every node you use to a variable (e.g., `MATCH (f:File)`). You must use that variable to access properties and alias every returned property (e.g., `RETURN f.path AS path`).
@@ -320,7 +367,18 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     ```cypher
     {CYPHER_EXAMPLE_CLASS_METHODS}
     ```
+
+*   **Natural Language:** "show all classes in myproject"
+*   **Cypher Query (scope by qualified_name prefix in a multi-project database):**
+    ```cypher
+    {CYPHER_EXAMPLE_PROJECT_SCOPED}
+    ```
 """
+
+
+# (H) Backwards-compatible default (no project scope injected)
+LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
+
 
 OPTIMIZATION_PROMPT = """
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.

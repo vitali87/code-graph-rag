@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from ..capture import ALL_ENABLED, CaptureSelection
 from ..constants import SupportedLanguage
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -26,6 +27,7 @@ class ProcessorFactory:
         "ast_cache",
         "unignore_paths",
         "exclude_paths",
+        "capture",
         "module_qn_to_file_path",
         "_import_processor",
         "_structure_processor",
@@ -46,6 +48,7 @@ class ProcessorFactory:
         ast_cache: ASTCacheProtocol,
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
+        capture: CaptureSelection | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -56,6 +59,7 @@ class ProcessorFactory:
         self.ast_cache = ast_cache
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        self.capture = capture if capture is not None else ALL_ENABLED
 
         self.module_qn_to_file_path: dict[str, Path] = {}
         self._func_class_captures_cache: dict[Path, dict] = {}
@@ -119,6 +123,7 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
                 class_field_types=self.definition_processor.class_field_types,
+                class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 method_return_types=self.definition_processor.method_return_types,
             )
         return self._type_inference
@@ -136,5 +141,10 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
                 type_aliases=self.definition_processor.type_aliases,
                 interface_implementers=self.definition_processor.interface_implementers,
+                capture=self.capture,
+                module_qn_to_file_path=self.module_qn_to_file_path,
+                cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
+                function_locations=self.definition_processor.function_locations,
+                macro_qns=self.definition_processor.macro_qns,
             )
         return self._call_processor

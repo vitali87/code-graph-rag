@@ -1529,7 +1529,7 @@ def _initialize_services_and_agent(
     )
     _validate_provider_config(cs.ModelRole.CYPHER, settings.active_cypher_config)
 
-    cypher_generator = CypherGenerator()
+    cypher_generator = CypherGenerator(active_projects=active_projects)
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
     file_reader = FileReader(project_root=repo_path)
     file_writer = FileWriter(project_root=repo_path)

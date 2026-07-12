@@ -24,6 +24,56 @@ export class Point {
 export function free() { return 1; }
 """
 
+# (H) `View.prototype.lookup = function () {...}` is DEFINEd by the CONSTRUCTOR
+# (H) node in cgr's model (the prototype pass registers `module.View.lookup`
+# (H) under the constructor). The oracle used to expect a module parent, which
+# (H) only matched cgr's since-cured anonymous-twin duplicate; it must model
+# (H) the constructor containment, including a constructor declared as a
+# (H) var-assigned function expression and an assignment nested in a function.
+JS_PROTOTYPE_SRC = """\
+function View(name) {
+    this.name = name;
+}
+
+View.prototype.lookup = function (key) {
+    return this.name + key;
+};
+
+var Store = function (items) {
+    this.items = items;
+};
+
+Store.prototype.get = function (i) {
+    return this.items[i];
+};
+
+function install() {
+    View.prototype.reset = function () {
+        this.name = "";
+    };
+}
+
+var Conn = (exports.Conn = function (stream) {
+    this.stream = stream;
+});
+
+Conn.prototype.close = function () {
+    this.stream = null;
+};
+
+function wrap(base) {
+    function Inner(x) {
+        base.call(this, x);
+    }
+
+    Inner.prototype.run = function () {
+        return this.x;
+    };
+
+    return Inner;
+}
+"""
+
 
 def _require_js() -> None:
     if not typescript_available():
@@ -54,3 +104,21 @@ def test_cgr_matches_tsc_oracle_on_js_containment_edges(tmp_path: Path) -> None:
             row,
             result.diff,
         )
+
+
+def test_cgr_matches_tsc_oracle_on_prototype_method_containment(
+    tmp_path: Path,
+) -> None:
+    _require_js()
+    project = tmp_path / "js_proto"
+    project.mkdir()
+    (project / "view.js").write_text(JS_PROTOTYPE_SRC, encoding="utf-8")
+
+    cgr = extract_cgr_js_graph(project, project.name)
+    oracle = run_javascript_oracle(project)
+
+    result = score_edge_types(cgr, oracle, ec.SCORED_EDGE_TYPES)
+    by_label = {row["label"]: row for row in result.rows}
+    row = by_label.get(cs.RelationshipType.DEFINES.value)
+    assert row is not None, (by_label, result.diff)
+    assert row["precision"] == 1.0 and row["recall"] == 1.0, (row, result.diff)

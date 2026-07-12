@@ -84,6 +84,10 @@ HELP_NO_START_STACK = (
 HELP_NO_SYNC = (
     "Skip the automatic incremental graph sync that runs before the agent starts."
 )
+HELP_NO_EMBEDDINGS = (
+    "Skip the semantic embedding pass after graph sync; the graph itself still "
+    "builds fully. Env equivalent: CGR_SKIP_EMBEDDINGS=1."
+)
 HELP_PROJECTS = (
     "Comma-separated list of project names to scope agent queries to. "
     "Overrides --project-name. If omitted, defaults to the current repo's project."
@@ -159,6 +163,11 @@ HELP_EXCLUDE_PATTERNS = (
 HELP_INTERACTIVE_SETUP = (
     "Show interactive prompt to select which detected directories to keep. "
     "Without this flag, all directories matching ignore patterns are automatically excluded."
+)
+HELP_CAPTURE = (
+    "Which relationships to capture. Groups (structure, calls, types, imports, io), "
+    "'all'/'none' as a base, or +TYPE / -TYPE overrides. Repeatable. Overrides "
+    "CGR_CAPTURE for this run. Default: core groups on, io opt-in."
 )
 
 HELP_ASK_AGENT = (

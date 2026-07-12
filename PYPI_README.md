@@ -57,6 +57,17 @@ cgr export -o graph.json
 cgr optimize python --repo-path ./my-project
 ```
 
+**Find dead code (functions unreachable from any entry point):**
+
+```bash
+cgr dead-code                                   # scan the indexed project
+cgr dead-code -e main --exclude '*.gen.*'       # add roots, skip generated code
+cgr dead-code --format json --fail-on-found     # CI-friendly report
+```
+
+Results are candidates for review, not a guaranteed delete list. See the
+[Dead Code Detection guide](https://docs.code-graph-rag.com/guide/dead-code/).
+
 **Run as an MCP server (for Claude Code):**
 
 ```bash

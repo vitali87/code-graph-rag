@@ -159,6 +159,24 @@ class JavaTypeResolverMixin:
         ] in [NodeType.CLASS, NodeType.INTERFACE]:
             return same_package_qn
 
+        # (H) A nested class referenced by its simple name from within the same file
+        # (H) (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
+        # (H) `module.Outer.Nested`, not `module.Nested`, so the direct check above
+        # (H) misses it. Search only this module's trie subtree (bounded, not a
+        # (H) whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
+        # (H) name, and use it only when unambiguous so a same-named nested type elsewhere
+        # (H) cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
+        # (H) already excludes character-level prefix collisions.
+        suffix = f"{cs.SEPARATOR_DOT}{type_name}"
+        nested = [
+            qn
+            for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
+            if qn.endswith(suffix)
+            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
+        ]
+        if len(nested) == 1:
+            return nested[0]
+
         return type_name
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
@@ -212,10 +230,10 @@ class JavaTypeResolverMixin:
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
+        if file_path is None or not (entry := self.ast_cache.load(file_path)):
             return []
 
-        root_node, _ = self.ast_cache[file_path]
+        root_node, _ = entry
 
         return self._find_interfaces_using_ast(root_node, target_class_name, module_qn)
 

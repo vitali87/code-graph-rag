@@ -7,8 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
-from codebase_rag.types_defs import ResultRow
+from codebase_rag.types_defs import PropertyValue, ResultRow
 
 
 @pytest.fixture
@@ -18,6 +19,8 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def dead_rows() -> list[ResultRow]:
+    # (H) Node rows as the dead-code node fetch returns them; neither symbol has
+    # (H) an incoming edge, so both are reported dead.
     return [
         {
             "label": "Function",
@@ -37,11 +40,22 @@ def dead_rows() -> list[ResultRow]:
 
 
 def _make_mock_ingestor(
-    *, projects: list[str], fetch_result: list[ResultRow]
+    *,
+    projects: list[str],
+    fetch_result: list[ResultRow],
+    rels: list[ResultRow] | None = None,
 ) -> MagicMock:
     mock = MagicMock()
     mock.list_projects.return_value = projects
-    mock.fetch_all.return_value = fetch_result
+
+    def _fetch(
+        query: str, params: dict[str, PropertyValue] | None = None
+    ) -> list[ResultRow]:
+        if query == cq.CYPHER_DEAD_CODE_NODES:
+            return fetch_result
+        return rels or []
+
+    mock.fetch_all.side_effect = _fetch
     mock.__enter__ = MagicMock(return_value=mock)
     mock.__exit__ = MagicMock(return_value=False)
     return mock
@@ -134,6 +148,29 @@ class TestDeadCodeCommand:
         _query, params = mock_ingestor.fetch_all.call_args.args
         assert params["project_prefix"] == "myproj."
 
+    def test_scoped_to_selected_project(self, runner: CliRunner) -> None:
+        # (H) Only symbols of the selected project are reported even if the
+        # (H) fetch surfaces rows from another prefix.
+        rows: list[ResultRow] = [
+            {
+                "label": "Function",
+                "name": "stray",
+                "qualified_name": "other.mod.stray",
+                "start_line": 1,
+                "end_line": 2,
+            },
+        ]
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj", "other"], fetch_result=rows
+        )
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(
+                app, ["dead-code", "--project-name", "myproj", "--format", "json"]
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == []
+
     def test_errors_when_project_ambiguous(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["a", "b"], fetch_result=[])
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
@@ -149,28 +186,59 @@ class TestDeadCodeCommand:
 
         assert result.exit_code == 1
 
-    def test_entry_point_forwarded_to_query(
+    def test_entry_point_roots_matching_symbol(
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
+        # (H) -e marks matching qualified-name suffixes as reachable roots, so
+        # (H) only the non-matching orphan is reported.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code", "-e", "main", "-e", "run"])
+            result = runner.invoke(
+                app, ["dead-code", "-e", "orphan_one", "--format", "json"]
+            )
 
         assert result.exit_code == 0
-        _query, params = mock_ingestor.fetch_all.call_args.args
-        assert params["entry_points"] == ["main", "run"]
+        names = {row["qualified_name"] for row in json.loads(result.output)}
+        assert names == {"myproj.mod.Thing.orphan_two"}
 
-    def test_decorator_root_extends_defaults(
-        self, runner: CliRunner, dead_rows: list[ResultRow]
-    ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+    def test_decorator_root_extends_defaults(self, runner: CliRunner) -> None:
+        # (H) --decorator-root adds to the built-in root set (task, route, ...),
+        # (H) so both decorated symbols are live and only the plain orphan reports.
+        rows: list[ResultRow] = [
+            {
+                "label": "Function",
+                "name": "custom",
+                "qualified_name": "myproj.mod.custom",
+                "decorators": ["@myhandler"],
+                "start_line": 1,
+                "end_line": 2,
+            },
+            {
+                "label": "Function",
+                "name": "job",
+                "qualified_name": "myproj.mod.job",
+                "decorators": ["@task"],
+                "start_line": 4,
+                "end_line": 5,
+            },
+            {
+                "label": "Function",
+                "name": "orphan",
+                "qualified_name": "myproj.mod.orphan",
+                "start_line": 7,
+                "end_line": 8,
+            },
+        ]
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=rows)
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code", "--decorator-root", "myhandler"])
+            result = runner.invoke(
+                app,
+                ["dead-code", "--decorator-root", "myhandler", "--format", "json"],
+            )
 
         assert result.exit_code == 0
-        _query, params = mock_ingestor.fetch_all.call_args.args
-        assert "myhandler" in params["root_decorators"]
-        assert "task" in params["root_decorators"]
+        names = {row["qualified_name"] for row in json.loads(result.output)}
+        assert names == {"myproj.mod.orphan"}
 
     def test_writes_json_to_output_file(
         self, runner: CliRunner, dead_rows: list[ResultRow], tmp_path: Path
@@ -208,56 +276,101 @@ class TestDeadCodeCommand:
 
         assert result.exit_code == 1
 
-    def test_include_tests_default_passes_test_patterns(
-        self, runner: CliRunner, dead_rows: list[ResultRow]
-    ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code"])
+    @staticmethod
+    def _test_flow_rows() -> tuple[list[ResultRow], list[ResultRow]]:
+        # (H) A test function calls a production helper; nothing else reaches
+        # (H) the helper.
+        nodes: list[ResultRow] = [
+            {
+                "label": "Function",
+                "name": "test_runs",
+                "qualified_name": "myproj.tests.test_runs",
+                "path": "proj/tests/test_mod.py",
+                "start_line": 1,
+                "end_line": 3,
+            },
+            {
+                "label": "Function",
+                "name": "helper",
+                "qualified_name": "myproj.mod.helper",
+                "path": "proj/mod.py",
+                "start_line": 5,
+                "end_line": 7,
+            },
+        ]
+        rels: list[ResultRow] = [
+            {
+                "from_label": "Function",
+                "from_qn": "myproj.tests.test_runs",
+                "rel_type": "CALLS",
+                "to_label": "Function",
+                "to_qn": "myproj.mod.helper",
+            },
+        ]
+        return nodes, rels
 
-        assert result.exit_code == 0
-        query, params = mock_ingestor.fetch_all.call_args.args
-        assert "test_patterns" in params
-        assert "$test_patterns" in query
-
-    def test_no_include_tests_omits_test_patterns(
-        self, runner: CliRunner, dead_rows: list[ResultRow]
-    ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code", "--no-include-tests"])
-
-        assert result.exit_code == 0
-        query, params = mock_ingestor.fetch_all.call_args.args
-        # (H) test_patterns is still passed (it filters test modules out of the
-        # (H) module-load roots and test-file symbols out of the report), but
-        # (H) test functions themselves are not roots.
-        assert "test_patterns" in params
-        assert "OR ANY(p IN $test_patterns WHERE n.path CONTAINS p)" not in query
-        # (H) Path is leading-slash-normalized so a root tests/ dir is excluded too.
-        assert (
-            "AND NOT ANY(p IN $test_patterns"
-            " WHERE ('/' + coalesce(n.path, '')) CONTAINS p)" in query
+    def test_include_tests_default_roots_test_code(self, runner: CliRunner) -> None:
+        # (H) With tests included (default), test functions are roots: the test
+        # (H) and the helper it calls are both live, so nothing is reported.
+        nodes, rels = self._test_flow_rows()
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], fetch_result=nodes, rels=rels
         )
-
-    def test_classes_flag_includes_class_candidates(
-        self, runner: CliRunner, dead_rows: list[ResultRow]
-    ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code", "--classes"])
+            result = runner.invoke(app, ["dead-code", "--format", "json"])
 
         assert result.exit_code == 0
-        query, _params = mock_ingestor.fetch_all.call_args.args
-        assert "Function|Method|Class" in query
+        assert json.loads(result.output) == []
 
-    def test_classes_off_by_default(
-        self, runner: CliRunner, dead_rows: list[ResultRow]
+    def test_no_include_tests_reports_test_only_production_code(
+        self, runner: CliRunner
     ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+        # (H) With tests excluded, production code reached only from tests is
+        # (H) reported; the test function itself is filtered from the report
+        # (H) (its only callers are excluded as roots, so it is pure noise).
+        nodes, rels = self._test_flow_rows()
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], fetch_result=nodes, rels=rels
+        )
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
-            result = runner.invoke(app, ["dead-code"])
+            result = runner.invoke(
+                app, ["dead-code", "--no-include-tests", "--format", "json"]
+            )
 
         assert result.exit_code == 0
-        query, _params = mock_ingestor.fetch_all.call_args.args
-        assert "Function|Method|Class" not in query
+        names = {row["qualified_name"] for row in json.loads(result.output)}
+        assert names == {"myproj.mod.helper"}
+
+    @staticmethod
+    def _class_rows() -> list[ResultRow]:
+        return [
+            {
+                "label": "Class",
+                "name": "Orphan",
+                "qualified_name": "myproj.mod.Orphan",
+                "path": "proj/mod.py",
+                "start_line": 1,
+                "end_line": 4,
+            },
+        ]
+
+    def test_classes_flag_includes_class_candidates(self, runner: CliRunner) -> None:
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], fetch_result=self._class_rows()
+        )
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["dead-code", "--classes", "--format", "json"])
+
+        assert result.exit_code == 0
+        names = {row["qualified_name"] for row in json.loads(result.output)}
+        assert names == {"myproj.mod.Orphan"}
+
+    def test_classes_off_by_default(self, runner: CliRunner) -> None:
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], fetch_result=self._class_rows()
+        )
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["dead-code", "--format", "json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == []

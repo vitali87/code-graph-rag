@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
-from .constants import NodeLabel, RelationshipType, SupportedLanguage
+from .constants import AuditCheck, NodeLabel, RelationshipType, SupportedLanguage
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
@@ -127,6 +127,7 @@ class ASTCacheProtocol(Protocol):
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
     def items(self) -> ItemsView[Path, tuple[Node, SupportedLanguage]]: ...
+    def load(self, key: Path) -> tuple[Node, SupportedLanguage] | None: ...
 
 
 class ColumnDescriptor(Protocol):
@@ -365,6 +366,7 @@ class LanguageQueries(TypedDict):
     calls: Query | None
     imports: Query | None
     locals: Query | None
+    highlights: Query | None
     config: LanguageSpec
     language: Language
     parser: Parser
@@ -429,6 +431,21 @@ class DeadCodeRow(TypedDict):
     end_line: int
 
 
+class DeadCodeConfig(NamedTuple):
+    include_tests: bool
+    include_classes: bool
+    root_decorators: frozenset[str]
+    entry_points: tuple[str, ...]
+    test_patterns: tuple[str, ...]
+    exclude_patterns: tuple[str, ...] = ()
+
+
+class GraphQueryClient(Protocol):
+    def fetch_all(
+        self, query: str, params: dict[str, PropertyValue] | None = None
+    ) -> list[ResultRow]: ...
+
+
 class ListProjectsSuccessResult(TypedDict):
     projects: list[str]
     count: int
@@ -472,6 +489,167 @@ class NodeSchema(NamedTuple):
     properties: str
 
 
+class GraphNodeRecord(NamedTuple):
+    label: str
+    properties: PropertyDict
+
+
+type RelEndpointSpec = tuple[str, str, PropertyValue]
+
+
+class GraphRelRecord(NamedTuple):
+    from_spec: RelEndpointSpec
+    rel_type: str
+    to_spec: RelEndpointSpec
+
+
+class AuditViolation(NamedTuple):
+    check: AuditCheck
+    detail: str
+
+
+class DeferredParentLink(NamedTuple):
+    """Containment edge whose non-module parent must exist before emission.
+
+    Parents can be registered by a later pass than the child (methods land in
+    the class pass after the function pass; forward declarations register
+    last), so verification waits until every pass finishes. A parent qn that
+    never registers is a phantom the database would drop, so the child
+    anchors to its registered lexical fallback when one is known (a nested
+    prototype assignment belongs to its enclosing function), else its module.
+    """
+
+    parent_label_guess: str
+    parent_qn: str
+    child_label: str
+    child_qn: str
+    module_qn: str
+    rel_type: str = RelationshipType.DEFINES.value
+    fallback_label: str | None = None
+    fallback_qn: str | None = None
+
+
+# (H) (module_qn, 1-based start line, 0-based start column) of a function
+# (H) node; the full span identifies the function even on shared lines.
+type FunctionSpanKey = tuple[str, int, int]
+
+
+class FunctionLocation(NamedTuple):
+    """Where the definition pass put a C++ function/method node.
+
+    Keyed by (module_qn, start_line, start_col) so Pass-3 call attribution
+    reuses the exact label and qn Pass 2 registered instead of re-deriving
+    them from the AST; the two walks diverge on preprocessor-distorted class
+    bodies and every divergence is a phantom caller the database drops
+    (issue #652). The column in the key keeps same-line functions (a one-line
+    curried arrow, minified `exports.a = ...; exports.b = ...`) from evicting
+    or masking each other's records.
+    """
+
+    label: str
+    qualified_name: str
+    container_qn: str | None
+    # (H) False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
+    # (H) lets an unnamed JS/TS function expression adopt a NAMED record (the
+    # (H) node a named pass registered for `exports.f = function`), while a
+    # (H) generated record keeps the historical bubble-to-module attribution.
+    is_named: bool = True
+
+
+class CppDefinitionSpan(NamedTuple):
+    """Full line span of a C/C++ function or method the tree-sitter pass ingested.
+
+    Recorded per relative file path so the hybrid C++ frontend can attribute a
+    macro use (a TU-level preprocessing entity with only a location) to the
+    tightest enclosing TREE-SITTER definition after Pass 2; libclang's own
+    spans carry wrong-scheme qns wherever macros hide namespaces.
+    """
+
+    start_line: int
+    end_line: int
+    label: str
+    qualified_name: str
+
+
+class PendingMacroCall(NamedTuple):
+    """A macro use the hybrid C++ frontend saw but cannot attribute yet.
+
+    The caller is resolvable only after the tree-sitter pass has recorded its
+    definition spans; a use outside every span attributes to the fallback
+    Module, mirroring the module-caller rule for ordinary calls.
+    """
+
+    rel_path: str
+    line: int
+    callee_qn: str
+    fallback_module_qn: str
+
+
+class PendingExpansionCall(NamedTuple):
+    """A call that exists only after macro expansion, seen by the hybrid frontend.
+
+    The call's text lives inside a macro definition body, so tree-sitter never
+    sees it at the expansion site. Both ends carry only locations: the caller
+    joins to the tightest tree-sitter definition span containing the expansion
+    site (falling back to the Module), the callee to the span containing the
+    referenced definition (dropped when none exists) -- so the emitted CALLS
+    edge is tree-sitter-scheme on both ends.
+    """
+
+    caller_rel_path: str
+    caller_line: int
+    callee_rel_path: str
+    callee_line: int
+    fallback_module_qn: str
+
+
+class DeferredCppInherit(NamedTuple):
+    """C++ INHERITS edge held back until every class is registered.
+
+    A base written in another header cannot resolve at parse time, so the
+    edge is emitted after Pass 2 with the base resolved namespace-scoped
+    across files; an unresolvable base emits no edge rather than a phantom
+    the database would drop.
+    """
+
+    child_label: str
+    child_qn: str
+    base_name: str
+    guess_qn: str
+    namespace_path: str
+    base_index: int
+
+
+class DeferredInherit(NamedTuple):
+    """Non-C++ INHERITS/IMPLEMENTS edge held back until every class is registered.
+
+    A parent that does not resolve at parse time is anchored to the child's
+    own module qn as a guess; the edge is emitted after Pass 2 with the guess
+    re-resolved against the full registry. An unresolvable parent emits no
+    edge rather than a phantom the database would drop.
+    """
+
+    rel_type: RelationshipType
+    child_qn: str
+    parent_qn: str
+    module_qn: str
+    base_index: int
+    language: SupportedLanguage
+
+
+class DeferredImportEdge(NamedTuple):
+    """IMPORTS edge held back until every file is parsed.
+
+    An internal-looking target is only real if some file (or inline module)
+    actually yields that module qn; verification happens against the full
+    module registry, and a target that resolves nowhere emits no edge.
+    """
+
+    module_qn: str
+    full_name: str
+    language: SupportedLanguage
+
+
 class RelationshipSchema(NamedTuple):
     sources: tuple[NodeLabel, ...]
     rel_type: RelationshipType
@@ -487,46 +665,56 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.FOLDER, "{path: string, name: string, absolute_path: string}"),
     NodeSchema(
         NodeLabel.FILE,
-        "{path: string, name: string, extension: string, absolute_path: string}",
+        "{path: string, name: string, extension: string?, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
     ),
-    NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.TYPE,
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+    ),
+    NodeSchema(
+        NodeLabel.UNION,
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+    ),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE_IMPLEMENTATION,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}",
     ),
-    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
+    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string}"),
     NodeSchema(
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.RESOURCE,
+        "{qualified_name: string, name: string, kind: string}",
     ),
 )
 
@@ -553,12 +741,27 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE,),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
         RelationshipType.DEFINES,
-        (NodeLabel.CLASS, NodeLabel.FUNCTION),
+        (
+            NodeLabel.CLASS,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.ENUM,
+            NodeLabel.INTERFACE,
+            NodeLabel.TYPE,
+            NodeLabel.UNION,
+            NodeLabel.MODULE,
+        ),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.ENUM,
+            NodeLabel.TYPE,
+            NodeLabel.UNION,
+        ),
         RelationshipType.DEFINES_METHOD,
         (NodeLabel.METHOD,),
     ),
@@ -583,17 +786,27 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE_IMPLEMENTATION,),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        (NodeLabel.CLASS,),
+        # (H) ExternalModule: a positively-external base (typing.Protocol,
+        # (H) js builtin.Error) keeps its edge by targeting the same external
+        # (H) node the import pass mints, mirroring Module IMPORTS.
+        (
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.FUNCTION,
+            NodeLabel.EXTERNAL_MODULE,
+        ),
     ),
     RelationshipSchema(
-        (NodeLabel.CLASS,),
+        (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        (NodeLabel.INTERFACE,),
+        (NodeLabel.INTERFACE, NodeLabel.EXTERNAL_MODULE),
     ),
     RelationshipSchema(
-        (NodeLabel.METHOD,),
+        # (H) A method-body anonymous-class override is registered as a Function node,
+        # (H) so it can be the source of an OVERRIDES edge onto the base Method.
+        (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),
     ),
@@ -608,9 +821,9 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     RelationshipSchema(
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.CALLS,
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.ENUM, NodeLabel.TYPE),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
@@ -621,5 +834,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.INSTANTIATES,
         (NodeLabel.CLASS,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.READS_FROM,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.WRITES_TO,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+        RelationshipType.FLOWS_TO,
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
     ),
 )

@@ -98,22 +98,50 @@ if has_torch() and has_transformers():
 
     from .unixcoder import UniXcoder
 
-    def _select_device() -> str:
+    def _device_available(device: cs.EmbeddingDevice) -> bool:
+        match device:
+            case cs.EmbeddingDevice.CUDA:
+                return torch.cuda.is_available()
+            case cs.EmbeddingDevice.MPS:
+                return torch.backends.mps.is_available()
+            case _:
+                return True
+
+    def _select_device() -> cs.EmbeddingDevice:
+        if (override := settings.EMBEDDING_DEVICE) is not None:
+            if _device_available(override):
+                return override
+            logger.warning(ls.EMBEDDING_DEVICE_UNAVAILABLE.format(device=override))
         if torch.cuda.is_available():
-            return "cuda"
+            return cs.EmbeddingDevice.CUDA
         if torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+            return cs.EmbeddingDevice.MPS
+        return cs.EmbeddingDevice.CPU
+
+    _batches_since_cache_drop = 0
+
+    def _sync_after_batch(device: torch.device | str) -> None:
+        # (H) MPS wedges inside Metal's waitUntilCompleted when command buffers
+        # (H) accumulate across thousands of batches (issue #689); draining the
+        # (H) stream after every batch keeps each command buffer short-lived,
+        # (H) and a periodic (not per-batch: ~21% throughput cost) cache drop
+        # (H) bounds Metal allocator growth over monorepo-scale runs.
+        if torch.device(device).type != cs.EmbeddingDevice.MPS:
+            return
+        torch.mps.synchronize()
+        global _batches_since_cache_drop
+        _batches_since_cache_drop += 1
+        if _batches_since_cache_drop >= cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL:
+            torch.mps.empty_cache()
+            _batches_since_cache_drop = 0
 
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
         model = UniXcoder(cs.UNIXCODER_MODEL)
         model.eval()
         device = _select_device()
-        if device == "cuda":
-            model = model.cuda()
-        elif device == "mps":
-            model = model.to("mps")
+        if device != cs.EmbeddingDevice.CPU:
+            model = model.to(device)
         return model
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
@@ -130,6 +158,7 @@ if has_torch() and has_transformers():
         with torch.no_grad():
             _, sentence_embeddings = model(tokens_tensor)
             embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+        _sync_after_batch(device)
         result: list[float] = embedding[0].tolist()
 
         cache.put(code, result)
@@ -167,6 +196,7 @@ if has_torch() and has_transformers():
             with torch.no_grad():
                 _, sentence_embeddings = model(tokens_tensor)
                 batch_np: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+            _sync_after_batch(device)
             for row in batch_np:
                 all_new_embeddings.append(row.tolist())
 

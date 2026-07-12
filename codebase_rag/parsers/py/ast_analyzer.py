@@ -8,7 +8,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
-from ...types_defs import LanguageQueries
+from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
@@ -56,6 +56,7 @@ class PythonAstAnalyzerMixin(_AstBase):
     queries: dict[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
+    function_registry: FunctionRegistryTrieProtocol
 
     _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
 
@@ -80,7 +81,12 @@ class PythonAstAnalyzerMixin(_AstBase):
     @abstractmethod
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
 
-    _return_stmt_cache: dict[int, list[Node]]
+    @abstractmethod
+    def _infer_free_function_return_type(
+        self, callee: str, module_qn: str
+    ) -> str | None: ...
+
+    _return_stmt_cache: dict[Node, list[Node]]
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -100,7 +106,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 comprehensions = captures.get("comprehension", [])
                 for_statements = captures.get("for_stmt", [])
                 if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[id(node)] = return_stmts
+                    self._return_stmt_cache[node] = return_stmts
             except Exception:
                 py_lang_obj = None
 
@@ -191,10 +197,10 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         expected_module = cs.SEPARATOR_DOT.join(qn_parts[:-2])
         file_path = self.module_qn_to_file_path.get(expected_module)
-        if not file_path or file_path not in self.ast_cache:
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
             return None
 
-        root_node, language = self.ast_cache[file_path]
+        root_node, language = entry
         return self._find_method_in_ast(root_node, class_name, method_name, language)
 
     def _find_method_in_ast(
@@ -225,9 +231,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not module_qn:
             return None
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if not file_path or file_path not in self.ast_cache:
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
             return None
-        root_node, language = self.ast_cache[file_path]
+        root_node, language = entry
         if language != cs.SupportedLanguage.PYTHON:
             return None
         lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
@@ -243,6 +249,53 @@ class PythonAstAnalyzerMixin(_AstBase):
             if name_node and safe_decode_text(name_node) == class_name:
                 return class_node
         return None
+
+    def _find_callable_ast_node(self, qn: str) -> Node | None:
+        # (H) Dispatch on the registry label: a FUNCTION qn is module.func (the
+        # (H) module is everything before the LAST dot), anything else keeps the
+        # (H) method-shaped module.Class.method lookup.
+        if self.function_registry.get(qn) == NodeType.FUNCTION:
+            return self._find_function_ast_node(qn)
+        return self._find_method_ast_node(qn)
+
+    def _find_function_ast_node(self, fn_qn: str) -> Node | None:
+        # (H) Top-level function definition for `mod.func`. Nested and method
+        # (H) definitions carry longer qns, so anything under a class or function
+        # (H) ancestor is skipped.
+        module_qn, _, fn_name = fn_qn.rpartition(cs.SEPARATOR_DOT)
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
+            return None
+        root_node, language = entry
+        if language != cs.SupportedLanguage.PYTHON:
+            return None
+        fn_query = self.queries[cs.SupportedLanguage.PYTHON][cs.QUERY_KEY_FUNCTIONS]
+        if not fn_query:
+            return None
+        cursor = QueryCursor(fn_query)
+        captures = sorted_captures(cursor, root_node)
+        for fn_node in captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
+            if not isinstance(fn_node, Node):
+                continue
+            name_node = fn_node.child_by_field_name(cs.TS_FIELD_NAME)
+            if (
+                name_node is not None
+                and safe_decode_text(name_node) == fn_name
+                and self._is_top_level_definition(fn_node)
+            ):
+                return fn_node
+        return None
+
+    def _is_top_level_definition(self, node: Node) -> bool:
+        parent = node.parent
+        while parent is not None:
+            if parent.type in (
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_FUNCTION_DEFINITION,
+            ):
+                return False
+            parent = parent.parent
+        return True
 
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
@@ -290,8 +343,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _analyze_method_return_statements(
-        self, method_node: Node, method_qn: str
+        self, method_node: Node, method_qn: str, module_qn: str | None = None
     ) -> str | None:
+        # (H) module_qn defaults to the method-shaped derivation (mod.Class.meth ->
+        # (H) mod); free-function callers pass their own (mod.func -> mod), which
+        # (H) the [-2] split cannot express.
+        if module_qn is None:
+            module_qn = cs.SEPARATOR_DOT.join(method_qn.split(cs.SEPARATOR_DOT)[:-2])
+        if annotated := self._annotated_return_type(method_node, method_qn, module_qn):
+            return annotated
+
         return_nodes: list[Node] = []
         self._find_return_statements(method_node, return_nodes)
 
@@ -306,15 +367,48 @@ class PythonAstAnalyzerMixin(_AstBase):
             )
             if return_value and (
                 inferred_type := self._analyze_return_expression(
-                    return_value, method_qn
+                    return_value, method_qn, module_qn
                 )
             ):
                 return inferred_type
 
         return None
 
+    def _annotated_return_type(
+        self, method_node: Node, method_qn: str, module_qn: str
+    ) -> str | None:
+        # (H) A declared `-> Widget` (or `-> Widget | None`, or the quoted
+        # (H) forward-ref form) is the cheapest and most reliable return-type
+        # (H) source; only a simple or dotted name is trusted, generics and
+        # (H) multi-type unions fall through to body inference.
+        type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if type_node is None or type_node.text is None:
+            return None
+        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        non_none = [
+            member
+            for part in text.split(cs.PY_UNION_SEPARATOR)
+            if (member := part.strip()) and member != cs.PY_NONE
+        ]
+        if len(non_none) != 1:
+            return None
+        candidate = non_none[0]
+        if not all(part.isidentifier() for part in candidate.split(cs.SEPARATOR_DOT)):
+            return None
+        if candidate == cs.PY_ANNOTATION_SELF:
+            # (H) `-> Self` names the enclosing class (the method qn minus its
+            # (H) leaf, kept fully qualified so cross-module receivers resolve);
+            # (H) a free function has none.
+            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+            if len(qn_parts) < 3:
+                return None
+            return cs.SEPARATOR_DOT.join(qn_parts[:-1])
+        if cs.SEPARATOR_DOT in candidate:
+            return candidate
+        return self._find_class_in_scope(candidate, module_qn) or candidate
+
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        cached = self._return_stmt_cache.get(id(node))
+        cached = self._return_stmt_cache.get(node)
         if cached is not None:
             return_nodes.extend(cached)
             return
@@ -336,18 +430,22 @@ class PythonAstAnalyzerMixin(_AstBase):
                 return_nodes.append(current)
             stack.extend(reversed(current.children))
 
-    def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
+    def _analyze_return_expression(
+        self, expr_node: Node, method_qn: str, module_qn: str
+    ) -> str | None:
         match expr_node.type:
             case cs.TS_PY_CALL:
-                return self._analyze_call_return(expr_node, method_qn)
+                return self._analyze_call_return(expr_node, method_qn, module_qn)
             case cs.TS_PY_IDENTIFIER:
-                return self._analyze_identifier_return(expr_node, method_qn)
+                return self._analyze_identifier_return(expr_node, method_qn, module_qn)
             case cs.TS_PY_ATTRIBUTE:
                 return self._analyze_attribute_return(expr_node, method_qn)
             case _:
                 return None
 
-    def _analyze_call_return(self, expr_node: Node, method_qn: str) -> str | None:
+    def _analyze_call_return(
+        self, expr_node: Node, method_qn: str, module_qn: str
+    ) -> str | None:
         func_node = expr_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if not func_node:
             return None
@@ -357,32 +455,41 @@ class PythonAstAnalyzerMixin(_AstBase):
             and func_node.text is not None
             and (class_name := safe_decode_text(func_node))
         ):
-            return self._resolve_call_class_name(class_name, method_qn)
+            if resolved := self._resolve_call_class_name(
+                class_name, method_qn, module_qn
+            ):
+                return resolved
+            # (H) A lowercase callee is a factory-calls-factory hop (django's
+            # (H) get_resolver delegating to _get_cached_resolver): follow the
+            # (H) inner factory's own return type transitively.
+            return self._infer_free_function_return_type(class_name, module_qn)
 
         if func_node.type == cs.TS_PY_ATTRIBUTE:
             if method_call_text := self._extract_method_call_from_attr(func_node):
-                module_qn = cs.SEPARATOR_DOT.join(
-                    method_qn.split(cs.SEPARATOR_DOT)[:-2]
-                )
                 return self._infer_method_call_return_type(
                     method_call_text, module_qn, None
                 )
 
         return None
 
-    def _resolve_call_class_name(self, class_name: str, method_qn: str) -> str | None:
-        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-        if class_name == cs.PY_KEYWORD_CLS and len(qn_parts) >= 2:
-            return qn_parts[-2]
+    def _resolve_call_class_name(
+        self, class_name: str, method_qn: str, module_qn: str
+    ) -> str | None:
+        if class_name == cs.PY_KEYWORD_CLS:
+            # (H) `return cls(...)` names the enclosing class, fully qualified so
+            # (H) cross-module receivers resolve without a scope lookup.
+            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+            return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 3 else None
 
         if class_name[0].isupper():
-            module_qn = cs.SEPARATOR_DOT.join(qn_parts[:-2])
             resolved_class = self._find_class_in_scope(class_name, module_qn)
             return resolved_class or class_name
 
         return None
 
-    def _analyze_identifier_return(self, expr_node: Node, method_qn: str) -> str | None:
+    def _analyze_identifier_return(
+        self, expr_node: Node, method_qn: str, module_qn: str
+    ) -> str | None:
         if expr_node.text is None:
             return None
 
@@ -394,8 +501,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             qn_parts = method_qn.split(cs.SEPARATOR_DOT)
             return qn_parts[-2] if len(qn_parts) >= 2 else None
 
-        module_qn = cs.SEPARATOR_DOT.join(method_qn.split(cs.SEPARATOR_DOT)[:-2])
-        if method_node := self._find_method_ast_node(method_qn):
+        if method_node := self._find_callable_ast_node(method_qn):
             local_vars = self.build_local_variable_type_map(method_node, module_qn)
             if identifier in local_vars:
                 logger.debug(

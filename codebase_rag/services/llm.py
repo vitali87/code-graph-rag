@@ -13,8 +13,8 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, load_cgr_instructions, settings
 from ..prompts import (
-    CYPHER_SYSTEM_PROMPT,
-    LOCAL_CYPHER_SYSTEM_PROMPT,
+    build_cypher_system_prompt,
+    build_local_cypher_system_prompt,
     build_rag_orchestrator_prompt,
 )
 from ..providers.base import get_provider_from_config
@@ -111,15 +111,15 @@ def _validate_call_procedures(query: str) -> None:
 class CypherGenerator:
     __slots__ = ("agent",)
 
-    def __init__(self) -> None:
+    def __init__(self, active_projects: list[str] | None = None) -> None:
         try:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)
 
             system_prompt = (
-                LOCAL_CYPHER_SYSTEM_PROMPT
+                build_local_cypher_system_prompt(active_projects)
                 if config.provider == cs.Provider.OLLAMA
-                else CYPHER_SYSTEM_PROMPT
+                else build_cypher_system_prompt(active_projects)
             )
 
             self.agent = Agent(

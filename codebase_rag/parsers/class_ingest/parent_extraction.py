@@ -87,17 +87,27 @@ def extract_parent_classes(
 
 
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
-    parent_classes: list[str] = []
+    return [guess for _, guess in extract_cpp_parent_bases(class_node, module_qn)]
+
+
+def extract_cpp_parent_bases(class_node: Node, module_qn: str) -> list[tuple[str, str]]:
+    """Return (written base name, parse-time guess qn) per base, in source order.
+
+    The written name keeps its ``::`` qualifiers (template arguments stripped)
+    so deferred resolution can scope-match it across files; the guess anchors
+    the base to the class's own module and only holds for same-file bases.
+    """
+    bases: list[tuple[str, str]] = []
     for child in class_node.children:
         if child.type == cs.TS_BASE_CLASS_CLAUSE:
-            parent_classes.extend(parse_cpp_base_classes(child, class_node, module_qn))
-    return parent_classes
+            bases.extend(parse_cpp_base_classes(child, class_node, module_qn))
+    return bases
 
 
 def parse_cpp_base_classes(
     base_clause_node: Node, class_node: Node, module_qn: str
-) -> list[str]:
-    parent_classes: list[str] = []
+) -> list[tuple[str, str]]:
+    bases: list[tuple[str, str]] = []
     base_type_nodes = (
         cs.TS_TYPE_IDENTIFIER,
         cs.CppNodeType.QUALIFIED_IDENTIFIER,
@@ -115,18 +125,21 @@ def parse_cpp_base_classes(
 
         if base_child.type in base_type_nodes and base_child.text:
             if parent_name := safe_decode_text(base_child):
+                # (H) strip(): `public Base <T>` would otherwise keep a
+                # (H) trailing space that can never match the registry.
+                written_name = parent_name.split(cs.CHAR_ANGLE_OPEN)[0].strip()
                 base_name = extract_cpp_base_class_name(parent_name)
                 parent_qn = cpp_utils.build_qualified_name(
                     class_node, module_qn, base_name
                 )
-                parent_classes.append(parent_qn)
+                bases.append((written_name, parent_qn))
                 logger.debug(
                     logs.CLASS_CPP_INHERITANCE,
                     parent_name=parent_name,
                     parent_qn=parent_qn,
                 )
 
-    return parent_classes
+    return bases
 
 
 def extract_cpp_base_class_name(parent_text: str) -> str:
@@ -136,7 +149,8 @@ def extract_cpp_base_class_name(parent_text: str) -> str:
     if cs.SEPARATOR_DOUBLE_COLON in parent_text:
         parent_text = parent_text.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
 
-    return parent_text
+    # (H) `public Base <T>` leaves a trailing space after the angle split.
+    return parent_text.strip()
 
 
 def java_base_type_identifier(type_node: Node) -> Node | None:
@@ -219,6 +233,17 @@ def extract_python_superclasses(
     import_map = import_processor.import_mapping.get(module_qn)
 
     for child in superclasses_node.children:
+        # (H) A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
+        # (H) int])`, click) is a `subscript` node; the base name is its `value`
+        # (H) field. Skipping it dropped the INHERITS edge and with it every
+        # (H) OVERRIDES/dispatch relationship of the subclass.
+        if child.type == cs.TS_PY_SUBSCRIPT:
+            value = child.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None and value.type in (
+                cs.TS_IDENTIFIER,
+                cs.TS_PY_ATTRIBUTE,
+            ):
+                child = value
         if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
             continue
         if not (parent_name := safe_decode_text(child)):

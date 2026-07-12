@@ -85,8 +85,16 @@ def _aggregate(rows: list[ScoreRow]) -> ScoreRow | None:
     return next((r for r in rows if r["label"] == ec.AGGREGATE_LABEL), None)
 
 
-def test_cgr_matches_libclang_oracle_on_cpp_structure(tmp_path: Path) -> None:
+def test_cgr_matches_libclang_oracle_on_cpp_structure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _require_cpp()
+    # (H) The L1 structure eval grades the TREE-SITTER extraction against the
+    # (H) libclang oracle; the default HYBRID frontend would add macro Function
+    # (H) nodes the oracle does not model (the fixture's compdb triggers it).
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
     project = tmp_path / "cpp_proj"
     (project / "include").mkdir(parents=True)
     (project / "src").mkdir(parents=True)

@@ -13,6 +13,8 @@ KIND_DESTRUCTOR = "DESTRUCTOR"
 KIND_BASE_SPECIFIER = "CXX_BASE_SPECIFIER"
 KIND_TRANSLATION_UNIT = "TRANSLATION_UNIT"
 KIND_CALL_EXPR = "CALL_EXPR"
+KIND_MACRO_DEFINITION = "MACRO_DEFINITION"
+KIND_MACRO_INSTANTIATION = "MACRO_INSTANTIATION"
 
 # (H) class/struct/union and their templated forms -> a Class node (cgr collapses
 # (H) struct/class to Class, matching parsers/cpp + the oracle).
@@ -31,6 +33,9 @@ METHOD_KIND_NAMES: frozenset[str] = frozenset(
 # (H) -> a Type node, matching how the tree-sitter path maps C++ alias/typedef
 # (H) declarations (TS_TYPE_ALIAS_DECLARATION) and Go/Rust type decls.
 TYPE_KIND_NAMES: frozenset[str] = frozenset({"TYPE_ALIAS_DECL", "TYPEDEF_DECL"})
+
+TOKEN_LPAREN = "("
+TOKEN_RPAREN = ")"
 
 LABEL_MODULE = cs.NodeLabel.MODULE.value
 LABEL_CLASS = cs.NodeLabel.CLASS.value

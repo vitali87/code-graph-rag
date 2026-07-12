@@ -75,15 +75,16 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |--------|------|----------|---------|---------------|-------|-----------------|-------------------|
 | C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
-| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
+| Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
 | PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
-| Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
-| TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
+| Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
+| TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
+| TypeScript | Fully Supported | .ts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
@@ -96,6 +97,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
 - **🚀 Interactive Code Optimization**: AI-powered codebase optimization with language-specific best practices and interactive approval workflow
 - **📚 Reference-Guided Optimization**: Use your own coding standards and architectural documents to guide optimization suggestions
+- **🧹 Dead Code Detection**: Report functions and methods unreachable from any entry point by walking `CALLS`/`REFERENCES` edges from roots (with a CI-friendly `--fail-on-found`)
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
 - **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
@@ -606,6 +608,54 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
 
+### Step 5: Dead Code Detection
+
+Once a repository is indexed, report functions and methods that are unreachable
+from any entry point. The walk starts from roots (exported/public symbols,
+tests, decorated handlers like routes/tasks/commands, dunder/lifecycle methods)
+and follows `CALLS` and `REFERENCES` edges; anything it never reaches is listed.
+
+```bash
+# Scan the indexed project (auto-selected when only one exists)
+cgr dead-code
+
+# Pick a project when several are indexed
+cgr dead-code --project-name my-project
+```
+
+**Declare framework/external entry points** so the code they reach is not flagged:
+
+```bash
+cgr dead-code -e main -e cli.run --decorator-root celery_app.task
+```
+
+**Exclude generated or vendored code** (noisy with library-invoked callbacks):
+
+```bash
+cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
+```
+
+**Fail CI when new unreachable code appears**, writing a JSON report:
+
+```bash
+cgr dead-code --format json --output dead-code.json --fail-on-found
+```
+
+> Results are candidates for review, not a guaranteed delete list: code reached
+> only via dynamic dispatch, reflection, or an external framework may still be
+> reported. See the [Dead Code Detection guide](https://docs.code-graph-rag.com/guide/dead-code/) for details.
+
+**Dead Code CLI Arguments:**
+- `--project-name`, `-n`: Project to scan (defaults to the sole indexed project)
+- `--entry-point`, `-e`: Treat symbols ending with this qualified name as reachable roots (repeatable)
+- `--decorator-root`: Treat symbols carrying this decorator as roots (repeatable)
+- `--exclude`: Glob matched against a symbol's file path to exclude (repeatable)
+- `--include-tests` / `--no-include-tests`: Treat test code as roots (on by default)
+- `--classes` / `--no-classes`: Also report unreachable classes (off by default)
+- `--format`: `table` (default) or `json`
+- `--output`, `-o`: Write the report to a file instead of stdout
+- `--fail-on-found`: Exit with code 1 when any candidate is found
+
 ## 🔌 MCP Server (Claude Code Integration)
 
 Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
@@ -663,19 +713,20 @@ The knowledge graph uses the following node types and relationships:
 | Project | `{name: string}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
-| File | `{path: string, name: string, extension: string, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
-| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| Type | `{qualified_name: string, name: string}` |
-| Union | `{qualified_name: string, name: string}` |
-| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
-| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
-| ExternalPackage | `{name: string, version_spec: string}` |
+| File | `{path: string, name: string, extension: string?, absolute_path: string}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}` |
+| Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}` |
+| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
+| ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
+| Resource | `{qualified_name: string, name: string, kind: string}` |
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
@@ -683,14 +734,15 @@ The knowledge graph uses the following node types and relationships:
 <!-- SECTION:language_mappings -->
 - **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `interface_declaration`, `method_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`
-- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
+- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `macro_definition`, `struct_item`, `trait_item`, `type_item`, `union_item`
+- **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
-- **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 
@@ -703,20 +755,23 @@ The knowledge graph uses the following node types and relationships:
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
-| Module | DEFINES | Class, Function |
-| Class | DEFINES_METHOD | Method |
+| Module, Function, Method, Class | DEFINES | Class, Function, Method, Enum, Interface, Type, Union, Module |
+| Class, Interface, Enum, Type, Union | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module, ExternalModule |
 | Module | EXPORTS | Class, Function |
 | Module | EXPORTS_MODULE | ModuleInterface |
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |
-| Class | INHERITS | Class |
-| Class | IMPLEMENTS | Interface |
-| Method | OVERRIDES | Method |
+| Class, Interface, Function | INHERITS | Class, Interface, Function, ExternalModule |
+| Class, Enum | IMPLEMENTS | Interface, ExternalModule |
+| Method, Function | OVERRIDES | Method |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
-| Function, Method | CALLS | Function, Method |
-| Module, Function, Method | REFERENCES | Function, Method |
+| Module, Function, Method | CALLS | Function, Method, Enum, Type |
+| Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
+| Module, Function, Method | READS_FROM | Resource |
+| Module, Function, Method | WRITES_TO | Resource |
+| Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
 <!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration

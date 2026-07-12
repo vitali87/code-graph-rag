@@ -138,6 +138,14 @@ def _c_get_name(node: Node) -> str | None:
 
 
 def _cpp_get_name(node: Node) -> str | None:
+    # (H) C++17 `namespace a::b {` is ONE node named `a::b`; render it as
+    # (H) dotted segments so both nesting spellings, the namespace walk in
+    # (H) cpp/utils, and the libclang frontend agree on qns.
+    if node.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+        name = _generic_get_name(node)
+        if name:
+            return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        return name
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
@@ -317,6 +325,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (function_signature_item
             name: (identifier) @name) @function
         (closure_expression) @function
+        (macro_definition
+            name: (identifier) @name) @function
         """,
         class_query="""
         (struct_item
@@ -404,7 +414,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (method_invocation
             name: (identifier) @name) @call
         (object_creation_expression
-            type: (type_identifier) @name) @call
+            type: (_) @name) @call
         """,
     ),
     cs.SupportedLanguage.C: LanguageSpec(

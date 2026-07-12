@@ -127,6 +127,47 @@ class CppTypeInferenceEngine:
             return (alias, underlying)
         return None
 
+    def collect_template_param_names(self, caller_node: Node) -> frozenset[str]:
+        # (H) Names of the template type parameters in scope at a function/method
+        # (H) (`template<typename SAX>` -> {"SAX"}), gathered from the function's own
+        # (H) template_declaration wrapper and every enclosing class/struct template. A
+        # (H) call receiver typed to one of these has NO concrete type at this site
+        # (H) (`SAX* sax`), so the resolver fans it out to all implementers instead of
+        # (H) treating it as an external type. Concrete external types (`std::string`) are
+        # (H) NOT in this set, so they still suppress the fan-out.
+        names: set[str] = set()
+        node: Node | None = caller_node
+        while node is not None:
+            if node.type == cs.TS_CPP_TEMPLATE_DECLARATION:
+                for param_list in node.children:
+                    if param_list.type == cs.TS_CPP_TEMPLATE_PARAMETER_LIST:
+                        self._collect_type_param_names(param_list, names)
+            node = node.parent
+        return frozenset(names)
+
+    def _collect_type_param_names(self, param_list: Node, names: set[str]) -> None:
+        # (H) One name per parameter declaration. An optional param (`typename SAX =
+        # (H) Real`) carries its DEFAULT type as a sibling child -- collecting every
+        # (H) descendant type_identifier would wrongly pull the concrete default `Real`
+        # (H) into the template-param set and fan a real `Real r; r.work()` out. Take the
+        # (H) `name` field when present (optional params), else the declaration's own
+        # (H) type_identifier (`typename T`, `typename... Ts`). Only genuine TYPE-param
+        # (H) declarations are read: a value param (`int N`, `MyEnum E`) or a
+        # (H) template-template param names a concrete type, not a stand-in a receiver
+        # (H) could be instantiated as, so it must never enter the set.
+        for decl in param_list.named_children:
+            if decl.type not in cs.CPP_TYPE_PARAMETER_DECL_TYPES:
+                continue
+            if (name_node := decl.child_by_field_name(cs.FIELD_NAME)) is not None:
+                if name := safe_decode_text(name_node):
+                    names.add(name)
+                continue
+            type_id = next(
+                (c for c in decl.children if c.type == cs.TS_TYPE_IDENTIFIER), None
+            )
+            if type_id and (name := safe_decode_text(type_id)):
+                names.add(name)
+
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # (H) Map each data member of a C++ class to its bare type name, so a member
         # (H) call `field_.method()` inside the class's methods can resolve via the

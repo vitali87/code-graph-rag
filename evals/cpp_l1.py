@@ -4,6 +4,8 @@ from typing import Annotated
 import typer
 from loguru import logger
 
+from codebase_rag import constants as cs
+
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_cpp_graph, restrict_to_files
@@ -26,6 +28,12 @@ def main(
         Path, typer.Option(help="Directory for cpp_scores.csv and cpp_diff.json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
+    # (H) The L1 structure eval grades the TREE-SITTER extraction against the
+    # (H) libclang oracle; the default HYBRID frontend would add macro Function
+    # (H) nodes the oracle does not model (the required compdb triggers it).
+    from codebase_rag.config import settings
+
+    settings.CPP_FRONTEND = cs.CppFrontend.TREESITTER
     target = target.resolve()
     if not cpp_available() or not (target / ec.CPP_COMPDB_FILENAME).is_file():
         logger.error(

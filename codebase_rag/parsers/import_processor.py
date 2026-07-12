@@ -1,4 +1,5 @@
 import json
+import os
 import posixpath
 import re
 from functools import lru_cache
@@ -9,9 +10,14 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import LanguageSpec
+from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 from ..services import IngestorProtocol
-from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from ..types_defs import (
+    DeferredImportEdge,
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+)
+from .cpp_frontend.qn import build_module_qn_map
 from .go import discover_go_module_paths, resolve_go_import_path
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -166,6 +172,19 @@ def _has_aliased_scheme(specifier: str) -> bool:
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
 
+def _is_conditional_import_node(import_node: Node) -> bool:
+    # (H) An import nested under an if/try (click's platform-conditional
+    # (H) `if WIN: from ._winconsole import X ... else: def X(...)`) binds its
+    # (H) name only on some runtime paths; a same-named local def is then a
+    # (H) mutually-exclusive fallback variant, not shadowed dead code.
+    current = import_node.parent
+    while current is not None:
+        if current.type in (cs.TS_PY_IF_STATEMENT, cs.TS_PY_TRY_STATEMENT):
+            return True
+        current = current.parent
+    return False
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -173,14 +192,20 @@ class ImportProcessor:
         "ingestor",
         "function_registry",
         "import_mapping",
+        "conditional_imports",
         "php_function_imports",
         "js_ts_bare_imports",
         "js_path_aliases",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
+        "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
+        "_cpp_module_qn_map",
+        "_cpp_qn_to_rel",
+        "_deferred_import_edges",
+        "_cpp_declaration_mappings",
     )
 
     def __init__(
@@ -195,6 +220,23 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # (H) Names bound by a CONDITIONAL Python import (nested under if/try --
+        # (H) click's `if WIN: from ._winconsole import X`): the dead-code fan-out
+        # (H) treats a same-named local def as the mutually-exclusive fallback
+        # (H) variant ONLY for these; an unconditional import is plain shadowing.
+        self.conditional_imports: dict[str, set[str]] = {}
+        # (H) Lazy: replayed walk of every eligible repo file, built on the first
+        # (H) C++ include so non-C++ projects never pay for it.
+        self._cpp_module_qn_map: dict[str, str] | None = None
+        self._cpp_qn_to_rel: dict[str, str] = {}
+        # (H) IMPORTS edges held back until every file is parsed, so internal
+        # (H) targets verify against the full module registry (issue #652).
+        self._deferred_import_edges: list[DeferredImportEdge] = []
+        # (H) Import-map entries registered by C++20 module DECLARATIONS
+        # (H) (`module X;`, `export module X;`, `import :partition;`). They
+        # (H) exist for name resolution only; a declaration is not an import,
+        # (H) so no IMPORTS edge may be emitted for them.
+        self._cpp_declaration_mappings: set[tuple[str, str]] = set()
         # (H) Local names brought in by a PHP `use function A\B\c` import, keyed by
         # (H) module. A PHP namespace path never matches cgr's file-path qualified
         # (H) name (a global helper declares `namespace Illuminate\Support` from
@@ -221,6 +263,16 @@ class ImportProcessor:
         )
 
         repo_is_package = (repo_path / cs.INIT_PY).is_file()
+
+        # (H) A repo whose top-level package shares the repo's name (a django
+        # (H) clone is django/django, celery is celery/celery) makes written
+        # (H) absolute imports collide with the project prefix: `django.http`
+        # (H) names the package dir and needs the project prefix on top
+        # (H) (django.django.http), while in a flat layout (repo root doubles
+        # (H) as the installed package) the written path already IS the qn.
+        self._project_named_package = (
+            not repo_is_package and (repo_path / project_name).is_dir()
+        )
 
         # (H) Python packages under nested source roots (src-layout, monorepo
         # (H) packages, pyproject package-dir remaps) are importable by a name that
@@ -349,43 +401,207 @@ class ImportProcessor:
             )
 
             if self.ingestor:
+                # (H) Hold the edges back: an internal target is only real if
+                # (H) some file yields that module qn, which is known only after
+                # (H) every file is parsed (flush_deferred_import_edges).
                 for full_name in self.import_mapping[module_qn].values():
-                    module_path = self._resolve_module_path(
-                        full_name, module_qn, language
-                    )
-
-                    self.ingestor.ensure_relationship_batch(
-                        (
-                            cs.NodeLabel.MODULE,
-                            cs.KEY_QUALIFIED_NAME,
-                            module_qn,
-                        ),
-                        cs.RelationshipType.IMPORTS,
-                        (
-                            self._module_label(module_path),
-                            cs.KEY_QUALIFIED_NAME,
-                            module_path,
-                        ),
-                    )
-                    logger.debug(
-                        ls.IMP_CREATED_RELATIONSHIP,
-                        from_module=module_qn,
-                        to_module=module_path,
-                        full_name=full_name,
+                    if (module_qn, full_name) in self._cpp_declaration_mappings:
+                        continue
+                    self._deferred_import_edges.append(
+                        DeferredImportEdge(
+                            module_qn=module_qn,
+                            full_name=full_name,
+                            language=language,
+                        )
                     )
 
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
+
+    def defer_import_edge(
+        self, module_qn: str, full_name: str, language: cs.SupportedLanguage
+    ) -> None:
+        # (H) Entry point for import shapes discovered outside parse_imports
+        # (H) (the CommonJS destructuring fallback); every IMPORTS edge must go
+        # (H) through the same deferred verification.
+        self._deferred_import_edges.append(
+            DeferredImportEdge(
+                module_qn=module_qn, full_name=full_name, language=language
+            )
+        )
+
+    def flush_deferred_import_edges(self, known_module_paths: dict[str, str]) -> int:
+        """Emit IMPORTS edges now that every file is parsed.
+
+        An external target gets its ExternalModule node as before. An internal
+        target must verify against the real module qns (with their file paths
+        for language tie-breaking); a guess that resolves nowhere (a broken
+        import, a directory with no index module, a crate path resolved from
+        the wrong root) emits no edge, because the phantom endpoint is
+        silently dropped by the database anyway.
+        """
+        deferred = self._deferred_import_edges
+        if not deferred or self.ingestor is None:
+            return 0
+        self._deferred_import_edges = []
+        known_module_qns = set(known_module_paths)
+        module_aliases = self._module_alias_map(known_module_qns)
+        emitted = 0
+        for entry in deferred:
+            # (H) `from pkg.transport import TTransport` is ambiguous in
+            # (H) Python: TTransport may be an item OR a submodule. The stdlib
+            # (H) extractor strips it as an item, anchoring the edge at the
+            # (H) package; when the FULL dotted name verifies as a real module,
+            # (H) the submodule is the true target.
+            if entry.language == cs.SupportedLanguage.PYTHON and (
+                full_target := self._verify_internal_import_target(
+                    entry.full_name, known_module_paths, module_aliases, entry.language
+                )
+            ):
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.IMPORTS,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, full_target),
+                )
+                emitted += 1
+                continue
+            module_path = self._resolve_module_path(
+                entry.full_name, entry.module_qn, entry.language
+            )
+            target_label = self._module_label(module_path)
+            if target_label == cs.NodeLabel.EXTERNAL_MODULE:
+                # (H) An external import target has no file pass to create its
+                # (H) node; without one here the IMPORTS edge MERGEs against
+                # (H) nothing and is silently dropped (issue #652).
+                self._ensure_external_module_node(module_path, entry.full_name)
+            else:
+                verified = self._verify_internal_import_target(
+                    module_path, known_module_paths, module_aliases, entry.language
+                )
+                if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
+                    # (H) A package-anchored guess that names no sibling module
+                    # (H) is an ABSOLUTE import in Python semantics (`import
+                    # (H) sys` inside a package); re-resolve it as one.
+                    if absolute := self._python_absolute_fallback(
+                        module_path, entry.module_qn
+                    ):
+                        self._ensure_external_module_node(absolute, entry.full_name)
+                        target_label = cs.NodeLabel.EXTERNAL_MODULE
+                        verified = absolute
+                if verified is None:
+                    logger.debug(
+                        ls.IMP_DROPPED_PHANTOM_TARGET,
+                        from_module=entry.module_qn,
+                        to_module=module_path,
+                    )
+                    continue
+                module_path = verified
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                cs.RelationshipType.IMPORTS,
+                (target_label, cs.KEY_QUALIFIED_NAME, module_path),
+            )
+            emitted += 1
+            logger.debug(
+                ls.IMP_CREATED_RELATIONSHIP,
+                from_module=entry.module_qn,
+                to_module=module_path,
+                full_name=entry.full_name,
+            )
+        return emitted
+
+    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
+        # (H) A module reached through its container's name: pkg/__init__.py,
+        # (H) shared/index.js, utils/mod.rs. Importers write the container qn;
+        # (H) the real Module node lives at the index-file leaf.
+        aliases: dict[str, str] = {}
+        for qn in known_module_qns:
+            base, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if base and leaf in cs.MODULE_INDEX_FILE_STEMS:
+                aliases[base] = qn
+        return aliases
+
+    def _python_absolute_fallback(self, module_path: str, module_qn: str) -> str | None:
+        package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        prefix = f"{package_qn}{cs.SEPARATOR_DOT}"
+        if not module_path.startswith(prefix):
+            return None
+        written = module_path[len(prefix) :]
+        if not written:
+            return None
+        absolute = self.stdlib_extractor.extract_module_path(
+            written, cs.SupportedLanguage.PYTHON
+        )
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not absolute or absolute.startswith(project_prefix):
+            return None
+        return absolute
+
+    def _verify_internal_import_target(
+        self,
+        module_path: str,
+        known_module_paths: dict[str, str],
+        module_aliases: dict[str, str],
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        if module_path in known_module_paths:
+            return module_path
+        if alias := module_aliases.get(module_path):
+            return alias
+        # (H) A path resolved from the wrong root (`use crate::utils` written
+        # (H) outside src/) still names a unique real module; a whole-segment
+        # (H) suffix match recovers it. Ambiguity means no edge, not a guess.
+        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not module_path.startswith(prefix):
+            return None
+        tail = module_path[len(prefix) :]
+        if not tail:
+            return None
+        suffix = f"{cs.SEPARATOR_DOT}{tail}"
+        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
+        matches.update(
+            real for base, real in module_aliases.items() if base.endswith(suffix)
+        )
+        if len(matches) > 1:
+            # (H) A polyglot repo can hold same-named modules in several
+            # (H) languages (thrift: src/protocol/__init__.py vs
+            # (H) src/ext/protocol.h); the importing language can only target
+            # (H) its own modules, so tie-break by file extension. Inline
+            # (H) modules (no file) stay eligible.
+            matches = {
+                qn
+                for qn in matches
+                if self._path_matches_language(known_module_paths.get(qn, ""), language)
+            }
+        if len(matches) == 1:
+            return matches.pop()
+        return None
+
+    @staticmethod
+    def _path_matches_language(path: str, language: cs.SupportedLanguage) -> bool:
+        if not path:
+            return True
+        spec = LANGUAGE_SPECS.get(language)
+        if spec is None:
+            return True
+        return path.endswith(tuple(spec.file_extensions))
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
         for import_node in all_imports:
+            before = set(self.import_mapping[module_qn])
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
                 self._handle_python_import_from_statement(import_node, module_qn)
+            if _is_conditional_import_node(import_node):
+                new_names = set(self.import_mapping[module_qn]) - before
+                if new_names:
+                    self.conditional_imports.setdefault(module_qn, set()).update(
+                        new_names
+                    )
 
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str
@@ -424,6 +640,8 @@ class ImportProcessor:
         if module_name == self.project_name or module_name.startswith(
             self.project_name + cs.SEPARATOR_DOT
         ):
+            if self._project_named_package:
+                return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
             return module_name
         if self._is_local_module(top_level):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
@@ -476,6 +694,12 @@ class ImportProcessor:
         ):
             return cs.NodeLabel.MODULE
         return cs.NodeLabel.EXTERNAL_MODULE
+
+    def ensure_external_module_node(self, module_path: str) -> None:
+        # (H) Public entry for non-import callers (deferred inheritance): an
+        # (H) external base keeps its edge by targeting the same ExternalModule
+        # (H) node an import of it would mint.
+        self._ensure_external_module_node(module_path, module_path)
 
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
         if not self.ingestor or not module_path:
@@ -561,9 +785,8 @@ class ImportProcessor:
         if not imported_items and not is_wildcard:
             return
 
-        base_module = self._resolve_python_base_module(module_name)
         self._register_python_from_imports(
-            module_qn, base_module, imported_items, is_wildcard
+            module_qn, module_name, imported_items, is_wildcard
         )
 
     def _extract_python_from_module_name(
@@ -574,7 +797,13 @@ class ImportProcessor:
             return None
 
         if module_name_node.type == cs.TS_DOTTED_NAME:
-            return safe_decode_text(module_name_node)
+            # (H) A written absolute path resolves through the same collision-
+            # (H) aware mapping as plain imports; a relative import is already
+            # (H) project-prefixed by construction and must NOT re-enter it (a
+            # (H) second prefixing would double the project segment).
+            if written := safe_decode_text(module_name_node):
+                return self._resolve_python_base_module(written)
+            return None
         if module_name_node.type == cs.TS_RELATIVE_IMPORT:
             return self._resolve_relative_import(module_name_node, module_qn)
         return None
@@ -605,8 +834,9 @@ class ImportProcessor:
         return None
 
     def _resolve_python_base_module(self, module_name: str) -> str:
-        if module_name.startswith(self.project_name):
-            return module_name
+        # (H) The old `startswith(project_name)` as-is shortcut is subsumed by
+        # (H) _resolve_import_full_name's first branch, which additionally
+        # (H) handles the project-named-package collision.
         top_level = module_name.split(cs.SEPARATOR_DOT)[0]
         return self._resolve_import_full_name(module_name, top_level)
 
@@ -692,7 +922,10 @@ class ImportProcessor:
                             child, source_module, module_qn, is_aliased_scheme
                         )
 
-            elif import_node.type == cs.TS_LEXICAL_DECLARATION:
+            elif import_node.type in (
+                cs.TS_LEXICAL_DECLARATION,
+                cs.TS_VARIABLE_DECLARATION,
+            ):
                 self._parse_js_require(import_node, module_qn)
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
@@ -749,11 +982,24 @@ class ImportProcessor:
             return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
         return None
 
+    @staticmethod
+    def _strip_js_extension(import_path: str) -> str:
+        # (H) An ESM RELATIVE specifier may carry an explicit extension
+        # (H) (`./b.js`); the module qn never does, so keeping it poisons the
+        # (H) import map AND the IMPORTS edge with a phantom `.js` segment
+        # (H) (issue #652). Bare package specifiers are exempt: a package can
+        # (H) legitimately be NAMED with the extension (p5.js, highlight.js).
+        for ext in cs.JS_TS_ALL_EXTENSIONS:
+            if import_path.endswith(ext) and len(import_path) > len(ext):
+                return import_path[: -len(ext)]
+        return import_path
+
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return aliased
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        import_path = self._strip_js_extension(import_path)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
         import_parts = import_path.split(cs.SEPARATOR_SLASH)
@@ -1010,6 +1256,52 @@ class ImportProcessor:
             elif import_node.type == cs.TS_DECLARATION:
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
+    def _resolve_cpp_include_target(
+        self, include_path: str, module_qn: str
+    ) -> str | None:
+        """Resolve a quoted #include to the module qn of a real repo file.
+
+        Tries the includer's directory, then the repo root, then a unique
+        path-suffix match (covers -I style includes written relative to a
+        source root). Returns None for headers outside the repo.
+        """
+        if self._cpp_module_qn_map is None:
+            self._cpp_module_qn_map = build_module_qn_map(
+                self.repo_path, self.project_name
+            )
+            self._cpp_qn_to_rel = {
+                qn: rel for rel, qn in self._cpp_module_qn_map.items()
+            }
+        normalized = os.path.normpath(include_path).replace(os.sep, cs.SEPARATOR_SLASH)
+
+        includer_rel = self._cpp_qn_to_rel.get(module_qn)
+        if includer_rel is not None:
+            candidate = os.path.normpath(
+                str(Path(includer_rel).parent / normalized)
+            ).replace(os.sep, cs.SEPARATOR_SLASH)
+            if qn := self._cpp_module_qn_map.get(candidate):
+                return qn
+
+        if qn := self._cpp_module_qn_map.get(normalized):
+            return qn
+
+        suffix = f"{cs.SEPARATOR_SLASH}{normalized}"
+        matches = sorted(rel for rel in self._cpp_module_qn_map if rel.endswith(suffix))
+        if not matches:
+            return None
+        if len(matches) > 1 and includer_rel is not None:
+            # (H) Prefer the header sharing the longest path prefix with the
+            # (H) includer (the same source tree), deterministically. commonpath
+            # (H) (not commonprefix) so sibling dirs with a shared name prefix
+            # (H) (src/ast vs src/ast_new) rank by whole components.
+            matches.sort(
+                key=lambda rel: (
+                    -len(os.path.commonpath([rel, includer_rel])),
+                    rel,
+                )
+            )
+        return self._cpp_module_qn_map[matches[0]]
+
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
         include_path = None
         is_system_include = False
@@ -1035,13 +1327,19 @@ class ImportProcessor:
                     if include_path.startswith(cs.CPP_STD_PREFIX)
                     else f"{cs.IMPORT_STD_PREFIX}{include_path}"
                 )
+            elif resolved := self._resolve_cpp_include_target(include_path, module_qn):
+                # (H) The include resolves to a real repo file; use that file's
+                # (H) actual (collision-disambiguated) module qn. The old
+                # (H) project-rooted, extension-stripped guess produced phantom
+                # (H) module qns (self-imports for same-stem header/source pairs,
+                # (H) wrong roots for -I style includes), which poisoned both the
+                # (H) IMPORTS edges and class resolution via the import map
+                # (H) (issue #652).
+                full_name = resolved
             else:
-                path_parts = (
-                    include_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                    .replace(cs.EXT_H, "")
-                    .replace(cs.EXT_HPP, "")
-                )
-                full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{path_parts}"
+                # (H) A quoted include that matches no repo file is a third-party
+                # (H) header; a project-rooted qn would be a phantom.
+                full_name = f"{cs.IMPORT_STD_PREFIX}{include_path}"
 
             self.import_mapping[module_qn][local_name] = full_name
             logger.debug(
@@ -1110,6 +1408,9 @@ class ImportProcessor:
                     partition_name = f"{cs.CPP_PARTITION_PREFIX}{partition_part}"
                     full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{partition_part}"
                     self.import_mapping[module_qn][partition_name] = full_name
+                    # (H) A partition lives inside the same named module; no
+                    # (H) graph node models it, so never emit an IMPORTS edge.
+                    self._cpp_declaration_mappings.add((module_qn, full_name))
                     logger.debug(
                         ls.IMP_CPP_PARTITION,
                         partition=partition_name,
@@ -1120,9 +1421,11 @@ class ImportProcessor:
         self, parts: list[str], name_index: int, module_qn: str, log_template: str
     ) -> None:
         module_name = parts[name_index].rstrip(";")
-        self.import_mapping[module_qn][module_name] = (
-            f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
-        )
+        full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
+        self.import_mapping[module_qn][module_name] = full_name
+        # (H) `module X;` / `export module X;` DECLARE this file's module; the
+        # (H) mapping exists for name resolution only, never as an IMPORTS edge.
+        self._cpp_declaration_mappings.add((module_qn, full_name))
         logger.debug(log_template, name=module_name)
 
     _PHP_INCLUDE_REQUIRE_TYPES = frozenset(
