@@ -278,11 +278,21 @@ class CSharpTypeInferenceEngine:
     def _find_method(
         self, class_qn: str, method_name: str, arg_count: int, seen: set[str]
     ) -> str | None:
-        if class_qn in seen:
-            return None
-        seen.add(class_qn)
+        # (H) An exact-arity match ANYWHERE up the hierarchy wins before any
+        # (H) same-name fallback, so an inherited correct-arity overload
+        # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
+        # (H) on the derived class (`Derived.Foo(int)`). Only when no arity matches
+        # (H) anywhere does the nearest lone same-name method (params-array /
+        # (H) optional args) stand in.
+        if resolved := self._find_method_by_arity(
+            class_qn, method_name, arg_count, set()
+        ):
+            return resolved
+        return self._find_method_by_name(class_qn, method_name, set())
+
+    def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
-        same_name: list[str] = []
+        matches: list[str] = []
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             if node_type != NodeType.METHOD or not qn.startswith(prefix):
                 continue
@@ -292,15 +302,37 @@ class CSharpTypeInferenceEngine:
             # (H) dot in its name portion).
             if cs.SEPARATOR_DOT in base or base != method_name:
                 continue
-            if _arity(leaf) == arg_count:
+            matches.append(qn)
+        return matches
+
+    def _find_method_by_arity(
+        self, class_qn: str, method_name: str, arg_count: int, seen: set[str]
+    ) -> str | None:
+        if class_qn in seen:
+            return None
+        seen.add(class_qn)
+        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+        for qn in self._direct_same_name_methods(class_qn, method_name):
+            if _arity(qn[len(prefix) :]) == arg_count:
                 return qn
-            same_name.append(qn)
-        # (H) No arity match: a lone same-name method is the target (params-array or
-        # (H) default args make the count differ); multiple is an ambiguous overload.
+        for base_qn in self.class_inheritance.get(class_qn, []):
+            if resolved := self._find_method_by_arity(
+                base_qn, method_name, arg_count, seen
+            ):
+                return resolved
+        return None
+
+    def _find_method_by_name(
+        self, class_qn: str, method_name: str, seen: set[str]
+    ) -> str | None:
+        if class_qn in seen:
+            return None
+        seen.add(class_qn)
+        same_name = self._direct_same_name_methods(class_qn, method_name)
         if len(same_name) == 1:
             return same_name[0]
         for base_qn in self.class_inheritance.get(class_qn, []):
-            if resolved := self._find_method(base_qn, method_name, arg_count, seen):
+            if resolved := self._find_method_by_name(base_qn, method_name, seen):
                 return resolved
         return None
 

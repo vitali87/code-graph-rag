@@ -149,6 +149,32 @@ public class App {
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
 
 
+def test_inherited_overload_arity_beats_local_same_name(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "I.cs").write_text(
+        """
+namespace N;
+public class Base {
+    public void Foo(int a) {}
+    public void Foo(int a, int b) {}
+}
+public class Derived : Base {
+    public void Foo(int a) {}
+}
+public class App { public void Run() { var d = new Derived(); d.Foo(1, 2); } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) d.Foo(1, 2) must reach the inherited two-arg overload, not the derived
+    # (H) one-arg Foo picked up as a lone same-name fallback.
+    assert any(t.endswith("N.Base.Foo(int, int)") for t in targets), targets
+    assert not any(t.endswith("N.Derived.Foo(int)") for t in targets), targets
+
+
 def test_static_call_through_type_name_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
