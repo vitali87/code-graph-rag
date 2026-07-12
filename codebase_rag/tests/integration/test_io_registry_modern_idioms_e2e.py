@@ -101,3 +101,22 @@ def test_pathlib_read_and_write(
     edges = _io_edges(memgraph_ingestor)
     assert (_WRITES, "resource::FILE::out.txt") in edges
     assert (_READS, "resource::FILE::in.txt") in edges
+
+
+def test_pathlib_directory_listing_and_touch(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "from pathlib import Path\n\n\n"
+        "def scan():\n"
+        "    d = Path('data')\n"
+        "    return list(d.iterdir())\n\n\n"
+        "def stamp():\n"
+        "    f = Path('flag')\n"
+        "    f.touch()\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::FILE::data") in edges
+    assert (_WRITES, "resource::FILE::flag") in edges
