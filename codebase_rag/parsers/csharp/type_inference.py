@@ -72,7 +72,7 @@ class CSharpTypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
-        csharp_extension_methods: dict[str, list[tuple[str, str]]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -310,7 +310,7 @@ class CSharpTypeInferenceEngine:
             > 1
         )
         matches: list[str] = []
-        for qn, recv_type in candidates:
+        for qn, recv_type, ext_namespace in candidates:
             # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
             # (H) leaf-split on `.` would land inside a qualified param type.
             if _arity(qn) != arg_count + 1:
@@ -319,15 +319,27 @@ class CSharpTypeInferenceEngine:
                 continue
             cand_qualified = cs.SEPARATOR_DOT in recv_type
             # (H) Namespace consistency between the call receiver and the stored
-            # (H) `this` type: both qualified -> require the SAME fully-qualified
-            # (H) name (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
-            # (H) one qualified and the other not -> the unqualified side's
-            # (H) namespace is unknown without a semantic model, so don't guess;
-            # (H) both unqualified -> match by simple name unless it's ambiguous.
+            # (H) `this` type, by qualification:
+            # (H)  - both qualified: require the SAME fully-qualified name
+            # (H)    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
+            # (H)  - recv qualified, cand not: resolve the ext's unqualified
+            # (H)    `this Widget` to `<ext-namespace>.Widget` and require equality
+            # (H)    (`N.Widget` binds a same-namespace `this Widget`);
+            # (H)  - recv unqualified, cand qualified: the receiver's namespace is
+            # (H)    unknown without a semantic model, so don't guess;
+            # (H)  - both unqualified: match by simple name unless it's ambiguous.
             if recv_qualified and cand_qualified:
                 if recv_type != receiver_type_name:
                     continue
-            elif recv_qualified != cand_qualified:
+            elif recv_qualified and not cand_qualified:
+                cand_qualified_name = (
+                    f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
+                    if ext_namespace
+                    else recv_type
+                )
+                if cand_qualified_name != receiver_type_name:
+                    continue
+            elif cand_qualified:  # (H) recv unqualified, cand qualified
                 continue
             elif ambiguous_unqualified:
                 continue

@@ -149,7 +149,7 @@ class ClassIngestMixin:
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_extension_methods: dict[str, list[tuple[str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -1018,8 +1018,24 @@ class ClassIngestMixin:
                     leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(
                         cs.SEPARATOR_DOT, 1
                     )[-1]
+                    # (H) The extension's declaring namespace (its class's
+                    # (H) namespace-qualified name minus the class leaf) so an
+                    # (H) unqualified `this Widget` can be resolved to
+                    # (H) `<namespace>.Widget` when matching a qualified call
+                    # (H) receiver. Empty for a top-level (namespace-less) class.
+                    ns_qualified_class = (
+                        class_qn[len(module_qn) + 1 :]
+                        if module_qn is not None
+                        and class_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                        else class_qn
+                    )
+                    ext_namespace = (
+                        ns_qualified_class.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                        if cs.SEPARATOR_DOT in ns_qualified_class
+                        else ""
+                    )
                     self.csharp_extension_methods.setdefault(leaf, []).append(
-                        (ingested_qn, receiver_type)
+                        (ingested_qn, receiver_type, ext_namespace)
                     )
             # (H) A Java method declared inside an anonymous class body
             # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing

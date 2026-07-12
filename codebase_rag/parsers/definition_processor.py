@@ -92,7 +92,7 @@ class DefinitionProcessor(
         # (H) the call's receiver -- a lookup the instance-hierarchy walk can't
         # (H) make (the method lives on an unrelated static class). Populated at
         # (H) method ingestion, read by the type-inference engine as a fallback.
-        self.csharp_extension_methods: dict[str, list[tuple[str, str]]] = {}
+        self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a

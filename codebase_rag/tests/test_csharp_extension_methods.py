@@ -210,6 +210,32 @@ namespace App {
     assert not any("WidgetExt.Poke" in t for t in targets), targets
 
 
+def test_qualified_receiver_binds_same_namespace_unqualified_extension(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The call receiver is qualified `N.Widget`; the extension declares its
+    # (H) receiver UNqualified (`this Widget`) but in the SAME namespace N. C#
+    # (H) binds it, so the resolver must resolve `this Widget` to `N.Widget` via
+    # (H) the extension's declaring namespace rather than skip on the mismatch.
+    (csharp_project / "L.cs").write_text(
+        """
+namespace N {
+    public class Widget { }
+    public static class WidgetExt {
+        public static void Poke(this Widget w) { }
+    }
+    public class Decoy { public void Poke() { } }
+    public class App7 { public void Run(N.Widget w) { w.Poke(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.WidgetExt.Poke(Widget)") for t in targets), targets
+
+
 def test_this_receiver_binds_exact_extension_despite_same_name_type(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
