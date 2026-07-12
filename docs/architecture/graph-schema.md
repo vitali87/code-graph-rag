@@ -67,6 +67,8 @@ The `io` capture group (opt-in; excluded from the default capture set) adds thre
 
 Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative and intra-procedural in this phase; a tainted value is only tracked within a single function body plus one level of argument/return hand-off.
 
+See [I/O and Data-Flow Edges](data-flow-edges.md) for the detailed reference: the taint model, propagation and kill rules, the `kind`/`via` edge properties, scope attribution, and example queries.
+
 ## Nested Definitions
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.

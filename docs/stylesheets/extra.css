@@ -335,3 +335,40 @@
     width: 13rem;
   }
 }
+
+/* Data-flow edge diagram — used in architecture/data-flow-edges.md */
+.cgr-flow {
+  --cf-panel: #ffffff;
+  --cf-reads: #0d9488;
+  --cf-writes: #7c3aed;
+  --cf-flows: #e2603b;
+  --cf-res-bg: #fff5e6; --cf-res-line: #f0b45e; --cf-res-ink: #8a5a12;
+  --cf-code-bg: #eef2fb; --cf-code-line: #b7c6ea; --cf-code-ink: #2b4a8a;
+  --cf-muted: #5c6470;
+  display: flex; flex-direction: column; gap: 0.9rem;
+  margin: 1rem 0 1.5rem; padding: 1.1rem 1.2rem;
+  border: 1px solid var(--md-default-fg-color--lightest); border-radius: 12px;
+}
+[data-md-color-scheme="slate"] .cgr-flow {
+  --cf-panel: #1c2027;
+  --cf-res-bg: #33260f; --cf-res-line: #7a5a24; --cf-res-ink: #f0c079;
+  --cf-code-bg: #1b2436; --cf-code-line: #33456e; --cf-code-ink: #a9c1f2;
+  --cf-muted: #9aa4b2;
+}
+.cgr-flow .edge { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.cgr-flow .node {
+  font-family: var(--md-code-font, monospace); font-size: 0.72rem;
+  padding: 0.2rem 0.55rem; border-radius: 7px; border: 1px solid; white-space: nowrap;
+}
+.cgr-flow .res { background: var(--cf-res-bg); border-color: var(--cf-res-line); color: var(--cf-res-ink); font-weight: 600; }
+.cgr-flow .code { background: var(--cf-code-bg); border-color: var(--cf-code-line); color: var(--cf-code-ink); }
+.cgr-flow .arrow { position: relative; flex: 1 1 120px; min-width: 120px; height: 20px; display: flex; align-items: center; justify-content: center; }
+.cgr-flow .arrow::before { content: ""; position: absolute; left: 0; right: 8px; top: 50%; height: 2px; transform: translateY(-50%); }
+.cgr-flow .arrow::after { content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%); border-left: 7px solid; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.cgr-flow .reads::before { background: var(--cf-reads); } .cgr-flow .reads::after { border-left-color: var(--cf-reads); }
+.cgr-flow .writes::before { background: var(--cf-writes); } .cgr-flow .writes::after { border-left-color: var(--cf-writes); }
+.cgr-flow .flows::before { background: var(--cf-flows); } .cgr-flow .flows::after { border-left-color: var(--cf-flows); }
+.cgr-flow .rel { position: relative; z-index: 1; background: var(--cf-panel); font-family: var(--md-code-font, monospace); font-size: 0.62rem; color: var(--cf-muted); padding: 0 0.4rem; white-space: nowrap; }
+.cgr-flow .legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 0.7rem; color: var(--cf-muted); margin-top: 0.2rem; }
+.cgr-flow .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.cgr-flow .sw { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }

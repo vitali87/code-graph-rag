@@ -97,6 +97,7 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Graph Schema: architecture/graph-schema.md
+    - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
