@@ -9,6 +9,7 @@ from ..import_processor import ImportProcessor
 from .constants import (
     DYNAMIC_TARGET,
     KEY_KIND,
+    PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
@@ -70,17 +71,23 @@ class IOAccessProcessor:
         # (H) last prior assignment. `reversed` keeps children left-to-right.
         # (H) ponytail: source-order, not path-sensitive; add a CFG pass if
         # (H) branch-precise handle resolution ever matters.
+        # (H) Start at the caller's children and prune nested defs/classes: each
+        # (H) is its own caller, so a read/write is credited to its immediate
+        # (H) scope only, never bubbled up to an enclosing function or the module
+        # (H) (matches flow_access and CALLS attribution).
         handles: dict[str, HandleBinding] = {}
-        stack = [caller_node]
+        stack = list(reversed(caller_node.children))
         while stack:
             node = stack.pop()
-            stack.extend(reversed(node.children))
+            if node.type in PY_SCOPE_BOUNDARIES:
+                continue
             bound = self._binding_from_node(node, import_map, ctor_by_name)
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
             elif node.type == cs.TS_PY_CALL:
                 self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
+            stack.extend(reversed(node.children))
 
     def _binding_from_node(
         self,

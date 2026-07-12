@@ -212,3 +212,30 @@ def test_plain_call_emits_no_io(tmp_path: Path) -> None:
     }
     rels = _run_io(tmp_path, files)
     assert rels == set()
+
+
+def test_nested_read_attributes_to_inner_scope_only(tmp_path: Path) -> None:
+    # (H) A read inside a nested def belongs to that nested caller alone; the
+    # (H) enclosing function (and the module) must NOT also be credited with it,
+    # (H) matching how FLOWS_TO and CALLS attribute to the immediate scope.
+    files = {
+        "m.py": (
+            "import os\n\ndef outer():\n    def inner():\n        os.getenv('K')\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.outer.inner", READS_FROM, "resource::ENV::K")
+    assert not _has(rels, "m.outer", READS_FROM, "resource::ENV::K")
+
+
+def test_module_scope_read_not_credited_with_function_read(tmp_path: Path) -> None:
+    # (H) A read inside a function must not also be attributed to the module
+    # (H) caller_spec (module-level IO is only genuine top-level statements).
+    files = {"m.py": "import os\n\n\ndef load():\n    os.getenv('K')\n"}
+    rels = _run_io(tmp_path, files)
+    module_reads = [
+        a
+        for a, r, b in rels
+        if r == READS_FROM and b.endswith("ENV::K") and a.endswith(".m")
+    ]
+    assert module_reads == []

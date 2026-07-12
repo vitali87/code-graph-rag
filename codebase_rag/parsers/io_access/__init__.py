@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from .constants import DYNAMIC_TARGET, RESOURCE_QN_FORMAT, IODirection, ResourceKind
+from .constants import (
+    DYNAMIC_TARGET,
+    PY_SCOPE_BOUNDARIES,
+    RESOURCE_QN_FORMAT,
+    IODirection,
+    ResourceKind,
+)
 from .extract import call_name, literal_target, normalise
 from .models import HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
@@ -11,6 +17,7 @@ __all__ = [
     "IO_HANDLE_CONSTRUCTORS",
     "IO_HANDLE_METHODS",
     "IO_SINKS",
+    "PY_SCOPE_BOUNDARIES",
     "RESOURCE_QN_FORMAT",
     "HandleBinding",
     "HandleConstructor",
