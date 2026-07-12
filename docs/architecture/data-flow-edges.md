@@ -179,6 +179,41 @@ crosses the call boundary *out of* the callee. `via = return` is simply the
 channel name. This edge is emitted both when the returned value is assigned
 (`r = build()`) and when it is returned directly (`return build()`).
 
+### Which way the arrow points
+
+The `arg` and `return` edges can look confusing side by side, because they point
+in opposite directions even though the caller is the same in both:
+
+```
+leak -FLOWS_TO {kind: arg}->    forward     (leak passes t INTO forward)
+build -FLOWS_TO {kind: return}-> leak        (build hands a value BACK to leak)
+```
+
+Both come from `leak`'s body — `leak` is the **caller** in both. The arrow points
+opposite ways because the *value* travels opposite ways across the call
+boundary. Picture each function as a box with input slots on the front and one
+output chute on the back:
+
+```
+   t ──▶│ forward │            │ build │──▶ r
+        └─────────┘            └───────┘
+   value goes IN               value comes OUT
+   caller → callee (arg)       callee → caller (return)
+```
+
+`leak` operates both boxes: it **pushes** `t` into `forward`'s input slot
+(`leak → forward`), and it **catches** what `build`'s chute produces
+(`build → leak`).
+
+Note that the assignment in `r = build()` is *not* what flips the direction. A
+return value flows out of the callee regardless; the `r =` only gives that
+out-flowing value a name so it can be tracked further downstream (which is how
+`print(r)` later completes the `ENV::K → STDOUT` resource flow). The rule is
+simply:
+
+> Direction follows the value. **In as an argument → caller → callee (`arg`).
+> Out as a return → callee → caller (`return`).**
+
 ### Reading an edge
 
 Read any `FLOWS_TO` edge as a sentence:
