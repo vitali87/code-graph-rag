@@ -149,6 +149,28 @@ public class App {
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
 
 
+def test_nullable_typed_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "J.cs").write_text(
+        """
+namespace N;
+public class Widget { public void Area() {} }
+public class Other { public void Area() {} }
+public class App { public void Run(Widget? w) { w.Area(); } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) A nullable type `Widget?` must bind to Widget (the `?` is not part of the
+    # (H) type name); the decoy Other.Area proves it is the typed path, not a
+    # (H) bare-name fallback.
+    assert any(t.endswith("N.Widget.Area") for t in targets), targets
+    assert not any(t.endswith("N.Other.Area") for t in targets), targets
+
+
 def test_inherited_overload_arity_beats_local_same_name(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

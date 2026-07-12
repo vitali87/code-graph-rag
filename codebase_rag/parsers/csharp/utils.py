@@ -7,10 +7,12 @@ from ..utils import safe_decode_text
 
 
 def _normalize_type_name(text: str) -> str:
-    # (H) Strip generic arguments (`List<int>` -> `List`) and whitespace so a
-    # (H) parameter signature is stable and matches the registered, generic-free
-    # (H) type names. Array brackets are kept (they distinguish overloads).
-    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
+    # (H) Strip generic arguments (`List<int>` -> `List`), a nullable suffix
+    # (H) (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
+    # (H) binds), and whitespace, so a parameter signature is stable and matches
+    # (H) the registered, generic-free type names. Array brackets are kept (they
+    # (H) distinguish overloads).
+    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
 def extract_parameter_type_names(method_node: Node) -> list[str]:
