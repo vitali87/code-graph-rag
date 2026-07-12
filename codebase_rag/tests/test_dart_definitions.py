@@ -179,6 +179,60 @@ mixin Diver on StatefulWidget {}
     assert ("Fish", "Comparable") in implements, implements
 
 
+def test_enum_implements_interface(
+    dart_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A Dart enum (plain or enhanced) can `implements` an interface. Enums use
+    # (H) the shared `enum_declaration` node type, so they ride the IMPLEMENTS gate.
+    (dart_project / "en.dart").write_text(
+        """
+abstract class Shape {}
+enum Kind implements Shape {
+  a(1),
+  b(2);
+  final int v;
+  const Kind(this.v);
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
+
+    implements = {
+        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        for c in get_relationships(mock_ingestor, "IMPLEMENTS")
+    }
+    assert ("Kind", "Shape") in implements, implements
+
+
+def test_pubspec_indentation_variants(
+    dart_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Dependency blocks may be indented by any consistent amount (2 spaces,
+    # (H) 4 spaces, ...); entries at the block's own indent level are packages
+    # (H) regardless of that width. Nested blocks (sdk:) sit deeper and are
+    # (H) recorded name-only via their parent key.
+    (dart_project / "pubspec.yaml").write_text(
+        """
+name: deep_app
+dependencies:
+    flutter:
+        sdk: flutter
+    http: ^1.0.0
+    provider: ^6.0.0
+""",
+        encoding="utf-8",
+    )
+    (dart_project / "main.dart").write_text("void main() {}\n", encoding="utf-8")
+    run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
+
+    names = {
+        c.args[2][2] for c in get_relationships(mock_ingestor, "DEPENDS_ON_EXTERNAL")
+    }
+    for pkg in ("http", "provider", "flutter"):
+        assert pkg in names, f"missing dependency {pkg}: {names}"
+
+
 def test_pubspec_dependencies(dart_project: Path, mock_ingestor: MagicMock) -> None:
     (dart_project / "pubspec.yaml").write_text(
         """

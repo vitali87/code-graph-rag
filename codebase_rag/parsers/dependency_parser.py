@@ -270,12 +270,16 @@ class PubspecYamlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         # (H) pubspec.yaml is flat enough that a line scanner beats adding a YAML
         # (H) dependency: track the current top-level key by zero indentation and
-        # (H) collect the `name: spec` lines indented under dependencies blocks. A
-        # (H) nested block (`sdk: flutter`, `git:`) has no scalar value on the key
-        # (H) line, so it is recorded name-only (spec = "").
+        # (H) collect the `name: spec` lines indented under dependencies blocks. The
+        # (H) block's own entry indent is whatever the FIRST entry uses (2 spaces, 4
+        # (H) spaces, ...), so packages are lines at exactly that indent; deeper
+        # (H) lines are a nested block's keys (`sdk:`, `git:`, `path:`) and are
+        # (H) skipped. A nested block's parent key (`flutter:`) has no inline
+        # (H) scalar, so it is recorded name-only (spec = "").
         dependencies: list[Dependency] = []
         try:
             in_deps = False
+            entry_indent: int | None = None
             with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 for raw in f:
                     line = raw.rstrip()
@@ -286,12 +290,13 @@ class PubspecYamlParser(DependencyParser):
                     if indent == 0:
                         key = stripped.split(cs.PUBSPEC_KEY_SEP, 1)[0]
                         in_deps = key in cs.PUBSPEC_DEP_KEYS
+                        entry_indent = None
                         continue
                     if not in_deps or cs.PUBSPEC_KEY_SEP not in stripped:
                         continue
-                    # (H) Only first-level entries (a package name); deeper indented
-                    # (H) lines are the nested block's own keys (sdk:, git:, path:).
-                    if indent > 2:
+                    if entry_indent is None:
+                        entry_indent = indent
+                    if indent != entry_indent:
                         continue
                     name, _, spec = stripped.partition(cs.PUBSPEC_KEY_SEP)
                     name = name.strip()
