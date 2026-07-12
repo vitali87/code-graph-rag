@@ -12,6 +12,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
 from .type_inference import TypeInferenceEngine
+from .utils import follow_reexports
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 _SEARCH_NAME_CACHE: dict[str, str] = {}
@@ -239,28 +240,9 @@ class CallResolver:
         return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
-        # (H) `from .pkg import Cls` records the importer's name against the re-export
-        # (H) module (pkg.Cls), not the class's real definition (pkg.mod.Cls), so a
-        # (H) class_qn that is not itself registered may be a re-export. Follow the
-        # (H) module's own import map one hop at a time until a registered class is
-        # (H) reached, guarding against cycles.
-        seen: set[str] = set()
-        current = class_qn
-        while (
-            current
-            and current not in seen
-            and current not in self.function_registry
-            and cs.SEPARATOR_DOT in current
-        ):
-            seen.add(current)
-            module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-            following = self.import_processor.import_mapping.get(module_qn, {}).get(
-                name
-            )
-            if not following or following == current:
-                break
-            current = following
-        return current
+        return follow_reexports(
+            class_qn, self.import_processor.import_mapping, self.function_registry
+        )
 
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT

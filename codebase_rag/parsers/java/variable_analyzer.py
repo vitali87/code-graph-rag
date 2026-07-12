@@ -511,8 +511,8 @@ class JavaVariableAnalyzerMixin:
         for split in range(len(parts) - 1, 0, -1):
             module_candidate = cs.SEPARATOR_DOT.join(parts[:split])
             file_path = self.module_qn_to_file_path.get(module_candidate)
-            if file_path is not None and file_path in self.ast_cache:
-                root_node, _ = self.ast_cache[file_path]
+            if file_path is not None and (entry := self.ast_cache.load(file_path)):
+                root_node, _ = entry
                 return root_node, parts[split:], module_candidate
         return None
 

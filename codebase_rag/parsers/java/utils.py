@@ -38,10 +38,10 @@ def get_root_node_from_module_qn(
         return None
 
     file_path = module_qn_to_file_path.get(module_qn)
-    if file_path is None or file_path not in ast_cache:
+    if file_path is None or not (entry := ast_cache.load(file_path)):
         return None
 
-    root_node, _ = ast_cache[file_path]
+    root_node, _ = entry
     return root_node
 
 
