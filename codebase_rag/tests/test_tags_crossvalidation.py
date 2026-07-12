@@ -61,3 +61,15 @@ def test_crossvalidate_flags_cgr_over_capture() -> None:
 
     assert missed == set()
     assert extra == {("ghost", 99)}
+
+
+def test_tags_query_uses_community_oracle() -> None:
+    # (H) The grammar-shipped community tags.scm captures @definition.constant for
+    # (H) module-level assignments; the earlier hand-written oracle did not. This pins
+    # (H) that the loader reads the real independent oracle, not a local copy.
+    parsers, _ = load_parsers()
+    root = parse_code("X = 1\n\ndef f():\n    pass\n", cs.SupportedLanguage.PYTHON, parsers)
+
+    missed, _extra = crossvalidate(root, _tags_query(), {("f", 3)})
+
+    assert ("X", 1) in missed
