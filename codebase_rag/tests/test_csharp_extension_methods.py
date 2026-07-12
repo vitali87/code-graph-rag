@@ -210,6 +210,35 @@ namespace App {
     assert not any("WidgetExt.Poke" in t for t in targets), targets
 
 
+def test_unqualified_receiver_does_not_bind_qualified_extension(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The call receiver is an UNqualified `Widget` in namespace N1 (whose own
+    # (H) N1.Widget is external/undeclared), while the only indexed extension has
+    # (H) a QUALIFIED `this N2.Widget`. The receiver's namespace can't be confirmed
+    # (H) without a semantic model, so a qualified extension receiver must not bind
+    # (H) to an unqualified call receiver. (Decoy.Poke blocks the generic fallback.)
+    (csharp_project / "I.cs").write_text(
+        """
+namespace N2 {
+    public class Widget { }
+    public static class WidgetExt {
+        public static void Poke(this N2.Widget w) { }
+    }
+    public class Decoy { public void Poke() { } }
+}
+namespace N1 {
+    public class App5 { public void Run(Widget w) { w.Poke(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any("WidgetExt.Poke" in t for t in targets), targets
+
+
 def test_type_name_receiver_does_not_bind_extension(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

@@ -317,6 +317,15 @@ class CSharpTypeInferenceEngine:
             # (H) on `.` would land inside a qualified param type (`System.Exception`).
             if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] == recv_simple
             and _arity(qn) == arg_count + 1
+            # (H) A QUALIFIED extension receiver (`this N2.Widget`) cannot be
+            # (H) confirmed against an UNqualified call receiver (`Widget`, whose
+            # (H) namespace is unknown without a semantic model) -- binding it
+            # (H) risks a wrong cross-namespace edge, so skip it (accept the
+            # (H) occasional miss over a false positive).
+            and not (
+                cs.SEPARATOR_DOT in recv_type
+                and cs.SEPARATOR_DOT not in receiver_type_name
+            )
         ]
         # (H) Bind only on a unique match; an ambiguous name across static classes
         # (H) is left unresolved rather than guessed.
