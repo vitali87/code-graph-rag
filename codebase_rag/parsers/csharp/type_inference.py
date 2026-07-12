@@ -173,10 +173,12 @@ class CSharpTypeInferenceEngine:
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
         # (H) The declared type of `field_name` on class_qn or any base class,
         # (H) read from the per-class maps recorded at ingestion (so it reaches a
-        # (H) field inherited from a base in another file). BFS with a visited
+        # (H) field inherited from a base in another file). Seed the BFS with every
+        # (H) partial part of the class so a field declared on ANOTHER part
+        # (H) (`helper` on P1, used in a method on P2) is found. BFS with a visited
         # (H) guard so a malformed inheritance cycle cannot loop.
         seen: set[str] = set()
-        queue = deque([class_qn])
+        queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
             current = queue.popleft()
             if current in seen:

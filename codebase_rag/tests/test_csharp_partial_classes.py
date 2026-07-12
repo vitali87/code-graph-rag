@@ -85,3 +85,29 @@ public class Decoy { public void Ping() { } }
     # (H) base. The Decoy.Ping makes the generic fallback ambiguous.
     assert any(t.endswith(".Base.Ping") for t in targets), targets
     assert not any(t.endswith(".Decoy.Ping") for t in targets), targets
+
+
+def test_field_typed_receiver_sees_field_on_other_part(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "F1.cs").write_text(
+        """
+namespace N;
+public class Helper { public void Run() { } }
+public class Decoy { public void Run() { } }
+public partial class Widget { private Helper helper; }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "F2.cs").write_text(
+        "namespace N;\npublic partial class Widget { public void Use() { helper.Run(); } }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    # (H) `helper` is a field declared on the OTHER part; typing it requires the
+    # (H) field lookup to span the partial group. The Decoy.Run makes the generic
+    # (H) fallback ambiguous, so only the field-typed receiver can bind Helper.Run.
+    assert any(t.endswith(".Helper.Run") for t in targets), targets
+    assert not any(t.endswith(".Decoy.Run") for t in targets), targets
