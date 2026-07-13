@@ -293,7 +293,7 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
     ) -> None:
         raw = call_name(node)
-        if raw is None:
+        if raw is None or self._head_is_shadowed(raw, import_map):
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
@@ -307,6 +307,19 @@ class IOAccessProcessor:
             keyword_arg_type=descriptor.keyword_arg_type,
         )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    @staticmethod
+    def _head_is_shadowed(raw: str, import_map: dict[str, str]) -> bool:
+        # (H) A dotted sink like `fs.writeFileSync` is only real I/O when `fs` is the
+        # (H) genuine module. A real builtin import maps the head to itself (`fs` /
+        # (H) `fs.default`), but importing `fs` from a LOCAL module maps it to a
+        # (H) project-qualified base, so the raw-dotted registry fallback must not
+        # (H) fire. A bare or unimported head is trusted (issue #714 precision).
+        head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
+        if not sep:
+            return False
+        base = import_map.get(head)
+        return base is not None and base.split(cs.SEPARATOR_DOT)[0] != head
 
     def _emit_call(
         self,

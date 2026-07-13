@@ -89,3 +89,33 @@ def test_module_level_js_io_sinks(
     edges = _io_edges(memgraph_ingestor)
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
     assert (_WRITES, "resource::FILE::cfg.json") in edges
+
+
+def test_shadowed_local_import_emits_no_edge(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `fs` imported from a LOCAL module is not Node's fs: fs.writeFileSync must
+    # (H) NOT emit a FILE edge (the raw-dotted registry fallback would otherwise
+    # (H) misfire on the shadowed name). Issue #714 precision.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from './fake';\n\n\n"
+        "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") not in _io_edges(memgraph_ingestor)
+
+
+def test_real_builtin_import_still_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) The genuine `import fs from 'fs'` (maps to fs.default) must still emit.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from 'fs';\n\n\n"
+        "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
