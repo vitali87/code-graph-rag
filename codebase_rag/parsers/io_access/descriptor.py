@@ -35,6 +35,7 @@ class LanguageDescriptor:
     subscript_type: str
     object_field: str
     property_field: str
+    subscript_index_field: str
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -59,6 +60,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
     property_field=cs.FIELD_PROPERTY,
+    subscript_index_field=cs.TS_FIELD_INDEX,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own

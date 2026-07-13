@@ -398,12 +398,11 @@ class IOAccessProcessor:
             if prop is not None and prop.text is not None:
                 return prop.text.decode(cs.ENCODING_UTF8)
             return DYNAMIC_TARGET
-        obj = node.child_by_field_name(descriptor.object_field)
-        for child in node.named_children:
-            if child is not obj and child.type == descriptor.string_type:
-                return string_literal(
-                    child, descriptor.string_type, descriptor.string_content_type
-                )
+        index = node.child_by_field_name(descriptor.subscript_index_field)
+        if index is not None and index.type == descriptor.string_type:
+            return string_literal(
+                index, descriptor.string_type, descriptor.string_content_type
+            )
         return DYNAMIC_TARGET
 
     def _block_declarations(
