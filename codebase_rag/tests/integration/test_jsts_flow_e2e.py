@@ -187,3 +187,40 @@ def test_shadowed_console_no_flow(
         and f["kind"] == FlowKind.RESOURCE.value
         for f in flows
     )
+
+
+def test_comment_in_arguments_does_not_break_flow(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Comments are named children; they must not shift argument indices or hide
+    # (H) the taint of a directly-passed source.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function boot() {\n  console.log(/* note */ process.env.SECRET);\n}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_typescript_typed_param_shadows_source(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A TS parameter is a required_parameter wrapper, not a bare identifier; a
+    # (H) `process` parameter must still shadow the global env source.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.ts",
+        "function run(process: any) {\n"
+        "  const a = process.env.SECRET;\n"
+        "  console.log(a);\n"
+        "}\n",
+    )
+    flows = _flows(memgraph_ingestor)
+    assert not any(f["kind"] == FlowKind.RESOURCE.value for f in flows)

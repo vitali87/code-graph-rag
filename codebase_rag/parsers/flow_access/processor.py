@@ -298,8 +298,7 @@ class FlowProcessor:
         d = jc.descriptor
         node_type = node.type
         if node_type == cs.TS_AWAIT_EXPRESSION:
-            inner = node.named_children[0] if node.named_children else None
-            return self._js_expr_taint(inner, tainted, jc)
+            return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
         if node_type == d.identifier_type:
             return (
                 tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None
@@ -386,7 +385,8 @@ class FlowProcessor:
         if args is None:
             return []
         out: list[tuple[str, Taint | None]] = []
-        for index, child in enumerate(args.named_children):
+        # (H) Comments are named children; exclude them so arg positions stay correct.
+        for index, child in enumerate(self._named_no_comments(args)):
             out.append(
                 (
                     VIA_ARG_FORMAT.format(index=index),
@@ -398,8 +398,19 @@ class FlowProcessor:
     def _js_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
     ) -> Taint | None:
-        value = node.named_children[0] if node.named_children else None
-        return self._js_expr_taint(value, tainted, jc)
+        return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
+
+    @staticmethod
+    def _named_no_comments(node: Node) -> list[Node]:
+        return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+
+    @staticmethod
+    def _js_first_expr(node: Node) -> Node | None:
+        # (H) The first meaningful sub-expression, skipping comment named children.
+        for child in node.named_children:
+            if child.type != cs.TS_COMMENT:
+                return child
+        return None
 
     def _js_member_source(self, node: Node, jc: _JsCtx) -> HandleBinding | None:
         obj = node.child_by_field_name(jc.descriptor.object_field)
@@ -487,8 +498,7 @@ class FlowProcessor:
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
             for child in params.named_children:
-                if child.type == descriptor.identifier_type and child.text:
-                    names.add(child.text.decode(cs.ENCODING_UTF8))
+                self._js_binding_names(child, descriptor, names)
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         stack = list((body or caller_node).named_children)
         while stack:
@@ -498,16 +508,44 @@ class FlowProcessor:
                 if name is not None and name.text:
                     names.add(name.text.decode(cs.ENCODING_UTF8))
                 continue
-            if node.type == descriptor.declarator_type:
-                name = node.child_by_field_name(cs.TS_FIELD_NAME)
-                if (
-                    name is not None
-                    and name.type == descriptor.identifier_type
-                    and name.text
-                ):
-                    names.add(name.text.decode(cs.ENCODING_UTF8))
+            if (
+                node.type == descriptor.declarator_type
+                and (name := node.child_by_field_name(cs.TS_FIELD_NAME)) is not None
+            ):
+                self._js_binding_names(name, descriptor, names)
             stack.extend(node.named_children)
         return frozenset(names - import_map.keys())
+
+    def _js_binding_names(
+        self, node: Node, descriptor: LanguageDescriptor, out: set[str]
+    ) -> None:
+        # (H) The names a binding target introduces: a plain identifier, a TS
+        # (H) required/optional parameter wrapper (its `pattern`), a default
+        # (H) (assignment_pattern left), or a destructuring pattern's leaves.
+        node_type = node.type
+        if node_type in (
+            descriptor.identifier_type,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if node.text:
+                out.add(node.text.decode(cs.ENCODING_UTF8))
+        elif node_type == cs.TS_PAIR_PATTERN:
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                self._js_binding_names(value, descriptor, out)
+        elif node_type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+            if (pattern := node.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
+                self._js_binding_names(pattern, descriptor, out)
+        elif node_type == cs.TS_ASSIGNMENT_PATTERN:
+            left = node.child_by_field_name(cs.FIELD_LEFT) or self._js_first_expr(node)
+            if left is not None:
+                self._js_binding_names(left, descriptor, out)
+        elif node_type in (
+            cs.TS_OBJECT_PATTERN,
+            cs.TS_ARRAY_PATTERN,
+            cs.TS_REST_PATTERN,
+        ):
+            for child in node.named_children:
+                self._js_binding_names(child, descriptor, out)
 
     @staticmethod
     def _merge(states: list[_TaintMap]) -> _TaintMap:

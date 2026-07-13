@@ -176,6 +176,9 @@ TS_RETURN_STATEMENT = "return_statement"
 # (H) `await fetch(...)` wraps the call in an await_expression; the flow walk
 # (H) unwraps it to see the inner source expression.
 TS_AWAIT_EXPRESSION = "await_expression"
+# (H) tree-sitter parses comments as named children, so the flow walk filters them
+# (H) out before indexing arguments or reading a single sub-expression.
+TS_COMMENT = "comment"
 TS_IMPORT_CLAUSE = "import_clause"
 TS_LEXICAL_DECLARATION = "lexical_declaration"
 TS_VARIABLE_DECLARATION = "variable_declaration"
