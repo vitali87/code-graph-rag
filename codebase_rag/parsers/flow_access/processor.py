@@ -11,18 +11,24 @@ from ...services import IngestorProtocol
 from ..call_resolver import CallResolver
 from ..import_processor import ImportProcessor
 from ..io_access import (
+    DYNAMIC_TARGET,
+    IO_MEMBER_READS,
     IO_SINKS,
+    LANGUAGE_DESCRIPTORS,
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
     HandleBinding,
     IODirection,
     IOSink,
+    LanguageDescriptor,
     ResourceKind,
     call_name,
     definition_header_nodes,
     literal_target,
+    normalise,
     registry_match,
     scope_seed_nodes,
+    string_literal,
 )
 from .constants import (
     KEY_KIND,
@@ -93,6 +99,16 @@ class _FlowCtx(NamedTuple):
     write_sinks: dict[str, IOSink]
 
 
+class _JsCtx(NamedTuple):
+    # (H) Per-caller constants for the lean non-Python flow walk (issue #714).
+    flow: _FlowCtx
+    descriptor: LanguageDescriptor
+    member_reads: tuple[tuple[str, ResourceKind], ...]
+    # (H) Names bound in the caller scope, which shadow a same-named builtin
+    # (H) source/sink (a local `const fetch`, `function process`, a parameter).
+    local_names: frozenset[str]
+
+
 class FlowProcessor:
     """Detects intra-procedural value flow in a function body and emits FLOWS_TO
     edges: resource->resource (a read source reaches a write sink), caller->callee
@@ -151,10 +167,6 @@ class FlowProcessor:
     ) -> None:
         if not self._enabled:
             return
-        # (H) ponytail: Python-only in phase 1, mirroring io_access; other languages
-        # (H) need their own source/sink tables and node types first.
-        if language != cs.SupportedLanguage.PYTHON:
-            return
         sinks = IO_SINKS.get(language, ())
         if not sinks:
             return
@@ -170,6 +182,19 @@ class FlowProcessor:
                 s.callee: s for s in sinks if s.direction == IODirection.WRITE
             },
         )
+        # (H) Non-Python languages take a lean STRAIGHT-LINE flow walk (issue #714):
+        # (H) taint from a read source (process.env, fetch, fs.readFile) reaching a
+        # (H) write sink emits a resource->resource flow, a tainted value passed to a
+        # (H) callee emits an arg edge, and a returned tainted value feeds the shared
+        # (H) return-taint fixpoint. No path-sensitivity yet (that is a follow-up),
+        # (H) and Python keeps its full path-sensitive walk below.
+        if language != cs.SupportedLanguage.PYTHON:
+            descriptor = LANGUAGE_DESCRIPTORS.get(language)
+            if descriptor is not None:
+                self._process_lean_flow(
+                    caller_node, ctx, descriptor, IO_MEMBER_READS.get(language, ())
+                )
+            return
 
         # (H) Path-sensitive MAY walk (issue #713): taint is threaded statement by
         # (H) statement, but each if/elif/else, try/except and loop is evaluated
@@ -189,6 +214,300 @@ class FlowProcessor:
 
         if self._acc_returns_taint:
             self._summaries[caller_qn] = self._acc_return_taint
+
+    # (H) Lean non-Python (JS/TS) straight-line flow (issue #714) below.
+    def _process_lean_flow(
+        self,
+        caller_node: Node,
+        ctx: _FlowCtx,
+        descriptor: LanguageDescriptor,
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+    ) -> None:
+        self._acc_returns_taint = False
+        self._acc_return_taint = _EMPTY_TAINT
+        jc = _JsCtx(
+            flow=ctx,
+            descriptor=descriptor,
+            member_reads=member_reads,
+            local_names=self._js_local_names(caller_node, descriptor, ctx.import_map),
+        )
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            statements = list(caller_node.named_children)
+        elif body.type == descriptor.block_scope_type:
+            statements = list(body.named_children)
+        else:
+            statements = [body]
+        tainted: _TaintMap = {}
+        # (H) ponytail: flat source-order walk, not path-sensitive (that is the JS
+        # (H) follow-up); a single taint map, nested functions pruned as their own
+        # (H) callers. Reuses the shared summary/deferred/finalize machinery (#712).
+        stack = list(reversed(statements))
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in descriptor.nested_scope_types:
+                continue
+            if node_type == descriptor.declarator_type:
+                self._js_bind(node, cs.TS_FIELD_NAME, cs.FIELD_VALUE, tainted, jc)
+            elif node_type == cs.TS_ASSIGNMENT_EXPRESSION:
+                self._js_bind(node, cs.FIELD_LEFT, cs.FIELD_RIGHT, tainted, jc)
+            elif node_type == descriptor.call_type:
+                self._js_call(node, tainted, jc)
+            elif node_type == cs.TS_RETURN_STATEMENT:
+                returned = self._js_return_taint(node, tainted, jc)
+                if returned is not None:
+                    self._acc_returns_taint = True
+                    self._acc_return_taint = _merge_taint(
+                        self._acc_return_taint, returned
+                    )
+            stack.extend(reversed(node.named_children))
+        if self._acc_returns_taint:
+            self._summaries[ctx.caller_qn] = self._acc_return_taint
+
+    def _js_bind(
+        self,
+        node: Node,
+        target_field: str,
+        value_field: str,
+        tainted: _TaintMap,
+        jc: _JsCtx,
+    ) -> None:
+        target = node.child_by_field_name(target_field)
+        if (
+            target is None
+            or target.type != jc.descriptor.identifier_type
+            or target.text is None
+        ):
+            return
+        lhs = target.text.decode(cs.ENCODING_UTF8)
+        taint = self._js_expr_taint(node.child_by_field_name(value_field), tainted, jc)
+        if taint is not None:
+            tainted[lhs] = taint
+        else:
+            tainted.pop(lhs, None)
+
+    def _js_expr_taint(
+        self, node: Node | None, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # (H) The Taint an expression carries: an identifier propagates the map; a
+        # (H) member/subscript may be an env source; a call may be a read source or a
+        # (H) function whose return is deferred (pending) to the fixpoint.
+        if node is None:
+            return None
+        d = jc.descriptor
+        node_type = node.type
+        if node_type == cs.TS_AWAIT_EXPRESSION:
+            inner = node.named_children[0] if node.named_children else None
+            return self._js_expr_taint(inner, tainted, jc)
+        if node_type == d.identifier_type:
+            return (
+                tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None
+            )
+        if node_type in (d.member_expression_type, d.subscript_type):
+            if (binding := self._js_member_source(node, jc)) is not None:
+                return Taint(frozenset({binding}), frozenset())
+            return None
+        if node_type == d.call_type:
+            raw = call_name(node)
+            if raw is None:
+                return None
+            if (binding := self._js_read_source(node, raw, jc)) is not None:
+                return Taint(frozenset({binding}), frozenset())
+            callee = self._resolve(
+                raw,
+                jc.flow.module_qn,
+                jc.flow.class_context,
+                jc.flow.caller_qn,
+                jc.flow.language,
+            )
+            if callee is not None:
+                self._return_edge_candidates.append(
+                    (callee[0], callee[1], jc.flow.caller_spec)
+                )
+                return Taint(frozenset(), frozenset({callee[1]}))
+        return None
+
+    def _js_call(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        raw = call_name(node)
+        if raw is None:
+            return
+        args = self._js_arg_taints(node, tainted, jc)
+        if not args:
+            return
+        if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
+            dst_identity = literal_target(
+                node,
+                sink.target_arg,
+                sink.target_kw,
+                string_type=jc.descriptor.string_type,
+                content_type=jc.descriptor.string_content_type,
+                keyword_arg_type=jc.descriptor.keyword_arg_type,
+            )
+            for _via, taint in args:
+                if taint is None:
+                    continue
+                for origin in taint.origins:
+                    self._emit_resource_flow(origin, sink.kind, dst_identity)
+                if taint.pending:
+                    self._deferred_resource_flows.append(
+                        (taint.pending, sink.kind, dst_identity)
+                    )
+            return
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+        )
+        if callee is None:
+            return
+        callee_type, callee_qn = callee
+        for via, taint in args:
+            if taint is None:
+                continue
+            if taint.origins:
+                self.ingestor.ensure_relationship_batch(
+                    jc.flow.caller_spec,
+                    cs.RelationshipType.FLOWS_TO,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                )
+            elif taint.pending:
+                self._deferred_arg_edges.append(
+                    (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
+                )
+
+    def _js_arg_taints(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> list[tuple[str, Taint | None]]:
+        args = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return []
+        out: list[tuple[str, Taint | None]] = []
+        for index, child in enumerate(args.named_children):
+            out.append(
+                (
+                    VIA_ARG_FORMAT.format(index=index),
+                    self._js_expr_taint(child, tainted, jc),
+                )
+            )
+        return out
+
+    def _js_return_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        value = node.named_children[0] if node.named_children else None
+        return self._js_expr_taint(value, tainted, jc)
+
+    def _js_member_source(self, node: Node, jc: _JsCtx) -> HandleBinding | None:
+        obj = node.child_by_field_name(jc.descriptor.object_field)
+        if obj is None or obj.text is None:
+            return None
+        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        for prefix, kind in jc.member_reads:
+            if obj_text != prefix:
+                continue
+            head = prefix.partition(cs.SEPARATOR_DOT)[0]
+            if head in jc.local_names or self._js_import_shadowed(head, jc):
+                return None
+            return HandleBinding(kind=kind, identity=self._js_member_identity(node, jc))
+        return None
+
+    def _js_member_identity(self, node: Node, jc: _JsCtx) -> str:
+        d = jc.descriptor
+        if node.type == d.member_expression_type:
+            prop = node.child_by_field_name(d.property_field)
+            if prop is not None and prop.text is not None:
+                return prop.text.decode(cs.ENCODING_UTF8)
+            return DYNAMIC_TARGET
+        index = node.child_by_field_name(d.subscript_index_field)
+        if index is not None and index.type == d.string_type:
+            return string_literal(index, d.string_type, d.string_content_type)
+        return DYNAMIC_TARGET
+
+    def _js_read_source(self, node: Node, raw: str, jc: _JsCtx) -> HandleBinding | None:
+        sink = self._js_match_sink(raw, jc.flow.read_sinks, jc)
+        if sink is None:
+            return None
+        identity = literal_target(
+            node,
+            sink.target_arg,
+            sink.target_kw,
+            string_type=jc.descriptor.string_type,
+            content_type=jc.descriptor.string_content_type,
+            keyword_arg_type=jc.descriptor.keyword_arg_type,
+        )
+        return HandleBinding(kind=sink.kind, identity=identity)
+
+    @staticmethod
+    def _js_match_sink(
+        raw: str, sink_map: dict[str, IOSink], jc: _JsCtx
+    ) -> IOSink | None:
+        # (H) Same shadow-aware matching as io_access: a locally-bound name is not
+        # (H) the builtin; the import-normalised name matches first (so an aliased
+        # (H) builtin resolves), then the raw dotted name only when its head resolves
+        # (H) to the genuine module (node:/require/ESM), never a shadowing local module.
+        head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
+        if (head if sep else raw) in jc.local_names:
+            return None
+        normalised = normalise(raw, jc.flow.import_map)
+        if normalised is not None and (sink := sink_map.get(normalised)) is not None:
+            return sink
+        if not sep:
+            return None
+        base = jc.flow.import_map.get(head)
+        ok = (
+            base is None
+            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
+            == head
+        )
+        return sink_map.get(raw) if ok else None
+
+    @staticmethod
+    def _js_import_shadowed(head: str, jc: _JsCtx) -> bool:
+        base = jc.flow.import_map.get(head)
+        return base is not None and (
+            base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) != head
+        )
+
+    def _js_local_names(
+        self,
+        caller_node: Node,
+        descriptor: LanguageDescriptor,
+        import_map: dict[str, str],
+    ) -> frozenset[str]:
+        # (H) ponytail: flat collection of the caller's parameters + every declarator
+        # (H) and hoisted function name in the body (nested functions pruned). Not
+        # (H) block-scoped and no destructuring -- the io walk has the precise version;
+        # (H) refine here if JS flow precision on those ever matters. Import aliases
+        # (H) (`const fs = require('fs')`) are the genuine module, not shadows.
+        names: set[str] = set()
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is not None:
+            for child in params.named_children:
+                if child.type == descriptor.identifier_type and child.text:
+                    names.add(child.text.decode(cs.ENCODING_UTF8))
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        stack = list((body or caller_node).named_children)
+        while stack:
+            node = stack.pop()
+            if node.type in descriptor.nested_scope_types:
+                name = node.child_by_field_name(cs.TS_FIELD_NAME)
+                if name is not None and name.text:
+                    names.add(name.text.decode(cs.ENCODING_UTF8))
+                continue
+            if node.type == descriptor.declarator_type:
+                name = node.child_by_field_name(cs.TS_FIELD_NAME)
+                if (
+                    name is not None
+                    and name.type == descriptor.identifier_type
+                    and name.text
+                ):
+                    names.add(name.text.decode(cs.ENCODING_UTF8))
+            stack.extend(node.named_children)
+        return frozenset(names - import_map.keys())
 
     @staticmethod
     def _merge(states: list[_TaintMap]) -> _TaintMap:

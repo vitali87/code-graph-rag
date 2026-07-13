@@ -170,6 +170,12 @@ TS_STRING_FRAGMENT = "string_fragment"
 # (H) Modern Node builtin imports carry a node: scheme (`import fs from 'node:fs'`);
 # (H) stripped when checking whether an imported name is the genuine builtin module.
 NODE_BUILTIN_PREFIX = "node:"
+# (H) `return_statement` node type (shared by Python and JS/TS grammars); used by
+# (H) the language-agnostic flow walk.
+TS_RETURN_STATEMENT = "return_statement"
+# (H) `await fetch(...)` wraps the call in an await_expression; the flow walk
+# (H) unwraps it to see the inner source expression.
+TS_AWAIT_EXPRESSION = "await_expression"
 TS_IMPORT_CLAUSE = "import_clause"
 TS_LEXICAL_DECLARATION = "lexical_declaration"
 TS_VARIABLE_DECLARATION = "variable_declaration"
