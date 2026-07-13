@@ -713,6 +713,15 @@ def ingest_method(
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return None
+    elif language == cs.SupportedLanguage.CSHARP:
+        # (H) Operators expose no `name` field (they would be dropped) and a
+        # (H) destructor's `name` field collides with the constructor; synthesize
+        # (H) the leaf so both register with the same name the FQN walk uses.
+        from .csharp import utils as csharp_utils
+
+        method_name = csharp_utils.synthesize_method_name(method_node)
+        if not method_name:
+            return None
     elif language == cs.SupportedLanguage.DART:
         # (H) Constructors/factories expose no `name` field; take the last bare
         # (H) identifier (`factory C.empty` -> `empty`) so they are not dropped.

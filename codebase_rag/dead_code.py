@@ -125,6 +125,17 @@ def _is_csharp_dispose_root(name: str, is_method: bool, path: str) -> bool:
     )
 
 
+def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
+    # (H) An operator overload is invoked by operator SYNTAX (`a + b`) and a
+    # (H) finalizer (`~Foo`) by the GC -- never a named call the graph sees -- so
+    # (H) both are reachability roots on a .cs file (cf. the C++ operator root).
+    # (H) The synthesized leaf carries the `operator_`/`~` prefix.
+    return path.endswith(cs.EXT_CS) and (
+        name.startswith(cs.TS_CSHARP_OPERATOR_NAME_PREFIX)
+        or name.startswith(cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX)
+    )
+
+
 def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
     # (H) Match test-path patterns against a leading-slash-normalized path so a dir
     # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
@@ -281,6 +292,10 @@ def dead_code_from_graph(
             leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
             qn in method_qns,
             str(props.get(cs.KEY_PATH, "")),
+        ):
+            roots.add(qn)
+        elif _is_csharp_operator_or_finalizer_root(
+            leaf, str(props.get(cs.KEY_PATH, ""))
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
