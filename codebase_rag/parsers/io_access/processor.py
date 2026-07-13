@@ -382,12 +382,16 @@ class IOAccessProcessor:
     def _param_names(
         self, caller_node: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
+        # (H) Parameter names bound in the whole function body. A param is a bare
+        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), or a
+        # (H) TS `required_parameter` wrapper whose `pattern` field holds either --
+        # (H) all handled by _pattern_names, unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
             for child in params.named_children:
-                if (name := self._binding_identifier(child, descriptor)) is not None:
-                    names.add(name)
+                target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
+                self._pattern_names(target, descriptor, names)
         return names
 
     @staticmethod
@@ -395,21 +399,6 @@ class IOAccessProcessor:
         name = node.child_by_field_name(cs.TS_FIELD_NAME)
         if name is not None and name.type == descriptor.identifier_type and name.text:
             return name.text.decode(cs.ENCODING_UTF8)
-        return None
-
-    @staticmethod
-    def _binding_identifier(node: Node, descriptor: LanguageDescriptor) -> str | None:
-        # (H) A parameter is either a bare identifier or a typed/patterned wrapper
-        # (H) whose `pattern` field holds the identifier (TS required_parameter).
-        if node.type == descriptor.identifier_type and node.text:
-            return node.text.decode(cs.ENCODING_UTF8)
-        pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-        if (
-            pattern is not None
-            and pattern.type == descriptor.identifier_type
-            and pattern.text
-        ):
-            return pattern.text.decode(cs.ENCODING_UTF8)
         return None
 
     def _emit_direct_call(

@@ -185,6 +185,22 @@ def test_destructured_local_shadows_sink(
     )
 
 
+def test_destructured_param_shadows_sink(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A destructured parameter (`function run({ http }) {}`) binds `http`
+    # (H) locally, so `http.get(...)` must not emit a NETWORK edge.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function run({ http }) {\n  http.get('https://n/b');\n}\n",
+    )
+    assert (_READS, "resource::NETWORK::https://n/b") not in _io_edges(
+        memgraph_ingestor
+    )
+
+
 def test_block_scoped_local_does_not_over_shadow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
