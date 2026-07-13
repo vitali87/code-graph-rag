@@ -6,6 +6,18 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def _first_attribute_list(node: Node) -> Node | None:
+    # (H) First attribute_list in document order anywhere under `node` (pre-order
+    # (H) DFS), so an attribute nested in an inner `#if` (a conditional block
+    # (H) inside another) is still found, not only an immediate grandchild.
+    if node.type == cs.TS_CSHARP_ATTRIBUTE_LIST:
+        return node
+    for child in node.children:
+        if (found := _first_attribute_list(child)) is not None:
+            return found
+    return None
+
+
 def definition_start_line(node: Node) -> int:
     # (H) The 1-based line a declaration truly starts on. When its attributes are
     # (H) wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
@@ -17,9 +29,8 @@ def definition_start_line(node: Node) -> int:
     # (H) with no leading directive.
     for child in node.children:
         if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
-            for grandchild in child.children:
-                if grandchild.type == cs.TS_CSHARP_ATTRIBUTE_LIST:
-                    return grandchild.start_point[0] + 1
+            if (attr_list := _first_attribute_list(child)) is not None:
+                return attr_list.start_point[0] + 1
             continue
         return child.start_point[0] + 1
     return node.start_point[0] + 1
