@@ -72,3 +72,20 @@ def test_typescript_direct_io_sinks(
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
     assert (_READS, "resource::NETWORK::https://api.example.com/data") in edges
     assert (_WRITES, "resource::FILE::out.txt") in edges
+    assert (_WRITES, "resource::NETWORK::https://api.example.com/upload") in edges
+
+
+def test_module_level_js_io_sinks(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Top-level (module-scope) I/O: the caller is the module root, which has no
+    # (H) body field, so the walk must seed from its own statements (issue #714 P1).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "main.js",
+        'console.log("boot");\nfs.writeFileSync("cfg.json", data);\n',
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
+    assert (_WRITES, "resource::FILE::cfg.json") in edges

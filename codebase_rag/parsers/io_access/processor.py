@@ -263,19 +263,26 @@ class IOAccessProcessor:
         # (H) Lean non-Python walk (issue #714): DFS the caller body for call sinks,
         # (H) pruning nested definitions (their body is a separate caller) so I/O is
         # (H) credited to the scope that runs it. No handle/stream tracking yet.
+        # (H) A function/method caller exposes its statements under the `body` field;
+        # (H) the module root (top-level calls) has no body field, so seed from its
+        # (H) own children instead. named_children skips anonymous punctuation, which
+        # (H) JS/TS grammars produce in bulk.
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
-        if body is None:
-            return
-        stack = list(body.named_children)
+        seed = body if body is not None else caller_node
+        stack = list(seed.named_children)
         while stack:
             node = stack.pop()
+            # (H) Nested defs are their own caller; skip entirely. JS default args and
+            # (H) decorators evaluate at call time in the nested scope (unlike Python's
+            # (H) definition-time headers), so crediting them here would be a false
+            # (H) positive -- full pruning is correct for these grammars.
             if node.type in descriptor.nested_scope_types:
                 continue
             if node.type == descriptor.call_type:
                 self._emit_direct_call(
                     node, caller_spec, import_map, sink_by_name, descriptor
                 )
-            stack.extend(node.children)
+            stack.extend(node.named_children)
 
     def _emit_direct_call(
         self,
