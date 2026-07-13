@@ -24,6 +24,7 @@ from ..io_access import (
     ResourceKind,
     call_name,
     definition_header_nodes,
+    is_require_alias,
     literal_target,
     normalise,
     registry_match,
@@ -229,7 +230,7 @@ class FlowProcessor:
             flow=ctx,
             descriptor=descriptor,
             member_reads=member_reads,
-            local_names=self._js_local_names(caller_node, descriptor, ctx.import_map),
+            local_names=self._js_local_names(caller_node, descriptor),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -484,16 +485,14 @@ class FlowProcessor:
         )
 
     def _js_local_names(
-        self,
-        caller_node: Node,
-        descriptor: LanguageDescriptor,
-        import_map: dict[str, str],
+        self, caller_node: Node, descriptor: LanguageDescriptor
     ) -> frozenset[str]:
         # (H) ponytail: flat collection of the caller's parameters + every declarator
         # (H) and hoisted function name in the body (nested functions pruned). Not
-        # (H) block-scoped and no destructuring -- the io walk has the precise version;
-        # (H) refine here if JS flow precision on those ever matters. Import aliases
-        # (H) (`const fs = require('fs')`) are the genuine module, not shadows.
+        # (H) block-scoped -- the io walk has the precise version; refine if JS flow
+        # (H) precision on that ever matters. A `const fs = require('fs')` declarator
+        # (H) is an import alias (the genuine module), so it is NOT a shadow; but a
+        # (H) local `const fs = {}` IS one, even if `fs` is also imported module-wide.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
@@ -510,11 +509,12 @@ class FlowProcessor:
                 continue
             if (
                 node.type == descriptor.declarator_type
+                and not is_require_alias(node, descriptor.call_type)
                 and (name := node.child_by_field_name(cs.TS_FIELD_NAME)) is not None
             ):
                 self._js_binding_names(name, descriptor, names)
             stack.extend(node.named_children)
-        return frozenset(names - import_map.keys())
+        return frozenset(names)
 
     def _js_binding_names(
         self, node: Node, descriptor: LanguageDescriptor, out: set[str]

@@ -20,6 +20,7 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    is_require_alias,
     literal_target,
     normalise,
     registry_match,
@@ -291,10 +292,9 @@ class IOAccessProcessor:
             # (H) Expression-bodied arrow (`() => fetch(url)`): the body IS the
             # (H) statement/expression, so walk it directly.
             statements = [body]
-        # (H) Parameters are visible in every block of the function body. Import
-        # (H) aliases (`const fs = require('fs')`) are the genuine module, resolved by
-        # (H) the import branch of _resolve_sink, so they never count as shadows.
-        params = self._param_names(caller_node, descriptor) - import_map.keys()
+        # (H) Parameters are visible in every block of the function body and always
+        # (H) shadow a same-named builtin (a parameter is never an import alias).
+        params = self._param_names(caller_node, descriptor)
         self._walk_scope(
             statements,
             frozenset(params),
@@ -315,16 +315,13 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) Names in scope for calls in THESE statements: the enclosing scopes' names
-        # (H) plus this block's own const/let/function declarations (import aliases
-        # (H) removed, since they are the genuine module, resolved by _resolve_sink).
-        # (H) ponytail: import_map is module-scoped, so a block-local `require` alias
-        # (H) leaks module-wide -- but using such a name outside its block is a runtime
-        # (H) ReferenceError (dead code), so its edge precision is not modeled. Per-scope
-        # (H) import tracking is the upgrade if that ever matters.
-        in_scope = (
-            inherited | self._block_declarations(statements, descriptor)
-        ) - import_map.keys()
+        # (H) Names in scope for calls in THESE statements: the enclosing scopes'
+        # (H) names plus this block's own const/let/function declarations. A
+        # (H) `const fs = require('fs')` declarator is an import alias (the genuine
+        # (H) module, resolved by _resolve_sink), so _block_declarations skips it;
+        # (H) but a local `const fs = {}` IS a shadow, even if `fs` is imported
+        # (H) module-wide, so import names are NOT blanket-removed here.
+        in_scope = inherited | self._block_declarations(statements, descriptor)
         stack = list(statements)
         while stack:
             node = stack.pop()
@@ -423,7 +420,9 @@ class IOAccessProcessor:
                 continue
             if node.type == descriptor.block_scope_type:
                 continue
-            if node.type == descriptor.declarator_type:
+            if node.type == descriptor.declarator_type and not is_require_alias(
+                node, descriptor.call_type
+            ):
                 names |= self._declarator_names(node, descriptor)
             stack.extend(node.named_children)
         return names

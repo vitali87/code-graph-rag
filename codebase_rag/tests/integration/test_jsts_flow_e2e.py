@@ -230,6 +230,29 @@ def test_comment_before_sink_target_keeps_identity(
     )
 
 
+def test_module_import_plus_local_shadow_no_flow(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `fs` is imported module-wide, but a function-local `const fs = {}` shadows
+    # (H) it: fs.writeFileSync must not be the builtin, so no resource flow appears.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from 'fs';\n\n\n"
+        "function f() {\n"
+        "  const fs = {};\n"
+        "  const data = fetch('u');\n"
+        "  fs.writeFileSync('out', data);\n"
+        "}\n",
+    )
+    flows = _flows(memgraph_ingestor)
+    assert not any(
+        (f["to"] or "").endswith("FILE::out") and f["kind"] == FlowKind.RESOURCE.value
+        for f in flows
+    )
+
+
 def test_typescript_typed_param_shadows_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

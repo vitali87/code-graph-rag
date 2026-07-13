@@ -65,6 +65,21 @@ def call_name(call_node: Node) -> str | None:
     return fn.text.decode(cs.ENCODING_UTF8)
 
 
+def is_require_alias(declarator: Node, call_type: str) -> bool:
+    # (H) A `const fs = require('fs')` declarator binds an import alias (the genuine
+    # (H) module), not a shadowing local, so it must not count as a local shadow --
+    # (H) unlike `const fs = {}`, which does. Detected by a `require(...)` value.
+    value = declarator.child_by_field_name(cs.FIELD_VALUE)
+    if value is None or value.type != call_type:
+        return False
+    fn = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return (
+        fn is not None
+        and fn.text is not None
+        and fn.text.decode(cs.ENCODING_UTF8) == cs.JS_REQUIRE_KEYWORD
+    )
+
+
 def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     if name is None:
         return None
