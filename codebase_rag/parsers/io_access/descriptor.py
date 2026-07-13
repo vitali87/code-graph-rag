@@ -29,6 +29,13 @@ class LanguageDescriptor:
     # (H) A nested block introduces a new lexical scope: const/let declared inside
     # (H) it do not shadow the enclosing scope, so declarator collection stops here.
     block_scope_type: str
+    # (H) Extra declaration node types (beyond declarator_type) whose bound names also
+    # (H) shadow a builtin -- Go's `var`/`const`/`range` specs; empty for JS/TS.
+    extra_declarator_types: frozenset[str]
+    # (H) True when a dotted sink call requires its head to be an imported package
+    # (H) (Go always imports stdlib; a package-scope `var os` is not the stdlib os).
+    # (H) False for JS/TS, whose sinks include unimported globals (`console`, `fetch`).
+    sinks_require_import: bool
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -56,11 +63,45 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
+    extra_declarator_types=frozenset(),
+    sinks_require_import=False,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
     property_field=cs.FIELD_PROPERTY,
     subscript_index_field=cs.TS_FIELD_INDEX,
+)
+
+_GO_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_GO_CALL_EXPRESSION,
+    string_type=cs.TS_GO_INTERPRETED_STRING,
+    string_content_type=cs.TS_GO_INTERPRETED_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_GO_FUNCTION_DECLARATION,
+            cs.TS_GO_METHOD_DECLARATION,
+            cs.TS_GO_FUNC_LITERAL,
+        }
+    ),
+    # (H) Go local declarations that shadow a package name: `:=` (declarator_type),
+    # (H) `var`/`const`/`range` (extra_declarator_types), and parameters. Go DOES
+    # (H) allow a local to shadow an imported package, so these must be collected.
+    identifier_type=cs.TS_GO_IDENTIFIER,
+    declarator_type=cs.TS_GO_SHORT_VAR_DECLARATION,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_GO_BLOCK,
+    extra_declarator_types=frozenset(
+        {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
+    ),
+    sinks_require_import=True,
+    # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
+    # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
+    member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
+    subscript_type=cs.TS_GO_INDEX_EXPRESSION,
+    object_field=cs.TS_GO_FIELD_OPERAND,
+    property_field=cs.TS_GO_FIELD_FIELD,
+    subscript_index_field=cs.TS_GO_FIELD_INDEX,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
@@ -69,4 +110,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.JS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TSX: _JS_TS_DESCRIPTOR,
+    cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
 }

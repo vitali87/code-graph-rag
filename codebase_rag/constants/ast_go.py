@@ -28,6 +28,21 @@ TS_GO_VAR_DECLARATION = "var_declaration"
 TS_GO_VAR_SPEC = "var_spec"
 TS_GO_SHORT_VAR_DECLARATION = "short_var_declaration"
 TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
+# (H) I/O detection (issue #714): a function body is a `block`; string arguments are
+# (H) `interpreted_string_literal` (double-quoted) whose text lives in a
+# (H) `interpreted_string_literal_content` child; `index_expression`/operand+field are
+# (H) the selector/subscript node shapes (only used by member-access reads, which Go
+# (H) has none of, so they are inert placeholders here).
+TS_GO_IDENTIFIER = "identifier"
+TS_GO_CONST_SPEC = "const_spec"
+TS_GO_RANGE_CLAUSE = "range_clause"
+TS_GO_BLOCK = "block"
+TS_GO_INTERPRETED_STRING = "interpreted_string_literal"
+TS_GO_INTERPRETED_STRING_CONTENT = "interpreted_string_literal_content"
+TS_GO_INDEX_EXPRESSION = "index_expression"
+TS_GO_FIELD_OPERAND = "operand"
+TS_GO_FIELD_FIELD = "field"
+TS_GO_FIELD_INDEX = "index"
 TS_GO_EXPRESSION_LIST = "expression_list"
 TS_GO_COMPOSITE_LITERAL = "composite_literal"
 TS_GO_LITERAL_VALUE = "literal_value"

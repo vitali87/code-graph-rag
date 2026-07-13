@@ -159,11 +159,41 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
 )
 
+# (H) Go direct-call I/O sinks (issue #714). Keyed by the FULL import path plus the
+# (H) function (`os.Getenv`, `net/http.Get`, `io/ioutil.ReadFile`), because a Go call
+# (H) `http.Get` resolves through import_map to its package path (`http -> net/http`)
+# (H) and match_normalised keys on that. Using the full path (not the bare package
+# (H) name) is what distinguishes the stdlib `net/http` from a third-party package
+# (H) that also happens to be named `http`, and it handles import aliases for free
+# (H) (`import h "net/http"` -> h resolves to net/http). Go has no keyword args, so the
+# (H) path/url is positional arg 0. Handle-returning calls (`os.Open`) are treated as
+# (H) a direct read/write of the path (stream handles are a follow-up); log.* and
+# (H) fmt.Fprint* (writer-targeted) are follow-ups.
+_GO_SINKS: tuple[IOSink, ...] = (
+    IOSink("os.Getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("os.LookupEnv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("os.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("os.Open", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("io/ioutil.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("os.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("os.Create", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("os.Remove", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("io/ioutil.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fmt.Print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("fmt.Println", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("fmt.Printf", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("net/http.Get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("net/http.Head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("net/http.Post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("net/http.PostForm", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
     cs.SupportedLanguage.TS: _JS_TS_SINKS,
     cs.SupportedLanguage.TSX: _JS_TS_SINKS,
+    cs.SupportedLanguage.GO: _GO_SINKS,
 }
 
 # (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:

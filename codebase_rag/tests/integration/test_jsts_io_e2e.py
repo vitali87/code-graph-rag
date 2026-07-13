@@ -347,3 +347,19 @@ def test_renamed_destructured_require_emits(
         "function save(d) {\n  wf('a.txt', d);\n}\n",
     )
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
+def test_scoped_package_ending_in_builtin_name_no_edge(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import fs from 'memfs/fs'` is a third-party package, not Node's fs; its
+    # (H) path ending in `fs` must NOT make fs.writeFileSync match (JS imports are
+    # (H) not path-resolved to a package name like Go's).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from 'memfs/fs';\n\n\n"
+        "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") not in _io_edges(memgraph_ingestor)

@@ -20,6 +20,7 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    head_is_genuine_module,
     is_require_alias,
     literal_target,
     match_normalised,
@@ -321,6 +322,12 @@ class IOAccessProcessor:
         # (H) module, resolved by _resolve_sink), so _block_declarations skips it;
         # (H) but a local `const fs = {}` IS a shadow, even if `fs` is imported
         # (H) module-wide, so import names are NOT blanket-removed here.
+        # (H) ponytail: order-INSENSITIVE within a block -- every declaration shadows
+        # (H) the whole block. Correct for JS (function/var hoist; const/let before
+        # (H) use is a TDZ error), but for Go's declare-at-point `:=`/`var` a local
+        # (H) declared LATER over-suppresses an earlier valid package call in the same
+        # (H) block -- a rare false NEGATIVE (redeclaring a used package name). An
+        # (H) order-sensitive walk is the upgrade if that ever matters.
         in_scope = inherited | self._block_declarations(statements, descriptor)
         stack = list(statements)
         while stack:
@@ -375,12 +382,8 @@ class IOAccessProcessor:
             if obj_text != prefix:
                 continue
             head = prefix.partition(cs.SEPARATOR_DOT)[0]
-            if head in in_scope:
-                return
-            base = import_map.get(head)
-            if base is not None and (
-                base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-                != head
+            if head in in_scope or not head_is_genuine_module(
+                import_map.get(head), head
             ):
                 return
             identity = self._member_identity(node, descriptor)
@@ -420,9 +423,10 @@ class IOAccessProcessor:
                 continue
             if node.type == descriptor.block_scope_type:
                 continue
-            if node.type == descriptor.declarator_type and not is_require_alias(
-                node, descriptor.call_type
-            ):
+            if (
+                node.type == descriptor.declarator_type
+                and not is_require_alias(node, descriptor.call_type)
+            ) or node.type in descriptor.extra_declarator_types:
                 names |= self._declarator_names(node, descriptor)
             stack.extend(node.named_children)
         return names
@@ -430,14 +434,15 @@ class IOAccessProcessor:
     def _declarator_names(
         self, declarator: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
-        # (H) The local names a declarator binds: a plain `const fs = ...` binds one
-        # (H) identifier; a destructuring `const { writeFileSync } = ...` /
-        # (H) `const { get: g } = ...` / `const [fetch] = ...` binds the pattern's
-        # (H) leaves. All are collected so they shadow a same-named builtin.
-        name = declarator.child_by_field_name(cs.TS_FIELD_NAME)
+        # (H) The local names a declaration binds: JS `const fs = ...` / destructuring
+        # (H) uses the `name` field; Go `var/const os = ...` also has `name` field(s),
+        # (H) while `os := ...` / `range` use the `left` field (an expression_list of
+        # (H) identifiers). All are collected so they shadow a same-named builtin.
         names: set[str] = set()
-        if name is not None:
+        for name in declarator.children_by_field_name(cs.TS_FIELD_NAME):
             self._pattern_names(name, descriptor, names)
+        if (left := declarator.child_by_field_name(cs.FIELD_LEFT)) is not None:
+            self._pattern_names(left, descriptor, names)
         return names
 
     def _pattern_names(
@@ -454,10 +459,15 @@ class IOAccessProcessor:
             # (H) `{ key: local }` binds the VALUE (local), not the property key.
             if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
                 self._pattern_names(value, descriptor, out)
+        elif node_type == cs.TS_GO_PARAMETER_DECLARATION:
+            # (H) Go `func f(os Config)`: the `name` field(s) are the bound locals.
+            for child in node.children_by_field_name(cs.TS_FIELD_NAME):
+                self._pattern_names(child, descriptor, out)
         elif node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,
             cs.TS_REST_PATTERN,
+            cs.TS_GO_EXPRESSION_LIST,
         ):
             for child in node.named_children:
                 self._pattern_names(child, descriptor, out)
@@ -466,9 +476,10 @@ class IOAccessProcessor:
         self, caller_node: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
         # (H) Parameter names bound in the whole function body. A param is a bare
-        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), or a
-        # (H) TS `required_parameter` wrapper whose `pattern` field holds either --
-        # (H) all handled by _pattern_names, unwrapping the TS wrapper first.
+        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), a TS
+        # (H) `required_parameter` wrapper whose `pattern` field holds either, or a Go
+        # (H) `parameter_declaration` (`os Config`) -- all handled by _pattern_names,
+        # (H) unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
@@ -496,7 +507,9 @@ class IOAccessProcessor:
         raw = call_name(node)
         if raw is None:
             return
-        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
+        sink = self._resolve_sink(
+            raw, import_map, sink_by_name, local_names, descriptor.sinks_require_import
+        )
         if sink is None:
             return
         identity = literal_target(
@@ -515,8 +528,9 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         local_names: frozenset[str],
+        sinks_require_import: bool,
     ) -> IOSink | None:
-        # (H) Match a JS/TS call against the sink table, respecting shadowing:
+        # (H) Match a JS/TS/Go call against the sink table, respecting shadowing:
         # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
         # (H)    parameter) is never the builtin -> no match.
         # (H)  - the import-normalised name is tried first, so an ALIASED builtin
@@ -528,19 +542,21 @@ class IOAccessProcessor:
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
             return None
-        # (H) A named import may resolve to `node:fs.writeFileSync`; the registry keys
-        # (H) on the bare module, so try the node:-stripped form too.
+        # (H) Go stdlib is always imported, so a dotted sink whose package head is
+        # (H) NOT imported (e.g. a package-scope `var os`) is not the stdlib package.
+        if sinks_require_import and sep and head not in import_map:
+            return None
+        # (H) The import-normalised name matches first: a JS named import may resolve
+        # (H) to `node:fs.writeFileSync` (node:-stripped too), and a Go call resolves
+        # (H) through its package path (`http.Get` -> `net/http.Get`, aliases included),
+        # (H) which the registry keys on -- so a third-party pkg named `http` misses.
         if (sink := match_normalised(raw, import_map, sink_by_name)) is not None:
             return sink
         if not sep:
             return None
-        base = import_map.get(head)
-        head_is_builtin = (
-            base is None
-            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-            == head
-        )
-        return sink_by_name.get(raw) if head_is_builtin else None
+        if not head_is_genuine_module(import_map.get(head), head):
+            return None
+        return sink_by_name.get(raw)
 
     def _emit_call(
         self,

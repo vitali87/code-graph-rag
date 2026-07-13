@@ -111,6 +111,17 @@ def registry_match[T](
     return None
 
 
+def head_is_genuine_module(base: str | None, head: str) -> bool:
+    # (H) True when `head` names the genuine imported module (so its raw dotted call
+    # (H) may match a sink). None base = an unimported global. Otherwise the import
+    # (H) base's module identity must equal head: drop any member suffix and node:
+    # (H) scheme. A local `import fs from './fake'` resolves elsewhere and is rejected.
+    # (H) Path-based (Go) imports are handled separately by package-name matching.
+    if base is None:
+        return True
+    return base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) == head
+
+
 def match_normalised[T](
     raw: str, import_map: dict[str, str], mapping: dict[str, T]
 ) -> T | None:
