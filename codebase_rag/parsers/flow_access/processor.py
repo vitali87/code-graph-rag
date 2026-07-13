@@ -298,7 +298,8 @@ class FlowProcessor:
             return None
         d = jc.descriptor
         node_type = node.type
-        if node_type == cs.TS_AWAIT_EXPRESSION:
+        if node_type in (cs.TS_AWAIT_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
+            # (H) Unwrap `await expr` and `(expr)` to the inner source expression.
             return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
         if node_type == d.identifier_type:
             return (

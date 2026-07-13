@@ -208,6 +208,25 @@ def test_comment_in_arguments_does_not_break_flow(
     )
 
 
+def test_parenthesized_source_flows(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A parenthesized source expression must be unwrapped like await, so
+    # (H) `console.log((process.env.SECRET))` still emits the flow.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function boot() {\n  console.log((process.env.SECRET));\n}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_comment_before_sink_target_keeps_identity(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -179,6 +179,9 @@ TS_AWAIT_EXPRESSION = "await_expression"
 # (H) tree-sitter parses comments as named children, so the flow walk filters them
 # (H) out before indexing arguments or reading a single sub-expression.
 TS_COMMENT = "comment"
+# (H) `(expr)` wraps its value in a parenthesized_expression; the flow walk unwraps
+# (H) it (like await) to reach the inner source/tainted expression.
+TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_IMPORT_CLAUSE = "import_clause"
 TS_LEXICAL_DECLARATION = "lexical_declaration"
 TS_VARIABLE_DECLARATION = "variable_declaration"
