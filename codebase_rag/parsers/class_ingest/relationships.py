@@ -109,6 +109,7 @@ def create_class_relationships(
         cs.TS_ENUM_DECLARATION,
         cs.TS_CSHARP_STRUCT_DECLARATION,
         cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_DART_CLASS_DEFINITION,
     ):
         for interface_qn in pe.extract_implemented_interfaces(
             class_node, module_qn, resolve_to_qn

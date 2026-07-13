@@ -162,7 +162,47 @@ def extract_parent_classes(
                     if name := safe_decode_text(base):
                         parent_classes.append(resolve_to_qn(name, module_qn))
 
+    if class_node.type in (
+        cs.TS_DART_CLASS_DEFINITION,
+        cs.TS_DART_MIXIN_DECLARATION,
+    ):
+        parent_classes.extend(
+            extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
+        )
+
     return parent_classes
+
+
+def extract_dart_parent_classes(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    # (H) Dart inheritance is INHERITS: the `superclass` node's first
+    # (H) type_identifier is the `extends` base, its nested `mixins` node holds
+    # (H) the `with` types (a mixin contributes members like a base), and a
+    # (H) `mixin M on Base` states a required superclass as a bare type_identifier
+    # (H) child. `implements` targets are IMPLEMENTS (extract_implemented_interfaces).
+    parents: list[str] = []
+    if superclass := find_child_by_type(class_node, cs.TS_DART_SUPERCLASS):
+        for child in superclass.named_children:
+            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
+                name := safe_decode_text(child)
+            ):
+                parents.append(resolve_to_qn(name, module_qn))
+            elif child.type == cs.TS_DART_MIXINS:
+                for mixin in child.named_children:
+                    if mixin.type == cs.TS_DART_TYPE_IDENTIFIER and (
+                        mixin_name := safe_decode_text(mixin)
+                    ):
+                        parents.append(resolve_to_qn(mixin_name, module_qn))
+    if class_node.type == cs.TS_DART_MIXIN_DECLARATION:
+        for child in class_node.named_children:
+            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
+                on_name := safe_decode_text(child)
+            ):
+                parents.append(resolve_to_qn(on_name, module_qn))
+    return parents
 
 
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
@@ -506,6 +546,14 @@ def extract_implemented_interfaces(
     if php_impl := find_child_by_type(class_node, cs.TS_PHP_CLASS_INTERFACE_CLAUSE):
         for child in php_impl.children:
             if name := php_base_simple_name(child):
+                implemented_interfaces.append(resolve_to_qn(name, module_qn))
+
+    # (H) Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+    if dart_impl := find_child_by_type(class_node, cs.TS_DART_INTERFACES):
+        for child in dart_impl.named_children:
+            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
+                name := safe_decode_text(child)
+            ):
                 implemented_interfaces.append(resolve_to_qn(name, module_qn))
 
     return implemented_interfaces

@@ -38,6 +38,7 @@ class TypeInferenceEngine:
         "class_field_guard_inner",
         "method_return_types",
         "csharp_partial_groups",
+        "csharp_extension_methods",
         "_java_type_inference",
         "_csharp_type_inference",
         "_lua_type_inference",
@@ -63,6 +64,7 @@ class TypeInferenceEngine:
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -97,6 +99,12 @@ class TypeInferenceEngine:
         # (H) span all parts of a split type.
         self.csharp_partial_groups = (
             csharp_partial_groups if csharp_partial_groups is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): C# extension-method
+        # (H) index, populated during ingestion and read by the C# resolver's
+        # (H) receiver-binding fallback.
+        self.csharp_extension_methods = (
+            csharp_extension_methods if csharp_extension_methods is not None else {}
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
@@ -157,6 +165,7 @@ class TypeInferenceEngine:
                 simple_name_lookup=self.simple_name_lookup,
                 class_field_types=self.class_field_types,
                 csharp_partial_groups=self.csharp_partial_groups,
+                csharp_extension_methods=self.csharp_extension_methods,
             )
         return self._csharp_type_inference
 

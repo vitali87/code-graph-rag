@@ -336,10 +336,14 @@ CYPHER_ALL_FOLDER_PATHS = (
 
 # (H) Rehydrate the in-memory function registry on an incremental run: returns
 # (H) every definition node's qualified name and label so call/instantiation
-# (H) resolution can see symbols defined in files that were not re-parsed.
+# (H) resolution can see symbols defined in files that were not re-parsed. The
+# (H) $project_prefix filter scopes it to the project being indexed; without it,
+# (H) another project's same-named symbols pollute the resolver trie and the
+# (H) bare-name fallback binds calls across the project boundary (issue #711).
 CYPHER_ALL_DEFINITION_QNS = (
-    "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
-    "OR n:Enum OR n:Type OR n:Union "
+    "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
+    "OR n:Enum OR n:Type OR n:Union) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line"
@@ -349,7 +353,8 @@ CYPHER_ALL_DEFINITION_QNS = (
 # (H) deferred import verification must count modules in UNCHANGED files as
 # (H) real targets, or editing one file would drop cross-file IMPORTS edges.
 CYPHER_ALL_MODULE_QNS = (
-    "MATCH (n) WHERE n:Module OR n:ModuleInterface "
+    "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
 )
 
@@ -378,6 +383,7 @@ CYPHER_INBOUND_EDGES = (
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
     "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"

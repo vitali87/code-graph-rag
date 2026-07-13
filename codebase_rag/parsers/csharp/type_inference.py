@@ -58,6 +58,7 @@ class CSharpTypeInferenceEngine:
         "simple_name_lookup",
         "class_field_types",
         "csharp_partial_groups",
+        "csharp_extension_methods",
     )
 
     def __init__(
@@ -73,6 +74,7 @@ class CSharpTypeInferenceEngine:
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
         csharp_partial_groups: dict[str, list[str]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -86,6 +88,9 @@ class CSharpTypeInferenceEngine:
         self.class_field_types = class_field_types
         self.csharp_partial_groups = (
             csharp_partial_groups if csharp_partial_groups is not None else {}
+        )
+        self.csharp_extension_methods = (
+            csharp_extension_methods if csharp_extension_methods is not None else {}
         )
 
     # (H) --- variable/field/parameter type map -------------------------------
@@ -212,12 +217,171 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
-        if receiver_class_qn is None:
+        # (H) Resolution order matters: an EXACT-ARITY instance method wins, then
+        # (H) an (always arity-exact) extension method, and only then the instance
+        # (H) name-only fallback. Trying the name-only fallback before extensions
+        # (H) would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
+        # (H) arity-correct `static Foo(this C, int)` extension.
+        if receiver_class_qn is not None:
+            if arity_hit := self._find_arity_across_parts(
+                receiver_class_qn, method_name, arg_count
+            ):
+                return cs.NodeLabel.METHOD.value, arity_hit
+        # (H) An extension method (`static M(this T x, ...)` on an unrelated static
+        # (H) class) whose `this` receiver type matches the call's receiver -- the
+        # (H) only path that binds `x.M()` to a method not in x's hierarchy.
+        if ext := self._try_extension_call(
+            receiver,
+            local_var_types or {},
+            module_qn,
+            caller_qn,
+            method_name,
+            arg_count,
+        ):
+            return cs.NodeLabel.METHOD.value, ext
+        if receiver_class_qn is not None:
+            if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
+                return cs.NodeLabel.METHOD.value, name_hit
+        return None
+
+    def _try_extension_call(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+        method_name: str,
+        arg_count: int,
+    ) -> str | None:
+        if not self.csharp_extension_methods:
             return None
-        method_qn = self._find_method(receiver_class_qn, method_name, arg_count)
-        if method_qn is None:
+        type_name = self._receiver_type_name(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if not type_name:
             return None
-        return cs.NodeLabel.METHOD.value, method_qn
+        return self._find_extension_method(type_name, method_name, arg_count)
+
+    def _receiver_type_name(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # (H) The receiver's declared type NAME (not its class qn), needed for the
+        # (H) extension-method fallback: extensions frequently target BCL types
+        # (H) (`string`, `int`) that are never registered as classes, so the raw
+        # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
+        # (H) branches but stops at the name.
+        if receiver.type == cs.TS_CSHARP_THIS:
+            return self._this_receiver_type(module_qn, caller_qn)
+        if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return self._this_field_receiver_type(receiver, caller_qn)
+        if receiver.type == cs.TS_CSHARP_IDENTIFIER:
+            return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
+        return None
+
+    def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
+        qn = self._containing_class_qn(caller_qn)
+        if qn is None:
+            return None
+        # (H) `this` names the exact containing class, so keep its
+        # (H) namespace-qualified form (`N1.Widget`, module prefix stripped) rather
+        # (H) than the bare simple name: that lets the matcher bind an exact `this
+        # (H) N1.Widget` extension even when another `N2.Widget` exists.
+        if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+            return qn[len(module_qn) + 1 :]
+        return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+    def _this_field_receiver_type(
+        self, receiver: Node, caller_qn: str | None
+    ) -> str | None:
+        expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
+        if expr is not None and expr.type == cs.TS_CSHARP_THIS and field:
+            if class_qn := self._containing_class_qn(caller_qn):
+                return self._field_type(class_qn, field)
+        return None
+
+    def _identifier_receiver_type(
+        self, receiver: Node, local_var_types: dict[str, str], caller_qn: str | None
+    ) -> str | None:
+        name = safe_decode_text(receiver)
+        if not name:
+            return None
+        if (type_name := local_var_types.get(name)) is not None:
+            return type_name
+        if class_qn := self._containing_class_qn(caller_qn):
+            if ftype := self._field_type(class_qn, name):
+                return ftype
+        # (H) An unknown bare identifier is a TYPE name (a static call
+        # (H) `Widget.M()`), not an instance -- extension methods bind on instances
+        # (H) only, so do NOT treat it as an extension receiver (else `Widget.Poke()`
+        # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
+        return None
+
+    def _find_extension_method(
+        self, receiver_type_name: str, method_name: str, arg_count: int
+    ) -> str | None:
+        candidates = self.csharp_extension_methods.get(method_name)
+        if not candidates:
+            return None
+        recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        recv_qualified = cs.SEPARATOR_DOT in receiver_type_name
+        # (H) An UNqualified receiver whose simple name maps to more than one
+        # (H) registered first-party type (`N1.Widget` vs `N2.Widget`) is
+        # (H) genuinely ambiguous -- we can't tell which one it is, so an
+        # (H) unqualified-vs-unqualified match must not guess. A qualified receiver
+        # (H) or a BCL name (not registered) is not affected.
+        ambiguous_unqualified = not recv_qualified and (
+            len(
+                [
+                    qn
+                    for qn in self.simple_name_lookup.get(recv_simple, set())
+                    if self.function_registry.get(qn) in _TYPE_DECLS
+                ]
+            )
+            > 1
+        )
+        matches: list[str] = []
+        for qn, recv_type, ext_namespace in candidates:
+            # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
+            # (H) leaf-split on `.` would land inside a qualified param type.
+            if _arity(qn) != arg_count + 1:
+                continue
+            if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] != recv_simple:
+                continue
+            cand_qualified = cs.SEPARATOR_DOT in recv_type
+            # (H) Namespace consistency between the call receiver and the stored
+            # (H) `this` type, by qualification:
+            # (H)  - both qualified: require the SAME fully-qualified name
+            # (H)    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
+            # (H)  - recv qualified, cand not: resolve the ext's unqualified
+            # (H)    `this Widget` to `<ext-namespace>.Widget` and require equality
+            # (H)    (`N.Widget` binds a same-namespace `this Widget`);
+            # (H)  - recv unqualified, cand qualified: the receiver's namespace is
+            # (H)    unknown without a semantic model, so don't guess;
+            # (H)  - both unqualified: match by simple name unless it's ambiguous.
+            if recv_qualified and cand_qualified:
+                if recv_type != receiver_type_name:
+                    continue
+            elif recv_qualified and not cand_qualified:
+                cand_qualified_name = (
+                    f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
+                    if ext_namespace
+                    else recv_type
+                )
+                if cand_qualified_name != receiver_type_name:
+                    continue
+            elif cand_qualified:  # (H) recv unqualified, cand qualified
+                continue
+            elif ambiguous_unqualified:
+                continue
+            matches.append(qn)
+        # (H) Bind only on a unique match; an ambiguous name across static classes
+        # (H) is left unresolved rather than guessed.
+        return matches[0] if len(matches) == 1 else None
 
     def _count_arguments(self, call_node: Node) -> int:
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
@@ -311,25 +475,31 @@ class CSharpTypeInferenceEngine:
             return min(group)
         return None
 
-    def _find_method(
+    # (H) An exact-arity match ANYWHERE up the hierarchy (_find_arity_across_parts)
+    # (H) wins before any same-name fallback, so an inherited correct-arity overload
+    # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
+    # (H) (`Derived.Foo(int)`). resolve_csharp_method_call sequences the two around
+    # (H) the extension-method lookup so an arity-correct extension is preferred over
+    # (H) a lone-same-name instance fallback. Both phases span every part of a
+    # (H) partial class (and each part's bases), so a member/base on another part
+    # (H) binds.
+    def _partial_roots(self, class_qn: str) -> list[str]:
+        return self.csharp_partial_groups.get(class_qn) or [class_qn]
+
+    def _find_arity_across_parts(
         self, class_qn: str, method_name: str, arg_count: int
     ) -> str | None:
-        # (H) An exact-arity match ANYWHERE up the hierarchy wins before any
-        # (H) same-name fallback, so an inherited correct-arity overload
-        # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
-        # (H) on the derived class (`Derived.Foo(int)`). Only when no arity matches
-        # (H) anywhere does the nearest lone same-name method (params-array /
-        # (H) optional args) stand in. For a partial class the search spans every
-        # (H) part (and each part's bases), so a member/base on another part binds.
-        roots = self.csharp_partial_groups.get(class_qn) or [class_qn]
         seen: set[str] = set()
-        for root in roots:
+        for root in self._partial_roots(class_qn):
             if resolved := self._find_method_by_arity(
                 root, method_name, arg_count, seen
             ):
                 return resolved
-        seen = set()
-        for root in roots:
+        return None
+
+    def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
+        seen: set[str] = set()
+        for root in self._partial_roots(class_qn):
             if resolved := self._find_method_by_name(root, method_name, seen):
                 return resolved
         return None

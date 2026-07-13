@@ -94,6 +94,13 @@ class DefinitionProcessor(
         # (H) private index groups parts by their namespace-qualified key.
         self.csharp_partial_groups: dict[str, list[str]] = {}
         self._csharp_partial_index: dict[str, list[str]] = {}
+        # (H) C# extension methods indexed for call binding: {method simple name:
+        # (H) [(method_qn, receiver_type_simple_name)]}. `s.WordCount()` resolves
+        # (H) to a `static WordCount(this string s)` whose receiver type matches
+        # (H) the call's receiver -- a lookup the instance-hierarchy walk can't
+        # (H) make (the method lives on an unrelated static class). Populated at
+        # (H) method ingestion, read by the type-inference engine as a fallback.
+        self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a

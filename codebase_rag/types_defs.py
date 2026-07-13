@@ -801,7 +801,14 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        (NodeLabel.INTERFACE, NodeLabel.EXTERNAL_MODULE),
+        # (H) CLASS/ENUM targets: Dart has no `interface` keyword, so `implements
+        # (H) X` names a concrete class (its implicit interface) or an enum.
+        (
+            NodeLabel.INTERFACE,
+            NodeLabel.CLASS,
+            NodeLabel.ENUM,
+            NodeLabel.EXTERNAL_MODULE,
+        ),
     ),
     RelationshipSchema(
         # (H) A method-body anonymous-class override is registered as a Function node,
