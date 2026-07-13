@@ -51,7 +51,9 @@ const int ModuleLine = 0;
 const string OperatorPrefix = "operator_";
 const string DestructorPrefix = "~";
 
-var ignoredDirs = new HashSet<string>(StringComparer.Ordinal)
+// Case-insensitive so a Bin/ or OBJ/ on a case-insensitive file system is still
+// skipped.
+var ignoredDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {
     ".git", "node_modules", "bin", "obj", "vendor", "testdata",
 };

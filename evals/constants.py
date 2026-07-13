@@ -429,6 +429,9 @@ CSHARP_ORACLE_BUILD_LOCK = ".build-lock"
 CSHARP_DEFAULT_TARGET = "."
 CSHARP_SCORES_FILENAME = "csharp_scores.csv"
 CSHARP_DIFF_FILENAME = "csharp_diff.json"
+CSHARP_ORACLE_PARSE_FAILED = (
+    "Failed to parse C# oracle JSON output: {error}\nstdout: {stdout}\nstderr: {stderr}"
+)
 
 # (H) Lua structure eval: cgr nodes graded against a luaparse oracle. Lua has no
 # (H) classes, so every function (global/local/table/method/anonymous) is Function.

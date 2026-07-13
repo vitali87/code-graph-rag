@@ -85,8 +85,17 @@ def _run_csharp_oracle_payload(target: Path) -> OraclePayload:
     )
     # (H) The program prints exactly one JSON line; take the last non-empty stdout
     # (H) line so any stray runtime notice printed before it cannot corrupt parse.
+    # (H) Surface both streams on a decode failure so a broken build/run is not
+    # (H) reduced to a context-free JSONDecodeError.
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    payload: OraclePayload = json.loads(lines[-1] if lines else "{}")
+    try:
+        payload: OraclePayload = json.loads(lines[-1] if lines else "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            ec.CSHARP_ORACLE_PARSE_FAILED.format(
+                error=exc, stdout=proc.stdout, stderr=proc.stderr
+            )
+        ) from exc
     return payload
 
 
