@@ -45,6 +45,25 @@ _JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 
 
+def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
+    # (H) (local, imported) name pairs bound by an object destructuring pattern:
+    # (H) `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
+    out: list[tuple[str, str]] = []
+    for child in pattern.named_children:
+        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
+            if name := safe_decode_text(child):
+                out.append((name, name))
+        elif child.type == cs.TS_PAIR_PATTERN:
+            key = child.child_by_field_name(cs.FIELD_KEY)
+            value = child.child_by_field_name(cs.FIELD_VALUE)
+            if key is not None and value is not None and value.type == cs.TS_IDENTIFIER:
+                imported = safe_decode_text(key)
+                local = safe_decode_text(value)
+                if imported and local:
+                    out.append((local, imported))
+    return out
+
+
 def _load_jsonc(path: Path) -> dict | None:
     # (H) tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first
     # (H) (comment-free configs), then fall back to stripping comments/trailing
@@ -1083,44 +1102,43 @@ class ImportProcessor:
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
         for declarator in decl_node.children:
-            if declarator.type == cs.TS_VARIABLE_DECLARATOR:
-                name_node = declarator.child_by_field_name(cs.FIELD_NAME)
-                value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
-
-                if (
-                    name_node
-                    and value_node
-                    and name_node.type == cs.TS_IDENTIFIER
-                    and value_node.type == cs.TS_CALL_EXPRESSION
-                ):
-                    func_node = value_node.child_by_field_name(cs.FIELD_FUNCTION)
-                    args_node = value_node.child_by_field_name(cs.FIELD_ARGUMENTS)
-
-                    if (
-                        func_node
-                        and args_node
-                        and func_node.type == cs.TS_IDENTIFIER
-                        and safe_decode_text(func_node) == cs.IMPORT_REQUIRE
-                    ):
-                        for arg in args_node.children:
-                            if arg.type == cs.TS_STRING:
-                                var_name = safe_decode_with_fallback(name_node)
-                                required_module = safe_decode_with_fallback(arg).strip(
-                                    "'\""
-                                )
-
-                                resolved_module = self._resolve_js_module_path(
-                                    required_module, current_module
-                                )
-                                self.import_mapping[current_module][var_name] = (
-                                    resolved_module
-                                )
-                                logger.debug(
-                                    ls.IMP_JS_REQUIRE,
-                                    var=var_name,
-                                    module=resolved_module,
-                                )
-                                break
+            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                continue
+            name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+            value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+            if (
+                name_node is None
+                or value_node is None
+                or value_node.type != cs.TS_CALL_EXPRESSION
+            ):
+                continue
+            func_node = value_node.child_by_field_name(cs.FIELD_FUNCTION)
+            args_node = value_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+            if (
+                func_node is None
+                or args_node is None
+                or func_node.type != cs.TS_IDENTIFIER
+                or safe_decode_text(func_node) != cs.IMPORT_REQUIRE
+            ):
+                continue
+            arg = next((a for a in args_node.children if a.type == cs.TS_STRING), None)
+            if arg is None:
+                continue
+            resolved_module = self._resolve_js_module_path(
+                safe_decode_with_fallback(arg).strip("'\""), current_module
+            )
+            if name_node.type == cs.TS_IDENTIFIER:
+                # (H) `const fs = require('fs')`: bind the whole module.
+                var_name = safe_decode_with_fallback(name_node)
+                self.import_mapping[current_module][var_name] = resolved_module
+                logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
+            elif name_node.type == cs.TS_OBJECT_PATTERN:
+                # (H) `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
+                # (H) local to module.imported, mirroring how ESM named imports resolve.
+                for local, imported in _js_destructured_names(name_node):
+                    full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
+                    self.import_mapping[current_module][local] = full
+                    logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
         source_module = None

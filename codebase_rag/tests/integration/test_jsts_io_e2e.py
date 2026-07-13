@@ -290,3 +290,60 @@ def test_local_declarations_shadow_sinks(
     assert (_WRITES, "resource::FILE::x.txt") not in edges
     assert (_READS, "resource::NETWORK::https://n/a") not in edges
     assert (_READS, "resource::NETWORK::https://n/b") not in edges
+
+
+def test_esm_named_import_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import { writeFileSync } from 'fs'` binds the bare name to fs.writeFileSync.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import { writeFileSync } from 'fs';\n\n\n"
+        "function save(d) {\n  writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
+def test_node_prefixed_named_import_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import { writeFileSync } from 'node:fs'` maps to node:fs.writeFileSync;
+    # (H) the node: scheme must be stripped for the sink match.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import { writeFileSync } from 'node:fs';\n\n\n"
+        "function save(d) {\n  writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
+def test_destructured_require_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `const { writeFileSync } = require('fs')` is a destructured CommonJS import.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "const { writeFileSync } = require('fs');\n\n\n"
+        "function save(d) {\n  writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
+def test_renamed_destructured_require_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `const { writeFileSync: wf } = require('fs')` binds the local wf.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "const { writeFileSync: wf } = require('fs');\n\n\n"
+        "function save(d) {\n  wf('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
