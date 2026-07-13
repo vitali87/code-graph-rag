@@ -26,7 +26,7 @@ from ..io_access import (
     definition_header_nodes,
     is_require_alias,
     literal_target,
-    normalise,
+    match_normalised,
     registry_match,
     scope_seed_nodes,
     string_literal,
@@ -465,8 +465,7 @@ class FlowProcessor:
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in jc.local_names:
             return None
-        normalised = normalise(raw, jc.flow.import_map)
-        if normalised is not None and (sink := sink_map.get(normalised)) is not None:
+        if (sink := match_normalised(raw, jc.flow.import_map, sink_map)) is not None:
             return sink
         if not sep:
             return None

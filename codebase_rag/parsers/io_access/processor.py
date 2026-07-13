@@ -22,7 +22,7 @@ from .extract import (
     definition_header_nodes,
     is_require_alias,
     literal_target,
-    normalise,
+    match_normalised,
     registry_match,
     scope_seed_nodes,
     string_literal,
@@ -528,11 +528,9 @@ class IOAccessProcessor:
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
             return None
-        normalised = normalise(raw, import_map)
-        if (
-            normalised is not None
-            and (sink := sink_by_name.get(normalised)) is not None
-        ):
+        # (H) A named import may resolve to `node:fs.writeFileSync`; the registry keys
+        # (H) on the bare module, so try the node:-stripped form too.
+        if (sink := match_normalised(raw, import_map, sink_by_name)) is not None:
             return sink
         if not sep:
             return None

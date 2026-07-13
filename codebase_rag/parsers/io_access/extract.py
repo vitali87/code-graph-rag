@@ -111,6 +111,22 @@ def registry_match[T](
     return None
 
 
+def match_normalised[T](
+    raw: str, import_map: dict[str, str], mapping: dict[str, T]
+) -> T | None:
+    # (H) Match a call's import-normalised name against a registry, also trying the
+    # (H) node:-stripped form so a `node:fs` named/destructured import (which maps a
+    # (H) local to `node:fs.writeFileSync`) resolves to the bare `fs.writeFileSync`
+    # (H) entry. Used for JS/TS shadow-aware sink matching (issue #714).
+    normalised = normalise(raw, import_map)
+    if normalised is None:
+        return None
+    hit = mapping.get(normalised)
+    if hit is None and normalised.startswith(cs.NODE_BUILTIN_PREFIX):
+        hit = mapping.get(normalised.removeprefix(cs.NODE_BUILTIN_PREFIX))
+    return hit
+
+
 def string_literal(
     arg: Node | None,
     string_type: str = cs.TS_PY_STRING,
