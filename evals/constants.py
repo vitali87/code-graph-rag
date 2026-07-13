@@ -416,6 +416,11 @@ CSHARP_ORACLE_PROJECT = "Oracle.csproj"
 DOTNET_BIN = "dotnet"
 DOTNET_TELEMETRY_ENV = "DOTNET_CLI_TELEMETRY_OPTOUT"
 DOTNET_NOLOGO_ENV = "DOTNET_NOLOGO"
+# (H) The oracle reads this comma-separated dir set so its file walk (and thus its
+# (H) declared-type universe used to split INHERITS/IMPLEMENTS) skips exactly the
+# (H) directories cgr's is_ignored/IGNORE_PATTERNS skips, not a smaller hardcoded
+# (H) subset that would let an ignored folder's types pollute the classification.
+CGR_IGNORE_DIRS_ENV = "CGR_IGNORE_DIRS"
 DOTNET_BUILD = "build"
 DOTNET_CONFIG_FLAG = "-c"
 DOTNET_CONFIG_RELEASE = "Release"

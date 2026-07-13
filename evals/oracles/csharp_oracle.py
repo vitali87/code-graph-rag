@@ -81,7 +81,15 @@ def _run_csharp_oracle_payload(target: Path) -> OraclePayload:
         capture_output=True,
         text=True,
         check=True,
-        env={**os.environ, **_DOTNET_ENV},
+        env={
+            **os.environ,
+            **_DOTNET_ENV,
+            # (H) Hand cgr's full ignore set to the oracle so its file walk (and the
+            # (H) declared-type universe it builds) matches what cgr indexes, not a
+            # (H) smaller hardcoded subset -- otherwise types under an ignored dir
+            # (H) (build/, .venv/) could misclassify a real file's inheritance edge.
+            ec.CGR_IGNORE_DIRS_ENV: ",".join(sorted(cs.IGNORE_PATTERNS)),
+        },
     )
     # (H) The program prints exactly one JSON line; take the last non-empty stdout
     # (H) line so any stray runtime notice printed before it cannot corrupt parse.

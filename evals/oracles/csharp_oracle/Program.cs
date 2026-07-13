@@ -51,12 +51,21 @@ const int ModuleLine = 0;
 const string OperatorPrefix = "operator_";
 const string DestructorPrefix = "~";
 
-// Case-insensitive so a Bin/ or OBJ/ on a case-insensitive file system is still
-// skipped.
+// cgr hands its full IGNORE_PATTERNS set via CGR_IGNORE_DIRS so the file walk (and
+// the declared-type universe below) skips exactly what cgr skips; the hardcoded
+// set is only the standalone-run fallback. Case-insensitive so a Bin/ or OBJ/ on a
+// case-insensitive file system is still skipped.
 var ignoredDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {
     ".git", "node_modules", "bin", "obj", "vendor", "testdata",
 };
+var ignoreEnv = Environment.GetEnvironmentVariable("CGR_IGNORE_DIRS");
+if (!string.IsNullOrEmpty(ignoreEnv))
+{
+    ignoredDirs = new HashSet<string>(
+        ignoreEnv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        StringComparer.OrdinalIgnoreCase);
+}
 
 var root = args.Length > 0 ? args[0] : ".";
 var rootFull = Path.GetFullPath(root);

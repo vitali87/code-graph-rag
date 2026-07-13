@@ -136,6 +136,33 @@ def test_cgr_matches_roslyn_oracle_on_inheritance(
         assert row["precision"] == 1.0 and row["recall"] == 1.0, (label, row)
 
 
+def test_oracle_ignores_cgr_ignored_dirs_for_classification(
+    tmp_path: Path,
+) -> None:
+    # (H) A type declared only under a cgr-ignored directory (`.venv/`, absent from
+    # (H) the oracle's hardcoded fallback set) must not enter the oracle's declared
+    # (H) universe: otherwise a base `Drawable` there would flip a real class's edge
+    # (H) from INHERITS to IMPLEMENTS, diverging from cgr (which never indexes the
+    # (H) ignored file). The oracle skips it via cgr's IGNORE_PATTERNS, so the real
+    # (H) `Widget : Drawable` stays INHERITS and no ignored-dir node is emitted.
+    _require_csharp()
+    project = tmp_path / "csharp_ignore"
+    project.mkdir()
+    (project / "App.cs").write_text(
+        "namespace N;\npublic class Widget : Drawable { }\n", encoding="utf-8"
+    )
+    hidden = project / ".venv"
+    hidden.mkdir()
+    (hidden / "Gen.cs").write_text(
+        "namespace N;\npublic interface Drawable { }\n", encoding="utf-8"
+    )
+    oracle = run_csharp_oracle(project)
+    assert not any(n.file.startswith(".venv") for n in oracle.nodes), oracle.nodes
+    rels = {(e.rel_type, e.target_name) for e in oracle.name_edges}
+    assert (cs.RelationshipType.INHERITS.value, "Drawable") in rels, rels
+    assert (cs.RelationshipType.IMPLEMENTS.value, "Drawable") not in rels, rels
+
+
 def test_cgr_matches_roslyn_oracle_on_spans(
     graphs: tuple[GraphData, GraphData],
 ) -> None:
