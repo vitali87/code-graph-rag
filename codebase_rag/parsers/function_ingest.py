@@ -207,6 +207,23 @@ class FunctionIngestMixin:
             if has_classes and self._is_method(func_node, lang_config):
                 continue
 
+            # (H) A C# local function whose name is a reserved keyword is a
+            # (H) parse-recovery artifact -- a `#if` splitting an if/else chain
+            # (H) mid-method makes tree-sitter parse the trailing `else if` as a
+            # (H) local_function_statement named `if`. Drop it wholesale instead of
+            # (H) emitting a bogus (or anonymized) Function node.
+            if (
+                language == cs.SupportedLanguage.CSHARP
+                and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
+            ):
+                name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+                if (
+                    name_node
+                    and name_node.text
+                    and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
+                ):
+                    continue
+
             if language == cs.SupportedLanguage.CPP:
                 if self._handle_cpp_out_of_class_method(
                     func_node, module_qn, lang_queries

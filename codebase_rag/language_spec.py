@@ -181,7 +181,14 @@ def _csharp_get_name(node: Node) -> str | None:
         from .parsers.csharp import utils as csharp_utils
 
         return csharp_utils.synthesize_method_name(node)
-    return _generic_get_name(node)
+    name = _generic_get_name(node)
+    # (H) A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # (H) construct into a declaration node (e.g. a `#if` splitting an if/else chain
+    # (H) makes the trailing `else if` parse as a local_function named `if`). Such a
+    # (H) node is never a real definition, so drop it instead of polluting the graph.
+    if name in cs.CSHARP_RESERVED_KEYWORDS:
+        return None
+    return name
 
 
 def _dart_get_name(node: Node) -> str | None:
