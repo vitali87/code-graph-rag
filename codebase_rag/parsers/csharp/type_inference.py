@@ -223,20 +223,34 @@ class CSharpTypeInferenceEngine:
         # (H) An extension method (`static M(this T x, ...)` on an unrelated static
         # (H) class) whose `this` receiver type matches the call's receiver -- the
         # (H) only path that binds `x.M()` to a method not in x's hierarchy.
-        if self.csharp_extension_methods:
-            type_name = self._receiver_type_name(
-                receiver, local_var_types or {}, module_qn, caller_qn
-            )
-            if type_name and (
-                ext := self._find_extension_method(type_name, method_name, arg_count)
-            ):
-                return cs.NodeLabel.METHOD.value, ext
+        if ext := self._try_extension_call(
+            receiver, local_var_types or {}, module_qn, caller_qn, method_name, arg_count
+        ):
+            return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
             if name_hit := self._find_method_by_name(
                 receiver_class_qn, method_name, set()
             ):
                 return cs.NodeLabel.METHOD.value, name_hit
         return None
+
+    def _try_extension_call(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+        method_name: str,
+        arg_count: int,
+    ) -> str | None:
+        if not self.csharp_extension_methods:
+            return None
+        type_name = self._receiver_type_name(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if not type_name:
+            return None
+        return self._find_extension_method(type_name, method_name, arg_count)
 
     def _receiver_type_name(
         self,
@@ -251,39 +265,50 @@ class CSharpTypeInferenceEngine:
         # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
         # (H) branches but stops at the name.
         if receiver.type == cs.TS_CSHARP_THIS:
-            qn = self._containing_class_qn(caller_qn)
-            if qn is None:
-                return None
-            # (H) `this` names the exact containing class, so keep its
-            # (H) namespace-qualified form (`N1.Widget`, module prefix stripped)
-            # (H) rather than the bare simple name: that lets the matcher bind an
-            # (H) exact `this N1.Widget` extension even when another `N2.Widget`
-            # (H) exists, instead of dropping it as ambiguous/mixed-qualified.
-            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
-                return qn[len(module_qn) + 1 :]
-            return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
-            field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
-            if expr is not None and expr.type == cs.TS_CSHARP_THIS and field:
-                if class_qn := self._containing_class_qn(caller_qn):
-                    return self._field_type(class_qn, field)
-            return None
+            return self._this_field_receiver_type(receiver, caller_qn)
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
-            name = safe_decode_text(receiver)
-            if not name:
-                return None
-            if (type_name := local_var_types.get(name)) is not None:
-                return type_name
-            if class_qn := self._containing_class_qn(caller_qn):
-                if ftype := self._field_type(class_qn, name):
-                    return ftype
-            # (H) An unknown bare identifier is a TYPE name (a static call
-            # (H) `Widget.M()`), not an instance -- extension methods bind on
-            # (H) instances only, so do NOT treat it as an extension receiver
-            # (H) (else `Widget.Poke()` would wrongly bind `static Poke(this
-            # (H) Widget)`, a call C# does not allow).
+            return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
+        return None
+
+    def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
+        qn = self._containing_class_qn(caller_qn)
+        if qn is None:
             return None
+        # (H) `this` names the exact containing class, so keep its
+        # (H) namespace-qualified form (`N1.Widget`, module prefix stripped) rather
+        # (H) than the bare simple name: that lets the matcher bind an exact `this
+        # (H) N1.Widget` extension even when another `N2.Widget` exists.
+        if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+            return qn[len(module_qn) + 1 :]
+        return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+    def _this_field_receiver_type(
+        self, receiver: Node, caller_qn: str | None
+    ) -> str | None:
+        expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
+        if expr is not None and expr.type == cs.TS_CSHARP_THIS and field:
+            if class_qn := self._containing_class_qn(caller_qn):
+                return self._field_type(class_qn, field)
+        return None
+
+    def _identifier_receiver_type(
+        self, receiver: Node, local_var_types: dict[str, str], caller_qn: str | None
+    ) -> str | None:
+        name = safe_decode_text(receiver)
+        if not name:
+            return None
+        if (type_name := local_var_types.get(name)) is not None:
+            return type_name
+        if class_qn := self._containing_class_qn(caller_qn):
+            if ftype := self._field_type(class_qn, name):
+                return ftype
+        # (H) An unknown bare identifier is a TYPE name (a static call
+        # (H) `Widget.M()`), not an instance -- extension methods bind on instances
+        # (H) only, so do NOT treat it as an extension receiver (else `Widget.Poke()`
+        # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
 
     def _find_extension_method(
