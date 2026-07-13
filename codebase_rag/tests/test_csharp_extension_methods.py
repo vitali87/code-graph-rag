@@ -261,9 +261,7 @@ namespace N1 {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    assert any(
-        t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets
-    ), targets
+    assert any(t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets), targets
 
 
 def test_qualified_receiver_binds_exact_extension_despite_same_name_type(
@@ -292,9 +290,7 @@ namespace N1 {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    assert any(
-        t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets
-    ), targets
+    assert any(t.endswith("N1.WidgetExt.Poke(N1.Widget)") for t in targets), targets
 
 
 def test_unqualified_receiver_does_not_bind_qualified_extension(

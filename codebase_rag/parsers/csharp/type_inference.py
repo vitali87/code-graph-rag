@@ -224,7 +224,12 @@ class CSharpTypeInferenceEngine:
         # (H) class) whose `this` receiver type matches the call's receiver -- the
         # (H) only path that binds `x.M()` to a method not in x's hierarchy.
         if ext := self._try_extension_call(
-            receiver, local_var_types or {}, module_qn, caller_qn, method_name, arg_count
+            receiver,
+            local_var_types or {},
+            module_qn,
+            caller_qn,
+            method_name,
+            arg_count,
         ):
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
