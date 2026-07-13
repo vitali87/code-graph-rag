@@ -16,15 +16,23 @@ from .constants import (
     IODirection,
     ResourceKind,
 )
+from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
     literal_target,
+    normalise,
     registry_match,
     scope_seed_nodes,
+    string_literal,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
-from .registry import IO_HANDLE_CONSTRUCTORS, IO_HANDLE_METHODS, IO_SINKS
+from .registry import (
+    IO_HANDLE_CONSTRUCTORS,
+    IO_HANDLE_METHODS,
+    IO_MEMBER_READS,
+    IO_SINKS,
+)
 
 _DIRECTION_REL = {
     IODirection.READ: cs.RelationshipType.READS_FROM,
@@ -59,16 +67,27 @@ class IOAccessProcessor:
     ) -> None:
         if not self._enabled:
             return
-        # (H) ponytail: Python-only in phase 1; other languages need their own
-        # (H) node types, add when their IO_SINKS tables land.
-        if language != cs.SupportedLanguage.PYTHON:
-            return
         sinks = IO_SINKS.get(language, ())
         constructors = IO_HANDLE_CONSTRUCTORS.get(language, ())
         if not sinks and not constructors:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         sink_by_name = {s.callee: s for s in sinks}
+        # (H) Non-Python languages take a lean direct-sink walk (issue #714): match
+        # (H) call sinks and emit, without Python's handle/scope machinery (streams
+        # (H) and data-flow are a follow-up). Python keeps the full handle-aware walk.
+        if language != cs.SupportedLanguage.PYTHON:
+            descriptor = LANGUAGE_DESCRIPTORS.get(language)
+            if descriptor is not None:
+                self._emit_direct_sinks(
+                    caller_node,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    IO_MEMBER_READS.get(language, ()),
+                    descriptor,
+                )
+            return
         ctor_by_name = {c.callee: c for c in constructors}
 
         # (H) Single forward pre-order DFS: bindings and accesses interleave in
@@ -244,6 +263,287 @@ class IOAccessProcessor:
             if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
                 handles.setdefault(bound[0], bound[1])
             stack.extend(node.children)
+
+    def _emit_direct_sinks(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Lean non-Python walk (issue #714): find call sinks in the caller body,
+        # (H) crediting I/O to the scope that runs it. No handle/stream tracking yet.
+        # (H) The walk is lexically scope-aware so a same-named local (`const fs`,
+        # (H) `function fetch`, a parameter) shadows the builtin ONLY where it is in
+        # (H) scope: block-scoped const/let shadow inside their own block and nested
+        # (H) blocks, never a sibling/outer use. A function/method caller exposes its
+        # (H) statements under the `body` field; the module root (top-level calls) has
+        # (H) no body field, so seed from its own children.
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            # (H) Module root (top-level calls): its own children are the statements.
+            statements = list(caller_node.named_children)
+        elif body.type == descriptor.block_scope_type:
+            statements = list(body.named_children)
+        else:
+            # (H) Expression-bodied arrow (`() => fetch(url)`): the body IS the
+            # (H) statement/expression, so walk it directly.
+            statements = [body]
+        # (H) Parameters are visible in every block of the function body. Import
+        # (H) aliases (`const fs = require('fs')`) are the genuine module, resolved by
+        # (H) the import branch of _resolve_sink, so they never count as shadows.
+        params = self._param_names(caller_node, descriptor) - import_map.keys()
+        self._walk_scope(
+            statements,
+            frozenset(params),
+            caller_spec,
+            import_map,
+            sink_by_name,
+            member_reads,
+            descriptor,
+        )
+
+    def _walk_scope(
+        self,
+        statements: list[Node],
+        inherited: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Names in scope for calls in THESE statements: the enclosing scopes' names
+        # (H) plus this block's own const/let/function declarations (import aliases
+        # (H) removed, since they are the genuine module, resolved by _resolve_sink).
+        # (H) ponytail: import_map is module-scoped, so a block-local `require` alias
+        # (H) leaks module-wide -- but using such a name outside its block is a runtime
+        # (H) ReferenceError (dead code), so its edge precision is not modeled. Per-scope
+        # (H) import tracking is the upgrade if that ever matters.
+        in_scope = (
+            inherited | self._block_declarations(statements, descriptor)
+        ) - import_map.keys()
+        stack = list(statements)
+        while stack:
+            node = stack.pop()
+            # (H) Nested function/method: its own caller, walked separately.
+            if node.type in descriptor.nested_scope_types:
+                continue
+            # (H) A nested { } is a child lexical scope: recurse with this block's
+            # (H) names inherited, so its declarations shadow only inside it.
+            if node.type == descriptor.block_scope_type:
+                self._walk_scope(
+                    list(node.named_children),
+                    in_scope,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    member_reads,
+                    descriptor,
+                )
+                continue
+            if node.type == descriptor.call_type:
+                self._emit_direct_call(
+                    node, caller_spec, import_map, sink_by_name, descriptor, in_scope
+                )
+            elif member_reads and node.type in (
+                descriptor.member_expression_type,
+                descriptor.subscript_type,
+            ):
+                self._emit_member_read(
+                    node, caller_spec, member_reads, in_scope, import_map, descriptor
+                )
+            stack.extend(node.named_children)
+
+    def _emit_member_read(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Env-style member reads: `process.env.X` (member) / `process.env['X']`
+        # (H) (subscript) read env var X. Match on the object prefix; skip when the
+        # (H) prefix head (`process`) is shadowed by a local binding or a non-global
+        # (H) import, mirroring the call-sink shadow rules.
+        obj = node.child_by_field_name(descriptor.object_field)
+        if obj is None or obj.text is None:
+            return
+        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        for prefix, kind in member_reads:
+            if obj_text != prefix:
+                continue
+            head = prefix.partition(cs.SEPARATOR_DOT)[0]
+            if head in in_scope:
+                return
+            base = import_map.get(head)
+            if base is not None and (
+                base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
+                != head
+            ):
+                return
+            identity = self._member_identity(node, descriptor)
+            self._emit(caller_spec, IODirection.READ, kind, identity)
+            return
+
+    def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
+        # (H) The accessed key: a member's `property` (`process.env.SECRET` -> SECRET),
+        # (H) or a subscript's string index (`process.env['T']` -> T); else <dynamic>.
+        if node.type == descriptor.member_expression_type:
+            prop = node.child_by_field_name(descriptor.property_field)
+            if prop is not None and prop.text is not None:
+                return prop.text.decode(cs.ENCODING_UTF8)
+            return DYNAMIC_TARGET
+        index = node.child_by_field_name(descriptor.subscript_index_field)
+        if index is not None and index.type == descriptor.string_type:
+            return string_literal(
+                index, descriptor.string_type, descriptor.string_content_type
+            )
+        return DYNAMIC_TARGET
+
+    def _block_declarations(
+        self, statements: list[Node], descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # (H) Names declared directly in these statements: const/let/var declarators
+        # (H) and hoisted `function` declarations. Nested blocks and nested functions
+        # (H) are their own scopes and are not descended into (their locals are theirs).
+        # (H) ponytail: `var` is really function-scoped, but a var redefining a
+        # (H) builtin name is rare enough to treat block-locally.
+        names: set[str] = set()
+        stack = list(statements)
+        while stack:
+            node = stack.pop()
+            if node.type in descriptor.nested_scope_types:
+                if (name := self._named_child_text(node, descriptor)) is not None:
+                    names.add(name)
+                continue
+            if node.type == descriptor.block_scope_type:
+                continue
+            if node.type == descriptor.declarator_type:
+                names |= self._declarator_names(node, descriptor)
+            stack.extend(node.named_children)
+        return names
+
+    def _declarator_names(
+        self, declarator: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # (H) The local names a declarator binds: a plain `const fs = ...` binds one
+        # (H) identifier; a destructuring `const { writeFileSync } = ...` /
+        # (H) `const { get: g } = ...` / `const [fetch] = ...` binds the pattern's
+        # (H) leaves. All are collected so they shadow a same-named builtin.
+        name = declarator.child_by_field_name(cs.TS_FIELD_NAME)
+        names: set[str] = set()
+        if name is not None:
+            self._pattern_names(name, descriptor, names)
+        return names
+
+    def _pattern_names(
+        self, node: Node, descriptor: LanguageDescriptor, out: set[str]
+    ) -> None:
+        node_type = node.type
+        if node_type in (
+            descriptor.identifier_type,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if node.text:
+                out.add(node.text.decode(cs.ENCODING_UTF8))
+        elif node_type == cs.TS_PAIR_PATTERN:
+            # (H) `{ key: local }` binds the VALUE (local), not the property key.
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                self._pattern_names(value, descriptor, out)
+        elif node_type in (
+            cs.TS_OBJECT_PATTERN,
+            cs.TS_ARRAY_PATTERN,
+            cs.TS_REST_PATTERN,
+        ):
+            for child in node.named_children:
+                self._pattern_names(child, descriptor, out)
+
+    def _param_names(
+        self, caller_node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # (H) Parameter names bound in the whole function body. A param is a bare
+        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), or a
+        # (H) TS `required_parameter` wrapper whose `pattern` field holds either --
+        # (H) all handled by _pattern_names, unwrapping the TS wrapper first.
+        names: set[str] = set()
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is not None:
+            for child in params.named_children:
+                target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
+                self._pattern_names(target, descriptor, names)
+        return names
+
+    @staticmethod
+    def _named_child_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        name = node.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.type == descriptor.identifier_type and name.text:
+            return name.text.decode(cs.ENCODING_UTF8)
+        return None
+
+    def _emit_direct_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
+    ) -> None:
+        raw = call_name(node)
+        if raw is None:
+            return
+        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
+        if sink is None:
+            return
+        identity = literal_target(
+            node,
+            sink.target_arg,
+            sink.target_kw,
+            string_type=descriptor.string_type,
+            content_type=descriptor.string_content_type,
+            keyword_arg_type=descriptor.keyword_arg_type,
+        )
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    @staticmethod
+    def _resolve_sink(
+        raw: str,
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        local_names: frozenset[str],
+    ) -> IOSink | None:
+        # (H) Match a JS/TS call against the sink table, respecting shadowing:
+        # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
+        # (H)    parameter) is never the builtin -> no match.
+        # (H)  - the import-normalised name is tried first, so an ALIASED builtin
+        # (H)    (`const myfs = require('fs')` -> myfs.x resolves to fs.x) matches.
+        # (H)  - the raw dotted name is a last resort, allowed only when the head
+        # (H)    resolves to the genuine module (a builtin maps `fs` -> `fs` /
+        # (H)    `fs.default` / `node:fs...`; a local `import fs from './x'` maps it
+        # (H)    elsewhere, so its raw `fs.writeFileSync` must not fire).
+        head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
+        if (head if sep else raw) in local_names:
+            return None
+        normalised = normalise(raw, import_map)
+        if (
+            normalised is not None
+            and (sink := sink_by_name.get(normalised)) is not None
+        ):
+            return sink
+        if not sep:
+            return None
+        base = import_map.get(head)
+        head_is_builtin = (
+            base is None
+            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
+            == head
+        )
+        return sink_by_name.get(raw) if head_is_builtin else None
 
     def _emit_call(
         self,

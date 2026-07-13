@@ -132,8 +132,52 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
     ),
 )
 
+# (H) JS/TS direct-call I/O sinks (issue #714, first increment). Keyed by the
+# (H) dotted callee text (`console.log`, `fs.writeFileSync`, `axios.get`); a bare
+# (H) global like `fetch` matches when it is not shadowed by an import. Node has
+# (H) no keyword args, so the URL/path is always positional arg 0. Member-access
+# (H) reads (`process.env.X`) and stream handles are a follow-up.
+_JS_TS_SINKS: tuple[IOSink, ...] = (
+    IOSink("console.log", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("console.info", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("console.warn", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("console.error", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("fetch", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("axios.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("axios.head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("axios.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("axios.put", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("axios.patch", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("axios.delete", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("http.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("https.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("fs.readFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("fs.readFileSync", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("fs.writeFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fs.writeFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fs.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
+    cs.SupportedLanguage.JS: _JS_TS_SINKS,
+    cs.SupportedLanguage.TS: _JS_TS_SINKS,
+    cs.SupportedLanguage.TSX: _JS_TS_SINKS,
+}
+
+# (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:
+# (H) `process.env.X` / `process.env['X']` reads env var X (issue #714). The head
+# (H) token (`process`) is shadow-checked like a sink, so a local `process` is
+# (H) not the Node global.
+_JS_TS_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
+    ("process.env", ResourceKind.ENV),
+)
+
+IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]] = {
+    cs.SupportedLanguage.JS: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.TS: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
 }
 
 # (H) Calls whose result is a resource handle; later method calls on the bound
