@@ -75,6 +75,22 @@ def test_typescript_direct_io_sinks(
     assert (_WRITES, "resource::NETWORK::https://api.example.com/upload") in edges
 
 
+def test_expression_bodied_arrow_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) An expression-bodied arrow has no statement block -- its body IS the call
+    # (H) expression, which must still be walked for sinks (issue #714 recall).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        'const load = () => fetch("https://api.example.com/data");\n',
+    )
+    assert (_READS, "resource::NETWORK::https://api.example.com/data") in _io_edges(
+        memgraph_ingestor
+    )
+
+
 def test_module_level_js_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

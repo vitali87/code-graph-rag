@@ -269,13 +269,22 @@ class IOAccessProcessor:
         # (H) blocks, never a sibling/outer use. A function/method caller exposes its
         # (H) statements under the `body` field; the module root (top-level calls) has
         # (H) no body field, so seed from its own children.
-        seed = caller_node.child_by_field_name(cs.FIELD_BODY) or caller_node
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            # (H) Module root (top-level calls): its own children are the statements.
+            statements = list(caller_node.named_children)
+        elif body.type == descriptor.block_scope_type:
+            statements = list(body.named_children)
+        else:
+            # (H) Expression-bodied arrow (`() => fetch(url)`): the body IS the
+            # (H) statement/expression, so walk it directly.
+            statements = [body]
         # (H) Parameters are visible in every block of the function body. Import
         # (H) aliases (`const fs = require('fs')`) are the genuine module, resolved by
         # (H) the import branch of _resolve_sink, so they never count as shadows.
         params = self._param_names(caller_node, descriptor) - import_map.keys()
         self._walk_scope(
-            seed,
+            statements,
             frozenset(params),
             caller_spec,
             import_map,
@@ -285,24 +294,24 @@ class IOAccessProcessor:
 
     def _walk_scope(
         self,
-        block_node: Node,
+        statements: list[Node],
         inherited: frozenset[str],
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) Names in scope for calls in THIS block: the enclosing scopes' names plus
-        # (H) this block's own const/let/function declarations (import aliases removed,
-        # (H) since they are the genuine module, resolved by _resolve_sink).
+        # (H) Names in scope for calls in THESE statements: the enclosing scopes' names
+        # (H) plus this block's own const/let/function declarations (import aliases
+        # (H) removed, since they are the genuine module, resolved by _resolve_sink).
         # (H) ponytail: import_map is module-scoped, so a block-local `require` alias
         # (H) leaks module-wide -- but using such a name outside its block is a runtime
         # (H) ReferenceError (dead code), so its edge precision is not modeled. Per-scope
         # (H) import tracking is the upgrade if that ever matters.
         in_scope = (
-            inherited | self._block_declarations(block_node, descriptor)
+            inherited | self._block_declarations(statements, descriptor)
         ) - import_map.keys()
-        stack = list(block_node.named_children)
+        stack = list(statements)
         while stack:
             node = stack.pop()
             # (H) Nested function/method: its own caller, walked separately.
@@ -312,7 +321,12 @@ class IOAccessProcessor:
             # (H) names inherited, so its declarations shadow only inside it.
             if node.type == descriptor.block_scope_type:
                 self._walk_scope(
-                    node, in_scope, caller_spec, import_map, sink_by_name, descriptor
+                    list(node.named_children),
+                    in_scope,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    descriptor,
                 )
                 continue
             if node.type == descriptor.call_type:
@@ -322,15 +336,15 @@ class IOAccessProcessor:
             stack.extend(node.named_children)
 
     def _block_declarations(
-        self, block_node: Node, descriptor: LanguageDescriptor
+        self, statements: list[Node], descriptor: LanguageDescriptor
     ) -> set[str]:
-        # (H) Names declared directly in this block: const/let/var declarators and
-        # (H) hoisted `function` declarations. Nested blocks and nested functions are
-        # (H) their own scopes and are not descended into (their locals are theirs).
+        # (H) Names declared directly in these statements: const/let/var declarators
+        # (H) and hoisted `function` declarations. Nested blocks and nested functions
+        # (H) are their own scopes and are not descended into (their locals are theirs).
         # (H) ponytail: `var` is really function-scoped, but a var redefining a
         # (H) builtin name is rare enough to treat block-locally.
         names: set[str] = set()
-        stack = list(block_node.named_children)
+        stack = list(statements)
         while stack:
             node = stack.pop()
             if node.type in descriptor.nested_scope_types:
