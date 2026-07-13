@@ -169,6 +169,23 @@ def test_node_prefixed_builtin_import_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_block_scoped_local_does_not_over_shadow(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `const`/`let` are block-scoped: a `const fs` inside a nested block does
+    # (H) NOT shadow a `fs.writeFileSync` outside that block, so the edge stands.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function f(d) {\n"
+        "  {\n    const fs = {};\n  }\n"
+        "  fs.writeFileSync('out.txt', d);\n"
+        "}\n",
+    )
+    assert (_WRITES, "resource::FILE::out.txt") in _io_edges(memgraph_ingestor)
+
+
 def test_local_declarations_shadow_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

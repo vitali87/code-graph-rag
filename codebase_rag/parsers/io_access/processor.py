@@ -315,6 +315,10 @@ class IOAccessProcessor:
                 if (name := self._named_child_text(node, descriptor)) is not None:
                     names.add(name)
                 continue
+            # (H) A nested { } block is its own lexical scope: const/let declared
+            # (H) inside it do not shadow this scope, so stop descending there.
+            if node.type == descriptor.block_scope_type:
+                continue
             if (
                 node.type == descriptor.declarator_type
                 and (name := self._named_child_text(node, descriptor)) is not None
