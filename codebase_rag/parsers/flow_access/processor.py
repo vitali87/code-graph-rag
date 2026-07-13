@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -472,9 +473,13 @@ class FlowProcessor:
             if is_tainted.get(callee_qn):
                 self._emit_return_edge((callee_type, callee_qn), caller_spec)
         for pending, sink_kind, sink_identity in self._deferred_resource_flows:
+            # (H) Union origins across pending callees first so a shared origin is
+            # (H) emitted once, not per callee.
+            origins: set[HandleBinding] = set()
             for callee_qn in pending:
-                for origin in resolved.get(callee_qn, frozenset()):
-                    self._emit_resource_flow(origin, sink_kind, sink_identity)
+                origins |= resolved.get(callee_qn, frozenset())
+            for origin in origins:
+                self._emit_resource_flow(origin, sink_kind, sink_identity)
         for (
             pending,
             caller_spec,
@@ -497,29 +502,37 @@ class FlowProcessor:
     def _resolve_summaries(
         self,
     ) -> tuple[dict[str, frozenset[HandleBinding]], dict[str, bool]]:
-        # (H) Fixpoint over the serialized summaries: a function's resolved origins
-        # (H) are its own plus every pending callee's resolved origins, and it is
-        # (H) tainted if it has an origin or any pending callee is tainted. Origins
-        # (H) and taintedness only grow, so this converges even through recursion;
-        # (H) the pass count bounds the longest return-forwarding chain.
+        # (H) Worklist fixpoint over the serialized summaries: a function's resolved
+        # (H) origins are its own plus every pending callee's, and it is tainted if
+        # (H) it has an origin or any pending callee is tainted. Origins/taintedness
+        # (H) only grow, so this converges through recursion. Re-queue only a
+        # (H) callee's callers when it changes, keeping the whole pass O(V + E).
         resolved = {qn: summary.origins for qn, summary in self._summaries.items()}
         is_tainted = {
             qn: bool(summary.origins) for qn, summary in self._summaries.items()
         }
-        for _ in range(len(self._summaries) + 1):
-            changed = False
-            for qn, summary in self._summaries.items():
-                new_origins = resolved[qn]
-                new_tainted = is_tainted[qn]
-                for callee_qn in summary.pending:
-                    new_origins = new_origins | resolved.get(callee_qn, frozenset())
-                    new_tainted = new_tainted or is_tainted.get(callee_qn, False)
-                if new_origins != resolved[qn] or new_tainted != is_tainted[qn]:
-                    resolved[qn] = new_origins
-                    is_tainted[qn] = new_tainted
-                    changed = True
-            if not changed:
-                break
+        callers_of: dict[str, set[str]] = defaultdict(set)
+        for qn, summary in self._summaries.items():
+            for callee_qn in summary.pending:
+                callers_of[callee_qn].add(qn)
+        worklist = deque(qn for qn, s in self._summaries.items() if s.pending)
+        queued = set(worklist)
+        while worklist:
+            qn = worklist.popleft()
+            queued.discard(qn)
+            summary = self._summaries[qn]
+            new_origins = summary.origins
+            new_tainted = bool(summary.origins)
+            for callee_qn in summary.pending:
+                new_origins = new_origins | resolved.get(callee_qn, frozenset())
+                new_tainted = new_tainted or is_tainted.get(callee_qn, False)
+            if new_origins != resolved[qn] or new_tainted != is_tainted[qn]:
+                resolved[qn] = new_origins
+                is_tainted[qn] = new_tainted
+                for caller in callers_of[qn]:
+                    if caller not in queued:
+                        worklist.append(caller)
+                        queued.add(caller)
         return resolved, is_tainted
 
     @staticmethod
