@@ -70,3 +70,19 @@ def test_go_direct_io_sinks(
     assert (_READS, "resource::NETWORK::https://api.example.com/data") in edges
     assert (_WRITES, "resource::FILE::out.txt") in edges
     assert (_WRITES, "resource::NETWORK::https://api.example.com/upload") in edges
+
+
+def test_go_aliased_import_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import h "net/http"` aliases the package; h.Get must still match http.Get
+    # (H) via the resolved package name (last path segment of net/http).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport h "net/http"\n\n'
+        'func fetch() {\n\th.Get("https://api.example.com/x")\n}\n',
+    )
+    assert (_READS, "resource::NETWORK::https://api.example.com/x") in _io_edges(
+        memgraph_ingestor
+    )

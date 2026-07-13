@@ -525,7 +525,7 @@ class IOAccessProcessor:
         # (H)    resolves to the genuine module (a builtin maps `fs` -> `fs` /
         # (H)    `fs.default` / `node:fs...`; a local `import fs from './x'` maps it
         # (H)    elsewhere, so its raw `fs.writeFileSync` must not fire).
-        head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
+        head, sep, rest = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
             return None
         # (H) A named import may resolve to `node:fs.writeFileSync`; the registry keys
@@ -534,7 +534,14 @@ class IOAccessProcessor:
             return sink
         if not sep:
             return None
-        if not head_is_genuine_module(import_map.get(head), head, path_based_imports):
+        base = import_map.get(head)
+        if path_based_imports and base is not None:
+            # (H) Go imports resolve to a package PATH (`h -> net/http`); the registry
+            # (H) keys on the package name, so match `<last-path-segment>.<method>`.
+            # (H) This covers both a plain `http.Get` and an aliased `import h "net/http"`.
+            package = base.split(cs.SEPARATOR_DOT)[0].rsplit("/", 1)[-1]
+            return sink_by_name.get(f"{package}{cs.SEPARATOR_DOT}{rest}")
+        if not head_is_genuine_module(base, head):
             return None
         return sink_by_name.get(raw)
 
