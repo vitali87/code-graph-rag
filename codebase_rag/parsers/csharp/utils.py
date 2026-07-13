@@ -150,6 +150,11 @@ def synthesize_method_name(method_node: Node) -> str | None:
     name = safe_decode_text(name_node) if name_node and name_node.text else None
     if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
         return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + name
+    # (H) A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # (H) construct (e.g. a `#if`-split `else if` chain -> local_function named
+    # (H) `if`); it is never a real member, so drop it rather than pollute the graph.
+    if name in cs.CSHARP_RESERVED_KEYWORDS:
+        return None
     return name
 
 
