@@ -166,6 +166,20 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.TSX: _JS_TS_SINKS,
 }
 
+# (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:
+# (H) `process.env.X` / `process.env['X']` reads env var X (issue #714). The head
+# (H) token (`process`) is shadow-checked like a sink, so a local `process` is
+# (H) not the Node global.
+_JS_TS_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
+    ("process.env", ResourceKind.ENV),
+)
+
+IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]] = {
+    cs.SupportedLanguage.JS: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.TS: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
+}
+
 # (H) Calls whose result is a resource handle; later method calls on the bound
 # (H) variable are attributed to the same resource.
 _PYTHON_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (

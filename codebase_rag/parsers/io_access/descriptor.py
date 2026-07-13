@@ -29,6 +29,13 @@ class LanguageDescriptor:
     # (H) A nested block introduces a new lexical scope: const/let declared inside
     # (H) it do not shadow the enclosing scope, so declarator collection stops here.
     block_scope_type: str
+    # (H) Member/subscript access node types + fields, for env reads like
+    # (H) `process.env.X` (member) and `process.env['X']` (subscript).
+    member_expression_type: str
+    subscript_type: str
+    object_field: str
+    property_field: str
+    subscript_index_field: str
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -49,6 +56,11 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
+    member_expression_type=cs.TS_MEMBER_EXPRESSION,
+    subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.FIELD_PROPERTY,
+    subscript_index_field=cs.TS_FIELD_INDEX,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
