@@ -11,6 +11,7 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    head_is_genuine_module,
     is_require_alias,
     literal_target,
     match_normalised,
@@ -46,6 +47,7 @@ __all__ = [
     "ResourceKind",
     "call_name",
     "definition_header_nodes",
+    "head_is_genuine_module",
     "is_require_alias",
     "literal_target",
     "match_normalised",

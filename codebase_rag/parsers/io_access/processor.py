@@ -20,6 +20,7 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    head_is_genuine_module,
     is_require_alias,
     literal_target,
     match_normalised,
@@ -375,12 +376,8 @@ class IOAccessProcessor:
             if obj_text != prefix:
                 continue
             head = prefix.partition(cs.SEPARATOR_DOT)[0]
-            if head in in_scope:
-                return
-            base = import_map.get(head)
-            if base is not None and (
-                base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-                != head
+            if head in in_scope or not head_is_genuine_module(
+                import_map.get(head), head
             ):
                 return
             identity = self._member_identity(node, descriptor)
@@ -534,13 +531,9 @@ class IOAccessProcessor:
             return sink
         if not sep:
             return None
-        base = import_map.get(head)
-        head_is_builtin = (
-            base is None
-            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-            == head
-        )
-        return sink_by_name.get(raw) if head_is_builtin else None
+        if not head_is_genuine_module(import_map.get(head), head):
+            return None
+        return sink_by_name.get(raw)
 
     def _emit_call(
         self,

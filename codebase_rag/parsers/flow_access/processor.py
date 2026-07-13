@@ -24,6 +24,7 @@ from ..io_access import (
     ResourceKind,
     call_name,
     definition_header_nodes,
+    head_is_genuine_module,
     is_require_alias,
     literal_target,
     match_normalised,
@@ -467,22 +468,13 @@ class FlowProcessor:
             return None
         if (sink := match_normalised(raw, jc.flow.import_map, sink_map)) is not None:
             return sink
-        if not sep:
+        if not sep or not head_is_genuine_module(jc.flow.import_map.get(head), head):
             return None
-        base = jc.flow.import_map.get(head)
-        ok = (
-            base is None
-            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-            == head
-        )
-        return sink_map.get(raw) if ok else None
+        return sink_map.get(raw)
 
     @staticmethod
     def _js_import_shadowed(head: str, jc: _JsCtx) -> bool:
-        base = jc.flow.import_map.get(head)
-        return base is not None and (
-            base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) != head
-        )
+        return not head_is_genuine_module(jc.flow.import_map.get(head), head)
 
     def _js_local_names(
         self, caller_node: Node, descriptor: LanguageDescriptor

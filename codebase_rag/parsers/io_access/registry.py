@@ -159,11 +159,37 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
 )
 
+# (H) Go direct-call I/O sinks (issue #714). Keyed by the selector callee text
+# (H) (`os.Getenv`, `fmt.Println`, `http.Get`); the package name (os/fmt/http) is
+# (H) the import, matched via normalise/raw fallback. Go has no keyword args, so the
+# (H) path/url is positional arg 0. Handle-returning calls (`os.Open`) are treated as
+# (H) a direct read/write of the path (stream handles are a follow-up); log.* and
+# (H) fmt.Fprint* (writer-targeted) are follow-ups.
+_GO_SINKS: tuple[IOSink, ...] = (
+    IOSink("os.Getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("os.LookupEnv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("os.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("os.Open", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("ioutil.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("os.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("os.Create", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("os.Remove", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("ioutil.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fmt.Print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("fmt.Println", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("fmt.Printf", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("http.Get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("http.Head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("http.Post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("http.PostForm", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
     cs.SupportedLanguage.TS: _JS_TS_SINKS,
     cs.SupportedLanguage.TSX: _JS_TS_SINKS,
+    cs.SupportedLanguage.GO: _GO_SINKS,
 }
 
 # (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:

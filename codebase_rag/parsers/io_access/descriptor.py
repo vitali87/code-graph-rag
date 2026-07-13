@@ -63,10 +63,39 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     subscript_index_field=cs.TS_FIELD_INDEX,
 )
 
+_GO_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_GO_CALL_EXPRESSION,
+    string_type=cs.TS_GO_INTERPRETED_STRING,
+    string_content_type=cs.TS_GO_INTERPRETED_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_GO_FUNCTION_DECLARATION,
+            cs.TS_GO_METHOD_DECLARATION,
+            cs.TS_GO_FUNC_LITERAL,
+        }
+    ),
+    # (H) Go's `:=` / parameter_declaration shapes differ from JS, so the JS-shaped
+    # (H) local-name collection matches nothing for Go -- benign, since shadowing a
+    # (H) package name (`os`, `fmt`) with a local does not compile in Go.
+    identifier_type=cs.TS_PY_IDENTIFIER,
+    declarator_type=cs.TS_GO_SHORT_VAR_DECLARATION,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_GO_BLOCK,
+    # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
+    # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
+    member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
+    subscript_type=cs.TS_GO_INDEX_EXPRESSION,
+    object_field=cs.TS_GO_FIELD_OPERAND,
+    property_field=cs.TS_GO_FIELD_FIELD,
+    subscript_index_field=cs.TS_GO_FIELD_INDEX,
+)
+
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
 # (H) handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.JS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TSX: _JS_TS_DESCRIPTOR,
+    cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
 }
