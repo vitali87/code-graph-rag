@@ -169,6 +169,22 @@ def test_node_prefixed_builtin_import_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_destructured_local_shadows_sink(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A destructured local binding (`const { fetch } = obj`) is not the global
+    # (H) builtin, so `fetch(...)` in that scope must not emit a NETWORK edge.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function run(obj) {\n  const { fetch } = obj;\n  fetch('https://n/a');\n}\n",
+    )
+    assert (_READS, "resource::NETWORK::https://n/a") not in _io_edges(
+        memgraph_ingestor
+    )
+
+
 def test_block_scoped_local_does_not_over_shadow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -339,13 +339,45 @@ class IOAccessProcessor:
                 continue
             if node.type == descriptor.block_scope_type:
                 continue
-            if (
-                node.type == descriptor.declarator_type
-                and (name := self._named_child_text(node, descriptor)) is not None
-            ):
-                names.add(name)
+            if node.type == descriptor.declarator_type:
+                names |= self._declarator_names(node, descriptor)
             stack.extend(node.named_children)
         return names
+
+    def _declarator_names(
+        self, declarator: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # (H) The local names a declarator binds: a plain `const fs = ...` binds one
+        # (H) identifier; a destructuring `const { writeFileSync } = ...` /
+        # (H) `const { get: g } = ...` / `const [fetch] = ...` binds the pattern's
+        # (H) leaves. All are collected so they shadow a same-named builtin.
+        name = declarator.child_by_field_name(cs.TS_FIELD_NAME)
+        names: set[str] = set()
+        if name is not None:
+            self._pattern_names(name, descriptor, names)
+        return names
+
+    def _pattern_names(
+        self, node: Node, descriptor: LanguageDescriptor, out: set[str]
+    ) -> None:
+        node_type = node.type
+        if node_type in (
+            descriptor.identifier_type,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if node.text:
+                out.add(node.text.decode(cs.ENCODING_UTF8))
+        elif node_type == cs.TS_PAIR_PATTERN:
+            # (H) `{ key: local }` binds the VALUE (local), not the property key.
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                self._pattern_names(value, descriptor, out)
+        elif node_type in (
+            cs.TS_OBJECT_PATTERN,
+            cs.TS_ARRAY_PATTERN,
+            cs.TS_REST_PATTERN,
+        ):
+            for child in node.named_children:
+                self._pattern_names(child, descriptor, out)
 
     def _param_names(
         self, caller_node: Node, descriptor: LanguageDescriptor

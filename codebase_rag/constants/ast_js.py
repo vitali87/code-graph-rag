@@ -169,6 +169,8 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
 
 # (H) JS/TS module system node types
 TS_OBJECT_PATTERN = "object_pattern"
+TS_ARRAY_PATTERN = "array_pattern"
+TS_REST_PATTERN = "rest_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_PAIR_PATTERN = "pair_pattern"
 TS_FUNCTION_DECLARATION = "function_declaration"
