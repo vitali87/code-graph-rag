@@ -16,6 +16,7 @@ from .constants import (
     IODirection,
     ResourceKind,
 )
+from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
@@ -59,16 +60,22 @@ class IOAccessProcessor:
     ) -> None:
         if not self._enabled:
             return
-        # (H) ponytail: Python-only in phase 1; other languages need their own
-        # (H) node types, add when their IO_SINKS tables land.
-        if language != cs.SupportedLanguage.PYTHON:
-            return
         sinks = IO_SINKS.get(language, ())
         constructors = IO_HANDLE_CONSTRUCTORS.get(language, ())
         if not sinks and not constructors:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         sink_by_name = {s.callee: s for s in sinks}
+        # (H) Non-Python languages take a lean direct-sink walk (issue #714): match
+        # (H) call sinks and emit, without Python's handle/scope machinery (streams
+        # (H) and data-flow are a follow-up). Python keeps the full handle-aware walk.
+        if language != cs.SupportedLanguage.PYTHON:
+            descriptor = LANGUAGE_DESCRIPTORS.get(language)
+            if descriptor is not None:
+                self._emit_direct_sinks(
+                    caller_node, caller_spec, import_map, sink_by_name, descriptor
+                )
+            return
         ctor_by_name = {c.callee: c for c in constructors}
 
         # (H) Single forward pre-order DFS: bindings and accesses interleave in
@@ -244,6 +251,55 @@ class IOAccessProcessor:
             if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
                 handles.setdefault(bound[0], bound[1])
             stack.extend(node.children)
+
+    def _emit_direct_sinks(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Lean non-Python walk (issue #714): DFS the caller body for call sinks,
+        # (H) pruning nested definitions (their body is a separate caller) so I/O is
+        # (H) credited to the scope that runs it. No handle/stream tracking yet.
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return
+        stack = list(body.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type in descriptor.nested_scope_types:
+                continue
+            if node.type == descriptor.call_type:
+                self._emit_direct_call(
+                    node, caller_spec, import_map, sink_by_name, descriptor
+                )
+            stack.extend(node.children)
+
+    def _emit_direct_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        raw = call_name(node)
+        if raw is None:
+            return
+        sink = registry_match(sink_by_name, raw, import_map)
+        if sink is None:
+            return
+        identity = literal_target(
+            node,
+            sink.target_arg,
+            sink.target_kw,
+            string_type=descriptor.string_type,
+            content_type=descriptor.string_content_type,
+            keyword_arg_type=descriptor.keyword_arg_type,
+        )
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
 
     def _emit_call(
         self,

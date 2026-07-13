@@ -164,6 +164,9 @@ TS_WILDCARD_IMPORT = "wildcard_import"
 
 # (H) Tree-sitter JS/TS import node types
 TS_STRING = "string"
+# (H) JS/TS string literals hold their text in a string_fragment child (the
+# (H) counterpart of Python's string_content), used for I/O target extraction.
+TS_STRING_FRAGMENT = "string_fragment"
 TS_IMPORT_CLAUSE = "import_clause"
 TS_LEXICAL_DECLARATION = "lexical_declaration"
 TS_VARIABLE_DECLARATION = "variable_declaration"
