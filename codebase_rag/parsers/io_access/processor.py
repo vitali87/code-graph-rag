@@ -322,6 +322,12 @@ class IOAccessProcessor:
         # (H) module, resolved by _resolve_sink), so _block_declarations skips it;
         # (H) but a local `const fs = {}` IS a shadow, even if `fs` is imported
         # (H) module-wide, so import names are NOT blanket-removed here.
+        # (H) ponytail: order-INSENSITIVE within a block -- every declaration shadows
+        # (H) the whole block. Correct for JS (function/var hoist; const/let before
+        # (H) use is a TDZ error), but for Go's declare-at-point `:=`/`var` a local
+        # (H) declared LATER over-suppresses an earlier valid package call in the same
+        # (H) block -- a rare false NEGATIVE (redeclaring a used package name). An
+        # (H) order-sensitive walk is the upgrade if that ever matters.
         in_scope = inherited | self._block_declarations(statements, descriptor)
         stack = list(statements)
         while stack:
