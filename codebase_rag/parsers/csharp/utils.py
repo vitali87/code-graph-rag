@@ -36,6 +36,32 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     return types
 
 
+def extension_receiver_type(method_node: Node) -> str | None:
+    # (H) For an extension method, the normalized type of its receiver: the first
+    # (H) parameter, whose first modifier is `this` (`static int WordCount(this
+    # (H) string s)` -> "string"). Only extension methods carry `this` on a
+    # (H) parameter, so its presence both identifies the method and names the
+    # (H) receiver type a call binds against (`s.WordCount()`). Returns None for a
+    # (H) non-extension method.
+    param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if param_list is None:
+        return None
+    first = next(
+        (c for c in param_list.children if c.type == cs.TS_CSHARP_PARAMETER), None
+    )
+    if first is None:
+        return None
+    has_this = any(
+        c.type == cs.TS_CSHARP_MODIFIER and safe_decode_text(c) == cs.TS_CSHARP_THIS
+        for c in first.children
+    )
+    if not has_this:
+        return None
+    type_node = first.child_by_field_name(cs.FIELD_TYPE)
+    name = safe_decode_text(type_node) if type_node and type_node.text else None
+    return _normalize_type_name(name) if name else None
+
+
 def build_field_type_map(class_node: Node) -> dict[str, str]:
     # (H) {field-or-property name: type name} for members declared directly on
     # (H) this class body, recorded at ingestion so a receiver typed to a field
