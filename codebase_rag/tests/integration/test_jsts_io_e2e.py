@@ -170,6 +170,22 @@ def test_aliased_builtin_import_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_module_import_plus_local_shadow_emits_no_edge(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `fs` imported module-wide, but a function-local `const fs = {}` shadows it;
+    # (H) the local object is not Node's fs, so no FILE edge (a module import must
+    # (H) not blanket-cancel a genuine local shadow of the same name).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from 'fs';\n\n\n"
+        "function save(d) {\n  const fs = {};\n  fs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") not in _io_edges(memgraph_ingestor)
+
+
 def test_node_prefixed_builtin_import_still_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

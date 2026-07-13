@@ -65,6 +65,21 @@ def call_name(call_node: Node) -> str | None:
     return fn.text.decode(cs.ENCODING_UTF8)
 
 
+def is_require_alias(declarator: Node, call_type: str) -> bool:
+    # (H) A `const fs = require('fs')` declarator binds an import alias (the genuine
+    # (H) module), not a shadowing local, so it must not count as a local shadow --
+    # (H) unlike `const fs = {}`, which does. Detected by a `require(...)` value.
+    value = declarator.child_by_field_name(cs.FIELD_VALUE)
+    if value is None or value.type != call_type:
+        return False
+    fn = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return (
+        fn is not None
+        and fn.text is not None
+        and fn.text.decode(cs.ENCODING_UTF8) == cs.JS_REQUIRE_KEYWORD
+    )
+
+
 def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     if name is None:
         return None
@@ -134,7 +149,13 @@ def literal_target(
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return DYNAMIC_TARGET
-    positional = [c for c in args.named_children if c.type != keyword_arg_type]
+    # (H) Exclude keyword args and comment nodes (tree-sitter keeps comments as
+    # (H) named children) so the positional index maps to the real argument.
+    positional = [
+        c
+        for c in args.named_children
+        if c.type not in (keyword_arg_type, cs.TS_COMMENT)
+    ]
     if arg_index is not None and arg_index < len(positional):
         return string_literal(positional[arg_index], string_type, content_type)
     if arg_keyword is not None:
