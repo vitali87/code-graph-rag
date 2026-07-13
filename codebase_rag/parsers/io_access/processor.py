@@ -427,14 +427,16 @@ class IOAccessProcessor:
     def _declarator_names(
         self, declarator: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
-        # (H) The local names a declarator binds: a plain `const fs = ...` binds one
-        # (H) identifier; a destructuring `const { writeFileSync } = ...` /
-        # (H) `const { get: g } = ...` / `const [fetch] = ...` binds the pattern's
-        # (H) leaves. All are collected so they shadow a same-named builtin.
-        name = declarator.child_by_field_name(cs.TS_FIELD_NAME)
+        # (H) The local names a declarator binds: JS `const fs = ...` / destructuring
+        # (H) uses the `name` field; Go `os := ...` uses the `left` field (an
+        # (H) expression_list of identifiers). All are collected so they shadow a
+        # (H) same-named builtin/package.
+        target = declarator.child_by_field_name(
+            cs.TS_FIELD_NAME
+        ) or declarator.child_by_field_name(cs.FIELD_LEFT)
         names: set[str] = set()
-        if name is not None:
-            self._pattern_names(name, descriptor, names)
+        if target is not None:
+            self._pattern_names(target, descriptor, names)
         return names
 
     def _pattern_names(
@@ -451,10 +453,15 @@ class IOAccessProcessor:
             # (H) `{ key: local }` binds the VALUE (local), not the property key.
             if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
                 self._pattern_names(value, descriptor, out)
+        elif node_type == cs.TS_GO_PARAMETER_DECLARATION:
+            # (H) Go `func f(os Config)`: the `name` field(s) are the bound locals.
+            for child in node.children_by_field_name(cs.TS_FIELD_NAME):
+                self._pattern_names(child, descriptor, out)
         elif node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,
             cs.TS_REST_PATTERN,
+            cs.TS_GO_EXPRESSION_LIST,
         ):
             for child in node.named_children:
                 self._pattern_names(child, descriptor, out)
@@ -463,9 +470,10 @@ class IOAccessProcessor:
         self, caller_node: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
         # (H) Parameter names bound in the whole function body. A param is a bare
-        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), or a
-        # (H) TS `required_parameter` wrapper whose `pattern` field holds either --
-        # (H) all handled by _pattern_names, unwrapping the TS wrapper first.
+        # (H) identifier, a destructuring pattern (`function f({ http }) {}`), a TS
+        # (H) `required_parameter` wrapper whose `pattern` field holds either, or a Go
+        # (H) `parameter_declaration` (`os Config`) -- all handled by _pattern_names,
+        # (H) unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:

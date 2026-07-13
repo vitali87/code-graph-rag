@@ -102,3 +102,30 @@ def test_third_party_go_package_named_http_no_edge(
     assert (_READS, "resource::NETWORK::https://api.example.com/x") not in _io_edges(
         memgraph_ingestor
     )
+
+
+def test_go_local_shadows_package(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Go allows a local to shadow an imported package name; `os` bound locally
+    # (H) is not the stdlib package, so os.Getenv here must not emit an ENV read.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport "os"\n\n'
+        'func f(os Config) {\n\tos.Getenv("SECRET")\n}\n',
+    )
+    assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
+
+
+def test_go_short_var_shadows_package(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A `:=` local named `os` shadows the package within the function.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport "os"\n\n'
+        'func f() {\n\tos := load()\n\tos.Getenv("SECRET")\n}\n',
+    )
+    assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
