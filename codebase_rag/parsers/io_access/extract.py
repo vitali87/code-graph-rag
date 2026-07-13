@@ -96,11 +96,15 @@ def registry_match[T](
     return None
 
 
-def string_literal(arg: Node | None) -> str:
-    if arg is None or arg.type != cs.TS_PY_STRING:
+def string_literal(
+    arg: Node | None,
+    string_type: str = cs.TS_PY_STRING,
+    content_type: str = cs.TS_PY_STRING_CONTENT,
+) -> str:
+    if arg is None or arg.type != string_type:
         return DYNAMIC_TARGET
     for child in arg.named_children:
-        if child.type == cs.TS_PY_STRING_CONTENT and child.text is not None:
+        if child.type == content_type and child.text is not None:
             return child.text.decode(cs.ENCODING_UTF8)
     return DYNAMIC_TARGET
 
@@ -117,16 +121,24 @@ def keyword_value(args: Node, keyword: str) -> Node | None:
 
 
 def literal_target(
-    call_node: Node, arg_index: int | None, arg_keyword: str | None = None
+    call_node: Node,
+    arg_index: int | None,
+    arg_keyword: str | None = None,
+    *,
+    string_type: str = cs.TS_PY_STRING,
+    content_type: str = cs.TS_PY_STRING_CONTENT,
+    keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT,
 ) -> str:
     if arg_index is None and arg_keyword is None:
         return DYNAMIC_TARGET
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return DYNAMIC_TARGET
-    positional = [c for c in args.named_children if c.type != cs.TS_PY_KEYWORD_ARGUMENT]
+    positional = [c for c in args.named_children if c.type != keyword_arg_type]
     if arg_index is not None and arg_index < len(positional):
-        return string_literal(positional[arg_index])
+        return string_literal(positional[arg_index], string_type, content_type)
     if arg_keyword is not None:
-        return string_literal(keyword_value(args, arg_keyword))
+        return string_literal(
+            keyword_value(args, arg_keyword), string_type, content_type
+        )
     return DYNAMIC_TARGET
