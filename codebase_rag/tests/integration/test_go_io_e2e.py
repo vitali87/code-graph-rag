@@ -86,3 +86,19 @@ def test_go_aliased_import_emits(
     assert (_READS, "resource::NETWORK::https://api.example.com/x") in _io_edges(
         memgraph_ingestor
     )
+
+
+def test_third_party_go_package_named_http_no_edge(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A third-party package whose path ends in `http` is NOT net/http; keying on
+    # (H) the full import path keeps it from matching the stdlib http.Get sink.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport "example.com/foo/http"\n\n'
+        'func fetch() {\n\thttp.Get("https://api.example.com/x")\n}\n',
+    )
+    assert (_READS, "resource::NETWORK::https://api.example.com/x") not in _io_edges(
+        memgraph_ingestor
+    )

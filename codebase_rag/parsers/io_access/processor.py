@@ -493,9 +493,7 @@ class IOAccessProcessor:
         raw = call_name(node)
         if raw is None:
             return
-        sink = self._resolve_sink(
-            raw, import_map, sink_by_name, local_names, descriptor.path_based_imports
-        )
+        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
         if sink is None:
             return
         identity = literal_target(
@@ -514,7 +512,6 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         local_names: frozenset[str],
-        path_based_imports: bool,
     ) -> IOSink | None:
         # (H) Match a JS/TS call against the sink table, respecting shadowing:
         # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
@@ -525,23 +522,18 @@ class IOAccessProcessor:
         # (H)    resolves to the genuine module (a builtin maps `fs` -> `fs` /
         # (H)    `fs.default` / `node:fs...`; a local `import fs from './x'` maps it
         # (H)    elsewhere, so its raw `fs.writeFileSync` must not fire).
-        head, sep, rest = raw.partition(cs.SEPARATOR_DOT)
+        head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
             return None
-        # (H) A named import may resolve to `node:fs.writeFileSync`; the registry keys
-        # (H) on the bare module, so try the node:-stripped form too.
+        # (H) The import-normalised name matches first: a JS named import may resolve
+        # (H) to `node:fs.writeFileSync` (node:-stripped too), and a Go call resolves
+        # (H) through its package path (`http.Get` -> `net/http.Get`, aliases included),
+        # (H) which the registry keys on -- so a third-party pkg named `http` misses.
         if (sink := match_normalised(raw, import_map, sink_by_name)) is not None:
             return sink
         if not sep:
             return None
-        base = import_map.get(head)
-        if path_based_imports and base is not None:
-            # (H) Go imports resolve to a package PATH (`h -> net/http`); the registry
-            # (H) keys on the package name, so match `<last-path-segment>.<method>`.
-            # (H) This covers both a plain `http.Get` and an aliased `import h "net/http"`.
-            package = base.split(cs.SEPARATOR_DOT)[0].rsplit("/", 1)[-1]
-            return sink_by_name.get(f"{package}{cs.SEPARATOR_DOT}{rest}")
-        if not head_is_genuine_module(base, head):
+        if not head_is_genuine_module(import_map.get(head), head):
             return None
         return sink_by_name.get(raw)
 

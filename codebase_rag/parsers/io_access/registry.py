@@ -159,9 +159,13 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
 )
 
-# (H) Go direct-call I/O sinks (issue #714). Keyed by the selector callee text
-# (H) (`os.Getenv`, `fmt.Println`, `http.Get`); the package name (os/fmt/http) is
-# (H) the import, matched via normalise/raw fallback. Go has no keyword args, so the
+# (H) Go direct-call I/O sinks (issue #714). Keyed by the FULL import path plus the
+# (H) function (`os.Getenv`, `net/http.Get`, `io/ioutil.ReadFile`), because a Go call
+# (H) `http.Get` resolves through import_map to its package path (`http -> net/http`)
+# (H) and match_normalised keys on that. Using the full path (not the bare package
+# (H) name) is what distinguishes the stdlib `net/http` from a third-party package
+# (H) that also happens to be named `http`, and it handles import aliases for free
+# (H) (`import h "net/http"` -> h resolves to net/http). Go has no keyword args, so the
 # (H) path/url is positional arg 0. Handle-returning calls (`os.Open`) are treated as
 # (H) a direct read/write of the path (stream handles are a follow-up); log.* and
 # (H) fmt.Fprint* (writer-targeted) are follow-ups.
@@ -170,18 +174,18 @@ _GO_SINKS: tuple[IOSink, ...] = (
     IOSink("os.LookupEnv", ResourceKind.ENV, IODirection.READ, target_arg=0),
     IOSink("os.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
     IOSink("os.Open", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink("ioutil.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("io/ioutil.ReadFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
     IOSink("os.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("os.Create", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("os.Remove", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
-    IOSink("ioutil.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("io/ioutil.WriteFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("fmt.Print", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("fmt.Println", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("fmt.Printf", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("http.Get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
-    IOSink("http.Head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
-    IOSink("http.Post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
-    IOSink("http.PostForm", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("net/http.Get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("net/http.Head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("net/http.Post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    IOSink("net/http.PostForm", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {

@@ -36,10 +36,6 @@ class LanguageDescriptor:
     object_field: str
     property_field: str
     subscript_index_field: str
-    # (H) Go imports resolve to a package PATH (`net/http`), whose package name is the
-    # (H) last segment (`http`); JS import bases have `/` normalised to `.`, so the
-    # (H) last-path-segment fallback for a genuine-module match must be Go-only.
-    path_based_imports: bool
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -65,7 +61,6 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.FIELD_OBJECT,
     property_field=cs.FIELD_PROPERTY,
     subscript_index_field=cs.TS_FIELD_INDEX,
-    path_based_imports=False,
 )
 
 _GO_DESCRIPTOR = LanguageDescriptor(
@@ -94,7 +89,6 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.TS_GO_FIELD_OPERAND,
     property_field=cs.TS_GO_FIELD_FIELD,
     subscript_index_field=cs.TS_GO_FIELD_INDEX,
-    path_based_imports=True,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
