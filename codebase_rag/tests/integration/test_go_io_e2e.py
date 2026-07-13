@@ -129,3 +129,24 @@ def test_go_short_var_shadows_package(
         'func f() {\n\tos := load()\n\tos.Getenv("SECRET")\n}\n',
     )
     assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
+
+
+def test_go_var_and_range_shadow_package(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `var os = ...` and a `range` binding also shadow the package name.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport "os"\n\n'
+        "func f(items []string) {\n"
+        "\tvar os = load()\n"
+        '\tos.Getenv("A")\n'
+        "\tfor fmt := range items {\n"
+        '\t\tfmt.Println("x")\n'
+        "\t}\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::ENV::A") not in edges
+    assert (_WRITES, "resource::STDOUT::<dynamic>") not in edges

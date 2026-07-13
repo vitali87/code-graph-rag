@@ -29,6 +29,9 @@ class LanguageDescriptor:
     # (H) A nested block introduces a new lexical scope: const/let declared inside
     # (H) it do not shadow the enclosing scope, so declarator collection stops here.
     block_scope_type: str
+    # (H) Extra declaration node types (beyond declarator_type) whose bound names also
+    # (H) shadow a builtin -- Go's `var`/`const`/`range` specs; empty for JS/TS.
+    extra_declarator_types: frozenset[str]
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -56,6 +59,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
+    extra_declarator_types=frozenset(),
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -75,13 +79,16 @@ _GO_DESCRIPTOR = LanguageDescriptor(
             cs.TS_GO_FUNC_LITERAL,
         }
     ),
-    # (H) Go's `:=` / parameter_declaration shapes differ from JS, so the JS-shaped
-    # (H) local-name collection matches nothing for Go -- benign, since shadowing a
-    # (H) package name (`os`, `fmt`) with a local does not compile in Go.
+    # (H) Go local declarations that shadow a package name: `:=` (declarator_type),
+    # (H) `var`/`const`/`range` (extra_declarator_types), and parameters. Go DOES
+    # (H) allow a local to shadow an imported package, so these must be collected.
     identifier_type=cs.TS_GO_IDENTIFIER,
     declarator_type=cs.TS_GO_SHORT_VAR_DECLARATION,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_GO_BLOCK,
+    extra_declarator_types=frozenset(
+        {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
+    ),
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,

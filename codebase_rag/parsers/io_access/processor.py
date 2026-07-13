@@ -417,9 +417,10 @@ class IOAccessProcessor:
                 continue
             if node.type == descriptor.block_scope_type:
                 continue
-            if node.type == descriptor.declarator_type and not is_require_alias(
-                node, descriptor.call_type
-            ):
+            if (
+                node.type == descriptor.declarator_type
+                and not is_require_alias(node, descriptor.call_type)
+            ) or node.type in descriptor.extra_declarator_types:
                 names |= self._declarator_names(node, descriptor)
             stack.extend(node.named_children)
         return names
@@ -427,16 +428,15 @@ class IOAccessProcessor:
     def _declarator_names(
         self, declarator: Node, descriptor: LanguageDescriptor
     ) -> set[str]:
-        # (H) The local names a declarator binds: JS `const fs = ...` / destructuring
-        # (H) uses the `name` field; Go `os := ...` uses the `left` field (an
-        # (H) expression_list of identifiers). All are collected so they shadow a
-        # (H) same-named builtin/package.
-        target = declarator.child_by_field_name(
-            cs.TS_FIELD_NAME
-        ) or declarator.child_by_field_name(cs.FIELD_LEFT)
+        # (H) The local names a declaration binds: JS `const fs = ...` / destructuring
+        # (H) uses the `name` field; Go `var/const os = ...` also has `name` field(s),
+        # (H) while `os := ...` / `range` use the `left` field (an expression_list of
+        # (H) identifiers). All are collected so they shadow a same-named builtin.
         names: set[str] = set()
-        if target is not None:
-            self._pattern_names(target, descriptor, names)
+        for name in declarator.children_by_field_name(cs.TS_FIELD_NAME):
+            self._pattern_names(name, descriptor, names)
+        if (left := declarator.child_by_field_name(cs.FIELD_LEFT)) is not None:
+            self._pattern_names(left, descriptor, names)
         return names
 
     def _pattern_names(
