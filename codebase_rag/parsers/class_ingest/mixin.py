@@ -697,9 +697,15 @@ class ClassIngestMixin:
             return
 
         class_qn, class_name, is_exported = identity
-        class_qn = self.function_registry.register_unique_qn(
-            class_qn, class_node.start_point[0] + 1
-        )
+        if language == cs.SupportedLanguage.CSHARP:
+            # (H) Skip a leading `#if [Attr] #endif` directive so the start line is
+            # (H) the conditional attribute, not the `#if` line (matches Roslyn).
+            from ..csharp import utils as csharp_utils
+
+            class_start_line = csharp_utils.definition_start_line(class_node)
+        else:
+            class_start_line = class_node.start_point[0] + 1
+        class_qn = self.function_registry.register_unique_qn(class_qn, class_start_line)
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -711,7 +717,7 @@ class ClassIngestMixin:
             cs.KEY_NAME: class_name,
             cs.KEY_MODIFIERS: modifiers,
             cs.KEY_DECORATORS: decorators,
-            cs.KEY_START_LINE: class_node.start_point[0] + 1,
+            cs.KEY_START_LINE: class_start_line,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,

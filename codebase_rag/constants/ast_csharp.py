@@ -25,6 +25,14 @@ TS_CSHARP_RECORD_DECLARATION = "record_declaration"
 TS_CSHARP_INTERFACE_DECLARATION = "interface_declaration"
 TS_CSHARP_ENUM_DECLARATION = "enum_declaration"
 
+# (H) A conditional-compilation block wrapping a declaration's attributes
+# (H) (`#if SYMBOL [Attr] #endif`) parses as this node, which sits as the leading
+# (H) child of the declaration -- so the declaration's start_point is the `#if`
+# (H) directive line. The real first token (Roslyn's span start) is the
+# (H) attribute_list nested inside it.
+TS_CSHARP_PREPROC_IF_IN_ATTR_LIST = "preproc_if_in_attribute_list"
+TS_CSHARP_ATTRIBUTE_LIST = "attribute_list"
+
 # (H) Member declarations -> Function/Method nodes.
 TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"
@@ -126,3 +134,91 @@ TS_CSHARP_FIELD_TYPE = "type"
 # (H) synthetic name is built from these prefixes so the node still gets a qn.
 TS_CSHARP_OPERATOR_NAME_PREFIX = "operator_"
 TS_CSHARP_DESTRUCTOR_NAME_PREFIX = "~"
+
+# (H) C# reserved keywords can never be identifiers, so a member/local-function
+# (H) whose `name` field is one is a parse-recovery artifact -- e.g. a `#if`
+# (H) directive splitting an if/else chain mid-method makes tree-sitter recover
+# (H) the trailing `else if (...)` as a local_function_statement named `if`. Drop
+# (H) those instead of emitting bogus Function nodes. Contextual keywords (`record`,
+# (H) `async`, `var`, ...) ARE valid identifiers, so only the reserved set is here.
+CSHARP_RESERVED_KEYWORDS = frozenset(
+    {
+        "abstract",
+        "as",
+        "base",
+        "bool",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "checked",
+        "class",
+        "const",
+        "continue",
+        "decimal",
+        "default",
+        "delegate",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "event",
+        "explicit",
+        "extern",
+        "false",
+        "finally",
+        "fixed",
+        "float",
+        "for",
+        "foreach",
+        "goto",
+        "if",
+        "implicit",
+        "in",
+        "int",
+        "interface",
+        "internal",
+        "is",
+        "lock",
+        "long",
+        "namespace",
+        "new",
+        "null",
+        "object",
+        "operator",
+        "out",
+        "override",
+        "params",
+        "private",
+        "protected",
+        "public",
+        "readonly",
+        "ref",
+        "return",
+        "sbyte",
+        "sealed",
+        "short",
+        "sizeof",
+        "stackalloc",
+        "static",
+        "string",
+        "struct",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "uint",
+        "ulong",
+        "unchecked",
+        "unsafe",
+        "ushort",
+        "using",
+        "virtual",
+        "void",
+        "volatile",
+        "while",
+    }
+)

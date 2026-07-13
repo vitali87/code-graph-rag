@@ -6,6 +6,36 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def _first_attribute_list(node: Node) -> Node | None:
+    # (H) First attribute_list in document order anywhere under `node` (pre-order
+    # (H) DFS), so an attribute nested in an inner `#if` (a conditional block
+    # (H) inside another) is still found, not only an immediate grandchild.
+    if node.type == cs.TS_CSHARP_ATTRIBUTE_LIST:
+        return node
+    for child in node.children:
+        if (found := _first_attribute_list(child)) is not None:
+            return found
+    return None
+
+
+def definition_start_line(node: Node) -> int:
+    # (H) The 1-based line a declaration truly starts on. When its attributes are
+    # (H) wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
+    # (H) tree-sitter nests a leading preproc_if_in_attribute_list child, so the
+    # (H) declaration's own start_point is the `#if` directive line. Roslyn treats
+    # (H) the directives as trivia and starts the span at the conditional
+    # (H) attribute, so return that attribute's line (else the first non-directive
+    # (H) child's line). Falls back to the node's own start for the common case
+    # (H) with no leading directive.
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
+            if (attr_list := _first_attribute_list(child)) is not None:
+                return attr_list.start_point[0] + 1
+            continue
+        return child.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _normalize_type_name(text: str) -> str:
     # (H) Strip generic arguments (`List<int>` -> `List`), a nullable suffix
     # (H) (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
@@ -120,6 +150,11 @@ def synthesize_method_name(method_node: Node) -> str | None:
     name = safe_decode_text(name_node) if name_node and name_node.text else None
     if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
         return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + name
+    # (H) A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # (H) construct (e.g. a `#if`-split `else if` chain -> local_function named
+    # (H) `if`); it is never a real member, so drop it rather than pollute the graph.
+    if name in cs.CSHARP_RESERVED_KEYWORDS:
+        return None
     return name
 
 
