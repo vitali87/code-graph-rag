@@ -57,6 +57,7 @@ class CSharpTypeInferenceEngine:
         "class_inheritance",
         "simple_name_lookup",
         "class_field_types",
+        "csharp_partial_groups",
         "csharp_extension_methods",
     )
 
@@ -72,6 +73,7 @@ class CSharpTypeInferenceEngine:
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
+        csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
     ):
         self.import_processor = import_processor
@@ -84,6 +86,9 @@ class CSharpTypeInferenceEngine:
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
         self.class_field_types = class_field_types
+        self.csharp_partial_groups = (
+            csharp_partial_groups if csharp_partial_groups is not None else {}
+        )
         self.csharp_extension_methods = (
             csharp_extension_methods if csharp_extension_methods is not None else {}
         )
@@ -173,10 +178,12 @@ class CSharpTypeInferenceEngine:
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
         # (H) The declared type of `field_name` on class_qn or any base class,
         # (H) read from the per-class maps recorded at ingestion (so it reaches a
-        # (H) field inherited from a base in another file). BFS with a visited
+        # (H) field inherited from a base in another file). Seed the BFS with every
+        # (H) partial part of the class so a field declared on ANOTHER part
+        # (H) (`helper` on P1, used in a method on P2) is found. BFS with a visited
         # (H) guard so a malformed inheritance cycle cannot loop.
         seen: set[str] = set()
-        queue = deque([class_qn])
+        queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
             current = queue.popleft()
             if current in seen:
@@ -216,8 +223,8 @@ class CSharpTypeInferenceEngine:
         # (H) would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
         # (H) arity-correct `static Foo(this C, int)` extension.
         if receiver_class_qn is not None:
-            if arity_hit := self._find_method_by_arity(
-                receiver_class_qn, method_name, arg_count, set()
+            if arity_hit := self._find_arity_across_parts(
+                receiver_class_qn, method_name, arg_count
             ):
                 return cs.NodeLabel.METHOD.value, arity_hit
         # (H) An extension method (`static M(this T x, ...)` on an unrelated static
@@ -233,9 +240,7 @@ class CSharpTypeInferenceEngine:
         ):
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
-            if name_hit := self._find_method_by_name(
-                receiver_class_qn, method_name, set()
-            ):
+            if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
                 return cs.NodeLabel.METHOD.value, name_hit
         return None
 
@@ -446,6 +451,11 @@ class CSharpTypeInferenceEngine:
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
+            # (H) Several candidates that are all parts of ONE partial class are a
+            # (H) single logical type, not a real ambiguity; return one part (method
+            # (H) resolution then spans the whole group).
+            if part := self._single_partial_group_member(candidates):
+                return part
             # (H) Prefer a candidate in the calling file's module; ambiguity across
             # (H) unrelated files is left unresolved rather than guessed.
             same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
@@ -453,12 +463,46 @@ class CSharpTypeInferenceEngine:
                 return same_module[0]
         return None
 
-    # (H) An exact-arity match ANYWHERE up the hierarchy (_find_method_by_arity)
-    # (H) wins before any same-name fallback, so an inherited correct-arity
-    # (H) overload (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name
-    # (H) method (`Derived.Foo(int)`). resolve_csharp_method_call sequences the
-    # (H) two around the extension-method lookup so an arity-correct extension is
-    # (H) preferred over a lone-same-name instance fallback.
+    def _single_partial_group_member(self, candidates: list[str]) -> str | None:
+        # (H) If every candidate belongs to the SAME partial-class group, they are
+        # (H) one logical type; return its lexicographically-first part (stable
+        # (H) across runs). A candidate outside the group (its group is None) means
+        # (H) a genuine cross-type ambiguity, left unresolved.
+        group = self.csharp_partial_groups.get(candidates[0])
+        if group is None:
+            return None
+        if all(self.csharp_partial_groups.get(c) is group for c in candidates):
+            return min(group)
+        return None
+
+    # (H) An exact-arity match ANYWHERE up the hierarchy (_find_arity_across_parts)
+    # (H) wins before any same-name fallback, so an inherited correct-arity overload
+    # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
+    # (H) (`Derived.Foo(int)`). resolve_csharp_method_call sequences the two around
+    # (H) the extension-method lookup so an arity-correct extension is preferred over
+    # (H) a lone-same-name instance fallback. Both phases span every part of a
+    # (H) partial class (and each part's bases), so a member/base on another part
+    # (H) binds.
+    def _partial_roots(self, class_qn: str) -> list[str]:
+        return self.csharp_partial_groups.get(class_qn) or [class_qn]
+
+    def _find_arity_across_parts(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> str | None:
+        seen: set[str] = set()
+        for root in self._partial_roots(class_qn):
+            if resolved := self._find_method_by_arity(
+                root, method_name, arg_count, seen
+            ):
+                return resolved
+        return None
+
+    def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
+        seen: set[str] = set()
+        for root in self._partial_roots(class_qn):
+            if resolved := self._find_method_by_name(root, method_name, seen):
+                return resolved
+        return None
 
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"

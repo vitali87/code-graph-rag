@@ -37,6 +37,7 @@ class TypeInferenceEngine:
         "class_field_types",
         "class_field_guard_inner",
         "method_return_types",
+        "csharp_partial_groups",
         "csharp_extension_methods",
         "_java_type_inference",
         "_csharp_type_inference",
@@ -62,6 +63,7 @@ class TypeInferenceEngine:
         class_field_types: dict[str, dict[str, str]] | None = None,
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
+        csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
     ):
         self.import_processor = import_processor
@@ -91,6 +93,12 @@ class TypeInferenceEngine:
         # (H) resolver's chained-call path.
         self.method_return_types = (
             method_return_types if method_return_types is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): C# partial-class part
+        # (H) groups, populated during ingestion and read by the C# resolver to
+        # (H) span all parts of a split type.
+        self.csharp_partial_groups = (
+            csharp_partial_groups if csharp_partial_groups is not None else {}
         )
         # (H) Shared reference (as with class_field_types): C# extension-method
         # (H) index, populated during ingestion and read by the C# resolver's
@@ -156,6 +164,7 @@ class TypeInferenceEngine:
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
                 class_field_types=self.class_field_types,
+                csharp_partial_groups=self.csharp_partial_groups,
                 csharp_extension_methods=self.csharp_extension_methods,
             )
         return self._csharp_type_inference

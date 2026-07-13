@@ -86,6 +86,14 @@ class DefinitionProcessor(
         # (H) interface implementations need no modifier and are unaffected.
         self.csharp_methods: set[str] = set()
         self.csharp_override_methods: set[str] = set()
+        # (H) C# partial-class unification. A `partial` type split across files
+        # (H) becomes N path-distinct Class nodes; parts sharing a
+        # (H) namespace-qualified name are one logical type. Each part qn maps to
+        # (H) the SHARED list of all its part qns (grows as parts are ingested),
+        # (H) so member/base resolution on any part spans the whole group. The
+        # (H) private index groups parts by their namespace-qualified key.
+        self.csharp_partial_groups: dict[str, list[str]] = {}
+        self._csharp_partial_index: dict[str, list[str]] = {}
         # (H) C# extension methods indexed for call binding: {method simple name:
         # (H) [(method_qn, receiver_type_simple_name)]}. `s.WordCount()` resolves
         # (H) to a `static WordCount(this string s)` whose receiver type matches
