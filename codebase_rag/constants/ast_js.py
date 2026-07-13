@@ -173,6 +173,9 @@ TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_PAIR_PATTERN = "pair_pattern"
+# (H) `process.env.X` is a member_expression; `process.env['X']` a subscript, used
+# (H) to detect environment-variable reads (issue #714 process.env follow-up).
+TS_SUBSCRIPT_EXPRESSION = "subscript_expression"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 

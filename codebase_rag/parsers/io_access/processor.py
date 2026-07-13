@@ -24,9 +24,15 @@ from .extract import (
     normalise,
     registry_match,
     scope_seed_nodes,
+    string_literal,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
-from .registry import IO_HANDLE_CONSTRUCTORS, IO_HANDLE_METHODS, IO_SINKS
+from .registry import (
+    IO_HANDLE_CONSTRUCTORS,
+    IO_HANDLE_METHODS,
+    IO_MEMBER_READS,
+    IO_SINKS,
+)
 
 _DIRECTION_REL = {
     IODirection.READ: cs.RelationshipType.READS_FROM,
@@ -74,7 +80,12 @@ class IOAccessProcessor:
             descriptor = LANGUAGE_DESCRIPTORS.get(language)
             if descriptor is not None:
                 self._emit_direct_sinks(
-                    caller_node, caller_spec, import_map, sink_by_name, descriptor
+                    caller_node,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    IO_MEMBER_READS.get(language, ()),
+                    descriptor,
                 )
             return
         ctor_by_name = {c.callee: c for c in constructors}
@@ -259,6 +270,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
         # (H) Lean non-Python walk (issue #714): find call sinks in the caller body,
@@ -289,6 +301,7 @@ class IOAccessProcessor:
             caller_spec,
             import_map,
             sink_by_name,
+            member_reads,
             descriptor,
         )
 
@@ -299,6 +312,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
         # (H) Names in scope for calls in THESE statements: the enclosing scopes' names
@@ -326,6 +340,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    member_reads,
                     descriptor,
                 )
                 continue
@@ -333,7 +348,63 @@ class IOAccessProcessor:
                 self._emit_direct_call(
                     node, caller_spec, import_map, sink_by_name, descriptor, in_scope
                 )
+            elif member_reads and node.type in (
+                descriptor.member_expression_type,
+                descriptor.subscript_type,
+            ):
+                self._emit_member_read(
+                    node, caller_spec, member_reads, in_scope, import_map, descriptor
+                )
             stack.extend(node.named_children)
+
+    def _emit_member_read(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Env-style member reads: `process.env.X` (member) / `process.env['X']`
+        # (H) (subscript) read env var X. Match on the object prefix; skip when the
+        # (H) prefix head (`process`) is shadowed by a local binding or a non-global
+        # (H) import, mirroring the call-sink shadow rules.
+        obj = node.child_by_field_name(descriptor.object_field)
+        if obj is None or obj.text is None:
+            return
+        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        for prefix, kind in member_reads:
+            if obj_text != prefix:
+                continue
+            head = prefix.partition(cs.SEPARATOR_DOT)[0]
+            if head in in_scope:
+                return
+            base = import_map.get(head)
+            if base is not None and (
+                base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
+                != head
+            ):
+                return
+            identity = self._member_identity(node, descriptor)
+            self._emit(caller_spec, IODirection.READ, kind, identity)
+            return
+
+    def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
+        # (H) The accessed key: a member's `property` (`process.env.SECRET` -> SECRET),
+        # (H) or a subscript's string index (`process.env['T']` -> T); else <dynamic>.
+        if node.type == descriptor.member_expression_type:
+            prop = node.child_by_field_name(descriptor.property_field)
+            if prop is not None and prop.text is not None:
+                return prop.text.decode(cs.ENCODING_UTF8)
+            return DYNAMIC_TARGET
+        obj = node.child_by_field_name(descriptor.object_field)
+        for child in node.named_children:
+            if child is not obj and child.type == descriptor.string_type:
+                return string_literal(
+                    child, descriptor.string_type, descriptor.string_content_type
+                )
+        return DYNAMIC_TARGET
 
     def _block_declarations(
         self, statements: list[Node], descriptor: LanguageDescriptor
