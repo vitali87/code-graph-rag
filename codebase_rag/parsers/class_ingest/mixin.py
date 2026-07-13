@@ -432,12 +432,20 @@ class ClassIngestMixin:
                 self.import_processor.ensure_external_module_node(parent_qn)
                 external_label = cs.NodeLabel.EXTERNAL_MODULE.value
             if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
+                # (H) Dart has no `interface` keyword: `implements X` targets a
+                # (H) concrete class, so a hardcoded Interface label would dangle.
+                # (H) Resolve the target's real registered label (Interface for a
+                # (H) true interface, Class/Enum for a Dart type); external stays
+                # (H) EXTERNAL_MODULE.
+                interface_label = external_label or rel.get_node_type_for_inheritance(
+                    parent_qn, self.function_registry
+                )
                 rel.create_implements_relationship(
                     str(child_type),
                     entry.child_qn,
                     parent_qn,
                     self.ingestor,
-                    interface_label=external_label,
+                    interface_label=interface_label,
                 )
                 self.interface_implementers.setdefault(parent_qn, set()).add(
                     entry.child_qn

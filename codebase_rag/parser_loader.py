@@ -180,6 +180,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.CSHARP,
         ),
+        LanguageImport(
+            cs.SupportedLanguage.DART,
+            cs.TreeSitterModule.DART,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.DART,
+        ),
     ]
 
     loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
@@ -290,29 +296,6 @@ def _create_highlights_query(
         )
 
     return None
-
-
-def _create_tags_query(
-    language: Language, lang_name: cs.SupportedLanguage
-) -> Query | None:
-    # (H) Independent cross-validation oracle (issue #524): the community tags.scm that
-    # (H) ships inside each grammar package, NOT a copy we author. TSX shares the
-    # (H) TypeScript grammar, like highlights.
-    query_lang_name = (
-        cs.SupportedLanguage.TS if lang_name == cs.SupportedLanguage.TSX else lang_name
-    )
-    module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{query_lang_name.replace('-', '_')}"
-    try:
-        module = importlib.import_module(module_name)
-        if module.__file__ is None:
-            return None
-        path = Path(module.__file__).parent / "queries" / "tags.scm"
-        if not path.exists():
-            return None
-        return Query(language, path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.debug(f"Failed to load community tags query for {query_lang_name}: {e}")
-        return None
 
 
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
