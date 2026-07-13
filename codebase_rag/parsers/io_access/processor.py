@@ -261,62 +261,77 @@ class IOAccessProcessor:
         sink_by_name: dict[str, IOSink],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) Lean non-Python walk (issue #714): DFS the caller body for call sinks,
-        # (H) pruning nested definitions (their body is a separate caller) so I/O is
-        # (H) credited to the scope that runs it. No handle/stream tracking yet.
-        # (H) A function/method caller exposes its statements under the `body` field;
-        # (H) the module root (top-level calls) has no body field, so seed from its
-        # (H) own children instead. named_children skips anonymous punctuation, which
-        # (H) JS/TS grammars produce in bulk.
-        local_names = self._local_bindings(caller_node, descriptor, import_map)
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
-        seed = body if body is not None else caller_node
-        stack = list(seed.named_children)
+        # (H) Lean non-Python walk (issue #714): find call sinks in the caller body,
+        # (H) crediting I/O to the scope that runs it. No handle/stream tracking yet.
+        # (H) The walk is lexically scope-aware so a same-named local (`const fs`,
+        # (H) `function fetch`, a parameter) shadows the builtin ONLY where it is in
+        # (H) scope: block-scoped const/let shadow inside their own block and nested
+        # (H) blocks, never a sibling/outer use. A function/method caller exposes its
+        # (H) statements under the `body` field; the module root (top-level calls) has
+        # (H) no body field, so seed from its own children.
+        seed = caller_node.child_by_field_name(cs.FIELD_BODY) or caller_node
+        # (H) Parameters are visible in every block of the function body. Import
+        # (H) aliases (`const fs = require('fs')`) are the genuine module, resolved by
+        # (H) the import branch of _resolve_sink, so they never count as shadows.
+        params = self._param_names(caller_node, descriptor) - import_map.keys()
+        self._walk_scope(
+            seed,
+            frozenset(params),
+            caller_spec,
+            import_map,
+            sink_by_name,
+            descriptor,
+        )
+
+    def _walk_scope(
+        self,
+        block_node: Node,
+        inherited: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Names in scope for calls in THIS block: the enclosing scopes' names plus
+        # (H) this block's own const/let/function declarations (import aliases removed).
+        in_scope = (
+            inherited | self._block_declarations(block_node, descriptor)
+        ) - import_map.keys()
+        stack = list(block_node.named_children)
         while stack:
             node = stack.pop()
-            # (H) Nested defs are their own caller; skip entirely. JS default args and
-            # (H) decorators evaluate at call time in the nested scope (unlike Python's
-            # (H) definition-time headers), so crediting them here would be a false
-            # (H) positive -- full pruning is correct for these grammars.
+            # (H) Nested function/method: its own caller, walked separately.
             if node.type in descriptor.nested_scope_types:
+                continue
+            # (H) A nested { } is a child lexical scope: recurse with this block's
+            # (H) names inherited, so its declarations shadow only inside it.
+            if node.type == descriptor.block_scope_type:
+                self._walk_scope(
+                    node, in_scope, caller_spec, import_map, sink_by_name, descriptor
+                )
                 continue
             if node.type == descriptor.call_type:
                 self._emit_direct_call(
-                    node, caller_spec, import_map, sink_by_name, descriptor, local_names
+                    node, caller_spec, import_map, sink_by_name, descriptor, in_scope
                 )
             stack.extend(node.named_children)
 
-    def _local_bindings(
-        self,
-        caller_node: Node,
-        descriptor: LanguageDescriptor,
-        import_map: dict[str, str],
-    ) -> frozenset[str]:
-        # (H) Names bound in the caller's OWN scope, which shadow a same-named
-        # (H) builtin sink: the caller's parameters, plus every local `const/let/var`
-        # (H) declarator and hoisted `function` declaration in the body (nested
-        # (H) scopes pruned -- their locals are their own). Names that are import
-        # (H) aliases (e.g. `const fs = require('fs')`, recorded in import_map) are
-        # (H) NOT shadows -- they are the genuine module, handled by the import
-        # (H) branch of _is_shadowed -- so they are excluded from the result.
+    def _block_declarations(
+        self, block_node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # (H) Names declared directly in this block: const/let/var declarators and
+        # (H) hoisted `function` declarations. Nested blocks and nested functions are
+        # (H) their own scopes and are not descended into (their locals are theirs).
+        # (H) ponytail: `var` is really function-scoped, but a var redefining a
+        # (H) builtin name is rare enough to treat block-locally.
         names: set[str] = set()
-        params = caller_node.child_by_field_name(descriptor.params_field)
-        if params is not None:
-            for child in params.named_children:
-                if (name := self._binding_identifier(child, descriptor)) is not None:
-                    names.add(name)
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
-        stack = list((body or caller_node).named_children)
+        stack = list(block_node.named_children)
         while stack:
             node = stack.pop()
             if node.type in descriptor.nested_scope_types:
-                # (H) A hoisted `function foo` binds `foo` in THIS scope; record its
-                # (H) name but do not descend into its body.
                 if (name := self._named_child_text(node, descriptor)) is not None:
                     names.add(name)
                 continue
-            # (H) A nested { } block is its own lexical scope: const/let declared
-            # (H) inside it do not shadow this scope, so stop descending there.
             if node.type == descriptor.block_scope_type:
                 continue
             if (
@@ -325,7 +340,18 @@ class IOAccessProcessor:
             ):
                 names.add(name)
             stack.extend(node.named_children)
-        return frozenset(names - import_map.keys())
+        return names
+
+    def _param_names(
+        self, caller_node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        names: set[str] = set()
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is not None:
+            for child in params.named_children:
+                if (name := self._binding_identifier(child, descriptor)) is not None:
+                    names.add(name)
+        return names
 
     @staticmethod
     def _named_child_text(node: Node, descriptor: LanguageDescriptor) -> str | None:

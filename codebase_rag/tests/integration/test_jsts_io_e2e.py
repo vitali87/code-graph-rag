@@ -186,6 +186,24 @@ def test_block_scoped_local_does_not_over_shadow(
     assert (_WRITES, "resource::FILE::out.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_block_local_shadows_within_its_block(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A `const fs` used WITHIN its own block is shadowed there: no FILE edge.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function f(d) {\n"
+        "  if (d) {\n"
+        "    const fs = {};\n"
+        "    fs.writeFileSync('out.txt', d);\n"
+        "  }\n"
+        "}\n",
+    )
+    assert (_WRITES, "resource::FILE::out.txt") not in _io_edges(memgraph_ingestor)
+
+
 def test_local_declarations_shadow_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
