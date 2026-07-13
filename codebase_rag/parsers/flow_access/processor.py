@@ -34,9 +34,26 @@ from .constants import (
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 
-# (H) Live taint state threaded through the walk: variable -> the set of resource
-# (H) origins currently tainting it (empty set = tainted, origin unknown).
-type _TaintMap = dict[str, frozenset[HandleBinding]]
+
+class Taint(NamedTuple):
+    # (H) What is tainting a variable: resolved resource origins plus the set of
+    # (H) callee QNs whose (possibly not-yet-processed) return value it carries. A
+    # (H) variable is present in the taint map iff it is tainted; a purely-pending
+    # (H) taint is only really tainted once finalize resolves a pending callee to a
+    # (H) tainted return -- how forward/cross-file return-taint is recovered (712).
+    origins: frozenset[HandleBinding]
+    pending: frozenset[str]
+
+
+_EMPTY_TAINT = Taint(frozenset(), frozenset())
+
+
+def _merge_taint(a: Taint, b: Taint) -> Taint:
+    return Taint(a.origins | b.origins, a.pending | b.pending)
+
+
+# (H) Live taint state threaded through the walk: variable -> its Taint.
+type _TaintMap = dict[str, Taint]
 
 # (H) Return wrappers whose taint lives in their elements: `return (x)`,
 # (H) `return a, b`, `return [x]`. Unwrapped so a tainted identifier/call inside
@@ -93,22 +110,34 @@ class FlowProcessor:
         self._resolver = resolver
         self._selection = selection
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
-        # (H) QN -> the SET of source bindings its body can return (empty set = it
-        # (H) returns a tainted value of unknown origin, e.g. a chained return;
-        # (H) absent = it returns nothing tainted). A set, not one binding, so a
-        # (H) callee returning DIFFERENT sources on different branches carries every
-        # (H) origin across the call boundary. Consulted for return-flow so a
-        # (H) returned value keeps its origin resource(s) through the call.
-        # (H) ponytail: single-pass and source-order dependent (a callee defined
-        # (H) after its caller is missed), exactly like CallProcessor._returned_callables;
-        # (H) a finalize/fixpoint pass is the upgrade if cross-file recall matters.
-        self._returns_taint: dict[str, frozenset[HandleBinding]] = {}
+        # (H) Per-function return-taint SUMMARY collected during the walk: caller QN
+        # (H) -> the Taint it returns (resolved origins + pending callee QNs whose
+        # (H) return it forwards). Resolved to a fixpoint in finalize(), so a callee
+        # (H) defined/processed AFTER its caller (forward or cross-file) is still
+        # (H) accounted for (issue #712). Only plain data crosses the walk boundary,
+        # (H) never a tree-sitter Node (the AST cache evicts trees).
+        self._summaries: dict[str, Taint] = {}
+        # (H) Deferred emission facts, drained once in finalize() when every summary
+        # (H) is in and the fixpoint is known. Each carries only serialized data:
+        # (H) return-edge candidates (callee_type, callee_qn, caller_spec) emit a
+        # (H) return edge iff the callee turns out to return taint; resource flows
+        # (H) (pending callee QNs, sink kind, sink identity) emit origin -> sink for
+        # (H) each pending callee's resolved origins; arg edges (pending QNs,
+        # (H) caller_spec, callee_type, callee_qn, via) emit iff a pending callee
+        # (H) resolves to a tainted return.
+        self._return_edge_candidates: list[tuple[str, str, tuple[str, str, str]]] = []
+        self._deferred_resource_flows: list[
+            tuple[frozenset[str], ResourceKind, str]
+        ] = []
+        self._deferred_arg_edges: list[
+            tuple[frozenset[str], tuple[str, str, str], str, str, str]
+        ] = []
         # (H) Per-caller scratch for the return-taint summary, accumulated across
         # (H) every branch of the structured walk (a return on ANY path contributes).
         # (H) Reset at the top of each process_flow_for_caller; not reentrant (the
         # (H) call processor drives one caller at a time).
         self._acc_returns_taint = False
-        self._acc_return_sources: set[HandleBinding] = set()
+        self._acc_return_taint = _EMPTY_TAINT
 
     def process_flow_for_caller(
         self,
@@ -149,27 +178,28 @@ class FlowProcessor:
         # (H) EVERY path. Straight-line code still behaves exactly as the old flat
         # (H) walk (single path, no branches to merge).
         self._acc_returns_taint = False
-        self._acc_return_sources = set()
+        self._acc_return_taint = _EMPTY_TAINT
         # (H) Seed from the caller's own scope; on a nested def descend into its
         # (H) header only (default args/decorators/bases run in THIS scope, its
         # (H) body is a separate caller). Same scoping as io_access.
-        tainted: dict[str, frozenset[HandleBinding]] = {}
+        tainted: _TaintMap = {}
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
 
         if self._acc_returns_taint:
-            self._returns_taint[caller_qn] = frozenset(self._acc_return_sources)
+            self._summaries[caller_qn] = self._acc_return_taint
 
     @staticmethod
     def _merge(states: list[_TaintMap]) -> _TaintMap:
         # (H) MAY union across branches: a variable is tainted after the join if it
-        # (H) is tainted on ANY incoming path; its origin set is the union of the
-        # (H) origins from the paths where it is tainted. A variable absent from
-        # (H) every branch (killed/never tainted on all paths) stays absent.
+        # (H) is tainted on ANY incoming path; its origins/pending are the union of
+        # (H) those from the paths where it is tainted. A variable absent from every
+        # (H) branch (killed/never tainted on all paths) stays absent.
         out: _TaintMap = {}
         for state in states:
-            for var, origins in state.items():
-                out[var] = out.get(var, frozenset()) | origins
+            for var, taint in state.items():
+                existing = out.get(var)
+                out[var] = _merge_taint(existing, taint) if existing else taint
         return out
 
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
@@ -194,10 +224,10 @@ class FlowProcessor:
             # (H) callee->caller edge, and the body's returned-source set is the
             # (H) UNION over all returns (any branch), so branches returning
             # (H) DIFFERENT tainted sources each carry to callers of this function.
-            sources = self._return_taint_source(node, state, ctx)
-            if sources is not None:
+            returned = self._return_taint_source(node, state, ctx)
+            if returned is not None:
                 self._acc_returns_taint = True
-                self._acc_return_sources |= sources
+                self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
         # (H) Descend into children in source order (an assignment's RHS call still
         # (H) needs _apply_call for its arg edges; nested calls in args likewise).
         for child in node.children:
@@ -297,9 +327,7 @@ class FlowProcessor:
                     merged = self._walk_stmt(block, merged, ctx)
         return merged
 
-    def _apply_assignment(
-        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
-    ) -> None:
+    def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
         if (
@@ -319,21 +347,24 @@ class FlowProcessor:
             return
         if right.type == cs.TS_PY_CALL and (raw := call_name(right)) is not None:
             if seed := self._source_binding(right, raw, ctx.import_map, ctx.read_sinks):
-                tainted[lhs] = frozenset({seed})
+                tainted[lhs] = Taint(frozenset({seed}), frozenset())
                 return
             callee = self._resolve(
                 raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
             )
-            if callee is not None and callee[1] in self._returns_taint:
-                tainted[lhs] = self._returns_taint[callee[1]]
-                self._emit_return_edge(callee, ctx.caller_spec)
+            if callee is not None:
+                # (H) Defer: mark lhs pending on the callee's return and record a
+                # (H) candidate return edge. finalize() decides whether the callee
+                # (H) really returns taint, so a callee processed later still counts.
+                self._return_edge_candidates.append(
+                    (callee[0], callee[1], ctx.caller_spec)
+                )
+                tainted[lhs] = Taint(frozenset(), frozenset({callee[1]}))
                 return
-        # (H) Any other RHS (literal, expression, untainted call) leaves lhs clean.
+        # (H) Any other RHS (literal, expression, unresolved call) leaves lhs clean.
         tainted.pop(lhs, None)
 
-    def _apply_call(
-        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
-    ) -> None:
+    def _apply_call(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         raw = call_name(node)
         if raw is None:
             return
@@ -344,13 +375,17 @@ class FlowProcessor:
         if sink is not None:
             dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
             for arg_name, _via in arg_names:
-                # (H) One resource->resource edge per known origin of the tainted
-                # (H) arg; an empty set (tainted, unknown origin) emits nothing.
-                for source in tainted.get(arg_name, frozenset()):
+                taint = tainted.get(arg_name)
+                if taint is None:
+                    continue
+                # (H) Resolved origins emit resource flows now; pending callees defer
+                # (H) to finalize, when the (possibly forward) callee's origins resolve.
+                for source in taint.origins:
                     self._emit_resource_flow(source, sink.kind, dst_identity)
-            return
-        vias = [via for arg_name, via in arg_names if arg_name in tainted]
-        if not vias:
+                if taint.pending:
+                    self._deferred_resource_flows.append(
+                        (taint.pending, sink.kind, dst_identity)
+                    )
             return
         callee = self._resolve(
             raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
@@ -358,45 +393,59 @@ class FlowProcessor:
         if callee is None:
             return
         callee_type, callee_qn = callee
-        for via in vias:
-            self.ingestor.ensure_relationship_batch(
-                ctx.caller_spec,
-                cs.RelationshipType.FLOWS_TO,
-                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-            )
+        for arg_name, via in arg_names:
+            taint = tainted.get(arg_name)
+            if taint is None:
+                continue
+            if taint.origins:
+                # (H) Definitely tainted arg: emit the caller->callee arg edge now.
+                self.ingestor.ensure_relationship_batch(
+                    ctx.caller_spec,
+                    cs.RelationshipType.FLOWS_TO,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                )
+            elif taint.pending:
+                # (H) Tainted only via a pending callee: defer, so no arg edge is
+                # (H) emitted if that callee turns out to return nothing tainted.
+                self._deferred_arg_edges.append(
+                    (taint.pending, ctx.caller_spec, callee_type, callee_qn, via)
+                )
 
     def _return_taint_source(
-        self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
-    ) -> frozenset[HandleBinding] | None:
-        # (H) The origin set this return yields, or None if it returns nothing
-        # (H) tainted. An empty set means tainted-but-unknown-origin. `return a, b`
-        # (H) unwraps to several value nodes; their origins union.
-        sources: set[HandleBinding] = set()
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        # (H) The Taint this return yields, or None if it returns nothing tainted.
+        # (H) `return a, b` unwraps to several value nodes; their taints union. A
+        # (H) directly-returned callee is deferred (pending) exactly like an
+        # (H) assigned one, so finalize() resolves it after every summary is in.
+        result = _EMPTY_TAINT
         tainted_here = False
         for child in _return_value_nodes(node):
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
-                if name in tainted:
+                if (taint := tainted.get(name)) is not None:
                     tainted_here = True
-                    sources |= tainted[name]
+                    result = _merge_taint(result, taint)
             elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
                 if seed := self._source_binding(
                     child, raw, ctx.import_map, ctx.read_sinks
                 ):
                     tainted_here = True
-                    sources.add(seed)
+                    result = _merge_taint(result, Taint(frozenset({seed}), frozenset()))
                     continue
                 callee = self._resolve(
                     raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
                 )
-                if callee is not None and callee[1] in self._returns_taint:
-                    # (H) A directly-returned tainted callee flows into this caller
-                    # (H) exactly like an assigned one, so emit its return edge.
-                    self._emit_return_edge(callee, ctx.caller_spec)
+                if callee is not None:
+                    self._return_edge_candidates.append(
+                        (callee[0], callee[1], ctx.caller_spec)
+                    )
                     tainted_here = True
-                    sources |= self._returns_taint[callee[1]]
-        return frozenset(sources) if tainted_here else None
+                    result = _merge_taint(
+                        result, Taint(frozenset(), frozenset({callee[1]}))
+                    )
+        return result if tainted_here else None
 
     def _emit_return_edge(
         self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
@@ -408,6 +457,70 @@ class FlowProcessor:
             caller_spec,
             properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
         )
+
+    def finalize(self) -> None:
+        # (H) Called once after every function has been walked (issue #712): resolve
+        # (H) the per-function return-taint summaries to a fixpoint, then drain the
+        # (H) deferred facts. A callee processed AFTER its caller is now known, so a
+        # (H) forward/cross-file return edge and the resource flow it carries appear.
+        # (H) All emitted edges are MERGE-idempotent, so re-emitting an edge the
+        # (H) inline walk already produced (backward case) is harmless.
+        if not self._enabled:
+            return
+        resolved, is_tainted = self._resolve_summaries()
+        for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
+            if is_tainted.get(callee_qn):
+                self._emit_return_edge((callee_type, callee_qn), caller_spec)
+        for pending, sink_kind, sink_identity in self._deferred_resource_flows:
+            for callee_qn in pending:
+                for origin in resolved.get(callee_qn, frozenset()):
+                    self._emit_resource_flow(origin, sink_kind, sink_identity)
+        for (
+            pending,
+            caller_spec,
+            callee_type,
+            callee_qn,
+            via,
+        ) in self._deferred_arg_edges:
+            if any(is_tainted.get(p) for p in pending):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.FLOWS_TO,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                )
+        # (H) One-shot per run: clear so a reused processor never re-emits.
+        self._return_edge_candidates.clear()
+        self._deferred_resource_flows.clear()
+        self._deferred_arg_edges.clear()
+
+    def _resolve_summaries(
+        self,
+    ) -> tuple[dict[str, frozenset[HandleBinding]], dict[str, bool]]:
+        # (H) Fixpoint over the serialized summaries: a function's resolved origins
+        # (H) are its own plus every pending callee's resolved origins, and it is
+        # (H) tainted if it has an origin or any pending callee is tainted. Origins
+        # (H) and taintedness only grow, so this converges even through recursion;
+        # (H) the pass count bounds the longest return-forwarding chain.
+        resolved = {qn: summary.origins for qn, summary in self._summaries.items()}
+        is_tainted = {
+            qn: bool(summary.origins) for qn, summary in self._summaries.items()
+        }
+        for _ in range(len(self._summaries) + 1):
+            changed = False
+            for qn, summary in self._summaries.items():
+                new_origins = resolved[qn]
+                new_tainted = is_tainted[qn]
+                for callee_qn in summary.pending:
+                    new_origins = new_origins | resolved.get(callee_qn, frozenset())
+                    new_tainted = new_tainted or is_tainted.get(callee_qn, False)
+                if new_origins != resolved[qn] or new_tainted != is_tainted[qn]:
+                    resolved[qn] = new_origins
+                    is_tainted[qn] = new_tainted
+                    changed = True
+            if not changed:
+                break
+        return resolved, is_tainted
 
     @staticmethod
     def _source_binding(

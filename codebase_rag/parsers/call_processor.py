@@ -3566,6 +3566,12 @@ class CallProcessor:
                     )
                 )
 
+    def finalize_flow(self) -> None:
+        # (H) Resolve deferred FLOWS_TO return-taint once every function body has
+        # (H) been walked, so a callee processed after its caller still contributes
+        # (H) its return edge and resource flow (issue #712).
+        self._flow_processor.finalize()
+
     def finalize_callable_param_flow(self) -> None:
         # (H) Resolve the recorded call-site argument bindings to a fixpoint and emit a
         # (H) CALLS edge from every function that invokes a callable parameter to each
