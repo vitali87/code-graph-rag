@@ -138,6 +138,22 @@ def test_commonjs_require_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_aliased_builtin_import_still_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `const myfs = require('fs')` aliases the real builtin under a new name;
+    # (H) import normalization resolves myfs.writeFileSync -> fs.writeFileSync, so
+    # (H) it must still emit (the alias is not a shadowing local module).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "const myfs = require('fs');\n\n\n"
+        "function save(d) {\n  myfs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
 def test_node_prefixed_builtin_import_still_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -21,6 +21,7 @@ from .extract import (
     call_name,
     definition_header_nodes,
     literal_target,
+    normalise,
     registry_match,
     scope_seed_nodes,
 )
@@ -354,9 +355,9 @@ class IOAccessProcessor:
         local_names: frozenset[str],
     ) -> None:
         raw = call_name(node)
-        if raw is None or self._is_shadowed(raw, import_map, local_names):
+        if raw is None:
             return
-        sink = registry_match(sink_by_name, raw, import_map)
+        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
         if sink is None:
             return
         identity = literal_target(
@@ -370,28 +371,39 @@ class IOAccessProcessor:
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
     @staticmethod
-    def _is_shadowed(
-        raw: str, import_map: dict[str, str], local_names: frozenset[str]
-    ) -> bool:
-        # (H) A sink matches only when its name refers to the genuine builtin. The
-        # (H) head (dotted `fs.writeFileSync`) or the whole bare name (`fetch`) is
-        # (H) shadowed when it is bound locally, or when it is imported from a module
-        # (H) whose base is not itself (a real builtin import maps `fs` -> `fs` /
-        # (H) `fs.default`; a local `import fs from './x'` maps it elsewhere).
+    def _resolve_sink(
+        raw: str,
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        local_names: frozenset[str],
+    ) -> IOSink | None:
+        # (H) Match a JS/TS call against the sink table, respecting shadowing:
+        # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
+        # (H)    parameter) is never the builtin -> no match.
+        # (H)  - the import-normalised name is tried first, so an ALIASED builtin
+        # (H)    (`const myfs = require('fs')` -> myfs.x resolves to fs.x) matches.
+        # (H)  - the raw dotted name is a last resort, allowed only when the head
+        # (H)    resolves to the genuine module (a builtin maps `fs` -> `fs` /
+        # (H)    `fs.default` / `node:fs...`; a local `import fs from './x'` maps it
+        # (H)    elsewhere, so its raw `fs.writeFileSync` must not fire).
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
-            return True
+            return None
+        normalised = normalise(raw, import_map)
+        if (
+            normalised is not None
+            and (sink := sink_by_name.get(normalised)) is not None
+        ):
+            return sink
         if not sep:
-            return False
+            return None
         base = import_map.get(head)
-        if base is None:
-            return False
-        # (H) `import fs from 'node:fs'` is a genuine builtin; strip the node: prefix
-        # (H) so the modern form is not mistaken for a shadowing local module.
-        base_module = base.split(cs.SEPARATOR_DOT)[0].removeprefix(
-            cs.NODE_BUILTIN_PREFIX
+        head_is_builtin = (
+            base is None
+            or base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
+            == head
         )
-        return base_module != head
+        return sink_by_name.get(raw) if head_is_builtin else None
 
     def _emit_call(
         self,
