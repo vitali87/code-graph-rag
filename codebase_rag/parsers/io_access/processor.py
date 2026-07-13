@@ -293,7 +293,12 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
     ) -> None:
         # (H) Names in scope for calls in THIS block: the enclosing scopes' names plus
-        # (H) this block's own const/let/function declarations (import aliases removed).
+        # (H) this block's own const/let/function declarations (import aliases removed,
+        # (H) since they are the genuine module, resolved by _resolve_sink).
+        # (H) ponytail: import_map is module-scoped, so a block-local `require` alias
+        # (H) leaks module-wide -- but using such a name outside its block is a runtime
+        # (H) ReferenceError (dead code), so its edge precision is not modeled. Per-scope
+        # (H) import tracking is the upgrade if that ever matters.
         in_scope = (
             inherited | self._block_declarations(block_node, descriptor)
         ) - import_map.keys()
