@@ -2,6 +2,7 @@
 
 from .ast_cpp import *  # noqa: F403
 from .ast_csharp import *  # noqa: F403
+from .ast_dart import *  # noqa: F403
 from .ast_go import *  # noqa: F403
 from .ast_java import *  # noqa: F403
 from .ast_js import *  # noqa: F403

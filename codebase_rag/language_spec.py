@@ -184,6 +184,21 @@ def _csharp_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
+def _dart_get_name(node: Node) -> str | None:
+    # (H) Most Dart declarations expose a `name` field (functions, getters,
+    # (H) setters, classes, enums, extensions). Constructors/factories and mixins
+    # (H) do not: their LAST bare `identifier` child is the declared name
+    # (H) (`C.named` -> `named`, `factory C.create` -> `create`, `mixin Swimmer`
+    # (H) -> `Swimmer`, a default constructor `C(...)` -> `C`).
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node and name_node.text:
+        return name_node.text.decode(cs.ENCODING_UTF8)
+    ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
+    if ids:
+        return ids[-1].text.decode(cs.ENCODING_UTF8)
+    return None
+
+
 PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
@@ -268,6 +283,13 @@ CSHARP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+DART_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_DART_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_DART_FUNCTION_TYPES),
+    get_name=_dart_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -282,6 +304,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
+    cs.SupportedLanguage.DART: DART_FQN_SPEC,
 }
 
 
@@ -593,6 +616,21 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (invocation_expression) @call
         (object_creation_expression) @call
         """,
+    ),
+    cs.SupportedLanguage.DART: LanguageSpec(
+        language=cs.SupportedLanguage.DART,
+        file_extensions=cs.DART_EXTENSIONS,
+        function_node_types=cs.SPEC_DART_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_DART_CLASS_TYPES,
+        module_node_types=cs.SPEC_DART_MODULE_TYPES,
+        # (H) No call node types: the tree-sitter-dart grammar has no
+        # (H) call-expression node (a call is an identifier plus a following
+        # (H) `argument_part`/`selector`), so cgr emits no Dart CALLS edges.
+        # (H) Names come from _dart_get_name (bare captures); the signature/body
+        # (H) split is repaired by dart_definition_end_point at ingestion.
+        call_node_types=cs.SPEC_DART_CALL_TYPES,
+        import_node_types=cs.SPEC_DART_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_DART_IMPORT_TYPES,
     ),
 }
 

@@ -12,6 +12,7 @@ DEPENDENCY_FILES = frozenset(
         "go.mod",
         "gemfile",
         "composer.json",
+        "pubspec.yaml",
     }
 )
 CSPROJ_SUFFIX = ".csproj"
@@ -52,6 +53,14 @@ GO_KEYWORD_MODULE = "module"
 GO_MOD_COMMENT_PREFIX = "//"
 DEP_FILE_GEMFILE = "gemfile"
 DEP_FILE_COMPOSER = "composer.json"
+DEP_FILE_PUBSPEC = "pubspec.yaml"
+
+# (H) pubspec.yaml dependency blocks; a `name: spec` under one of these top-level
+# (H) keys is a package, while a nested block (`flutter:\n    sdk: flutter`) has no
+# (H) inline version and is recorded name-only.
+PUBSPEC_DEP_KEYS = frozenset({"dependencies", "dev_dependencies"})
+PUBSPEC_COMMENT_PREFIX = "#"
+PUBSPEC_KEY_SEP = ":"
 
 # (H) Go.mod parsing patterns
 GOMOD_REQUIRE_BLOCK_START = "require ("

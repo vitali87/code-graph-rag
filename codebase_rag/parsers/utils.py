@@ -678,6 +678,14 @@ def _js_ts_field_member_name(
     return safe_decode_text(name_node)
 
 
+def _method_end_line(node: ASTNode, language: cs.SupportedLanguage | None) -> int:
+    if language == cs.SupportedLanguage.DART:
+        from .dart import dart_definition_end_point
+
+        return dart_definition_end_point(node)[0] + 1
+    return node.end_point[0] + 1
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -714,6 +722,13 @@ def ingest_method(
         method_name = csharp_utils.synthesize_method_name(method_node)
         if not method_name:
             return None
+    elif language == cs.SupportedLanguage.DART:
+        # (H) Constructors/factories expose no `name` field; take the last bare
+        # (H) identifier (`factory C.empty` -> `empty`) so they are not dropped.
+        from .dart import dart_get_name
+
+        if not (method_name := dart_get_name(method_node)):
+            return None
     elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # (H) A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # (H) field on the function node; take the binding name from the enclosing
@@ -747,7 +762,9 @@ def ingest_method(
         cs.KEY_MODIFIERS: modifiers,
         cs.KEY_DECORATORS: decorators,
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
-        cs.KEY_END_LINE: method_node.end_point[0] + 1,
+        # (H) Dart method signatures end before their sibling function_body;
+        # (H) extend the span over the body (no-op for other languages).
+        cs.KEY_END_LINE: _method_end_line(method_node, language),
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
         cs.KEY_IS_EXPORTED: (
             export_detection.is_exported(method_node, method_name, language)
