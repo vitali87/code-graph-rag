@@ -25,6 +25,14 @@ TS_CSHARP_RECORD_DECLARATION = "record_declaration"
 TS_CSHARP_INTERFACE_DECLARATION = "interface_declaration"
 TS_CSHARP_ENUM_DECLARATION = "enum_declaration"
 
+# (H) A conditional-compilation block wrapping a declaration's attributes
+# (H) (`#if SYMBOL [Attr] #endif`) parses as this node, which sits as the leading
+# (H) child of the declaration -- so the declaration's start_point is the `#if`
+# (H) directive line. The real first token (Roslyn's span start) is the
+# (H) attribute_list nested inside it.
+TS_CSHARP_PREPROC_IF_IN_ATTR_LIST = "preproc_if_in_attribute_list"
+TS_CSHARP_ATTRIBUTE_LIST = "attribute_list"
+
 # (H) Member declarations -> Function/Method nodes.
 TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"

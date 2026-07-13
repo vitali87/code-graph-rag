@@ -740,11 +740,18 @@ def ingest_method(
     else:
         method_name = text.decode(cs.ENCODING_UTF8)
 
+    if language == cs.SupportedLanguage.CSHARP:
+        # (H) Skip a leading `#if [Attr] #endif` directive so the start line is the
+        # (H) conditional attribute, not the `#if` line (matches Roslyn's span).
+        from .csharp import utils as csharp_utils
+
+        method_start_line = csharp_utils.definition_start_line(method_node)
+    else:
+        method_start_line = method_node.start_point[0] + 1
+
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_node.start_point[0] + 1
-        )
+        method_qn = function_registry.register_unique_qn(method_qn, method_start_line)
 
     decorators = []
     modifiers = []
@@ -761,7 +768,7 @@ def ingest_method(
         cs.KEY_NAME: method_name,
         cs.KEY_MODIFIERS: modifiers,
         cs.KEY_DECORATORS: decorators,
-        cs.KEY_START_LINE: method_node.start_point[0] + 1,
+        cs.KEY_START_LINE: method_start_line,
         # (H) Dart method signatures end before their sibling function_body;
         # (H) extend the span over the body (no-op for other languages).
         cs.KEY_END_LINE: _method_end_line(method_node, language),
