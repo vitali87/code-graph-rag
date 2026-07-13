@@ -267,7 +267,7 @@ class IOAccessProcessor:
         # (H) the module root (top-level calls) has no body field, so seed from its
         # (H) own children instead. named_children skips anonymous punctuation, which
         # (H) JS/TS grammars produce in bulk.
-        local_names = self._local_bindings(caller_node, descriptor)
+        local_names = self._local_bindings(caller_node, descriptor, import_map)
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         seed = body if body is not None else caller_node
         stack = list(seed.named_children)
@@ -286,13 +286,18 @@ class IOAccessProcessor:
             stack.extend(node.named_children)
 
     def _local_bindings(
-        self, caller_node: Node, descriptor: LanguageDescriptor
+        self,
+        caller_node: Node,
+        descriptor: LanguageDescriptor,
+        import_map: dict[str, str],
     ) -> frozenset[str]:
         # (H) Names bound in the caller's OWN scope, which shadow a same-named
         # (H) builtin sink: the caller's parameters, plus every local `const/let/var`
         # (H) declarator and hoisted `function` declaration in the body (nested
-        # (H) scopes pruned -- their locals are their own). No import entry exists
-        # (H) for these, so without this a local `fetch`/`fs` would match the sink.
+        # (H) scopes pruned -- their locals are their own). Names that are import
+        # (H) aliases (e.g. `const fs = require('fs')`, recorded in import_map) are
+        # (H) NOT shadows -- they are the genuine module, handled by the import
+        # (H) branch of _is_shadowed -- so they are excluded from the result.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
@@ -315,7 +320,7 @@ class IOAccessProcessor:
             ):
                 names.add(name)
             stack.extend(node.named_children)
-        return frozenset(names)
+        return frozenset(names - import_map.keys())
 
     @staticmethod
     def _named_child_text(node: Node, descriptor: LanguageDescriptor) -> str | None:

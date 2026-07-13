@@ -121,6 +121,23 @@ def test_real_builtin_import_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_commonjs_require_still_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `const fs = require('fs')` binds fs via a declarator, but it is an import
+    # (H) alias (tracked in import_map), not a shadowing local -- it must still emit.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function save(d) {\n"
+        "  const fs = require('fs');\n"
+        "  fs.writeFileSync('a.txt', d);\n"
+        "}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
 def test_node_prefixed_builtin_import_still_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
