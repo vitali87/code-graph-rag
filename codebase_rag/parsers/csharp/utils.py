@@ -6,6 +6,25 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def definition_start_line(node: Node) -> int:
+    # (H) The 1-based line a declaration truly starts on. When its attributes are
+    # (H) wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
+    # (H) tree-sitter nests a leading preproc_if_in_attribute_list child, so the
+    # (H) declaration's own start_point is the `#if` directive line. Roslyn treats
+    # (H) the directives as trivia and starts the span at the conditional
+    # (H) attribute, so return that attribute's line (else the first non-directive
+    # (H) child's line). Falls back to the node's own start for the common case
+    # (H) with no leading directive.
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
+            for grandchild in child.children:
+                if grandchild.type == cs.TS_CSHARP_ATTRIBUTE_LIST:
+                    return grandchild.start_point[0] + 1
+            continue
+        return child.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _normalize_type_name(text: str) -> str:
     # (H) Strip generic arguments (`List<int>` -> `List`), a nullable suffix
     # (H) (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
