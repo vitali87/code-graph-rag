@@ -33,6 +33,7 @@ TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
 # (H) `interpreted_string_literal_content` child; `index_expression`/operand+field are
 # (H) the selector/subscript node shapes (only used by member-access reads, which Go
 # (H) has none of, so they are inert placeholders here).
+TS_GO_IDENTIFIER = "identifier"
 TS_GO_BLOCK = "block"
 TS_GO_INTERPRETED_STRING = "interpreted_string_literal"
 TS_GO_INTERPRETED_STRING_CONTENT = "interpreted_string_literal_content"

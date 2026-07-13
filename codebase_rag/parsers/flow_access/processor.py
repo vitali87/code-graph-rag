@@ -468,13 +468,17 @@ class FlowProcessor:
             return None
         if (sink := match_normalised(raw, jc.flow.import_map, sink_map)) is not None:
             return sink
-        if not sep or not head_is_genuine_module(jc.flow.import_map.get(head), head):
+        if not sep or not head_is_genuine_module(
+            jc.flow.import_map.get(head), head, jc.descriptor.path_based_imports
+        ):
             return None
         return sink_map.get(raw)
 
     @staticmethod
     def _js_import_shadowed(head: str, jc: _JsCtx) -> bool:
-        return not head_is_genuine_module(jc.flow.import_map.get(head), head)
+        return not head_is_genuine_module(
+            jc.flow.import_map.get(head), head, jc.descriptor.path_based_imports
+        )
 
     def _js_local_names(
         self, caller_node: Node, descriptor: LanguageDescriptor

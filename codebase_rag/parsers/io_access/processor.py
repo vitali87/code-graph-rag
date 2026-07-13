@@ -493,7 +493,9 @@ class IOAccessProcessor:
         raw = call_name(node)
         if raw is None:
             return
-        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
+        sink = self._resolve_sink(
+            raw, import_map, sink_by_name, local_names, descriptor.path_based_imports
+        )
         if sink is None:
             return
         identity = literal_target(
@@ -512,6 +514,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         local_names: frozenset[str],
+        path_based_imports: bool,
     ) -> IOSink | None:
         # (H) Match a JS/TS call against the sink table, respecting shadowing:
         # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
@@ -531,7 +534,7 @@ class IOAccessProcessor:
             return sink
         if not sep:
             return None
-        if not head_is_genuine_module(import_map.get(head), head):
+        if not head_is_genuine_module(import_map.get(head), head, path_based_imports):
             return None
         return sink_by_name.get(raw)
 

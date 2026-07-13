@@ -111,17 +111,22 @@ def registry_match[T](
     return None
 
 
-def head_is_genuine_module(base: str | None, head: str) -> bool:
+def head_is_genuine_module(
+    base: str | None, head: str, allow_path_segment: bool = False
+) -> bool:
     # (H) True when `head` names the genuine imported module (so its raw dotted call
     # (H) may match a sink). None base = an unimported global. Otherwise the import
     # (H) base's module identity must equal head: drop any member suffix and node:
-    # (H) scheme, then accept either the whole name (JS `fs`) or its last path segment
-    # (H) (Go's `net/http` package is `http`). A local `import fs from './fake'`
-    # (H) resolves elsewhere and is correctly rejected (issue #714).
+    # (H) scheme. For path-based imports (Go: `net/http` -> package `http`) the last
+    # (H) path segment is also accepted; JS normalises `/` to `.` in bases, so its
+    # (H) `memfs/fs` -> `memfs.fs...` (module `memfs`) is correctly rejected. A local
+    # (H) `import fs from './fake'` also resolves elsewhere and is rejected (#714).
     if base is None:
         return True
     module = base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX)
-    return module == head or module.rsplit("/", 1)[-1] == head
+    if module == head:
+        return True
+    return allow_path_segment and module.rsplit("/", 1)[-1] == head
 
 
 def match_normalised[T](
