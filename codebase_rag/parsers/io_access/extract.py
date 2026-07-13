@@ -122,7 +122,7 @@ def match_normalised[T](
     if normalised is None:
         return None
     hit = mapping.get(normalised)
-    if hit is None:
+    if hit is None and normalised.startswith(cs.NODE_BUILTIN_PREFIX):
         hit = mapping.get(normalised.removeprefix(cs.NODE_BUILTIN_PREFIX))
     return hit
 
