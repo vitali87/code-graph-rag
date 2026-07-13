@@ -150,3 +150,16 @@ def test_go_var_and_range_shadow_package(
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::A") not in edges
     assert (_WRITES, "resource::STDOUT::<dynamic>") not in edges
+
+
+def test_go_unimported_package_name_no_edge(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A package-scope `var os` (NOT an import of stdlib os) must not match the
+    # (H) os.Getenv sink; Go stdlib packages are always imported.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nvar os Config\n\nfunc f() {\n\tos.Getenv("SECRET")\n}\n',
+    )
+    assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)

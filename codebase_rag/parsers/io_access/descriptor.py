@@ -32,6 +32,10 @@ class LanguageDescriptor:
     # (H) Extra declaration node types (beyond declarator_type) whose bound names also
     # (H) shadow a builtin -- Go's `var`/`const`/`range` specs; empty for JS/TS.
     extra_declarator_types: frozenset[str]
+    # (H) True when a dotted sink call requires its head to be an imported package
+    # (H) (Go always imports stdlib; a package-scope `var os` is not the stdlib os).
+    # (H) False for JS/TS, whose sinks include unimported globals (`console`, `fetch`).
+    sinks_require_import: bool
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -60,6 +64,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
     extra_declarator_types=frozenset(),
+    sinks_require_import=False,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -89,6 +94,7 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     extra_declarator_types=frozenset(
         {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
     ),
+    sinks_require_import=True,
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,

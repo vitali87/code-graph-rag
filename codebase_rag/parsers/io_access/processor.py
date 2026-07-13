@@ -507,7 +507,9 @@ class IOAccessProcessor:
         raw = call_name(node)
         if raw is None:
             return
-        sink = self._resolve_sink(raw, import_map, sink_by_name, local_names)
+        sink = self._resolve_sink(
+            raw, import_map, sink_by_name, local_names, descriptor.sinks_require_import
+        )
         if sink is None:
             return
         identity = literal_target(
@@ -526,8 +528,9 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         local_names: frozenset[str],
+        sinks_require_import: bool,
     ) -> IOSink | None:
-        # (H) Match a JS/TS call against the sink table, respecting shadowing:
+        # (H) Match a JS/TS/Go call against the sink table, respecting shadowing:
         # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
         # (H)    parameter) is never the builtin -> no match.
         # (H)  - the import-normalised name is tried first, so an ALIASED builtin
@@ -538,6 +541,10 @@ class IOAccessProcessor:
         # (H)    elsewhere, so its raw `fs.writeFileSync` must not fire).
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
+            return None
+        # (H) Go stdlib is always imported, so a dotted sink whose package head is
+        # (H) NOT imported (e.g. a package-scope `var os`) is not the stdlib package.
+        if sinks_require_import and sep and head not in import_map:
             return None
         # (H) The import-normalised name matches first: a JS named import may resolve
         # (H) to `node:fs.writeFileSync` (node:-stripped too), and a Go call resolves
