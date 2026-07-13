@@ -208,6 +208,28 @@ def test_comment_in_arguments_does_not_break_flow(
     )
 
 
+def test_comment_before_sink_target_keeps_identity(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A comment before the sink's target argument must not shift the positional
+    # (H) index used for the resource identity (literal_target filters comments).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function sync() {\n"
+        "  const data = fetch('https://api.example.com/x');\n"
+        "  fs.writeFileSync(/* path */ 'out.txt', data);\n"
+        "}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::NETWORK::https://api.example.com/x",
+        "resource::FILE::out.txt",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_typescript_typed_param_shadows_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -134,7 +134,13 @@ def literal_target(
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return DYNAMIC_TARGET
-    positional = [c for c in args.named_children if c.type != keyword_arg_type]
+    # (H) Exclude keyword args and comment nodes (tree-sitter keeps comments as
+    # (H) named children) so the positional index maps to the real argument.
+    positional = [
+        c
+        for c in args.named_children
+        if c.type not in (keyword_arg_type, cs.TS_COMMENT)
+    ]
     if arg_index is not None and arg_index < len(positional):
         return string_literal(positional[arg_index], string_type, content_type)
     if arg_keyword is not None:
