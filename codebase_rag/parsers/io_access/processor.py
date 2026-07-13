@@ -267,6 +267,7 @@ class IOAccessProcessor:
         # (H) the module root (top-level calls) has no body field, so seed from its
         # (H) own children instead. named_children skips anonymous punctuation, which
         # (H) JS/TS grammars produce in bulk.
+        local_names = self._local_bindings(caller_node, descriptor)
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         seed = body if body is not None else caller_node
         stack = list(seed.named_children)
@@ -280,9 +281,63 @@ class IOAccessProcessor:
                 continue
             if node.type == descriptor.call_type:
                 self._emit_direct_call(
-                    node, caller_spec, import_map, sink_by_name, descriptor
+                    node, caller_spec, import_map, sink_by_name, descriptor, local_names
                 )
             stack.extend(node.named_children)
+
+    def _local_bindings(
+        self, caller_node: Node, descriptor: LanguageDescriptor
+    ) -> frozenset[str]:
+        # (H) Names bound in the caller's OWN scope, which shadow a same-named
+        # (H) builtin sink: the caller's parameters, plus every local `const/let/var`
+        # (H) declarator and hoisted `function` declaration in the body (nested
+        # (H) scopes pruned -- their locals are their own). No import entry exists
+        # (H) for these, so without this a local `fetch`/`fs` would match the sink.
+        names: set[str] = set()
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is not None:
+            for child in params.named_children:
+                if (name := self._binding_identifier(child, descriptor)) is not None:
+                    names.add(name)
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        stack = list((body or caller_node).named_children)
+        while stack:
+            node = stack.pop()
+            if node.type in descriptor.nested_scope_types:
+                # (H) A hoisted `function foo` binds `foo` in THIS scope; record its
+                # (H) name but do not descend into its body.
+                if (name := self._named_child_text(node, descriptor)) is not None:
+                    names.add(name)
+                continue
+            if (
+                node.type == descriptor.declarator_type
+                and (name := self._named_child_text(node, descriptor)) is not None
+            ):
+                names.add(name)
+            stack.extend(node.named_children)
+        return frozenset(names)
+
+    @staticmethod
+    def _named_child_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        name = node.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.type == descriptor.identifier_type and name.text:
+            return name.text.decode(cs.ENCODING_UTF8)
+        return None
+
+    @staticmethod
+    def _binding_identifier(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        # (H) A parameter is either a bare identifier or a typed/patterned wrapper
+        # (H) whose `pattern` field holds the identifier (TS required_parameter).
+        if node.type == descriptor.identifier_type and node.text:
+            return node.text.decode(cs.ENCODING_UTF8)
+        pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if (
+            pattern is not None
+            and pattern.type == descriptor.identifier_type
+            and pattern.text
+        ):
+            return pattern.text.decode(cs.ENCODING_UTF8)
+        return None
 
     def _emit_direct_call(
         self,
@@ -291,9 +346,10 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
     ) -> None:
         raw = call_name(node)
-        if raw is None or self._head_is_shadowed(raw, import_map):
+        if raw is None or self._is_shadowed(raw, import_map, local_names):
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
@@ -309,13 +365,17 @@ class IOAccessProcessor:
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
     @staticmethod
-    def _head_is_shadowed(raw: str, import_map: dict[str, str]) -> bool:
-        # (H) A dotted sink like `fs.writeFileSync` is only real I/O when `fs` is the
-        # (H) genuine module. A real builtin import maps the head to itself (`fs` /
-        # (H) `fs.default`), but importing `fs` from a LOCAL module maps it to a
-        # (H) project-qualified base, so the raw-dotted registry fallback must not
-        # (H) fire. A bare or unimported head is trusted (issue #714 precision).
+    def _is_shadowed(
+        raw: str, import_map: dict[str, str], local_names: frozenset[str]
+    ) -> bool:
+        # (H) A sink matches only when its name refers to the genuine builtin. The
+        # (H) head (dotted `fs.writeFileSync`) or the whole bare name (`fetch`) is
+        # (H) shadowed when it is bound locally, or when it is imported from a module
+        # (H) whose base is not itself (a real builtin import maps `fs` -> `fs` /
+        # (H) `fs.default`; a local `import fs from './x'` maps it elsewhere).
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
+        if (head if sep else raw) in local_names:
+            return True
         if not sep:
             return False
         base = import_map.get(head)

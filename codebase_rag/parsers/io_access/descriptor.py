@@ -21,6 +21,11 @@ class LanguageDescriptor:
     # (H) Nested definitions whose body is a separate caller: the walk prunes them
     # (H) so a nested function's I/O is not credited to the enclosing one.
     nested_scope_types: frozenset[str]
+    # (H) Local-binding detection so a name declared in the caller scope (a local
+    # (H) `const fs`, `function fetch`, or a parameter) shadows the builtin sink.
+    identifier_type: str
+    declarator_type: str
+    params_field: str
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -37,6 +42,9 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
             cs.TS_METHOD_DEFINITION,
         }
     ),
+    identifier_type=cs.TS_PY_IDENTIFIER,
+    declarator_type=cs.TS_VARIABLE_DECLARATOR,
+    params_field=cs.TS_FIELD_PARAMETERS,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own

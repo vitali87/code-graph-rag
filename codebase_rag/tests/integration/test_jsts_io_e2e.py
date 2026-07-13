@@ -119,3 +119,27 @@ def test_real_builtin_import_still_emits(
         "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
     )
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
+def test_local_declarations_shadow_sinks(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Names bound locally are not the builtins: a local `const fs`, a local
+    # (H) `function fetch`, and a `http` parameter must all suppress the sink match
+    # (H) (issue #714 precision -- no import entry exists for these).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function run(http) {\n"
+        "  const fs = {};\n"
+        "  function fetch(u) {}\n"
+        "  fs.writeFileSync('x.txt', d);\n"
+        "  fetch('https://n/a');\n"
+        "  http.get('https://n/b');\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_WRITES, "resource::FILE::x.txt") not in edges
+    assert (_READS, "resource::NETWORK::https://n/a") not in edges
+    assert (_READS, "resource::NETWORK::https://n/b") not in edges
