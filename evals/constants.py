@@ -396,6 +396,48 @@ SCALA_CLI_ARG_SEP = "--"
 JAVA_SCORES_FILENAME = "java_scores.csv"
 JAVA_DIFF_FILENAME = "java_diff.json"
 
+# (H) C# structure eval: cgr nodes graded against a Roslyn syntax-tree oracle
+# (H) (Microsoft.CodeAnalysis.CSharp, the C# analog of Go's go/ast). class/struct/
+# (H) record map to Class, interface to Interface, enum to Enum (cgr's
+# (H) determine_node_type), and members/local functions to Method/Function.
+CS_SUFFIX = ".cs"
+CSHARP_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+)
+CSHARP_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in CSHARP_SCORED_NODE_KINDS
+)
+CSHARP_ORACLE_DIRNAME = "csharp_oracle"
+CSHARP_ORACLE_PROJECT = "Oracle.csproj"
+DOTNET_BIN = "dotnet"
+DOTNET_TELEMETRY_ENV = "DOTNET_CLI_TELEMETRY_OPTOUT"
+DOTNET_NOLOGO_ENV = "DOTNET_NOLOGO"
+# (H) The oracle reads this comma-separated dir set so its file walk (and thus its
+# (H) declared-type universe used to split INHERITS/IMPLEMENTS) skips exactly the
+# (H) directories cgr's is_ignored/IGNORE_PATTERNS skips, not a smaller hardcoded
+# (H) subset that would let an ignored folder's types pollute the classification.
+CGR_IGNORE_DIRS_ENV = "CGR_IGNORE_DIRS"
+DOTNET_BUILD = "build"
+DOTNET_CONFIG_FLAG = "-c"
+DOTNET_CONFIG_RELEASE = "Release"
+DOTNET_OUTPUT_FLAG = "-o"
+DOTNET_VERBOSITY_FLAG = "--verbosity"
+DOTNET_VERBOSITY_QUIET = "quiet"
+CSHARP_ORACLE_SOURCE = "Program.cs"
+CSHARP_ORACLE_BUILD_DIRNAME = "bin/oracle"
+CSHARP_ORACLE_DLL = "Oracle.dll"
+CSHARP_ORACLE_BUILD_LOCK = ".build-lock"
+CSHARP_DEFAULT_TARGET = "."
+CSHARP_SCORES_FILENAME = "csharp_scores.csv"
+CSHARP_DIFF_FILENAME = "csharp_diff.json"
+CSHARP_ORACLE_PARSE_FAILED = (
+    "Failed to parse C# oracle JSON output: {error}\nstdout: {stdout}\nstderr: {stderr}"
+)
+
 # (H) Lua structure eval: cgr nodes graded against a luaparse oracle. Lua has no
 # (H) classes, so every function (global/local/table/method/anonymous) is Function.
 LUA_SUFFIX = ".lua"
