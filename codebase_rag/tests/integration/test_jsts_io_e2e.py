@@ -121,6 +121,21 @@ def test_real_builtin_import_still_emits(
     assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
 
 
+def test_node_prefixed_builtin_import_still_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import fs from 'node:fs'` is a genuine builtin (the modern form); the
+    # (H) node: prefix must not be mistaken for a shadowing local module.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "import fs from 'node:fs';\n\n\n"
+        "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
+    )
+    assert (_WRITES, "resource::FILE::a.txt") in _io_edges(memgraph_ingestor)
+
+
 def test_local_declarations_shadow_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

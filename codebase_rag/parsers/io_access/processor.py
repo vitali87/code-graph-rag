@@ -379,7 +379,14 @@ class IOAccessProcessor:
         if not sep:
             return False
         base = import_map.get(head)
-        return base is not None and base.split(cs.SEPARATOR_DOT)[0] != head
+        if base is None:
+            return False
+        # (H) `import fs from 'node:fs'` is a genuine builtin; strip the node: prefix
+        # (H) so the modern form is not mistaken for a shadowing local module.
+        base_module = base.split(cs.SEPARATOR_DOT)[0].removeprefix(
+            cs.NODE_BUILTIN_PREFIX
+        )
+        return base_module != head
 
     def _emit_call(
         self,
