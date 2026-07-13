@@ -34,6 +34,10 @@ from .constants import (
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 
+# (H) Live taint state threaded through the walk: variable -> the set of resource
+# (H) origins currently tainting it (empty set = tainted, origin unknown).
+type _TaintMap = dict[str, frozenset[HandleBinding]]
+
 # (H) Return wrappers whose taint lives in their elements: `return (x)`,
 # (H) `return a, b`, `return [x]`. Unwrapped so a tainted identifier/call inside
 # (H) them is still seen as a returned tainted value.
@@ -99,6 +103,12 @@ class FlowProcessor:
         # (H) after its caller is missed), exactly like CallProcessor._returned_callables;
         # (H) a finalize/fixpoint pass is the upgrade if cross-file recall matters.
         self._returns_taint: dict[str, frozenset[HandleBinding]] = {}
+        # (H) Per-caller scratch for the return-taint summary, accumulated across
+        # (H) every branch of the structured walk (a return on ANY path contributes).
+        # (H) Reset at the top of each process_flow_for_caller; not reentrant (the
+        # (H) call processor drives one caller at a time).
+        self._acc_returns_taint = False
+        self._acc_return_sources: set[HandleBinding] = set()
 
     def process_flow_for_caller(
         self,
@@ -131,43 +141,161 @@ class FlowProcessor:
             },
         )
 
-        # (H) Source-ordered pre-order walk with a live taint map: push children
-        # (H) reversed so the leftmost is visited first, giving straight-line
-        # (H) statement order. Each assignment retaints or KILLS its target, so a
-        # (H) later overwrite with an untainted value removes stale taint (no
-        # (H) monotonic false positive). ponytail: not path-sensitive; a KILL on one
-        # (H) branch of an if/else drops taint conservatively -- add a CFG pass only
-        # (H) if branch precision ever matters.
-        tainted: dict[str, frozenset[HandleBinding]] = {}
-        body_returns_taint = False
-        body_return_sources: set[HandleBinding] = set()
+        # (H) Path-sensitive MAY walk (issue #713): taint is threaded statement by
+        # (H) statement, but each if/elif/else, try/except and loop is evaluated
+        # (H) per branch against a COPY of the incoming state and unioned at the
+        # (H) merge point. So taint that survives on ANY path survives the join, and
+        # (H) a variable is killed only when reassigned to an untainted value on
+        # (H) EVERY path. Straight-line code still behaves exactly as the old flat
+        # (H) walk (single path, no branches to merge).
+        self._acc_returns_taint = False
+        self._acc_return_sources = set()
         # (H) Seed from the caller's own scope; on a nested def descend into its
         # (H) header only (default args/decorators/bases run in THIS scope, its
         # (H) body is a separate caller). Same scoping as io_access.
-        stack = list(reversed(scope_seed_nodes(caller_node)))
-        while stack:
-            node = stack.pop()
-            node_type = node.type
-            if node_type in PY_SCOPE_BOUNDARIES:
-                stack.extend(reversed(definition_header_nodes(node)))
-                continue
-            if node_type == cs.TS_PY_ASSIGNMENT:
-                self._apply_assignment(node, tainted, ctx)
-            elif node_type == cs.TS_PY_CALL:
-                self._apply_call(node, tainted, ctx)
-            elif node_type == cs.TS_PY_RETURN_STATEMENT:
-                # (H) Process every return: each `return callee()` emits its own
-                # (H) callee->caller edge, and the body's returned-source set is the
-                # (H) UNION over all returns, so branches returning DIFFERENT tainted
-                # (H) sources each carry to callers of this function.
-                sources = self._return_taint_source(node, tainted, ctx)
-                if sources is not None:
-                    body_returns_taint = True
-                    body_return_sources |= sources
-            stack.extend(reversed(node.children))
+        tainted: dict[str, frozenset[HandleBinding]] = {}
+        for node in scope_seed_nodes(caller_node):
+            tainted = self._walk_stmt(node, tainted, ctx)
 
-        if body_returns_taint:
-            self._returns_taint[caller_qn] = frozenset(body_return_sources)
+        if self._acc_returns_taint:
+            self._returns_taint[caller_qn] = frozenset(self._acc_return_sources)
+
+    @staticmethod
+    def _merge(states: list[_TaintMap]) -> _TaintMap:
+        # (H) MAY union across branches: a variable is tainted after the join if it
+        # (H) is tainted on ANY incoming path; its origin set is the union of the
+        # (H) origins from the paths where it is tainted. A variable absent from
+        # (H) every branch (killed/never tainted on all paths) stays absent.
+        out: _TaintMap = {}
+        for state in states:
+            for var, origins in state.items():
+                out[var] = out.get(var, frozenset()) | origins
+        return out
+
+    def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        node_type = node.type
+        if node_type in PY_SCOPE_BOUNDARIES:
+            # (H) Nested def/class: only its header executes in this scope.
+            for header in definition_header_nodes(node):
+                state = self._walk_stmt(header, state, ctx)
+            return state
+        if node_type == cs.TS_PY_IF_STATEMENT:
+            return self._walk_if(node, state, ctx)
+        if node_type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_WHILE_STATEMENT):
+            return self._walk_loop(node, state, ctx)
+        if node_type == cs.TS_PY_TRY_STATEMENT:
+            return self._walk_try(node, state, ctx)
+        if node_type == cs.TS_PY_ASSIGNMENT:
+            self._apply_assignment(node, state, ctx)
+        elif node_type == cs.TS_PY_CALL:
+            self._apply_call(node, state, ctx)
+        elif node_type == cs.TS_PY_RETURN_STATEMENT:
+            # (H) Process every return: each `return callee()` emits its own
+            # (H) callee->caller edge, and the body's returned-source set is the
+            # (H) UNION over all returns (any branch), so branches returning
+            # (H) DIFFERENT tainted sources each carry to callers of this function.
+            sources = self._return_taint_source(node, state, ctx)
+            if sources is not None:
+                self._acc_returns_taint = True
+                self._acc_return_sources |= sources
+        # (H) Descend into children in source order (an assignment's RHS call still
+        # (H) needs _apply_call for its arg edges; nested calls in args likewise).
+        for child in node.children:
+            state = self._walk_stmt(child, state, ctx)
+        return state
+
+    def _walk_if(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        # (H) The if-condition runs on all paths; process it in the incoming state.
+        cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
+        if cond is not None:
+            state = self._walk_stmt(cond, state, ctx)
+        branch_exits: list[_TaintMap] = []
+        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+        if consequence is not None:
+            branch_exits.append(self._walk_stmt(consequence, dict(state), ctx))
+        has_else = False
+        for clause in node.children:
+            if clause.type == cs.TS_PY_ELIF_CLAUSE:
+                elif_cond = clause.child_by_field_name(cs.TS_FIELD_CONDITION)
+                if elif_cond is not None:
+                    state = self._walk_stmt(elif_cond, state, ctx)
+                elif_body = clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+                if elif_body is not None:
+                    branch_exits.append(self._walk_stmt(elif_body, dict(state), ctx))
+            elif clause.type == cs.TS_PY_ELSE_CLAUSE:
+                has_else = True
+                else_body = clause.child_by_field_name(cs.FIELD_BODY)
+                if else_body is not None:
+                    branch_exits.append(self._walk_stmt(else_body, dict(state), ctx))
+        # (H) No else means the skip path preserves the incoming state.
+        if not has_else:
+            branch_exits.append(dict(state))
+        return self._merge(branch_exits) if branch_exits else state
+
+    def _walk_loop(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        # (H) The while-condition / for-iterable runs before the body.
+        for field in (cs.TS_FIELD_CONDITION, cs.TS_FIELD_RIGHT):
+            part = node.child_by_field_name(field)
+            if part is not None:
+                state = self._walk_stmt(part, state, ctx)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if body is not None:
+            # (H) The body runs zero or more times: union the skip path with one
+            # (H) pass, then re-run the body once from that merge so taint carried
+            # (H) from a later iteration into an earlier statement is caught.
+            # (H) ponytail: two passes, not a full fixpoint; iterate to stability
+            # (H) only if deeper loop-carried taint chains ever matter. Edges are
+            # (H) MERGE-idempotent, so the re-walk never duplicates graph edges.
+            once = self._walk_stmt(body, dict(state), ctx)
+            merged = self._merge([state, once])
+            twice = self._walk_stmt(body, dict(merged), ctx)
+            state = self._merge([state, twice])
+        for clause in node.children:
+            if clause.type == cs.TS_PY_ELSE_CLAUSE:
+                else_body = clause.child_by_field_name(cs.FIELD_BODY)
+                if else_body is not None:
+                    state = self._walk_stmt(else_body, state, ctx)
+        return state
+
+    def _walk_try(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        body_exit = (
+            self._walk_stmt(body, dict(state), ctx) if body is not None else dict(state)
+        )
+        branch_exits: list[_TaintMap] = []
+        has_else = False
+        for clause in node.children:
+            if clause.type == cs.TS_PY_EXCEPT_CLAUSE:
+                block = next(
+                    (c for c in clause.children if c.type == cs.TS_PY_BLOCK), None
+                )
+                if block is not None:
+                    # (H) An except handler can run after the try body partially
+                    # (H) executed, so seed it with union(pre, body_exit) -- taint
+                    # (H) introduced before the raise must still reach the handler.
+                    branch_exits.append(
+                        self._walk_stmt(block, self._merge([state, body_exit]), ctx)
+                    )
+            elif clause.type == cs.TS_PY_ELSE_CLAUSE:
+                has_else = True
+                else_body = clause.child_by_field_name(cs.FIELD_BODY)
+                if else_body is not None:
+                    branch_exits.append(
+                        self._walk_stmt(else_body, dict(body_exit), ctx)
+                    )
+        # (H) The try body completing normally (no else) is itself a path.
+        if not has_else:
+            branch_exits.append(body_exit)
+        merged = self._merge(branch_exits) if branch_exits else body_exit
+        for clause in node.children:
+            if clause.type == cs.TS_PY_FINALLY_CLAUSE:
+                block = next(
+                    (c for c in clause.children if c.type == cs.TS_PY_BLOCK), None
+                )
+                if block is not None:
+                    # (H) finally runs on every path: apply it to the merged state.
+                    merged = self._walk_stmt(block, merged, ctx)
+        return merged
 
     def _apply_assignment(
         self, node: Node, tainted: dict[str, frozenset[HandleBinding]], ctx: _FlowCtx
