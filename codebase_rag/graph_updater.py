@@ -875,7 +875,10 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         added = 0
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS):
+        project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
+        for row in self.ingestor.fetch_all(
+            cs.CYPHER_ALL_DEFINITION_QNS, project_params
+        ):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -921,7 +924,7 @@ class GraphUpdater:
         # (H) Module qns from unchanged files: deferred import verification and
         # (H) C++20 module-impl resolution must count them as real targets, or
         # (H) an incremental run would drop edges a clean index emits.
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS):
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -945,7 +948,10 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
-        rows = self.ingestor.fetch_all(cs.CYPHER_ALL_INHERITS)
+        rows = self.ingestor.fetch_all(
+            cs.CYPHER_ALL_INHERITS,
+            {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+        )
         for child, bases in self._rehydrated_bases_by_child(
             rows, class_inheritance
         ).items():

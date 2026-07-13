@@ -25,6 +25,7 @@ from ..types_defs import (
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .cpp import utils as cpp_utils
+from .dart import dart_definition_end_point
 from .go import utils as go_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -909,7 +910,10 @@ class FunctionIngestMixin:
             cs.KEY_MODIFIERS: modifiers,
             cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: func_node.start_point[0] + 1,
-            cs.KEY_END_LINE: func_node.end_point[0] + 1,
+            # (H) Dart splits a definition into a signature node and a sibling
+            # (H) function_body; extend the end over that body so the snippet
+            # (H) covers the whole function (no-op for every other language).
+            cs.KEY_END_LINE: dart_definition_end_point(func_node)[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }

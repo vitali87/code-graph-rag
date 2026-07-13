@@ -18,6 +18,7 @@ from ..types_defs import (
     LanguageQueries,
 )
 from .cpp_frontend.qn import build_module_qn_map
+from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
 from .go import discover_go_module_paths, resolve_go_import_path
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -393,6 +394,8 @@ class ImportProcessor:
                     self._parse_php_imports(captures, module_qn)
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
+                case cs.SupportedLanguage.DART:
+                    self._parse_dart_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
@@ -1529,6 +1532,19 @@ class ImportProcessor:
                 language=lang_config.language,
                 node_type=import_node.type,
             )
+
+    def _parse_dart_imports(self, captures: dict, module_qn: str) -> None:
+        # (H) Dart import/export/part directives carry a URI string. `dart:` and
+        # (H) `package:` targets are external (kept verbatim); relative paths and
+        # (H) part files resolve to a project-internal module qn. A `part of
+        # (H) my.library;` directive names a dotted library, not a file, so it has
+        # (H) no URI and is skipped.
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            uri = dart_extract_uri(import_node)
+            if not uri:
+                continue
+            if full_name := dart_resolve_import(uri, module_qn, self.project_name):
+                self.import_mapping[module_qn][dart_local_name(uri)] = full_name
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
