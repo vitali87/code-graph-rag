@@ -100,6 +100,19 @@ def test_rust_inlined_env_in_println(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
+def test_rust_tainted_path_name_no_over_taint(tmp_path: Path) -> None:
+    flows = _resource_flows(
+        "fn boot() {\n"
+        '    let env = std::env::var("SECRET").unwrap();\n'
+        '    println!("{}", std::env::var("CLEAN").unwrap());\n'
+        "}\n",
+        "main.rs",
+        tmp_path,
+    )
+    assert ("resource::ENV::CLEAN", "resource::STDOUT::<dynamic>") in flows
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
 def test_rust_untainted_println_no_flow(tmp_path: Path) -> None:
     flows = _resource_flows(
         'fn boot() {\n    println!("hello");\n}\n',

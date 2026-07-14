@@ -96,6 +96,28 @@ def test_rust_inlined_env_in_println(
     )
 
 
+def test_rust_tainted_path_name_no_over_taint(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A local named `env` shadows nothing in the fully-qualified `std::env::var`
+    # (H) path, and it is never printed -- only CLEAN is. The bare-identifier scan must
+    # (H) not treat the `env` path segment as the tainted local (over-taint P1).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "main.rs",
+        "fn boot() {\n"
+        '    let env = std::env::var("SECRET").unwrap();\n'
+        '    println!("{}", std::env::var("CLEAN").unwrap());\n'
+        "}\n",
+    )
+    flows = _flows(memgraph_ingestor)
+    assert _resource_flow(flows, "resource::ENV::CLEAN", "resource::STDOUT::<dynamic>")
+    assert not _resource_flow(
+        flows, "resource::ENV::SECRET", "resource::STDOUT::<dynamic>"
+    )
+
+
 def test_rust_untainted_println_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

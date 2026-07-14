@@ -678,7 +678,9 @@ class FlowProcessor:
         macro = node.child_by_field_name(cs.TS_RS_FIELD_MACRO)
         if macro is None or macro.text is None:
             return
-        sink = jc.flow.macro_sinks.get(macro.text.decode(cs.ENCODING_UTF8))
+        sink = self._js_match_sink(
+            macro.text.decode(cs.ENCODING_UTF8), jc.flow.macro_sinks, jc
+        )
         if sink is None:
             return
         for child in node.named_children:
@@ -691,7 +693,9 @@ class FlowProcessor:
     ) -> list[Taint]:
         out: list[Taint] = []
         # (H) A tainted local used directly in the macro args (bare identifier token).
-        for name in self._token_identifiers(token_tree, jc.descriptor.identifier_type):
+        for name in self._bare_arg_identifiers(
+            token_tree, jc.descriptor.identifier_type, cs.TS_RS_TOKEN_SCOPE
+        ):
             taint = tainted.get(name)
             if taint is not None:
                 out.append(taint)
@@ -719,17 +723,26 @@ class FlowProcessor:
         return out
 
     @staticmethod
-    def _token_identifiers(token_tree: Node, identifier_type: str) -> set[str]:
-        # (H) Every identifier token in a flattened macro body. Path segments of an
-        # (H) inlined call (`std`, `env`) are here too but never appear in the taint
-        # (H) map, so matching against `tainted` only picks out real tainted locals.
+    def _bare_arg_identifiers(
+        token_tree: Node, identifier_type: str, scope_separator: str
+    ) -> set[str]:
+        # (H) Identifiers in a flattened macro body that are NOT a segment of a scoped
+        # (H) path: a path segment (`std`/`env`/`var` in `std::env::var`) is adjacent to
+        # (H) a `::` token, so it is excluded and a tainted local that happens to share a
+        # (H) segment name (a local `env`) is not confused with the path (over-taint P1).
         out: set[str] = set()
-        stack = list(token_tree.children)
+        stack = [token_tree]
         while stack:
-            n = stack.pop()
-            if n.type == identifier_type and n.text:
-                out.add(n.text.decode(cs.ENCODING_UTF8))
-            stack.extend(n.children)
+            current = stack.pop()
+            kids = current.children
+            for i, child in enumerate(kids):
+                if child.type == identifier_type and child.text:
+                    prev_sep = i > 0 and kids[i - 1].type == scope_separator
+                    next_sep = i + 1 < len(kids) and kids[i + 1].type == scope_separator
+                    if not prev_sep and not next_sep:
+                        out.add(child.text.decode(cs.ENCODING_UTF8))
+                elif child.type == cs.TS_RS_TOKEN_TREE:
+                    stack.append(child)
         return out
 
     def _flow_stream(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
@@ -755,7 +768,9 @@ class FlowProcessor:
             base = left
         if base.text is None:
             return
-        sink = jc.flow.stream_sinks.get(base.text.decode(cs.ENCODING_UTF8))
+        sink = self._js_match_sink(
+            base.text.decode(cs.ENCODING_UTF8), jc.flow.stream_sinks, jc
+        )
         if sink is None:
             return
         for operand in operands:
