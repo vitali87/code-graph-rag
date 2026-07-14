@@ -171,26 +171,31 @@ def _parse_payload(stdout: str, stderr: str = "") -> BaseKindMap:
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
         return {}
-    result: BaseKindMap = {}
-    for type_fact in payload.get("types", []):
-        key = (type_fact["file"], int(type_fact["line"]))
-        kinds: dict[str, str] = {}
-        conflicting: set[str] = set()
-        for base in type_fact.get("bases", []):
-            name, kind = base["name"], base["kind"]
-            if name in kinds and kinds[name] != kind:
-                # (H) Two bases share a simple name but differ in kind (e.g.
-                # (H) `: A.Widget, B.Widget`, one class + one interface). Neither
-                # (H) the map nor split_csharp_bases can tell them apart by simple
-                # (H) name, so drop the name and let the per-base heuristic decide
-                # (H) rather than let the last-written kind silently win.
-                conflicting.add(name)
-            else:
-                kinds.setdefault(name, kind)
-        for name in conflicting:
-            kinds.pop(name, None)
-        result[key] = kinds
-    return result
+    return {
+        (type_fact["file"], int(type_fact["line"])): _base_kinds(
+            type_fact.get("bases", [])
+        )
+        for type_fact in payload.get("types", [])
+    }
+
+
+def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
+    # (H) Fold one type's bases to {simple_name: kind}. Two bases sharing a simple
+    # (H) name but differing in kind (e.g. `: A.Widget, B.Widget`, one class + one
+    # (H) interface) cannot be told apart by simple name on either side, so the
+    # (H) name is dropped and split_csharp_bases falls back to the heuristic rather
+    # (H) than letting the last-written kind silently win.
+    kinds: dict[str, str] = {}
+    conflicting: set[str] = set()
+    for base in bases:
+        name, kind = base["name"], base["kind"]
+        if name in kinds and kinds[name] != kind:
+            conflicting.add(name)
+        else:
+            kinds.setdefault(name, kind)
+    for name in conflicting:
+        kinds.pop(name, None)
+    return kinds
 
 
 def run_csharp_frontend(repo_path: Path) -> BaseKindMap:
