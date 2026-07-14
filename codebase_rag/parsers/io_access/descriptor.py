@@ -104,6 +104,39 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     subscript_index_field=cs.TS_GO_FIELD_INDEX,
 )
 
+_JAVA_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_JAVA_METHOD_INVOCATION,
+    string_type=cs.TS_JAVA_STRING_LITERAL,
+    string_content_type=cs.TS_STRING_FRAGMENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_METHOD_DECLARATION,
+            cs.TS_CONSTRUCTOR_DECLARATION,
+            cs.TS_JAVA_LAMBDA_EXPRESSION,
+        }
+    )
+    | cs.JAVA_CLASS_NODE_TYPES,
+    # (H) Java locals that shadow the `System`/`Files` global head: a
+    # (H) `variable_declarator` (`Object System = ...`), a `formal_parameter`, and an
+    # (H) `enhanced_for_statement` (for-each) loop var (extra_declarator_types).
+    identifier_type=cs.TS_PY_IDENTIFIER,
+    declarator_type=cs.TS_VARIABLE_DECLARATOR,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_JAVA_BLOCK,
+    extra_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    # (H) Java's System/Files sink heads are java.lang / java.nio globals that never
+    # (H) appear in import_map, so requiring an import would reject every sink.
+    sinks_require_import=False,
+    # (H) Inert (no IO_MEMBER_READS for Java): env access is a call. Filled with Java's
+    # (H) field_access (object/field) and array_access (index) shapes for correctness.
+    member_expression_type=cs.TS_FIELD_ACCESS,
+    subscript_type=cs.TS_JAVA_ARRAY_ACCESS,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.JAVA_FIELD_FIELD,
+    subscript_index_field=cs.JAVA_FIELD_INDEX,
+)
+
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
 # (H) handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -111,4 +144,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TSX: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
+    cs.SupportedLanguage.JAVA: _JAVA_DESCRIPTOR,
 }

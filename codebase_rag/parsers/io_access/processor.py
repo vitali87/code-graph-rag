@@ -459,8 +459,9 @@ class IOAccessProcessor:
             # (H) `{ key: local }` binds the VALUE (local), not the property key.
             if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
                 self._pattern_names(value, descriptor, out)
-        elif node_type == cs.TS_GO_PARAMETER_DECLARATION:
-            # (H) Go `func f(os Config)`: the `name` field(s) are the bound locals.
+        elif node_type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_FORMAL_PARAMETER):
+            # (H) Go `func f(os Config)` / Java `void f(Object System)`: the `name`
+            # (H) field(s) are the bound locals.
             for child in node.children_by_field_name(cs.TS_FIELD_NAME):
                 self._pattern_names(child, descriptor, out)
         elif node_type in (

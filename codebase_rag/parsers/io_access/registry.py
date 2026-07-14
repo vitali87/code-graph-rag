@@ -188,12 +188,37 @@ _GO_SINKS: tuple[IOSink, ...] = (
     IOSink("net/http.PostForm", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
 )
 
+# (H) Java direct-call I/O sinks (issue #714). Keyed by the dotted callee text
+# (H) reconstructed from `method_invocation` (`System.getenv`, `System.out.println`):
+# (H) `System` (java.lang) and `Files` (java.nio.file) are effective globals, so the
+# (H) sink table is not import-gated (sinks_require_import=False); a local named
+# (H) `System`/`Files` still shadows it. Java has no keyword args, so the env key /
+# (H) path is positional arg 0. Handle-based I/O (java.io/java.nio streams, java.sql
+# (H) Statement.execute*, HttpClient) and static-imported bare calls are a follow-up.
+_JAVA_SINKS: tuple[IOSink, ...] = (
+    IOSink("System.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("System.out.println", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.out.print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.out.printf", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.out.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.err.println", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.err.print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.err.printf", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("Files.readString", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("Files.readAllLines", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("Files.readAllBytes", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("Files.lines", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("Files.writeString", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("Files.write", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
     cs.SupportedLanguage.TS: _JS_TS_SINKS,
     cs.SupportedLanguage.TSX: _JS_TS_SINKS,
     cs.SupportedLanguage.GO: _GO_SINKS,
+    cs.SupportedLanguage.JAVA: _JAVA_SINKS,
 }
 
 # (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:
