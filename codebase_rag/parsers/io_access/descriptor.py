@@ -65,6 +65,10 @@ class LanguageDescriptor:
     # (H) where no such per-declarator ordering is needed (Go's list-assign RHS is
     # (H) evaluated wholesale; JS is hoisted).
     declaration_statement_type: str | None
+    # (H) Macro-call node whose name is matched against a per-language macro sink table
+    # (H) (Rust `println!`/`eprintln!` write STDOUT); None where the language has no such
+    # (H) macro I/O. The macro name lives in the `macro` field.
+    macro_type: str | None
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -72,6 +76,11 @@ class LanguageDescriptor:
     object_field: str
     property_field: str
     subscript_index_field: str
+    # (H) Path separator for scoped call names (Rust `::`). When set, sink resolution
+    # (H) expands the head segment through the import map on THIS separator (`use
+    # (H) std::fs; fs::write` -> `std::fs::write`) instead of the default `.`, so a bare
+    # (H) short path matches std only when its head is genuinely imported. None = `.`.
+    scope_separator: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -99,6 +108,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     hoisted_declarations=True,
     decl_in_own_initializer=True,
     declaration_statement_type=None,
+    macro_type=None,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -138,6 +148,7 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     declaration_statement_type=None,
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
+    macro_type=None,
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
     subscript_type=cs.TS_GO_INDEX_EXPRESSION,
     object_field=cs.TS_GO_FIELD_OPERAND,
@@ -178,11 +189,47 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     declaration_statement_type=cs.TS_LOCAL_VARIABLE_DECLARATION,
     # (H) Inert (no IO_MEMBER_READS for Java): env access is a call. Filled with Java's
     # (H) field_access (object/field) and array_access (index) shapes for correctness.
+    macro_type=None,
     member_expression_type=cs.TS_FIELD_ACCESS,
     subscript_type=cs.TS_JAVA_ARRAY_ACCESS,
     object_field=cs.FIELD_OBJECT,
     property_field=cs.JAVA_FIELD_FIELD,
     subscript_index_field=cs.JAVA_FIELD_INDEX,
+)
+
+_RUST_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_RS_CALL_EXPRESSION,
+    string_type=cs.TS_RS_STRING_LITERAL,
+    string_content_type=cs.TS_RS_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset({cs.TS_RS_FUNCTION_ITEM, cs.TS_RS_CLOSURE_EXPRESSION}),
+    # (H) Rust `let x = ...` binds via a `pattern` field; params via `parameter`'s
+    # (H) `pattern` field (handled by _param_names' pattern unwrap). Shadowing is inert
+    # (H) for Rust's `::`-path and macro sinks (a local can't shadow `std::fs::write`
+    # (H) or `println!`), but wired for correctness / future value-level sinks.
+    identifier_type=cs.TS_IDENTIFIER,
+    declarator_type=cs.TS_RS_LET_DECLARATION,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_RS_BLOCK,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    # (H) Rust `let` is declare-at-point and its scope starts AFTER the statement
+    # (H) (`let x = x` reads the outer x), like Go: source-order, add name after.
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=cs.TS_RS_MACRO_INVOCATION,
+    # (H) Inert (no IO_MEMBER_READS for Rust): env access is a call (`std::env::var`).
+    # (H) Filled with Rust's own field_expression / index_expression shape for
+    # (H) correctness (not Java's field_access), so a future value-level sink is right.
+    member_expression_type=cs.TS_RS_FIELD_EXPRESSION,
+    subscript_type=cs.TS_RS_INDEX_EXPRESSION,
+    object_field=cs.FIELD_VALUE,
+    property_field=cs.RS_FIELD_FIELD,
+    subscript_index_field=cs.RS_FIELD_INDEX,
+    scope_separator=cs.TS_RS_TOKEN_SCOPE,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
@@ -193,4 +240,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.TSX: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
     cs.SupportedLanguage.JAVA: _JAVA_DESCRIPTOR,
+    cs.SupportedLanguage.RUST: _RUST_DESCRIPTOR,
 }
