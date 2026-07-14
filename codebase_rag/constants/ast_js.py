@@ -168,6 +168,24 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
   (function_expression) @function_expr)
 """
 
+# (H) JS/TS control-flow node types + fields for the path-sensitive taint walk
+# (H) (issue #714 follow-up). Each if/else, loop, and try branch is evaluated against
+# (H) a COPY of the incoming taint state and unioned at the merge, so taint surviving
+# (H) on ANY path survives and a kill counts only when it happens on EVERY path. The
+# (H) values coincide with the Python grammar's but stay JS-scoped per the per-language
+# (H) constants convention.
+TS_JS_IF_STATEMENT = "if_statement"
+TS_JS_ELSE_CLAUSE = "else_clause"
+TS_JS_WHILE_STATEMENT = "while_statement"
+TS_JS_FOR_STATEMENT = "for_statement"
+TS_JS_FOR_IN_STATEMENT = "for_in_statement"
+TS_JS_TRY_STATEMENT = "try_statement"
+TS_JS_CATCH_CLAUSE = "catch_clause"
+TS_JS_FINALLY_CLAUSE = "finally_clause"
+FIELD_ALTERNATIVE = "alternative"
+FIELD_HANDLER = "handler"
+FIELD_FINALIZER = "finalizer"
+
 # (H) JS/TS module system node types
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
