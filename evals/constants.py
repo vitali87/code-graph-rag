@@ -313,12 +313,23 @@ RS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
     k.value for k in RS_SCORED_NODE_KINDS
 )
 RS_ORACLE_DIRNAME = "rs_oracle"
+RS_ORACLE_BIN = "rs_oracle"
+RS_ORACLE_BUILD_LOCK = ".build.lock"
 CARGO_BIN = "cargo"
 CARGO_RUN = "run"
+CARGO_BUILD = "build"
+CARGO_METADATA = "metadata"
+CARGO_FORMAT_VERSION = "--format-version"
+CARGO_FORMAT_VERSION_1 = "1"
+CARGO_NO_DEPS = "--no-deps"
+CARGO_META_TARGET_DIR_KEY = "target_directory"
 CARGO_RELEASE = "--release"
+CARGO_RELEASE_DIRNAME = "release"
 CARGO_MANIFEST = "--manifest-path"
 CARGO_QUIET = "-q"
 CARGO_ARG_SEP = "--"
+CARGO_SRC_DIRNAME = "src"
+CARGO_RS_GLOB = "**/*.rs"
 RS_SCORES_FILENAME = "rs_scores.csv"
 RS_DIFF_FILENAME = "rs_diff.json"
 
