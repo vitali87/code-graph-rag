@@ -352,16 +352,18 @@ class IOAccessProcessor:
                 )
             return
         # (H) Declare-at-point languages (Go, Java): a local is in scope only from its
-        # (H) own statement onward, so grow the shadow set in SOURCE ORDER. A call
+        # (H) own declaration onward, so grow the shadow set in SOURCE ORDER. A call
         # (H) BEFORE a later same-named local is the real global and still emits; the
-        # (H) local shadows only the calls that follow it. Declarations are added AFTER
-        # (H) the statement is walked, so a sink in the statement's own header (a
-        # (H) `T x = <init>`, a for-each iterable) is not shadowed by the name it binds.
-        # (H) Loop-clause vars are the exception: scoped to the BODY only, seeded there
-        # (H) via body_extra, and never leaked to sibling statements.
+        # (H) local shadows only the statements from its own on. A plain local is in
+        # (H) scope from its own initializer (JLS 6.3: `T System = System.getenv()` and
+        # (H) later comma-declarators see it), so its name is added to `live` BEFORE the
+        # (H) statement is walked. Loop-clause vars are the exception: in scope in the
+        # (H) BODY only (not the iterable header, evaluated before the var binds, nor
+        # (H) sibling statements), so they are seeded via body_extra and NOT added here.
         live = set(inherited)
         for stmt in statements:
             loop_vars = self._loop_declarations(stmt, descriptor)
+            live |= self._block_declarations([stmt], descriptor) - loop_vars
             self._walk_stmt_sinks(
                 stmt,
                 frozenset(live),
@@ -372,7 +374,6 @@ class IOAccessProcessor:
                 member_reads,
                 descriptor,
             )
-            live |= self._block_declarations([stmt], descriptor) - loop_vars
 
     def _loop_declarations(
         self, stmt: Node, descriptor: LanguageDescriptor

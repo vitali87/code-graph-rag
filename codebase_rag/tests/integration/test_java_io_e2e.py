@@ -180,6 +180,24 @@ def test_java_fully_qualified_files_emits(
     )
 
 
+def test_java_multi_declarator_second_init_shadowed(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) In `Object System = make(), x = System.getenv(...)` the first declarator binds
+    # (H) `System`, which is in scope for the second declarator's initializer (JLS 6.3),
+    # (H) so System.getenv there is the local, not the global -- no ENV read.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f() {\n"
+        '        Object System = make(), x = System.getenv("SECRET");\n'
+        "    }\n"
+        "}\n",
+    )
+    assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
+
+
 def test_java_foreach_iterable_call_not_shadowed(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
