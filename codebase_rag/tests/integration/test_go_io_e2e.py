@@ -152,6 +152,21 @@ def test_go_var_and_range_shadow_package(
     assert (_WRITES, "resource::STDOUT::<dynamic>") not in edges
 
 
+def test_go_self_referential_init_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Go scope starts AFTER the declaration (unlike Java), so in `os := os.Getenv(..)`
+    # (H) the RHS os is still the imported package -- the ENV read must emit; the new
+    # (H) local os shadows only the statements that follow.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        'package main\n\nimport "os"\n\n'
+        'func f() {\n\tos := os.Getenv("PATH")\n\t_ = os\n}\n',
+    )
+    assert (_READS, "resource::ENV::PATH") in _io_edges(memgraph_ingestor)
+
+
 def test_go_unimported_package_name_no_edge(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
