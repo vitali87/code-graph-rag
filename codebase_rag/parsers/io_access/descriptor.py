@@ -81,6 +81,11 @@ class LanguageDescriptor:
     # (H) std::fs; fs::write` -> `std::fs::write`) instead of the default `.`, so a bare
     # (H) short path matches std only when its head is genuinely imported. None = `.`.
     scope_separator: str | None = None
+    # (H) Stream-insertion sink (C++ `std::cout << x`): a binary_expression whose
+    # (H) `operator` field equals stream_sink_operator and whose left-spine base
+    # (H) (cout/cerr) is a stream sink. None where the language has no such operator I/O.
+    stream_sink_type: str | None = None
+    stream_sink_operator: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -232,6 +237,45 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     scope_separator=cs.TS_RS_TOKEN_SCOPE,
 )
 
+_CPP_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_CPP_CALL_EXPRESSION,
+    string_type=cs.TS_CPP_STRING_LITERAL,
+    string_content_type=cs.TS_CPP_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {cs.TS_CPP_FUNCTION_DEFINITION, cs.TS_CPP_LAMBDA_EXPRESSION}
+    ),
+    # (H) C++ shadowing of an I/O sink name (a local/param named `getenv`/`printf`/
+    # (H) `cout`) is pathological, so the shadow machinery is left inert: init_declarator
+    # (H) has no name/left/pattern field (-> _declarator_names yields nothing) and
+    # (H) function_definition has no direct `parameters` field (params nest under
+    # (H) declarator), so no names are collected. Plain-name matching is sound here.
+    identifier_type=cs.TS_CPP_IDENTIFIER,
+    declarator_type=cs.TS_CPP_INIT_DECLARATOR,
+    params_field=cs.KEY_PARAMETERS,
+    block_scope_type=cs.TS_CPP_COMPOUND_STATEMENT,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    # (H) C++ is declare-at-point; sinks are shadow-inert (above) so the flags below
+    # (H) never actually suppress anything.
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # (H) Inert (no IO_MEMBER_READS for C++): env access is a call (`std::getenv`).
+    # (H) Wired with C++'s own field_expression / subscript_expression shape.
+    member_expression_type=cs.TS_CPP_FIELD_EXPRESSION,
+    subscript_type=cs.TS_CPP_SUBSCRIPT_EXPRESSION,
+    object_field=cs.CPP_FIELD_ARGUMENT,
+    property_field=cs.CPP_FIELD_FIELD,
+    subscript_index_field=cs.CPP_FIELD_INDICES,
+    # (H) `std::cout << x` / `std::cerr << x` write STDOUT via the `<<` operator.
+    stream_sink_type=cs.TS_CPP_BINARY_EXPRESSION,
+    stream_sink_operator=cs.CPP_OP_LEFT_SHIFT,
+)
+
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
 # (H) handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -241,4 +285,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
     cs.SupportedLanguage.JAVA: _JAVA_DESCRIPTOR,
     cs.SupportedLanguage.RUST: _RUST_DESCRIPTOR,
+    cs.SupportedLanguage.CPP: _CPP_DESCRIPTOR,
 }

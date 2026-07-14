@@ -35,6 +35,7 @@ from .registry import (
     IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
+    IO_STREAM_SINKS,
 )
 
 _DIRECTION_REL = {
@@ -80,6 +81,9 @@ class IOAccessProcessor:
         # (H) walk to _emit_macro as a parameter (not instance state) so the processor
         # (H) stays stateless, mirroring sink_by_name.
         macro_sinks = IO_MACRO_SINKS.get(language, {})
+        # (H) Per-language stream-insertion sink table (C++ std::cout/cerr `<<`), threaded
+        # (H) the same way; empty for languages without operator I/O.
+        stream_sinks = IO_STREAM_SINKS.get(language, {})
         # (H) Non-Python languages take a lean direct-sink walk (issue #714): match
         # (H) call sinks and emit, without Python's handle/scope machinery (streams
         # (H) and data-flow are a follow-up). Python keeps the full handle-aware walk.
@@ -92,6 +96,7 @@ class IOAccessProcessor:
                     import_map,
                     sink_by_name,
                     macro_sinks,
+                    stream_sinks,
                     IO_MEMBER_READS.get(language, ()),
                     descriptor,
                 )
@@ -279,6 +284,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -310,6 +316,7 @@ class IOAccessProcessor:
             import_map,
             sink_by_name,
             macro_sinks,
+            stream_sinks,
             member_reads,
             descriptor,
         )
@@ -322,6 +329,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -357,6 +365,7 @@ class IOAccessProcessor:
                     import_map,
                     sink_by_name,
                     macro_sinks,
+                    stream_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -390,6 +399,7 @@ class IOAccessProcessor:
                     import_map,
                     sink_by_name,
                     macro_sinks,
+                    stream_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -406,6 +416,7 @@ class IOAccessProcessor:
                     import_map,
                     sink_by_name,
                     macro_sinks,
+                    stream_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -419,6 +430,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -439,6 +451,7 @@ class IOAccessProcessor:
                 import_map,
                 sink_by_name,
                 macro_sinks,
+                stream_sinks,
                 member_reads,
                 descriptor,
             )
@@ -472,6 +485,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -495,6 +509,7 @@ class IOAccessProcessor:
                     import_map,
                     sink_by_name,
                     macro_sinks,
+                    stream_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -520,6 +535,14 @@ class IOAccessProcessor:
                     descriptor,
                 )
                 continue
+            elif (
+                stream_sinks
+                and descriptor.stream_sink_type is not None
+                and node.type == descriptor.stream_sink_type
+            ):
+                # (H) A stream-insertion sink (`std::cout << x`); descend still so a call
+                # (H) sink in an inserted operand (`std::cout << getenv("X")`) is caught.
+                self._emit_stream_sink(node, caller_spec, stream_sinks, descriptor)
             elif member_reads and node.type in (
                 descriptor.member_expression_type,
                 descriptor.subscript_type,
@@ -528,6 +551,48 @@ class IOAccessProcessor:
                     node, caller_spec, member_reads, in_scope, import_map, descriptor
                 )
             stack.extend(node.named_children)
+
+    def _emit_stream_sink(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        stream_sinks: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) A `<<` chain like `std::cout << a << b` nests left-associatively:
+        # (H) (((cout << a) << b)). Act only at the TOP of the chain (parent is not
+        # (H) itself a `<<` insertion) and walk the `left` spine to the base operand; if
+        # (H) the base is a stream sink (cout/cerr), emit ONE STDOUT write. A non-stream
+        # (H) base (arithmetic `x << 2`) resolves to a non-sink and emits nothing.
+        if not self._is_stream_insertion(node, descriptor):
+            return
+        parent = node.parent
+        if parent is not None and self._is_stream_insertion(parent, descriptor):
+            return
+        base = node
+        while self._is_stream_insertion(base, descriptor):
+            left = base.child_by_field_name(cs.FIELD_LEFT)
+            if left is None:
+                return
+            base = left
+        if base.text is None:
+            return
+        sink = stream_sinks.get(base.text.decode(cs.ENCODING_UTF8))
+        if sink is not None:
+            self._emit(caller_spec, sink.direction, sink.kind, DYNAMIC_TARGET)
+
+    @staticmethod
+    def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
+        # (H) A binary_expression whose `operator` field is the stream-insertion token.
+        if node.type != descriptor.stream_sink_type:
+            return False
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return (
+            operator is not None
+            and operator.text is not None
+            and operator.text.decode(cs.ENCODING_UTF8)
+            == descriptor.stream_sink_operator
+        )
 
     def _emit_macro(
         self,
