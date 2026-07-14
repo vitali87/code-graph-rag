@@ -52,6 +52,25 @@ CSHARP_SYNTHESIZED_NAME_TYPES = frozenset(
     }
 )
 
+# (H) Declaration node types that are grammatically ONLY ever a type member -- C#
+# (H) has no top-level method/constructor/operator/property (a real top-level
+# (H) function is a local_function_statement, deliberately excluded). When a `#if`
+# (H) split truncates a class_declaration node early, tree-sitter detaches the
+# (H) following members into the namespace's declaration_list with no class
+# (H) ancestor, so the generic is_method_node ancestor walk returns False and they
+# (H) would be mislabelled module Functions. This set drives their recovery as
+# (H) Methods (function_ingest), by grammar invariant.
+CSHARP_MEMBER_ONLY_TYPES = frozenset(
+    {
+        TS_CSHARP_METHOD_DECLARATION,
+        TS_CSHARP_CONSTRUCTOR_DECLARATION,
+        TS_CSHARP_DESTRUCTOR_DECLARATION,
+        TS_CSHARP_OPERATOR_DECLARATION,
+        TS_CSHARP_CONVERSION_OPERATOR_DECLARATION,
+        TS_CSHARP_PROPERTY_DECLARATION,
+    }
+)
+
 # (H) Base spec: `class C : Base, IShape` / `interface I : IOther` /
 # (H) `enum E : byte`. A single base_list lumps the base class and interfaces
 # (H) together (unlike Java's separate superclass/super_interfaces clauses), so

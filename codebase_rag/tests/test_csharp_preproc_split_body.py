@@ -7,9 +7,20 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_relationships,
+    run_updater,
+)
 
 SKIP = "c_sharp"
+
+
+def _leaf_names(mock_ingestor: MagicMock, label: str) -> set[str]:
+    return {
+        qn.rsplit(".", 1)[-1].split("(", 1)[0]
+        for qn in get_node_names(mock_ingestor, label)
+    }
 
 
 def test_if_split_body_emits_no_keyword_named_function(
@@ -32,8 +43,126 @@ def test_if_split_body_emits_no_keyword_named_function(
     )
     run_updater(project, mock_ingestor, skip_if_missing=SKIP)
     for label in (cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value):
-        names = {
-            qn.rsplit(".", 1)[-1].split("(", 1)[0]
-            for qn in get_node_names(mock_ingestor, label)
-        }
+        names = _leaf_names(mock_ingestor, label)
         assert "if" not in names, f"{label} node named 'if' leaked from #if-split body"
+
+
+# (H) When a `#if` splits a statement deep inside a method, tree-sitter's error
+# (H) recovery can TRUNCATE the enclosing class_declaration node early; every
+# (H) member after the truncation point detaches into the namespace's
+# (H) declaration_list with no class ancestor. A C# `method_declaration` /
+# (H) `property_declaration` is grammatically only ever a type member (a real
+# (H) top-level function is a local_function_statement), so such a detached node
+# (H) is still a class method and must be emitted as a Method, never mislabelled a
+# (H) module-level Function (this was ~133 phantom Function FPs on Newtonsoft.Json,
+# (H) e.g. JsonTextReader.BlockCopyChars, a private static member). The body below
+# (H) is a reduced slice of the real JsonTextReader.ParseReadString derailment.
+_ORPHAN_MEMBER_SRC = """\
+namespace N
+{
+    public class Reader
+    {
+        private void ParseReadString(int readType)
+        {
+            switch (readType)
+            {
+                default:
+                    if (_dateParseHandling != DateParseHandling.None)
+                    {
+                        DateParseHandling dateParseHandling;
+                        if (readType == ReadType.ReadAsDateTime)
+                        {
+                            dateParseHandling = DateParseHandling.DateTime;
+                        }
+#if HAVE_DATE_TIME_OFFSET
+                        else if (readType == ReadType.ReadAsDateTimeOffset)
+                        {
+                            dateParseHandling = DateParseHandling.DateTimeOffset;
+                        }
+#endif
+                        else
+                        {
+                            dateParseHandling = _dateParseHandling;
+                        }
+
+                        if (dateParseHandling == DateParseHandling.DateTime)
+                        {
+                            if (TryParse(out DateTime dt))
+                            {
+                                SetToken(dt);
+                                return;
+                            }
+                        }
+#if HAVE_DATE_TIME_OFFSET
+                        else
+                        {
+                            if (TryParseOffset(out DateTimeOffset dt))
+                            {
+                                SetToken(dt);
+                                return;
+                            }
+                        }
+#endif
+                    }
+
+                    SetToken(_stringReference.ToString());
+                    break;
+            }
+        }
+
+        private static void BlockCopyChars(char[] src, int srcOffset)
+        {
+            const int charByteCount = 2;
+            Shift();
+            Buffer.BlockCopy(src, srcOffset, charByteCount);
+        }
+
+        private static void Shift() { }
+
+        public int Prop { get; set; }
+    }
+}
+"""
+
+
+def test_if_truncated_class_body_orphan_members_are_methods(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "cs_orphan_members"
+    project.mkdir()
+    (project / "Reader.cs").write_text(_ORPHAN_MEMBER_SRC, encoding="utf-8")
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    func_leaves = _leaf_names(mock_ingestor, cs.NodeLabel.FUNCTION.value)
+    method_leaves = _leaf_names(mock_ingestor, cs.NodeLabel.METHOD.value)
+
+    # (H) The method and property that the truncation detached from the class node
+    # (H) must be Methods, not module Functions.
+    for name in ("BlockCopyChars", "Prop"):
+        assert name not in func_leaves, f"{name} leaked as a module Function"
+        assert name in method_leaves, f"{name} missing as a Method"
+
+    # (H) They must attach to the recovered enclosing class, not orphan or vanish.
+    method_qns = get_node_names(mock_ingestor, cs.NodeLabel.METHOD.value)
+    assert any(".Reader.BlockCopyChars" in qn for qn in method_qns), method_qns
+    defines_method_targets = {
+        c.args[2][2] for c in get_relationships(mock_ingestor, "DEFINES_METHOD")
+    }
+    assert any(".Reader.BlockCopyChars" in qn for qn in defines_method_targets), (
+        defines_method_targets
+    )
+
+    # (H) A call inside the recovered method must be attributed to its Method node,
+    # (H) not a re-derived module-Function qn (which would source a dropped edge).
+    # (H) The recovery records function_locations so Pass 3 reuses the Method
+    # (H) identity; the graph audit already rejects any dangling CALLS endpoint.
+    shift_calls = [
+        c
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if ".Reader.Shift" in c.args[2][2]
+    ]
+    assert shift_calls, "expected a CALLS edge into Reader.Shift"
+    for c in shift_calls:
+        caller_label, _, caller_qn = c.args[0]
+        assert caller_label == cs.NodeLabel.METHOD.value, c.args[0]
+        assert ".Reader.BlockCopyChars" in caller_qn, caller_qn
