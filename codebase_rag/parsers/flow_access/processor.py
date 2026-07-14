@@ -101,14 +101,26 @@ class _FlowCtx(NamedTuple):
     write_sinks: dict[str, IOSink]
 
 
+# (H) Languages whose local declarations hoist to the whole function scope (JS/TS
+# (H) const/let are in the temporal dead zone before their line, so using the name
+# (H) earlier is a ReferenceError -- treating it as shadowed function-wide is safe).
+# (H) Go has no hoisting: a `:=`/`var` shadow only applies from its point forward, so
+# (H) its names are added to the live shadow set during the source-order walk instead.
+_HOISTED_DECL_LANGS = frozenset(
+    {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
+)
+
+
 class _JsCtx(NamedTuple):
     # (H) Per-caller constants for the lean non-Python flow walk (issue #714).
     flow: _FlowCtx
     descriptor: LanguageDescriptor
     member_reads: tuple[tuple[str, ResourceKind], ...]
-    # (H) Names bound in the caller scope, which shadow a same-named builtin
-    # (H) source/sink (a local `const fetch`, `function process`, a parameter).
-    local_names: frozenset[str]
+    # (H) Names that shadow a same-named builtin source/sink (a local `const fetch`, a
+    # (H) parameter, a Go `os := ...`). MUTABLE: seeded with parameters (+ hoisted
+    # (H) declarations for JS/TS) and grown with each Go binding as the walk reaches
+    # (H) it, so a later Go shadow never suppresses an earlier valid source read.
+    local_names: set[str]
 
 
 class FlowProcessor:
@@ -231,7 +243,7 @@ class FlowProcessor:
             flow=ctx,
             descriptor=descriptor,
             member_reads=member_reads,
-            local_names=self._js_local_names(caller_node, descriptor),
+            local_names=self._js_local_names(caller_node, descriptor, ctx.language),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -250,10 +262,19 @@ class FlowProcessor:
             node_type = node.type
             if node_type in descriptor.nested_scope_types:
                 continue
-            if node_type == descriptor.declarator_type:
-                self._js_bind(node, cs.TS_FIELD_NAME, cs.FIELD_VALUE, tainted, jc)
-            elif node_type == cs.TS_ASSIGNMENT_EXPRESSION:
-                self._js_bind(node, cs.FIELD_LEFT, cs.FIELD_RIGHT, tainted, jc)
+            if node_type == descriptor.declarator_type or node_type in (
+                cs.TS_ASSIGNMENT_EXPRESSION,
+                cs.TS_GO_ASSIGNMENT_STATEMENT,
+            ):
+                self._lean_bind(node, tainted, jc)
+            elif node_type in descriptor.extra_declarator_types:
+                # (H) Go `var`/`const` bind like a declarator; a `range` clause rebinds
+                # (H) its loop vars to (untainted) iteration elements, so kill any taint
+                # (H) they carried under those names before the loop.
+                if node_type == cs.TS_GO_RANGE_CLAUSE:
+                    self._lean_kill(node, tainted, jc)
+                else:
+                    self._lean_bind(node, tainted, jc)
             elif node_type == descriptor.call_type:
                 self._js_call(node, tainted, jc)
             elif node_type == cs.TS_RETURN_STATEMENT:
@@ -267,27 +288,92 @@ class FlowProcessor:
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
-    def _js_bind(
-        self,
-        node: Node,
-        target_field: str,
-        value_field: str,
-        tainted: _TaintMap,
-        jc: _JsCtx,
-    ) -> None:
-        target = node.child_by_field_name(target_field)
-        if (
-            target is None
-            or target.type != jc.descriptor.identifier_type
-            or target.text is None
-        ):
-            return
-        lhs = target.text.decode(cs.ENCODING_UTF8)
-        taint = self._js_expr_taint(node.child_by_field_name(value_field), tainted, jc)
-        if taint is not None:
-            tainted[lhs] = taint
+    def _lean_bind(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # (H) Bind LHS name(s) to their RHS taint across the grammars: JS uses a single
+        # (H) `name`/`value` (declarator) or `left`/`right` (assignment); Go uses `left`/
+        # (H) `right` expression_lists (`:=`, `=`) or `name`/`value` (`var`/`const`).
+        d = jc.descriptor
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if left is not None:
+            targets = self._lean_targets(left, d)
+            values = self._lean_values(node.child_by_field_name(cs.FIELD_RIGHT), d)
         else:
-            tainted.pop(lhs, None)
+            targets = []
+            for name in node.children_by_field_name(cs.TS_FIELD_NAME):
+                targets.extend(self._lean_targets(name, d))
+            values = self._lean_values(node.child_by_field_name(cs.FIELD_VALUE), d)
+        # (H) `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
+        # (H) all (a tuple return can't be split statically -- over-approximates err).
+        spread = len(values) == 1 and len(targets) > 1
+        # (H) Go assigns in parallel: every RHS is evaluated against the PRE-assignment
+        # (H) map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
+        # (H) all taints first, then apply, or an earlier LHS update would corrupt a
+        # (H) later RHS read of the same name.
+        computed: list[tuple[str, Taint | None]] = []
+        for index, name in enumerate(targets):
+            if name is None:
+                continue
+            rhs = (
+                values[0]
+                if spread
+                else (values[index] if index < len(values) else None)
+            )
+            computed.append((name, self._js_expr_taint(rhs, tainted, jc)))
+        for name, taint in computed:
+            if taint is not None:
+                tainted[name] = taint
+            else:
+                tainted.pop(name, None)
+        # (H) Register the bound names AFTER reading the RHS (which still saw the
+        # (H) pre-declaration scope): a Go shadow applies only from here forward.
+        self._register_shadows(targets, jc)
+
+    def _lean_kill(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return
+        names = self._lean_targets(left, jc.descriptor)
+        for name in names:
+            if name is not None:
+                tainted.pop(name, None)
+        self._register_shadows(names, jc)
+
+    @staticmethod
+    def _register_shadows(names: list[str | None], jc: _JsCtx) -> None:
+        # (H) Non-hoisted (Go) declarations grow the live shadow set as the walk
+        # (H) reaches them; JS/TS names are already seeded function-wide (and a
+        # (H) require-alias must never be registered, so skip hoisted languages).
+        if jc.flow.language in _HOISTED_DECL_LANGS:
+            return
+        for name in names:
+            if name is not None:
+                jc.local_names.add(name)
+
+    @staticmethod
+    def _lean_targets(node: Node, descriptor: LanguageDescriptor) -> list[str | None]:
+        # (H) LHS name(s): a bare identifier, or a Go expression_list of them. A
+        # (H) non-identifier target (JS destructuring, a field/index write) yields None
+        # (H) so its RHS position is still consumed but no taint var is bound.
+        if node.type == descriptor.identifier_type:
+            return [node.text.decode(cs.ENCODING_UTF8) if node.text else None]
+        if node.type == cs.TS_GO_EXPRESSION_LIST:
+            return [
+                c.text.decode(cs.ENCODING_UTF8)
+                if c.type == descriptor.identifier_type and c.text
+                else None
+                for c in node.named_children
+                if c.type != cs.TS_COMMENT
+            ]
+        return [None]
+
+    def _lean_values(
+        self, node: Node | None, descriptor: LanguageDescriptor
+    ) -> list[Node]:
+        if node is None:
+            return []
+        if node.type == cs.TS_GO_EXPRESSION_LIST:
+            return self._named_no_comments(node)
+        return [node]
 
     def _js_expr_taint(
         self, node: Node | None, tainted: _TaintMap, jc: _JsCtx
@@ -401,7 +487,27 @@ class FlowProcessor:
     def _js_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
     ) -> Taint | None:
-        return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
+        # (H) A return carries the taint of any returned value: JS `return expr` is a
+        # (H) direct child, Go `return expr` wraps it in an expression_list (and
+        # (H) `return a, b` several) -- union the taint over every returned value.
+        result: Taint | None = None
+        for expr in self._lean_return_values(node):
+            taint = self._js_expr_taint(expr, tainted, jc)
+            if taint is not None:
+                result = taint if result is None else _merge_taint(result, taint)
+        return result
+
+    @staticmethod
+    def _lean_return_values(node: Node) -> list[Node]:
+        out: list[Node] = []
+        for child in node.named_children:
+            if child.type == cs.TS_COMMENT:
+                continue
+            if child.type == cs.TS_GO_EXPRESSION_LIST:
+                out.extend(c for c in child.named_children if c.type != cs.TS_COMMENT)
+            else:
+                out.append(child)
+        return out
 
     @staticmethod
     def _named_no_comments(node: Node) -> list[Node]:
@@ -477,19 +583,25 @@ class FlowProcessor:
         return not head_is_genuine_module(jc.flow.import_map.get(head), head)
 
     def _js_local_names(
-        self, caller_node: Node, descriptor: LanguageDescriptor
-    ) -> frozenset[str]:
-        # (H) ponytail: flat collection of the caller's parameters + every declarator
-        # (H) and hoisted function name in the body (nested functions pruned). Not
-        # (H) block-scoped -- the io walk has the precise version; refine if JS flow
-        # (H) precision on that ever matters. A `const fs = require('fs')` declarator
-        # (H) is an import alias (the genuine module), so it is NOT a shadow; but a
-        # (H) local `const fs = {}` IS one, even if `fs` is also imported module-wide.
+        self,
+        caller_node: Node,
+        descriptor: LanguageDescriptor,
+        language: cs.SupportedLanguage,
+    ) -> set[str]:
+        # (H) The shadow set seed: always the caller's parameters (in scope for the
+        # (H) whole body in every grammar). For hoisted-declaration languages (JS/TS)
+        # (H) also every declarator/function name in the body up front, since those
+        # (H) shadow function-wide. Go declarations are NOT hoisted, so they are added
+        # (H) to the live set during the walk (see _lean_bind) rather than seeded here.
+        # (H) A `const fs = require('fs')` declarator is an import alias (the genuine
+        # (H) module), so it is NOT a shadow; a local `const fs = {}` IS one.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
             for child in params.named_children:
                 self._js_binding_names(child, descriptor, names)
+        if language not in _HOISTED_DECL_LANGS:
+            return names
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         stack = list((body or caller_node).named_children)
         while stack:
@@ -506,14 +618,15 @@ class FlowProcessor:
             ):
                 self._js_binding_names(name, descriptor, names)
             stack.extend(node.named_children)
-        return frozenset(names)
+        return names
 
     def _js_binding_names(
         self, node: Node, descriptor: LanguageDescriptor, out: set[str]
     ) -> None:
         # (H) The names a binding target introduces: a plain identifier, a TS
         # (H) required/optional parameter wrapper (its `pattern`), a default
-        # (H) (assignment_pattern left), or a destructuring pattern's leaves.
+        # (H) (assignment_pattern left), a destructuring pattern's leaves, or a Go
+        # (H) expression_list / `parameter_declaration` (`os Config`).
         node_type = node.type
         if node_type in (
             descriptor.identifier_type,
@@ -531,10 +644,14 @@ class FlowProcessor:
             left = node.child_by_field_name(cs.FIELD_LEFT) or self._js_first_expr(node)
             if left is not None:
                 self._js_binding_names(left, descriptor, out)
+        elif node_type == cs.TS_GO_PARAMETER_DECLARATION:
+            for child in node.children_by_field_name(cs.TS_FIELD_NAME):
+                self._js_binding_names(child, descriptor, out)
         elif node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,
             cs.TS_REST_PATTERN,
+            cs.TS_GO_EXPRESSION_LIST,
         ):
             for child in node.named_children:
                 self._js_binding_names(child, descriptor, out)
