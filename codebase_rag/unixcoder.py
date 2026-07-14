@@ -109,7 +109,7 @@ class UniXcoder(nn.Module):
         self,
         source_ids: torch.Tensor,
         decoder_only: bool = True,
-        eos_id: int | None = None,
+        eos_id: int | list[int] | None = None,
         beam_size: int = 5,
         max_length: int = 64,
     ) -> torch.Tensor:
@@ -125,6 +125,9 @@ class UniXcoder(nn.Module):
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
+            # (H) transformers 5.5 widened config.eos_token_id to int | list[int] |
+            # (H) None (models may declare several EOS tokens); Beam accepts either
+            # (H) form and stops on any of them.
             eos_id = self.config.eos_token_id
         assert eos_id is not None
 
@@ -200,13 +203,15 @@ class Beam:
         "size",
     )
 
-    def __init__(self, size: int, eos: int, device: torch.device) -> None:
+    def __init__(self, size: int, eos: int | list[int], device: torch.device) -> None:
         self.size = size
         self.device = device
         self.scores: torch.Tensor = torch.FloatTensor(size).zero_().to(device)
         self.prevKs: list[torch.Tensor] = []
         self.nextYs: list[torch.Tensor] = [torch.LongTensor(size).fill_(0).to(device)]
-        self._eos = eos
+        # (H) Normalize to a set of stop ids so a config with multiple EOS tokens
+        # (H) terminates on any of them (transformers 5.5 typing).
+        self._eos: frozenset[int] = frozenset(eos if isinstance(eos, list) else [eos])
         self.eosTop = False
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
@@ -224,7 +229,7 @@ class Beam:
             beamLk = wordLk + self.scores.unsqueeze(1).expand_as(wordLk)
 
             for i in range(self.nextYs[-1].size(0)):
-                if self.nextYs[-1][i] == self._eos:
+                if int(self.nextYs[-1][i]) in self._eos:
                     beamLk[i] = -1e20
         else:
             beamLk = wordLk[0]
@@ -238,11 +243,11 @@ class Beam:
         self.nextYs.append(bestScoresId - prevK * numWords)
 
         for i in range(self.nextYs[-1].size(0)):
-            if self.nextYs[-1][i] == self._eos:
+            if int(self.nextYs[-1][i]) in self._eos:
                 s = self.scores[i]
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
-        if self.nextYs[-1][0] == self._eos:
+        if int(self.nextYs[-1][0]) in self._eos:
             self.eosTop = True
 
     def done(self) -> bool:
@@ -256,7 +261,7 @@ class Beam:
             unfinished = [
                 (self.scores[i], len(self.nextYs) - 1, i)
                 for i in range(self.nextYs[-1].size(0))
-                if self.nextYs[-1][i] != self._eos
+                if int(self.nextYs[-1][i]) not in self._eos
             ]
             unfinished.sort(key=lambda a: -a[0])
             self.finished += unfinished[: self.size - len(self.finished)]
@@ -281,7 +286,7 @@ class Beam:
         for pred in preds:
             tokens: list[torch.Tensor] = []
             for tok in pred:
-                if tok == self._eos:
+                if int(tok) in self._eos:
                     break
                 tokens.append(tok)
             sentence.append(tokens)
