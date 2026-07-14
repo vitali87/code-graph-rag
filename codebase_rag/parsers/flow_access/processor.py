@@ -330,14 +330,26 @@ class FlowProcessor:
         # (H) an earlier statement. ponytail: two passes, not a full fixpoint; edges
         # (H) are MERGE-idempotent so the re-walk never duplicates them.
         body = node.child_by_field_name(cs.FIELD_BODY)
+        # (H) A C-style for's `increment` runs AFTER the body each iteration, not in
+        # (H) the header, so skip it below and walk it after each body pass instead.
+        increment = (
+            node.child_by_field_name(cs.FIELD_INCREMENT)
+            if node.type == cs.TS_JS_FOR_STATEMENT
+            else None
+        )
+        skip_ids = {n.id for n in (body, increment) if n is not None}
         for child in node.named_children:
-            if body is not None and child.id == body.id:
+            if child.id in skip_ids:
                 continue
             state = self._walk_js_stmt(child, state, jc)
         if body is not None:
             once = self._walk_js_stmt(body, dict(state), jc)
+            if increment is not None:
+                once = self._walk_js_stmt(increment, once, jc)
             merged = self._merge([state, once])
             twice = self._walk_js_stmt(body, dict(merged), jc)
+            if increment is not None:
+                twice = self._walk_js_stmt(increment, twice, jc)
             state = self._merge([state, twice])
         return state
 

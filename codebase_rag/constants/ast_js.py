@@ -185,6 +185,10 @@ TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
 FIELD_HANDLER = "handler"
 FIELD_FINALIZER = "finalizer"
+# (H) The C-style `for (init; cond; increment)` update clause, which runs AFTER the
+# (H) body each iteration (not in the header), so taint the body carries into it
+# (H) reaches the next iteration.
+FIELD_INCREMENT = "increment"
 
 # (H) JS/TS module system node types
 TS_OBJECT_PATTERN = "object_pattern"

@@ -167,6 +167,33 @@ def test_loop_carried_taint_reaches_earlier_sink(
     )
 
 
+def test_for_increment_carries_taint_to_next_iteration(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) The C-style `for` increment `x = y` runs AFTER the body each iteration: it
+    # (H) picks up the taint the body put on `y` and carries it into `x` for the next
+    # (H) iteration's write. Walking the increment in the header (before the body)
+    # (H) missed this; it is now walked after each body pass.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "app.js",
+        "function sync() {\n"
+        "  let x = '';\n"
+        "  let y = '';\n"
+        "  for (let i = 0; i < 3; x = y) {\n"
+        "    y = fetch('https://api.example.com/x');\n"
+        "    fs.writeFileSync('out.txt', x);\n"
+        "  }\n"
+        "}\n",
+    )
+    assert _has_resource(
+        _flows(memgraph_ingestor),
+        "resource::NETWORK::https://api.example.com/x",
+        "resource::FILE::out.txt",
+    )
+
+
 def test_try_body_taint_survives_to_after(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
