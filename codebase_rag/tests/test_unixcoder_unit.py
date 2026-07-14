@@ -12,7 +12,7 @@ class TestBeamInit:
     def test_initializes_with_correct_size(self) -> None:
         beam = Beam(size=5, eos=2, device=torch.device("cpu"))
         assert beam.size == 5
-        assert beam._eos == 2
+        assert beam._eos == frozenset({2})
 
     def test_initializes_scores_to_zero(self) -> None:
         beam = Beam(size=3, eos=2, device=torch.device("cpu"))
@@ -171,6 +171,20 @@ class TestBeamBuildTargetTokens:
         ]
         result = beam.buildTargetTokens(preds)
         assert len(result[0]) == 3
+
+
+class TestBeamMultipleEos:
+    def test_normalizes_single_int_to_membership_set(self) -> None:
+        beam = Beam(size=2, eos=2, device=torch.device("cpu"))
+        assert beam._eos == frozenset({2})
+
+    def test_stops_on_any_eos_in_list(self) -> None:
+        # (H) transformers can declare several valid stop ids; Beam must terminate
+        # (H) on any of them, not just the first.
+        beam = Beam(size=1, eos=[2, 99], device=torch.device("cpu"))
+        preds = [[torch.tensor(5), torch.tensor(99), torch.tensor(6)]]
+        result = beam.buildTargetTokens(preds)
+        assert len(result[0]) == 1
 
 
 class TestForwardAttentionMask:
