@@ -125,7 +125,11 @@ class UniXcoder(nn.Module):
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
-            eos_id = self.config.eos_token_id
+            # (H) transformers 5.5 widened config.eos_token_id to int | list[int] |
+            # (H) None (models may declare several EOS tokens); Beam wants one int, so
+            # (H) take the first when it is a list.
+            config_eos = self.config.eos_token_id
+            eos_id = config_eos[0] if isinstance(config_eos, list) else config_eos
         assert eos_id is not None
 
         device = source_ids.device
