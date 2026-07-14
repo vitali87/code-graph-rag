@@ -199,6 +199,7 @@ class FunctionIngestMixin:
     rehydrated_definition_paths: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -1325,10 +1326,19 @@ class FunctionIngestMixin:
             )
         )
         # (H) Track it like an in-class C# method so the override walk can gate a
-        # (H) class-parent OVERRIDES on the `override` modifier.
+        # (H) class-parent OVERRIDES on the `override` modifier, and index it as an
+        # (H) extension method if it is one, so `recv.Ext()` still binds to a
+        # (H) recovered extension the same as the normal class-member pass would.
         self.csharp_methods.add(ingested_qn)
         if csharp_has_override_modifier(func_node):
             self.csharp_override_methods.add(ingested_qn)
+        csharp_utils.index_extension_method(
+            self.csharp_extension_methods,
+            ingested_qn,
+            func_node,
+            class_qn,
+            module_qn,
+        )
         return True
 
     def _find_enclosing_function_node(

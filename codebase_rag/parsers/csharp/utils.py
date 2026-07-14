@@ -92,6 +92,43 @@ def extension_receiver_type(method_node: Node) -> str | None:
     return _normalize_type_name(name) if name else None
 
 
+def index_extension_method(
+    store: dict[str, list[tuple[str, str, str]]],
+    ingested_qn: str,
+    method_node: Node,
+    class_qn: str,
+    module_qn: str | None,
+) -> None:
+    # (H) Index an extension method by simple name + receiver type + declaring
+    # (H) namespace so a `recv.Ext()` call binds to the static method even though it
+    # (H) lives on an unrelated static class (not in recv's hierarchy). Shared by the
+    # (H) class-member pass and the `#if`-truncation recovery so both stay in sync.
+    # (H) No-op for a non-extension method (no `this` receiver).
+    receiver_type = extension_receiver_type(method_node)
+    if not receiver_type:
+        return
+    # (H) Strip the parameter signature BEFORE taking the leaf: a qualified param
+    # (H) type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
+    # (H) on `Widget)` instead of the method name `Poke` and never match.
+    leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    # (H) The extension's declaring namespace (its class's namespace-qualified name
+    # (H) minus the class leaf) so an unqualified `this Widget` can resolve to
+    # (H) `<namespace>.Widget` against a qualified call receiver. Empty for a
+    # (H) top-level (namespace-less) class.
+    ns_qualified_class = (
+        class_qn[len(module_qn) + 1 :]
+        if module_qn is not None
+        and class_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+        else class_qn
+    )
+    ext_namespace = (
+        ns_qualified_class.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if cs.SEPARATOR_DOT in ns_qualified_class
+        else ""
+    )
+    store.setdefault(leaf, []).append((ingested_qn, receiver_type, ext_namespace))
+
+
 def build_field_type_map(class_node: Node) -> dict[str, str]:
     # (H) {field-or-property name: type name} for members declared directly on
     # (H) this class body, recorded at ingestion so a receiver typed to a field
