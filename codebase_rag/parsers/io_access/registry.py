@@ -273,6 +273,7 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
     ("secure_getenv", ResourceKind.ENV, IODirection.READ, 0),
     ("printf", ResourceKind.STDOUT, IODirection.WRITE, None),
     ("puts", ResourceKind.STDOUT, IODirection.WRITE, None),
+    ("putchar", ResourceKind.STDOUT, IODirection.WRITE, None),
 )
 
 # (H) Keyed under both the bare (C linkage / `using namespace std`) and `std::`-
@@ -310,7 +311,7 @@ IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
 # (H) (`std::cout << x` writes STDOUT). Both the bare and std:: forms are keyed.
 _CPP_STREAM_SINKS: dict[str, IOSink] = {
     f"{prefix}{name}": IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
-    for name in ("cout", "cerr", "clog")
+    for name in ("cout", "cerr", "clog", "wcout", "wcerr", "wclog")
     for prefix in ("", "std::")
 }
 

@@ -78,6 +78,28 @@ def test_cpp_unqualified_getenv(
     assert (_READS, "resource::ENV::TOKEN") in _io_edges(memgraph_ingestor)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "putchar('x');",
+        'std::wcout << L"hi";',
+        'std::wcerr << L"e";',
+    ],
+)
+def test_cpp_putchar_and_wide_streams(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, body: str
+) -> None:
+    # (H) putchar (call) and the wide-char streams wcout/wcerr (`<<` insertion) each
+    # (H) write STDOUT, same as puts / cout. Isolated so the STDOUT edge can only come
+    # (H) from the sink under test.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        f"#include <cstdio>\n#include <iostream>\nvoid f() {{\n    {body}\n}}\n",
+    )
+    assert (_WRITES, "resource::STDOUT::<dynamic>") in _io_edges(memgraph_ingestor)
+
+
 def test_cpp_nested_lambda_not_credited(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
