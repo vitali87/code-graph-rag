@@ -162,12 +162,15 @@ public static class Frontend
 
     private static bool IsFirstParty(string path, string rootFull, HashSet<string> ignoredDirs)
     {
-        var full = Path.GetFullPath(path);
-        if (!full.StartsWith(rootFull, StringComparison.Ordinal))
+        // GetRelativePath yields a rooted path when the two are on different
+        // volumes and a "../"-prefixed path when `path` sits outside the root, so
+        // it decides containment without a case-sensitive prefix compare that a
+        // drive/folder casing mismatch on Windows would break.
+        var rel = Path.GetRelativePath(rootFull, Path.GetFullPath(path));
+        if (Path.IsPathRooted(rel) || rel == ".." || rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
         {
             return false;
         }
-        var rel = Path.GetRelativePath(rootFull, full);
         foreach (var part in rel.Split(Path.DirectorySeparatorChar, '/'))
         {
             if (ignoredDirs.Contains(part))

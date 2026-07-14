@@ -16,7 +16,10 @@ import subprocess
 import time
 from pathlib import Path
 
+from loguru import logger
+
 from ... import constants as cs
+from ... import logs as ls
 from ...config import settings
 
 # (H) Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
@@ -141,18 +144,42 @@ def _restore(dotnet: str, project: Path) -> None:
         return
 
 
-def _parse_payload(stdout: str) -> BaseKindMap:
+def _parse_payload(stdout: str, stderr: str = "") -> BaseKindMap:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
+        # (H) No output at all: the tool crashed before printing its JSON line.
+        logger.error(
+            ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
+        )
         return {}
     try:
         payload = json.loads(lines[-1])
     except json.JSONDecodeError:
+        # (H) A decode failure means the tool emitted non-JSON after building;
+        # (H) surface both streams so it can be debugged, not silently degraded.
+        logger.error(
+            ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
+        )
         return {}
     result: BaseKindMap = {}
     for type_fact in payload.get("types", []):
         key = (type_fact["file"], int(type_fact["line"]))
-        result[key] = {b["name"]: b["kind"] for b in type_fact.get("bases", [])}
+        kinds: dict[str, str] = {}
+        conflicting: set[str] = set()
+        for base in type_fact.get("bases", []):
+            name, kind = base["name"], base["kind"]
+            if name in kinds and kinds[name] != kind:
+                # (H) Two bases share a simple name but differ in kind (e.g.
+                # (H) `: A.Widget, B.Widget`, one class + one interface). Neither
+                # (H) the map nor split_csharp_bases can tell them apart by simple
+                # (H) name, so drop the name and let the per-base heuristic decide
+                # (H) rather than let the last-written kind silently win.
+                conflicting.add(name)
+            else:
+                kinds.setdefault(name, kind)
+        for name in conflicting:
+            kinds.pop(name, None)
+        result[key] = kinds
     return result
 
 
@@ -182,4 +209,4 @@ def run_csharp_frontend(repo_path: Path) -> BaseKindMap:
         )
     except (subprocess.SubprocessError, OSError):
         return {}
-    return _parse_payload(proc.stdout)
+    return _parse_payload(proc.stdout, proc.stderr)

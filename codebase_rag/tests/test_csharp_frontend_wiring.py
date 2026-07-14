@@ -2,6 +2,7 @@
 # (H) corrects INHERITS-vs-IMPLEMENTS where the parse-time I-prefix heuristic is
 # (H) wrong. The wiring decides which path runs, gated on CSHARP_FRONTEND + a
 # (H) discoverable .csproj + a usable dotnet toolchain.
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,6 +14,7 @@ from codebase_rag.parsers.csharp_frontend import (
     csharp_frontend_available,
     run_csharp_frontend,
 )
+from codebase_rag.parsers.csharp_frontend.frontend import _parse_payload
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -37,7 +39,7 @@ public class Button : IWidget, Renderer
 
 _CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 </Project>
@@ -60,6 +62,43 @@ def _has(pairs: set[tuple[str, str]], child_suffix: str, parent_suffix: str) -> 
     return any(
         ch.endswith(child_suffix) and pa.endswith(parent_suffix) for ch, pa in pairs
     )
+
+
+def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
+    # (H) Two bases with the same simple name but different kinds (`: A.Widget,
+    # (H) B.Widget`, one class + one interface) cannot be told apart by simple
+    # (H) name, so the name is dropped from the map and the heuristic decides;
+    # (H) a same-kind duplicate is kept.
+    payload = json.dumps(
+        {
+            "types": [
+                {
+                    "file": "F.cs",
+                    "line": 3,
+                    "name": "Button",
+                    "bases": [
+                        {"name": "Widget", "kind": "class"},
+                        {"name": "Widget", "kind": "interface"},
+                        {"name": "Handler", "kind": "interface"},
+                    ],
+                },
+                {
+                    "file": "G.cs",
+                    "line": 5,
+                    "name": "Panel",
+                    "bases": [
+                        {"name": "Base", "kind": "class"},
+                        {"name": "Base", "kind": "class"},
+                    ],
+                },
+            ]
+        }
+    )
+    result = _parse_payload(payload)
+    assert "Widget" not in result[("F.cs", 3)]
+    assert result[("F.cs", 3)]["Handler"] == "interface"
+    # (H) A duplicate that agrees on kind is unambiguous, so it survives.
+    assert result[("G.cs", 5)]["Base"] == "class"
 
 
 def test_default_treesitter_keeps_iprefix_heuristic(temp_repo: Path) -> None:

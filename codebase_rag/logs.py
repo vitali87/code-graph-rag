@@ -38,6 +38,10 @@ CSHARP_FRONTEND_BUILD_FAILED = (
     "C# Roslyn frontend tool failed to build; using tree-sitter"
 )
 CSHARP_FRONTEND_TYPES = "C# Roslyn frontend classified {count} type base list(s)"
+CSHARP_FRONTEND_PARSE_FAILED = (
+    "C# Roslyn frontend produced no parseable JSON; using tree-sitter.\n"
+    "stdout: {stdout}\nstderr: {stderr}"
+)
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
