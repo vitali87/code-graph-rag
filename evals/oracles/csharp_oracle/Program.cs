@@ -76,7 +76,7 @@ foreach (var path in EnumerateCsFiles(rootFull, ignoredDirs))
     string text;
     try { text = File.ReadAllText(path); }
     catch { continue; }
-    var tree = CSharpSyntaxTree.ParseText(text, path: path);
+    var tree = CSharpSyntaxTree.ParseText(NeutralizeConditionalDirectives(text), path: path);
     var rel = Path.GetRelativePath(rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
     files.Add((rel, tree.GetRoot()));
 }
@@ -322,6 +322,38 @@ static string TypeSimpleName(TypeSyntax type)
         default:
             return "";
     }
+}
+
+// cgr has no preprocessor: tree-sitter parses every #if/#elif/#else branch, so a
+// declaration guarded by an undefined symbol IS in cgr's graph. Roslyn instead
+// treats an undefined #if branch as disabled trivia and never yields its
+// declarations, which would make every such real declaration read as a cgr false
+// positive. Blank the conditional directive LINES (keeping the line so 1-based line
+// numbers are stable for the join) so every branch parses as active code, matching
+// cgr's structural view. Non-conditional directives (#region, #pragma, #nullable,
+// #define/#undef) don't gate code and are left for Roslyn to handle.
+static string NeutralizeConditionalDirectives(string text)
+{
+    if (text.IndexOf("#if", StringComparison.Ordinal) < 0)
+    {
+        return text;
+    }
+    var lines = text.Split('\n');
+    for (var i = 0; i < lines.Length; i++)
+    {
+        var trimmed = lines[i].TrimStart();
+        if (trimmed.StartsWith("#if", StringComparison.Ordinal)
+            || trimmed.StartsWith("#elif", StringComparison.Ordinal)
+            || trimmed.StartsWith("#else", StringComparison.Ordinal)
+            || trimmed.StartsWith("#endif", StringComparison.Ordinal))
+        {
+            // ponytail: blanks a line that merely looks like a directive (e.g. `#if`
+            // at column 0 inside a multi-line verbatim string); vanishingly rare and
+            // cgr's tree-sitter mishandles the same case, so no eval bias.
+            lines[i] = "";
+        }
+    }
+    return string.Join('\n', lines);
 }
 
 static IEnumerable<string> EnumerateCsFiles(string root, HashSet<string> ignoredDirs)

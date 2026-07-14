@@ -163,6 +163,39 @@ def test_oracle_ignores_cgr_ignored_dirs_for_classification(
     assert (cs.RelationshipType.IMPLEMENTS.value, "Drawable") not in rels, rels
 
 
+def test_oracle_includes_declarations_in_inactive_if_regions(
+    tmp_path: Path,
+) -> None:
+    # (H) cgr has no preprocessor: it parses every `#if`/`#else` branch, so a method
+    # (H) guarded by an undefined symbol IS in cgr's graph. The Roslyn oracle must
+    # (H) match that view (neutralize conditional directives so all branches parse),
+    # (H) otherwise real declarations inside `#if` blocks read as cgr false positives
+    # (H) (e.g. ~871 phantom Method FPs on Newtonsoft.Json).
+    _require_csharp()
+    project = tmp_path / "csharp_if"
+    project.mkdir()
+    (project / "Guarded.cs").write_text(
+        "namespace N;\n"
+        "public class Guarded {\n"
+        "    public void Active() { }\n"
+        "#if HAVE_SOMETHING\n"
+        "    public void OnlyWhenDefined() { }\n"
+        "#endif\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cgr = extract_cgr_csharp_graph(project, project.name)
+    oracle = run_csharp_oracle(project)
+    oracle_keys = {(n.kind, n.start_line) for n in oracle.nodes}
+    cgr_keys = {(n.kind, n.start_line) for n in cgr.nodes}
+    # (H) OnlyWhenDefined() is on line 5, inside the undefined `#if HAVE_SOMETHING`.
+    assert (cs.NodeLabel.METHOD.value, 5) in oracle_keys, oracle_keys
+    assert cgr_keys == oracle_keys, {
+        "cgr_only": cgr_keys - oracle_keys,
+        "oracle_only": oracle_keys - cgr_keys,
+    }
+
+
 def test_cgr_matches_roslyn_oracle_on_spans(
     graphs: tuple[GraphData, GraphData],
 ) -> None:
