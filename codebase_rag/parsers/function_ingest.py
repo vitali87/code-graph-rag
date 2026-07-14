@@ -1313,6 +1313,17 @@ class FunctionIngestMixin:
             cs.NodeLabel.METHOD.value,
             ingested_qn,
         )
+        # (H) Record where this method landed so Pass-3 call attribution reuses this
+        # (H) Method identity instead of re-deriving a module-Function qn from the
+        # (H) node (the FQN walk sees no class ancestor, so a call inside the
+        # (H) recovered member would otherwise source a phantom, dropped edge).
+        self.function_locations[function_span_key(module_qn, func_node)] = (
+            FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=ingested_qn,
+                container_qn=class_qn,
+            )
+        )
         # (H) Track it like an in-class C# method so the override walk can gate a
         # (H) class-parent OVERRIDES on the `override` modifier.
         self.csharp_methods.add(ingested_qn)

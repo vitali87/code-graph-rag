@@ -113,8 +113,11 @@ namespace N
         private static void BlockCopyChars(char[] src, int srcOffset)
         {
             const int charByteCount = 2;
+            Shift();
             Buffer.BlockCopy(src, srcOffset, charByteCount);
         }
+
+        private static void Shift() { }
 
         public int Prop { get; set; }
     }
@@ -148,3 +151,18 @@ def test_if_truncated_class_body_orphan_members_are_methods(
     assert any(".Reader.BlockCopyChars" in qn for qn in defines_method_targets), (
         defines_method_targets
     )
+
+    # (H) A call inside the recovered method must be attributed to its Method node,
+    # (H) not a re-derived module-Function qn (which would source a dropped edge).
+    # (H) The recovery records function_locations so Pass 3 reuses the Method
+    # (H) identity; the graph audit already rejects any dangling CALLS endpoint.
+    shift_calls = [
+        c
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if ".Reader.Shift" in c.args[2][2]
+    ]
+    assert shift_calls, "expected a CALLS edge into Reader.Shift"
+    for c in shift_calls:
+        caller_label, _, caller_qn = c.args[0]
+        assert caller_label == cs.NodeLabel.METHOD.value, c.args[0]
+        assert ".Reader.BlockCopyChars" in caller_qn, caller_qn
