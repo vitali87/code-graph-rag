@@ -163,6 +163,35 @@ class TestReadFileLargeFiles:
         assert "This is line 10000" in result
 
 
+class TestReadFilePathTraversal:
+    """Ensure the paginated branch cannot escape the project root."""
+
+    async def test_absolute_path_outside_root_is_blocked(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        """An absolute path outside the root must not be read (pathlib discards
+        project_root when the right operand is absolute)."""
+        secret = temp_project_root.parent / "secret.txt"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+
+        result = await mcp_registry.read_file(str(secret), offset=0, limit=5)
+
+        assert "TOP SECRET" not in result
+        assert "outside of project root" in result
+
+    async def test_relative_traversal_outside_root_is_blocked(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        """A ../ traversal escaping the root must be blocked too."""
+        secret = temp_project_root.parent / "secret2.txt"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+
+        result = await mcp_registry.read_file("../secret2.txt", offset=0, limit=5)
+
+        assert "TOP SECRET" not in result
+        assert "outside of project root" in result
+
+
 class TestReadFileEdgeCases:
     """Test edge cases and error handling."""
 
