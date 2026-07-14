@@ -118,6 +118,27 @@ def test_rust_tainted_path_name_no_over_taint(
     )
 
 
+def test_rust_inline_format_capture_to_println(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Rust inline format capture: `println!("{secret}")` reads the local through
+    # (H) the format string with no separate identifier token. ENV -> STDOUT.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "main.rs",
+        "fn boot() {\n"
+        '    let secret = std::env::var("SECRET").unwrap();\n'
+        '    println!("{secret}");\n'
+        "}\n",
+    )
+    assert _resource_flow(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+    )
+
+
 def test_rust_untainted_println_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

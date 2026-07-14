@@ -692,10 +692,14 @@ class FlowProcessor:
         self, token_tree: Node, tainted: _TaintMap, jc: _JsCtx
     ) -> list[Taint]:
         out: list[Taint] = []
-        # (H) A tainted local used directly in the macro args (bare identifier token).
-        for name in self._bare_arg_identifiers(
+        # (H) A tainted local reaching the macro args by name: either a bare identifier
+        # (H) token (`println!("{}", secret)`) or an inline format capture inside the
+        # (H) template string (`println!("{secret}")`, Rust 2021+), which has no
+        # (H) separate identifier token.
+        named = self._bare_arg_identifiers(
             token_tree, jc.descriptor.identifier_type, cs.TS_RS_TOKEN_SCOPE
-        ):
+        ) | self._macro_format_captures(token_tree, jc)
+        for name in named:
             taint = tainted.get(name)
             if taint is not None:
                 out.append(taint)
@@ -720,6 +724,50 @@ class FlowProcessor:
                     frozenset(),
                 )
             )
+        return out
+
+    def _macro_format_captures(self, token_tree: Node, jc: _JsCtx) -> set[str]:
+        # (H) Names captured inline by the format template (the FIRST string literal in
+        # (H) the macro args), e.g. `println!("{secret} {x:?}")`. Only the first string
+        # (H) is the template; later string args are values, not templates.
+        for child in token_tree.children:
+            if child.type == jc.descriptor.string_type:
+                content = string_literal(
+                    child, jc.descriptor.string_type, jc.descriptor.string_content_type
+                )
+                if content == DYNAMIC_TARGET:
+                    return set()
+                return self._format_capture_names(content)
+        return set()
+
+    @staticmethod
+    def _format_capture_names(template: str) -> set[str]:
+        # (H) Identifier names in `{name}` / `{name:spec}` placeholders of a Rust format
+        # (H) template. `{{`/`}}` are escaped braces; positional (`{}`, `{0}`) captures
+        # (H) reference no local, so only alphanumeric-identifier names are returned.
+        out: set[str] = set()
+        i, n = 0, len(template)
+        while i < n:
+            char = template[i]
+            if char == "{":
+                if i + 1 < n and template[i + 1] == "{":
+                    i += 2
+                    continue
+                close = template.find("}", i + 1)
+                if close == -1:
+                    break
+                name = template[i + 1 : close].split(":", 1)[0].strip()
+                if (
+                    name
+                    and (name[0].isalpha() or name[0] == "_")
+                    and all(c.isalnum() or c == "_" for c in name)
+                ):
+                    out.add(name)
+                i = close + 1
+            elif char == "}" and i + 1 < n and template[i + 1] == "}":
+                i += 2
+            else:
+                i += 1
         return out
 
     @staticmethod
