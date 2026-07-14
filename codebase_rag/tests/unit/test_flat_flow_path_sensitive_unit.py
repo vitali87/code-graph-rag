@@ -1,110 +1,85 @@
 from __future__ import annotations
 
-from typing import cast
-
-from tree_sitter import Node
+from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.flow_access import FlowKind
-from codebase_rag.parsers.flow_access.processor import FlowProcessor
-from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.services import IngestorProtocol
+from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
-# (H) Fast unit coverage for the Go/Java path-sensitive flat walk (issue #714): drives
-# (H) FlowProcessor directly on a parsed snippet with recording fakes, no Memgraph. The
-# (H) integration suite (test_flat_path_sensitive_flow_e2e.py) asserts the same behavior
-# (H) end to end; these run under `pytest -m "not integration"` so the coverage counts.
+# (H) Fast unit coverage for the Go/Java path-sensitive flat walk (issue #714): runs the
+# (H) real GraphUpdater against a one-file project with a recording in-memory ingestor
+# (H) (no Memgraph), so it is collected under `pytest -m "not integration"` and its
+# (H) coverage counts toward SonarCloud. The integration suite
+# (H) (test_flat_path_sensitive_flow_e2e.py) asserts the same behavior end to end.
 
-_FUNC_TYPES = {"function_declaration", "method_declaration"}
-_LANG_BY_FILE = {
-    "main.go": cs.SupportedLanguage.GO,
-    "App.java": cs.SupportedLanguage.JAVA,
-}
-
-
-_Spec = tuple[object, object, object]
+_LANG_BY_FILE = {"main.go": "flow_go", "App.java": "flow_java"}
 
 
 class _RecordingIngestor:
+    # (H) Structural IngestorProtocol stand-in that records FLOWS_TO relationships; the
+    # (H) query-side methods are no-ops (a single fresh project needs no rehydration).
     def __init__(self) -> None:
-        self.rels: list[tuple[_Spec, object, _Spec, dict[str, object]]] = []
+        self.rels: list[
+            tuple[
+                tuple[str, str, PropertyValue],
+                str,
+                tuple[str, str, PropertyValue],
+                PropertyDict,
+            ]
+        ] = []
 
-    def ensure_node_batch(self, label: object, properties: object) -> None:
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         pass
 
     def ensure_relationship_batch(
         self,
-        start: _Spec,
-        rel_type: object,
-        end: _Spec,
-        properties: dict[str, object] | None = None,
+        from_spec: tuple[str, str, PropertyValue],
+        rel_type: str,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: PropertyDict | None = None,
     ) -> None:
-        self.rels.append((start, rel_type, end, properties or {}))
+        self.rels.append((from_spec, rel_type, to_spec, properties or {}))
 
     def flush_all(self) -> None:
         pass
 
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        pass
 
-class _NoResolver:
-    def resolve_function_call(self, *args: object, **kwargs: object) -> None:
-        return None
-
-
-class _EmptyImports:
-    def __init__(self) -> None:
-        self.import_mapping: dict[str, dict[str, str]] = {}
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        return []
 
 
-def _first_function(node: Node) -> Node | None:
-    if node.type in _FUNC_TYPES:
-        return node
-    for child in node.named_children:
-        found = _first_function(child)
-        if found is not None:
-            return found
-    return None
-
-
-def _resource_flows(code: str, filename: str) -> list[tuple[str, str]]:
-    language = _LANG_BY_FILE[filename]
-    parsers, _ = load_parsers()
-    tree = parsers[language.value].parse(code.encode("utf-8"))
-    func = _first_function(tree.root_node)
-    assert func is not None
-    module_qn = "proj.mod"
-    caller_qn = f"{module_qn}.f"
+def _resource_flows(code: str, filename: str, tmp_path: Path) -> list[tuple[str, str]]:
+    project = tmp_path / _LANG_BY_FILE[filename]
+    project.mkdir()
+    (project / filename).write_text(code, encoding="utf-8")
+    parsers, queries = load_parsers()
     ingestor = _RecordingIngestor()
-    # (H) The fakes are structural stand-ins for concrete-typed constructor params;
-    # (H) cast keeps the harness type-clean without blanket suppressions.
-    processor = FlowProcessor(
-        cast(IngestorProtocol, ingestor),
-        cast(ImportProcessor, _EmptyImports()),
-        cast(CallResolver, _NoResolver()),
-        resolve_capture([cs.CaptureGroup.IO.value]),
-    )
-    processor.process_flow_for_caller(
-        func,
-        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, caller_qn),
-        caller_qn,
-        module_qn,
-        language,
-        None,
-    )
-    processor.finalize()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture([cs.CaptureGroup.IO.value]),
+        skip_embeddings=True,
+    ).run()
     out: list[tuple[str, str]] = []
-    for start, rel_type, end, props in ingestor.rels:
+    for from_spec, rel_type, to_spec, props in ingestor.rels:
         if (
             rel_type == cs.RelationshipType.FLOWS_TO
             and props.get("kind") == FlowKind.RESOURCE.value
         ):
-            out.append((str(start[2]), str(end[2])))
+            out.append((str(from_spec[2]), str(to_spec[2])))
     return out
 
 
-def test_go_kill_on_one_branch_taint_survives() -> None:
+def test_go_kill_on_one_branch_taint_survives(tmp_path: Path) -> None:
     flows = _resource_flows(
         "package main\n\n"
         'import (\n\t"fmt"\n\t"os"\n)\n\n'
@@ -116,11 +91,12 @@ def test_go_kill_on_one_branch_taint_survives() -> None:
         "\tfmt.Println(secret)\n"
         "}\n",
         "main.go",
+        tmp_path,
     )
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
-def test_go_kill_on_all_branches_no_flow() -> None:
+def test_go_kill_on_all_branches_no_flow(tmp_path: Path) -> None:
     flows = _resource_flows(
         "package main\n\n"
         'import (\n\t"fmt"\n\t"os"\n)\n\n'
@@ -134,11 +110,12 @@ def test_go_kill_on_all_branches_no_flow() -> None:
         "\tfmt.Println(secret)\n"
         "}\n",
         "main.go",
+        tmp_path,
     )
     assert flows == []
 
 
-def test_go_branch_local_shadow_does_not_leak() -> None:
+def test_go_branch_local_shadow_does_not_leak(tmp_path: Path) -> None:
     flows = _resource_flows(
         "package main\n\n"
         'import (\n\t"fmt"\n\t"os"\n)\n\n'
@@ -150,11 +127,12 @@ def test_go_branch_local_shadow_does_not_leak() -> None:
         '\tfmt.Println(os.Getenv("SECRET"))\n'
         "}\n",
         "main.go",
+        tmp_path,
     )
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
-def test_go_if_initializer_shadow_does_not_leak() -> None:
+def test_go_if_initializer_shadow_does_not_leak(tmp_path: Path) -> None:
     flows = _resource_flows(
         "package main\n\n"
         'import (\n\t"fmt"\n\t"os"\n)\n\n'
@@ -165,11 +143,12 @@ def test_go_if_initializer_shadow_does_not_leak() -> None:
         '\tfmt.Println(os.Getenv("SECRET"))\n'
         "}\n",
         "main.go",
+        tmp_path,
     )
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
-def test_java_kill_on_one_branch_taint_survives() -> None:
+def test_java_kill_on_one_branch_taint_survives(tmp_path: Path) -> None:
     flows = _resource_flows(
         "class App {\n"
         "    void f(boolean cond) {\n"
@@ -181,11 +160,12 @@ def test_java_kill_on_one_branch_taint_survives() -> None:
         "    }\n"
         "}\n",
         "App.java",
+        tmp_path,
     )
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
-def test_java_kill_on_all_branches_no_flow() -> None:
+def test_java_kill_on_all_branches_no_flow(tmp_path: Path) -> None:
     flows = _resource_flows(
         "class App {\n"
         "    void f(boolean cond) {\n"
@@ -199,5 +179,6 @@ def test_java_kill_on_all_branches_no_flow() -> None:
         "    }\n"
         "}\n",
         "App.java",
+        tmp_path,
     )
     assert flows == []
