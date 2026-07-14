@@ -267,6 +267,31 @@ def test_go_later_shadow_keeps_prior_variable_flow(
     )
 
 
+def test_go_parallel_assignment_preserves_rhs_taint(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Go evaluates every RHS before any LHS update; `_, copy := "safe", secret`
+    # (H) must read `secret` as still tainted, so logging copy keeps ENV -> STDOUT.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "package main\n\n"
+        'import (\n\t"fmt"\n\t"os"\n)\n\n'
+        "func boot() {\n"
+        '\tsecret := os.Getenv("SECRET")\n'
+        '\tsecret, copy := "safe", secret\n'
+        "\t_ = secret\n"
+        "\tfmt.Println(copy)\n"
+        "}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_go_reassignment_kills_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -305,6 +305,11 @@ class FlowProcessor:
         # (H) `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
         # (H) all (a tuple return can't be split statically -- over-approximates err).
         spread = len(values) == 1 and len(targets) > 1
+        # (H) Go assigns in parallel: every RHS is evaluated against the PRE-assignment
+        # (H) map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
+        # (H) all taints first, then apply, or an earlier LHS update would corrupt a
+        # (H) later RHS read of the same name.
+        computed: list[tuple[str, Taint | None]] = []
         for index, name in enumerate(targets):
             if name is None:
                 continue
@@ -313,7 +318,8 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            taint = self._js_expr_taint(rhs, tainted, jc)
+            computed.append((name, self._js_expr_taint(rhs, tainted, jc)))
+        for name, taint in computed:
             if taint is not None:
                 tainted[name] = taint
             else:
