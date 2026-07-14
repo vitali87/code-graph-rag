@@ -137,6 +137,32 @@ def test_go_branch_local_shadow_does_not_leak(
     )
 
 
+def test_go_if_initializer_shadow_does_not_leak(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A Go `if` initializer (`if os := load(); ...`) is scoped to the whole if
+    # (H) statement and must not leak past it, so os.Getenv AFTER the if is the real
+    # (H) env source. The shadow set must be restored to its pre-if state on exit.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "main.go",
+        "package main\n\n"
+        'import (\n\t"fmt"\n\t"os"\n)\n\n'
+        "func boot() {\n"
+        "\tif os := load(); os != nil {\n"
+        "\t\t_ = os\n"
+        "\t}\n"
+        '\tfmt.Println(os.Getenv("SECRET"))\n'
+        "}\n",
+    )
+    assert _resource_flow(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+    )
+
+
 # (H) Java
 
 

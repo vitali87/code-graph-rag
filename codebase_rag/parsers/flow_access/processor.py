@@ -292,9 +292,12 @@ class FlowProcessor:
     def _walk_flat_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
         # (H) The header (any initializer + condition) runs on all paths; each of the
         # (H) then / else(-if) / implicit skip paths is walked against a copy and
-        # (H) unioned (MAY join). A branch grows the live shadow set with its own
-        # (H) block-scoped declarations; snapshot it before each branch and restore it
-        # (H) after, so those declarations never shadow a source/sink past the join.
+        # (H) unioned (MAY join). Two shadow scopes are restored: a branch grows the
+        # (H) live shadow set with its own block-scoped declarations (restored between
+        # (H) branches), and a Go `if` initializer (`if x := f(); cond {}`) is scoped
+        # (H) to the whole if statement (restored on exit) -- so neither shadows a
+        # (H) source/sink past its scope.
+        pre_if_shadows = set(jc.local_names)
         consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
         alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
         skip = {n.id for n in (consequence, alternative) if n is not None}
@@ -314,6 +317,7 @@ class FlowProcessor:
         else:
             # (H) No else: the skip path preserves the incoming state.
             branch_exits.append(dict(state))
+        self._restore_shadows(pre_if_shadows, jc)
         return self._merge(branch_exits)
 
     @staticmethod
