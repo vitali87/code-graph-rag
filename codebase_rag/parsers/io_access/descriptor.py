@@ -32,6 +32,16 @@ class LanguageDescriptor:
     # (H) Extra declaration node types (beyond declarator_type) whose bound names also
     # (H) shadow a builtin -- Go's `var`/`const`/`range` specs; empty for JS/TS.
     extra_declarator_types: frozenset[str]
+    # (H) Loop-clause declaration nodes (Java for-each, Go `range`) whose bound var is
+    # (H) in scope in the loop BODY only -- NOT the iterable header (evaluated before
+    # (H) the var binds) nor sibling statements. The source-order walk seeds only the
+    # (H) body with these, so a sink in the iterable still resolves to the global.
+    loop_declarator_types: frozenset[str]
+    # (H) A wrapper node that holds a block's statements as its children (Go's
+    # (H) `statement_list`); None where a block's children ARE the statements (JS,
+    # (H) Java). The source-order walk unwraps it so per-statement shadowing sees the
+    # (H) real statement boundaries instead of one giant container "statement".
+    statement_container_type: str | None
     # (H) True when a dotted sink call requires its head to be an imported package
     # (H) (Go always imports stdlib; a package-scope `var os` is not the stdlib os).
     # (H) False for JS/TS, whose sinks include unimported globals (`console`, `fetch`).
@@ -70,6 +80,8 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
     extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
     sinks_require_import=False,
     hoisted_declarations=True,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
@@ -101,6 +113,8 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     extra_declarator_types=frozenset(
         {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
     ),
+    loop_declarator_types=frozenset({cs.TS_GO_RANGE_CLAUSE}),
+    statement_container_type=cs.TS_GO_STATEMENT_LIST,
     sinks_require_import=True,
     # (H) Go is declare-at-point (`:=`/`var` bind from that line on), so a local named
     # (H) after a valid package call must not retroactively shadow it -- source order.
@@ -135,6 +149,8 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_JAVA_BLOCK,
     extra_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    loop_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    statement_container_type=None,
     # (H) Java's System/Files sink heads are java.lang / java.nio globals that never
     # (H) appear in import_map, so requiring an import would reject every sink.
     sinks_require_import=False,

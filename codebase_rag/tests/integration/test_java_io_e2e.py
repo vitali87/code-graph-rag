@@ -180,6 +180,45 @@ def test_java_fully_qualified_files_emits(
     )
 
 
+def test_java_foreach_iterable_call_not_shadowed(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) The for-each loop variable is NOT in scope in the iterable expression, so a
+    # (H) sink there is the real global and must emit even when the loop var name
+    # (H) collides with the sink head.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f() {\n"
+        '        for (String System : System.getenv("PATH").split(":")) {\n'
+        "            use(System);\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+    )
+    assert (_READS, "resource::ENV::PATH") in _io_edges(memgraph_ingestor)
+
+
+def test_java_foreach_loopvar_shadows_in_body(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) The for-each loop variable IS in scope in the loop body, so a call on it
+    # (H) there is shadowed (not the global).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f(Object[] items) {\n"
+        "        for (Object System : items) {\n"
+        '            System.getenv("X");\n'
+        "        }\n"
+        "    }\n"
+        "}\n",
+    )
+    assert (_READS, "resource::ENV::X") not in _io_edges(memgraph_ingestor)
+
+
 def test_java_varargs_shadows_system(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

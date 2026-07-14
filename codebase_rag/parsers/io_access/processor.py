@@ -316,6 +316,18 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
+        # (H) Go wraps a block's statements in a single `statement_list`; unwrap it so
+        # (H) the source-order walk iterates the real statements, not one container.
+        if descriptor.statement_container_type is not None:
+            statements = [
+                child
+                for stmt in statements
+                for child in (
+                    stmt.named_children
+                    if stmt.type == descriptor.statement_container_type
+                    else (stmt,)
+                )
+            ]
         # (H) Names in scope for calls in these statements: the enclosing scopes'
         # (H) names plus this block's own declarations. A `const fs = require('fs')`
         # (H) declarator is an import alias (the genuine module, resolved by
@@ -331,6 +343,7 @@ class IOAccessProcessor:
                 self._walk_stmt_sinks(
                     stmt,
                     in_scope,
+                    frozenset(),
                     caller_spec,
                     import_map,
                     sink_by_name,
@@ -341,24 +354,51 @@ class IOAccessProcessor:
         # (H) Declare-at-point languages (Go, Java): a local is in scope only from its
         # (H) own statement onward, so grow the shadow set in SOURCE ORDER. A call
         # (H) BEFORE a later same-named local is the real global and still emits; the
-        # (H) local shadows only the calls that follow it.
+        # (H) local shadows only the calls that follow it. Declarations are added AFTER
+        # (H) the statement is walked, so a sink in the statement's own header (a
+        # (H) `T x = <init>`, a for-each iterable) is not shadowed by the name it binds.
+        # (H) Loop-clause vars are the exception: scoped to the BODY only, seeded there
+        # (H) via body_extra, and never leaked to sibling statements.
         live = set(inherited)
         for stmt in statements:
-            live |= self._block_declarations([stmt], descriptor)
+            loop_vars = self._loop_declarations(stmt, descriptor)
             self._walk_stmt_sinks(
                 stmt,
                 frozenset(live),
+                loop_vars,
                 caller_spec,
                 import_map,
                 sink_by_name,
                 member_reads,
                 descriptor,
             )
+            live |= self._block_declarations([stmt], descriptor) - loop_vars
+
+    def _loop_declarations(
+        self, stmt: Node, descriptor: LanguageDescriptor
+    ) -> frozenset[str]:
+        # (H) Names bound by a loop clause (Java for-each var, Go `range` var) within
+        # (H) this statement: in scope in the loop body only. Stops at nested scopes /
+        # (H) blocks so an inner loop's var is not hoisted to the outer statement.
+        names: set[str] = set()
+        stack = [stmt]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type in descriptor.nested_scope_types
+                or node.type == descriptor.block_scope_type
+            ):
+                continue
+            if node.type in descriptor.loop_declarator_types:
+                names |= self._declarator_names(node, descriptor)
+            stack.extend(node.named_children)
+        return frozenset(names)
 
     def _walk_stmt_sinks(
         self,
         stmt: Node,
         in_scope: frozenset[str],
+        body_extra: frozenset[str],
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
@@ -368,7 +408,9 @@ class IOAccessProcessor:
         # (H) Emit the direct sinks / member reads within one statement subtree, under
         # (H) the given in-scope shadow set. A nested { } is a child lexical scope:
         # (H) recurse via _walk_scope so its declarations shadow only inside it (and,
-        # (H) for declare-at-point langs, in its own source order).
+        # (H) for declare-at-point langs, in its own source order). body_extra seeds a
+        # (H) loop var into the body scope (the loop's own block) without exposing it to
+        # (H) the header expressions walked in this flat pass.
         stack = [stmt]
         while stack:
             node = stack.pop()
@@ -378,7 +420,7 @@ class IOAccessProcessor:
             if node.type == descriptor.block_scope_type:
                 self._walk_scope(
                     list(node.named_children),
-                    in_scope,
+                    in_scope | body_extra,
                     caller_spec,
                     import_map,
                     sink_by_name,
