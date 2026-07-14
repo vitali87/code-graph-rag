@@ -77,6 +77,45 @@ def _dll_fresh(dll: Path) -> bool:
     return dll.is_file() and dll.stat().st_mtime >= _newest_source_mtime()
 
 
+def _acquire_build_lock(lock: Path, dll: Path) -> bool:
+    # (H) Serialise the one build across parallel workers. Returns True holding the
+    # (H) lock (caller must rmdir); False if it gave up because another worker
+    # (H) already produced a fresh DLL or the tries ran out.
+    for _ in range(_LOCK_TRIES):
+        try:
+            lock.mkdir()
+            return True
+        except FileExistsError:
+            time.sleep(_LOCK_POLL_SECONDS)
+            if _dll_fresh(dll):
+                return False
+    return False
+
+
+def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
+    src.mkdir(parents=True, exist_ok=True)
+    for name in _TOOL_SOURCES:
+        shutil.copy2(_TOOL_SRC / name, src / name)
+    proc = subprocess.run(
+        [
+            dotnet,
+            "build",
+            str(src),
+            "-c",
+            "Release",
+            "-o",
+            str(out),
+            "--verbosity",
+            "quiet",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, **_DOTNET_ENV},
+    )
+    return proc.returncode == 0
+
+
 def _build_tool(dotnet: str) -> Path | None:
     # (H) Build from a copy in the writable cache, never the bundled source dir,
     # (H) which is read-only under a pip install (obj/ intermediates would fail).
@@ -88,40 +127,11 @@ def _build_tool(dotnet: str) -> Path | None:
         return dll
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    for _ in range(_LOCK_TRIES):
-        try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            time.sleep(_LOCK_POLL_SECONDS)
-            if _dll_fresh(dll):
-                return dll
-    else:
+    if not _acquire_build_lock(lock, dll):
         return dll if _dll_fresh(dll) else None
     try:
-        if not _dll_fresh(dll):
-            src.mkdir(parents=True, exist_ok=True)
-            for name in _TOOL_SOURCES:
-                shutil.copy2(_TOOL_SRC / name, src / name)
-            proc = subprocess.run(
-                [
-                    dotnet,
-                    "build",
-                    str(src),
-                    "-c",
-                    "Release",
-                    "-o",
-                    str(out),
-                    "--verbosity",
-                    "quiet",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                env={**os.environ, **_DOTNET_ENV},
-            )
-            if proc.returncode != 0:
-                return None
+        if not _dll_fresh(dll) and not _compile_tool(dotnet, src, out):
+            return None
     finally:
         lock.rmdir()
     return dll if _dll_fresh(dll) else None
