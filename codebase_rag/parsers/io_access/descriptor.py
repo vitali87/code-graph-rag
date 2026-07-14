@@ -86,6 +86,11 @@ class LanguageDescriptor:
     # (H) (cout/cerr) is a stream sink. None where the language has no such operator I/O.
     stream_sink_type: str | None = None
     stream_sink_operator: str | None = None
+    # (H) Field on `declarator_type` holding the bound name when it is NOT a plain
+    # (H) `name`/`left` field but a nested declarator (C++ `init_declarator` ->
+    # (H) `declarator`, unwrapped through pointer/reference declarators). None = the
+    # (H) language binds via `name`/`left` (JS/Go/Java/Rust). Used by the flow walk.
+    declarator_name_field: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -235,6 +240,9 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     property_field=cs.RS_FIELD_FIELD,
     subscript_index_field=cs.RS_FIELD_INDEX,
     scope_separator=cs.TS_RS_TOKEN_SCOPE,
+    # (H) `let x = env::var(..)` binds via the `pattern` field (a plain identifier for
+    # (H) a simple binding), the init under `value`. Used by the flow walk.
+    declarator_name_field=cs.TS_FIELD_PATTERN,
 )
 
 _CPP_DESCRIPTOR = LanguageDescriptor(
@@ -274,6 +282,9 @@ _CPP_DESCRIPTOR = LanguageDescriptor(
     # (H) `std::cout << x` / `std::cerr << x` write STDOUT via the `<<` operator.
     stream_sink_type=cs.TS_CPP_BINARY_EXPRESSION,
     stream_sink_operator=cs.CPP_OP_LEFT_SHIFT,
+    # (H) `int x = getenv(...)` binds via the `declarator` field (a nested
+    # (H) pointer/reference declarator unwrapped to its identifier), not `name`.
+    declarator_name_field=cs.FIELD_DECLARATOR,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own

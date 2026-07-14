@@ -394,7 +394,7 @@ def _cpp_scope_bound_names(scope_node: Node) -> set[str]:
     return set(_cpp_declarator_param_names(declarator))
 
 
-def _cpp_declarator_name(declarator: Node | None) -> str | None:
+def cpp_declarator_name(declarator: Node | None) -> str | None:
     # (H) Unwrap pointer/reference/parenthesized/function declarators down to the
     # (H) bound identifier (`int (*cb)()` -> cb, `T& x` -> x, `Fn cb` -> cb).
     current = declarator
@@ -439,7 +439,7 @@ def _cpp_declarator_param_names(declarator: Node | None) -> list[str]:
         if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
             continue
         param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
-        if (name := _cpp_declarator_name(param_declarator)) is not None:
+        if (name := cpp_declarator_name(param_declarator)) is not None:
             names.append(name)
     return names
 
