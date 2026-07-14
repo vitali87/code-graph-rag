@@ -254,10 +254,13 @@ _RUST_CALL_METHODS: tuple[
     ("fs", "remove_dir_all", ResourceKind.FILE, IODirection.WRITE, 0),
 )
 
+# (H) Keyed only under the fully `std::`-qualified form. A bare short path
+# (H) (`use std::fs; fs::write`) resolves by expanding its head segment through the
+# (H) import map (fs -> std::fs); keying the bare `fs::write` too would overmatch a
+# (H) local `mod fs { fn write() }` that never touches std.
 _RUST_SINKS: tuple[IOSink, ...] = tuple(
-    IOSink(f"{prefix}{module}::{fn}", kind, direction, target_arg=arg)
+    IOSink(f"std::{module}::{fn}", kind, direction, target_arg=arg)
     for module, fn, kind, direction, arg in _RUST_CALL_METHODS
-    for prefix in ("", "std::")
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {

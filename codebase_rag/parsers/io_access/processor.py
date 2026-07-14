@@ -511,7 +511,13 @@ class IOAccessProcessor:
                 # (H) flattens the macro body to raw tokens (no call_expression node), so
                 # (H) _emit_macro reconstructs scoped calls from the token stream itself.
                 self._emit_macro(
-                    node, caller_spec, import_map, sink_by_name, macro_sinks, in_scope
+                    node,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    macro_sinks,
+                    in_scope,
+                    descriptor,
                 )
                 continue
             elif member_reads and node.type in (
@@ -531,6 +537,7 @@ class IOAccessProcessor:
         sink_by_name: dict[str, IOSink],
         macro_sinks: dict[str, IOSink],
         in_scope: frozenset[str],
+        descriptor: LanguageDescriptor,
     ) -> None:
         # (H) Match a macro invocation's name (`macro` field) against the per-language
         # (H) macro sink table (Rust `println!`/`eprintln!` -> STDOUT); the target is a
@@ -548,7 +555,7 @@ class IOAccessProcessor:
         for child in node.named_children:
             if child.type == cs.TS_RS_TOKEN_TREE:
                 self._scan_token_tree_calls(
-                    child, caller_spec, import_map, sink_by_name, in_scope
+                    child, caller_spec, import_map, sink_by_name, in_scope, descriptor
                 )
 
     def _scan_token_tree_calls(
@@ -558,6 +565,7 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         in_scope: frozenset[str],
+        descriptor: LanguageDescriptor,
     ) -> None:
         # (H) tree-sitter flattens a Rust macro body to raw tokens, so an inlined call
         # (H) (`std::env::var("X")`) is a run of `identifier` joined by `::` tokens
@@ -575,17 +583,18 @@ class IOAccessProcessor:
             elif child.type == cs.TS_RS_TOKEN_TREE:
                 if path:
                     self._emit_token_tree_call(
-                        "::".join(path),
+                        cs.TS_RS_TOKEN_SCOPE.join(path),
                         child,
                         caller_spec,
                         import_map,
                         sink_by_name,
                         in_scope,
+                        descriptor,
                     )
                 path, expect_sep = [], False
                 # (H) Recurse for a nested macro / grouped call in the arguments.
                 self._scan_token_tree_calls(
-                    child, caller_spec, import_map, sink_by_name, in_scope
+                    child, caller_spec, import_map, sink_by_name, in_scope, descriptor
                 )
             else:
                 path, expect_sep = [], False
@@ -598,10 +607,18 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         in_scope: frozenset[str],
+        descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) A reconstructed scoped call (name `raw`, `args` = its token_tree). Rust
-        # (H) sinks never require an import, so pass sinks_require_import=False.
-        sink = self._resolve_sink(raw, import_map, sink_by_name, in_scope, False)
+        # (H) A reconstructed scoped call (name `raw`, `args` = its token_tree),
+        # (H) resolved with the same import-expansion / shadow rules as a real call.
+        sink = self._resolve_sink(
+            raw,
+            import_map,
+            sink_by_name,
+            in_scope,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
         if sink is None:
             return
         # (H) ponytail: only arg0 (or a kwless <dynamic>) is resolved from the flat
@@ -787,7 +804,12 @@ class IOAccessProcessor:
         if raw is None:
             return
         sink = self._resolve_sink(
-            raw, import_map, sink_by_name, local_names, descriptor.sinks_require_import
+            raw,
+            import_map,
+            sink_by_name,
+            local_names,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
         )
         if sink is None:
             return
@@ -808,7 +830,22 @@ class IOAccessProcessor:
         sink_by_name: dict[str, IOSink],
         local_names: frozenset[str],
         sinks_require_import: bool,
+        scope_separator: str | None = None,
     ) -> IOSink | None:
+        # (H) Rust (scope_separator="::"): sinks are keyed only under the full `std::`
+        # (H) form. Expand the head segment through the import map on `::` (`use std::fs;
+        # (H) fs::write` -> `std::fs::write`; a fully-qualified `std::fs::write` has an
+        # (H) unimported `std` head and stays as-is). A bare `fs::write` with no import
+        # (H) does not expand and misses -> no false match on a local `mod fs`. A head
+        # (H) bound to a local name is shadowed.
+        if scope_separator is not None:
+            head, _, rest = raw.partition(scope_separator)
+            if head in local_names:
+                return None
+            base = import_map.get(head)
+            if base is not None:
+                raw = f"{base}{scope_separator}{rest}" if rest else base
+            return sink_by_name.get(raw)
         # (H) Match a JS/TS/Go call against the sink table, respecting shadowing:
         # (H)  - a name bound locally (a local `const fs`, `function fetch`, or a
         # (H)    parameter) is never the builtin -> no match.

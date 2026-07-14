@@ -110,6 +110,25 @@ def test_rust_use_imported_short_path(
     assert (_WRITES, "resource::FILE::o.txt") in edges
 
 
+def test_rust_local_module_does_not_match_std_sink(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A local `mod fs` with its own write() must NOT be mistaken for std::fs::write.
+    # (H) A bare short path (`fs::write`) resolves to std only when `fs` is imported
+    # (H) (`use std::fs;`); with a local module and no import, no FILE edge is emitted.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "mod fs {\n"
+        "    pub fn write(_p: &str, _d: &str) {}\n"
+        "}\n"
+        "fn f() {\n"
+        '    fs::write("out.txt", "x");\n'
+        "}\n",
+    )
+    assert (_WRITES, "resource::FILE::out.txt") not in _io_edges(memgraph_ingestor)
+
+
 def test_rust_nested_closure_not_credited(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

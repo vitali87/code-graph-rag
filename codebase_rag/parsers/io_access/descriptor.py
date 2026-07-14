@@ -76,6 +76,11 @@ class LanguageDescriptor:
     object_field: str
     property_field: str
     subscript_index_field: str
+    # (H) Path separator for scoped call names (Rust `::`). When set, sink resolution
+    # (H) expands the head segment through the import map on THIS separator (`use
+    # (H) std::fs; fs::write` -> `std::fs::write`) instead of the default `.`, so a bare
+    # (H) short path matches std only when its head is genuinely imported. None = `.`.
+    scope_separator: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -224,6 +229,7 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.FIELD_VALUE,
     property_field=cs.RS_FIELD_FIELD,
     subscript_index_field=cs.RS_FIELD_INDEX,
+    scope_separator=cs.TS_RS_TOKEN_SCOPE,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
