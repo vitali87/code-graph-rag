@@ -261,25 +261,67 @@ class FlowProcessor:
             for node in statements:
                 tainted = self._walk_js_stmt(node, tainted, jc)
         else:
-            # (H) Go keeps the flat source-order walk: its shadow set is grown in
-            # (H) source order (_register_shadows), which a branch-copying walk would
-            # (H) break. Path-sensitivity for Go is a separate follow-up.
-            self._flat_flow_walk(statements, tainted, jc)
+            # (H) Go/Java path-sensitive MAY walk (issue #714 follow-up): an
+            # (H) if_statement branches-and-merges like the JS walk (its condition/
+            # (H) consequence/alternative fields are shared across the grammars), and
+            # (H) the live shadow set is snapshotted per branch and restored at the
+            # (H) merge, so a block-scoped Go/Java declaration inside a branch does not
+            # (H) leak its shadow past the join. Loops and try are walked straight-line
+            # (H) (one source-order pass), matching the previous flat behaviour --
+            # (H) loop-carried and per-branch try taint stay a follow-up.
+            for node in statements:
+                tainted = self._walk_flat_stmt(node, tainted, jc)
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
-    def _flat_flow_walk(
-        self, statements: list[Node], tainted: _TaintMap, jc: _JsCtx
-    ) -> None:
-        # (H) Flat source-order DFS (Go): a single taint map, nested functions pruned
-        # (H) as their own callers. Reuses the shared summary/deferred/finalize (#712).
-        stack = list(reversed(statements))
-        while stack:
-            node = stack.pop()
-            if node.type in jc.descriptor.nested_scope_types:
-                continue
-            self._apply_js_leaf(node, tainted, jc)
-            stack.extend(reversed(node.named_children))
+    def _walk_flat_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) Structured walk for the non-hoisted flat languages (Go, Java): only
+        # (H) if_statement branches-and-merges; every other node applies its leaf effect
+        # (H) and threads state through its children in source order (so a nested call in
+        # (H) an argument, or a loop/try body, is still seen -- one pass, as before).
+        node_type = node.type
+        if node_type in jc.descriptor.nested_scope_types:
+            return state
+        if node_type == cs.TS_JS_IF_STATEMENT:
+            return self._walk_flat_if(node, state, jc)
+        self._apply_js_leaf(node, state, jc)
+        for child in node.named_children:
+            state = self._walk_flat_stmt(child, state, jc)
+        return state
+
+    def _walk_flat_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The header (any initializer + condition) runs on all paths; each of the
+        # (H) then / else(-if) / implicit skip paths is walked against a copy and
+        # (H) unioned (MAY join). A branch grows the live shadow set with its own
+        # (H) block-scoped declarations; snapshot it before each branch and restore it
+        # (H) after, so those declarations never shadow a source/sink past the join.
+        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+        alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
+        skip = {n.id for n in (consequence, alternative) if n is not None}
+        for child in node.named_children:
+            if child.id not in skip:
+                state = self._walk_flat_stmt(child, state, jc)
+        pre_shadows = set(jc.local_names)
+        branch_exits: list[_TaintMap] = []
+        if consequence is not None:
+            branch_exits.append(self._walk_flat_stmt(consequence, dict(state), jc))
+            self._restore_shadows(pre_shadows, jc)
+        if alternative is not None:
+            # (H) else_clause holds either a block or a nested if (else-if chain); the
+            # (H) recursion handles both and merges within.
+            branch_exits.append(self._walk_flat_stmt(alternative, dict(state), jc))
+            self._restore_shadows(pre_shadows, jc)
+        else:
+            # (H) No else: the skip path preserves the incoming state.
+            branch_exits.append(dict(state))
+        return self._merge(branch_exits)
+
+    @staticmethod
+    def _restore_shadows(pre_shadows: set[str], jc: _JsCtx) -> None:
+        # (H) Reset the mutable live shadow set to a pre-branch snapshot in place (jc is
+        # (H) a NamedTuple, so the set object is shared -- mutate, do not rebind).
+        jc.local_names.clear()
+        jc.local_names.update(pre_shadows)
 
     def _walk_js_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
         # (H) Path-sensitive walk for JS/TS: control-flow nodes branch-and-merge, every
