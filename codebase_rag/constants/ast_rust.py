@@ -37,6 +37,15 @@ RS_COMMENT_TYPES = (TS_RS_LINE_COMMENT, TS_RS_BLOCK_COMMENT)
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
 
+# (H) Rust I/O direct-sink walk node types (issue #714). call_expression keeps a
+# (H) `function` field (a scoped_identifier like `std::fs::write`), so call_name works
+# (H) unchanged; `macro_invocation` (`println!`) needs its own handling via macro_type.
+# (H) A string_literal wraps a `string_content`; `block` is the fn-body lexical scope.
+TS_RS_STRING_LITERAL = "string_literal"
+TS_RS_STRING_CONTENT = "string_content"
+TS_RS_BLOCK = "block"
+TS_RS_FIELD_MACRO = "macro"
+
 # (H) Rust node types for local-variable type inference (receiver-dispatch)
 TS_RS_LET_DECLARATION = "let_declaration"
 TS_RS_PARAMETER = "parameter"

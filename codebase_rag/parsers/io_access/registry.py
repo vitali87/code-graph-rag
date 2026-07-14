@@ -232,6 +232,30 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
     ),
 )
 
+# (H) Rust direct-call I/O sinks (issue #714). call_name yields the callee's path text
+# (H) with `::` separators (`std::env::var`, `std::fs::write`); Rust code reaches these
+# (H) either fully-qualified or via `use std::fs;` + `fs::write(..)`, so each sink is
+# (H) keyed under BOTH the full `std::MODULE::fn` and the short `MODULE::fn` form (the
+# (H) `::` path is not shadowable by a local, so no import-gating needed). Rust has no
+# (H) keyword args -> path/key is positional arg 0. File handles (`File::open`,
+# (H) `BufReader`) and the print macros (handled separately) are follow-ups here.
+_RUST_CALL_METHODS: tuple[
+    tuple[str, str, ResourceKind, IODirection, int | None], ...
+] = (
+    ("env", "var", ResourceKind.ENV, IODirection.READ, 0),
+    ("env", "vars", ResourceKind.ENV, IODirection.READ, None),
+    ("fs", "read_to_string", ResourceKind.FILE, IODirection.READ, 0),
+    ("fs", "read", ResourceKind.FILE, IODirection.READ, 0),
+    ("fs", "write", ResourceKind.FILE, IODirection.WRITE, 0),
+    ("fs", "remove_file", ResourceKind.FILE, IODirection.WRITE, 0),
+)
+
+_RUST_SINKS: tuple[IOSink, ...] = tuple(
+    IOSink(f"{prefix}{module}::{fn}", kind, direction, target_arg=arg)
+    for module, fn, kind, direction, arg in _RUST_CALL_METHODS
+    for prefix in ("", "std::")
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -239,6 +263,19 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.TSX: _JS_TS_SINKS,
     cs.SupportedLanguage.GO: _GO_SINKS,
     cs.SupportedLanguage.JAVA: _JAVA_SINKS,
+    cs.SupportedLanguage.RUST: _RUST_SINKS,
+}
+
+# (H) Macro-call I/O sinks keyed by macro name (issue #714). Rust's stdout/stderr write
+# (H) path is the `println!`/`print!`/`eprintln!`/`eprint!` macros, not calls; the target
+# (H) is a format template, so the resource identity is always <dynamic> (STDOUT).
+_RUST_MACRO_SINKS: dict[str, IOSink] = {
+    name: IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
+    for name in ("println", "print", "eprintln", "eprint")
+}
+
+IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
+    cs.SupportedLanguage.RUST: _RUST_MACRO_SINKS,
 }
 
 # (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:

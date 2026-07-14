@@ -32,6 +32,7 @@ from .models import HandleBinding, HandleConstructor, IOSink
 from .registry import (
     IO_HANDLE_CONSTRUCTORS,
     IO_HANDLE_METHODS,
+    IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
 )
@@ -59,6 +60,8 @@ class IOAccessProcessor:
         # (H) When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
         self._enabled = selection.io_enabled
+        # (H) Per-language macro sink table, (re)set at the start of each caller walk.
+        self._macro_sinks: dict[str, IOSink] = {}
 
     def process_io_for_caller(
         self,
@@ -75,6 +78,9 @@ class IOAccessProcessor:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         sink_by_name = {s.callee: s for s in sinks}
+        # (H) Per-language macro sink table (Rust print macros), read during the walk by
+        # (H) _emit_macro. Set per caller; the walk is single-threaded, so no re-entrancy.
+        self._macro_sinks = IO_MACRO_SINKS.get(language, {})
         # (H) Non-Python languages take a lean direct-sink walk (issue #714): match
         # (H) call sinks and emit, without Python's handle/scope machinery (streams
         # (H) and data-flow are a follow-up). Python keeps the full handle-aware walk.
@@ -487,6 +493,13 @@ class IOAccessProcessor:
                 self._emit_direct_call(
                     node, caller_spec, import_map, sink_by_name, descriptor, in_scope
                 )
+            elif (
+                descriptor.macro_type is not None and node.type == descriptor.macro_type
+            ):
+                # (H) A macro sink (`println!`) writes STDOUT; still descend so a real
+                # (H) call sink inside the macro args (`println!("{}", env::var("X"))`)
+                # (H) is also caught.
+                self._emit_macro(node, caller_spec)
             elif member_reads and node.type in (
                 descriptor.member_expression_type,
                 descriptor.subscript_type,
@@ -495,6 +508,17 @@ class IOAccessProcessor:
                     node, caller_spec, member_reads, in_scope, import_map, descriptor
                 )
             stack.extend(node.named_children)
+
+    def _emit_macro(self, node: Node, caller_spec: tuple[str, str, str]) -> None:
+        # (H) Match a macro invocation's name (`macro` field) against the per-language
+        # (H) macro sink table (Rust `println!`/`eprintln!` -> STDOUT). The target is a
+        # (H) format template, so the resource identity is always <dynamic>.
+        macro = node.child_by_field_name(cs.TS_RS_FIELD_MACRO)
+        if macro is None or macro.text is None:
+            return
+        sink = self._macro_sinks.get(macro.text.decode(cs.ENCODING_UTF8))
+        if sink is not None:
+            self._emit(caller_spec, sink.direction, sink.kind, DYNAMIC_TARGET)
 
     def _emit_member_read(
         self,
@@ -572,12 +596,15 @@ class IOAccessProcessor:
         # (H) The local names a declaration binds: JS `const fs = ...` / destructuring
         # (H) uses the `name` field; Go `var/const os = ...` also has `name` field(s),
         # (H) while `os := ...` / `range` use the `left` field (an expression_list of
-        # (H) identifiers). All are collected so they shadow a same-named builtin.
+        # (H) identifiers); Rust `let s = ...` uses the `pattern` field. All are
+        # (H) collected so they shadow a same-named builtin.
         names: set[str] = set()
         for name in declarator.children_by_field_name(cs.TS_FIELD_NAME):
             self._pattern_names(name, descriptor, names)
         if (left := declarator.child_by_field_name(cs.FIELD_LEFT)) is not None:
             self._pattern_names(left, descriptor, names)
+        for pattern in declarator.children_by_field_name(cs.TS_FIELD_PATTERN):
+            self._pattern_names(pattern, descriptor, names)
         return names
 
     def _pattern_names(
