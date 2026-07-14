@@ -76,6 +76,19 @@ class TestComputeParserFingerprint:
         (parsers_dir / "some_parser.py").write_text("A = 1\n")
         assert compute_parser_fingerprint(pkg) == compute_parser_fingerprint(pkg)
 
+    def test_changes_when_csharp_frontend_setting_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # (H) The frontend selection is part of the parser identity: flipping it
+        # (H) rewrites edges for unchanged sources, so it must change the
+        # (H) fingerprint and trip the staleness warning (issue #738).
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+        assert compute_parser_fingerprint() != before
+
 
 class TestFingerprintStamping:
     def test_full_sync_stamps_current_fingerprint(
