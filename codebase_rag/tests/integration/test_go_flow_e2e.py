@@ -218,6 +218,55 @@ def test_go_local_shadows_source_no_flow(
     assert not any(f["kind"] == FlowKind.RESOURCE.value for f in flows)
 
 
+def test_go_later_shadow_does_not_suppress_earlier_source(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Go has no hoisting: a `os := load()` AFTER the read must not retroactively
+    # (H) shadow the earlier real os.Getenv, so the direct ENV -> STDOUT flow stands.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "package main\n\n"
+        'import (\n\t"fmt"\n\t"os"\n)\n\n'
+        "func boot() {\n"
+        '\tfmt.Println(os.Getenv("SECRET"))\n'
+        "\tos := load()\n"
+        "\t_ = os\n"
+        "}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_go_later_shadow_keeps_prior_variable_flow(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A read bound to `secret`, THEN a later `os := load()` shadow, then a log of
+    # (H) secret: the import was in scope at the read, so ENV -> STDOUT must survive.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "package main\n\n"
+        'import (\n\t"fmt"\n\t"os"\n)\n\n'
+        "func boot() {\n"
+        '\tsecret := os.Getenv("SECRET")\n'
+        "\tos := load()\n"
+        "\t_ = os\n"
+        "\tfmt.Println(secret)\n"
+        "}\n",
+    )
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_go_reassignment_kills_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

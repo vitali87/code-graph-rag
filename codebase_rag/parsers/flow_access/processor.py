@@ -101,14 +101,26 @@ class _FlowCtx(NamedTuple):
     write_sinks: dict[str, IOSink]
 
 
+# (H) Languages whose local declarations hoist to the whole function scope (JS/TS
+# (H) const/let are in the temporal dead zone before their line, so using the name
+# (H) earlier is a ReferenceError -- treating it as shadowed function-wide is safe).
+# (H) Go has no hoisting: a `:=`/`var` shadow only applies from its point forward, so
+# (H) its names are added to the live shadow set during the source-order walk instead.
+_HOISTED_DECL_LANGS = frozenset(
+    {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
+)
+
+
 class _JsCtx(NamedTuple):
     # (H) Per-caller constants for the lean non-Python flow walk (issue #714).
     flow: _FlowCtx
     descriptor: LanguageDescriptor
     member_reads: tuple[tuple[str, ResourceKind], ...]
-    # (H) Names bound in the caller scope, which shadow a same-named builtin
-    # (H) source/sink (a local `const fetch`, `function process`, a parameter).
-    local_names: frozenset[str]
+    # (H) Names that shadow a same-named builtin source/sink (a local `const fetch`, a
+    # (H) parameter, a Go `os := ...`). MUTABLE: seeded with parameters (+ hoisted
+    # (H) declarations for JS/TS) and grown with each Go binding as the walk reaches
+    # (H) it, so a later Go shadow never suppresses an earlier valid source read.
+    local_names: set[str]
 
 
 class FlowProcessor:
@@ -231,7 +243,7 @@ class FlowProcessor:
             flow=ctx,
             descriptor=descriptor,
             member_reads=member_reads,
-            local_names=self._js_local_names(caller_node, descriptor),
+            local_names=self._js_local_names(caller_node, descriptor, ctx.language),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -306,14 +318,30 @@ class FlowProcessor:
                 tainted[name] = taint
             else:
                 tainted.pop(name, None)
+        # (H) Register the bound names AFTER reading the RHS (which still saw the
+        # (H) pre-declaration scope): a Go shadow applies only from here forward.
+        self._register_shadows(targets, jc)
 
     def _lean_kill(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         if left is None:
             return
-        for name in self._lean_targets(left, jc.descriptor):
+        names = self._lean_targets(left, jc.descriptor)
+        for name in names:
             if name is not None:
                 tainted.pop(name, None)
+        self._register_shadows(names, jc)
+
+    @staticmethod
+    def _register_shadows(names: list[str | None], jc: _JsCtx) -> None:
+        # (H) Non-hoisted (Go) declarations grow the live shadow set as the walk
+        # (H) reaches them; JS/TS names are already seeded function-wide (and a
+        # (H) require-alias must never be registered, so skip hoisted languages).
+        if jc.flow.language in _HOISTED_DECL_LANGS:
+            return
+        for name in names:
+            if name is not None:
+                jc.local_names.add(name)
 
     @staticmethod
     def _lean_targets(node: Node, descriptor: LanguageDescriptor) -> list[str | None]:
@@ -549,19 +577,25 @@ class FlowProcessor:
         return not head_is_genuine_module(jc.flow.import_map.get(head), head)
 
     def _js_local_names(
-        self, caller_node: Node, descriptor: LanguageDescriptor
-    ) -> frozenset[str]:
-        # (H) ponytail: flat collection of the caller's parameters + every declarator
-        # (H) and hoisted function name in the body (nested functions pruned). Not
-        # (H) block-scoped -- the io walk has the precise version; refine if JS flow
-        # (H) precision on that ever matters. A `const fs = require('fs')` declarator
-        # (H) is an import alias (the genuine module), so it is NOT a shadow; but a
-        # (H) local `const fs = {}` IS one, even if `fs` is also imported module-wide.
+        self,
+        caller_node: Node,
+        descriptor: LanguageDescriptor,
+        language: cs.SupportedLanguage,
+    ) -> set[str]:
+        # (H) The shadow set seed: always the caller's parameters (in scope for the
+        # (H) whole body in every grammar). For hoisted-declaration languages (JS/TS)
+        # (H) also every declarator/function name in the body up front, since those
+        # (H) shadow function-wide. Go declarations are NOT hoisted, so they are added
+        # (H) to the live set during the walk (see _lean_bind) rather than seeded here.
+        # (H) A `const fs = require('fs')` declarator is an import alias (the genuine
+        # (H) module), so it is NOT a shadow; a local `const fs = {}` IS one.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
         if params is not None:
             for child in params.named_children:
                 self._js_binding_names(child, descriptor, names)
+        if language not in _HOISTED_DECL_LANGS:
+            return names
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         stack = list((body or caller_node).named_children)
         while stack:
@@ -574,16 +608,11 @@ class FlowProcessor:
             if (
                 node.type == descriptor.declarator_type
                 and not is_require_alias(node, descriptor.call_type)
-            ) or node.type in descriptor.extra_declarator_types:
-                # (H) Go binds via a `left` expression_list (`:=`, `range`) or `name`
-                # (H) field(s) (`var`/`const`); JS declarators via a single `name`.
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                if left is not None:
-                    self._js_binding_names(left, descriptor, names)
-                for name in node.children_by_field_name(cs.TS_FIELD_NAME):
-                    self._js_binding_names(name, descriptor, names)
+                and (name := node.child_by_field_name(cs.TS_FIELD_NAME)) is not None
+            ):
+                self._js_binding_names(name, descriptor, names)
             stack.extend(node.named_children)
-        return frozenset(names)
+        return names
 
     def _js_binding_names(
         self, node: Node, descriptor: LanguageDescriptor, out: set[str]
