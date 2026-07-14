@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from typing import cast
+
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.flow_access import FlowKind
 from codebase_rag.parsers.flow_access.processor import FlowProcessor
+from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.services import IngestorProtocol
 
 # (H) Fast unit coverage for the Go/Java path-sensitive flat walk (issue #714): drives
 # (H) FlowProcessor directly on a parsed snippet with recording fakes, no Memgraph. The
@@ -72,10 +77,12 @@ def _resource_flows(code: str, filename: str) -> list[tuple[str, str]]:
     module_qn = "proj.mod"
     caller_qn = f"{module_qn}.f"
     ingestor = _RecordingIngestor()
+    # (H) The fakes are structural stand-ins for concrete-typed constructor params;
+    # (H) cast keeps the harness type-clean without blanket suppressions.
     processor = FlowProcessor(
-        ingestor,  # type: ignore[arg-type]
-        _EmptyImports(),  # type: ignore[arg-type]
-        _NoResolver(),  # type: ignore[arg-type]
+        cast(IngestorProtocol, ingestor),
+        cast(ImportProcessor, _EmptyImports()),
+        cast(CallResolver, _NoResolver()),
         resolve_capture([cs.CaptureGroup.IO.value]),
     )
     processor.process_flow_for_caller(
