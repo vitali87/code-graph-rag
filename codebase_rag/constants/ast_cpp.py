@@ -160,6 +160,31 @@ CPP_DECLARATOR_SUFFIX = "declarator"
 FIELD_OPERATOR = "operator"
 FIELD_MACRO = "macro"
 
+# (H) C++ I/O direct-sink walk node types (issue #714). call_expression keeps a
+# (H) `function` field so call_name works unchanged. The stdout write path is the
+# (H) stream-insertion operator `std::cout << x` -- a `binary_expression` with a `<<`
+# (H) operator whose left-spine base is cout/cerr (no call node), handled via
+# (H) stream_sink_type like Rust's macro sinks. A string_literal wraps string_content;
+# (H) `compound_statement` is the block scope; `declaration` holds init_declarator
+# (H) locals whose bound name is nested under the `declarator` field.
+TS_CPP_STRING_LITERAL = "string_literal"
+TS_CPP_STRING_CONTENT = "string_content"
+TS_CPP_COMPOUND_STATEMENT = "compound_statement"
+TS_CPP_DECLARATION = "declaration"
+TS_CPP_INIT_DECLARATOR = "init_declarator"
+TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
+TS_CPP_IDENTIFIER = "identifier"
+TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
+# (H) Stream-insertion operator; a `binary_expression` using it whose left-spine base
+# (H) is std::cout / std::cerr writes STDOUT.
+CPP_OP_LEFT_SHIFT = "<<"
+# (H) field_expression = `obj.field` (argument/field); subscript_expression =
+# (H) `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
+# (H) correctness / future value-level sinks.
+CPP_FIELD_ARGUMENT = "argument"
+CPP_FIELD_FIELD = "field"
+CPP_FIELD_INDICES = "indices"
+
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
 CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)

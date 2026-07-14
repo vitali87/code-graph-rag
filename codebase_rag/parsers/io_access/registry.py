@@ -263,6 +263,26 @@ _RUST_SINKS: tuple[IOSink, ...] = tuple(
     for module, fn, kind, direction, arg in _RUST_CALL_METHODS
 )
 
+# (H) C++ direct-call I/O sinks (issue #714). getenv reads ENV; printf/puts write
+# (H) STDOUT unconditionally. Deliberately EXCLUDED (ambiguous by name alone, deferred
+# (H) to the stream-handle follow-up): fprintf/fputs/fwrite (first arg is a FILE* that
+# (H) may be stdout/stderr OR a file); remove/rename (std::remove/rename overload the
+# (H) STL erase-remove algorithm on iterators, so keying them would false-match).
+_CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...] = (
+    ("getenv", ResourceKind.ENV, IODirection.READ, 0),
+    ("secure_getenv", ResourceKind.ENV, IODirection.READ, 0),
+    ("printf", ResourceKind.STDOUT, IODirection.WRITE, None),
+    ("puts", ResourceKind.STDOUT, IODirection.WRITE, None),
+)
+
+# (H) Keyed under both the bare (C linkage / `using namespace std`) and `std::`-
+# (H) qualified forms; C++ has no use-alias import map to expand a short path.
+_CPP_SINKS: tuple[IOSink, ...] = tuple(
+    IOSink(f"{prefix}{fn}", kind, direction, target_arg=arg)
+    for fn, kind, direction, arg in _CPP_CALL_METHODS
+    for prefix in ("", "std::")
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -271,6 +291,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.GO: _GO_SINKS,
     cs.SupportedLanguage.JAVA: _JAVA_SINKS,
     cs.SupportedLanguage.RUST: _RUST_SINKS,
+    cs.SupportedLanguage.CPP: _CPP_SINKS,
 }
 
 # (H) Macro-call I/O sinks keyed by macro name (issue #714). Rust's stdout/stderr write
@@ -283,6 +304,18 @@ _RUST_MACRO_SINKS: dict[str, IOSink] = {
 
 IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
     cs.SupportedLanguage.RUST: _RUST_MACRO_SINKS,
+}
+
+# (H) Stream-insertion I/O sinks keyed by the left-spine base of a `<<` chain
+# (H) (`std::cout << x` writes STDOUT). Both the bare and std:: forms are keyed.
+_CPP_STREAM_SINKS: dict[str, IOSink] = {
+    f"{prefix}{name}": IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
+    for name in ("cout", "cerr", "clog")
+    for prefix in ("", "std::")
+}
+
+IO_STREAM_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
+    cs.SupportedLanguage.CPP: _CPP_STREAM_SINKS,
 }
 
 # (H) Member/subscript accesses that are I/O reads, keyed by the object prefix:
