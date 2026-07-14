@@ -152,6 +152,7 @@ class ClassIngestMixin:
     csharp_partial_groups: dict[str, list[str]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -753,6 +754,18 @@ class ClassIngestMixin:
         # (H) type_spec is class_node, so this is a no-op for non-templates and for
         # (H) Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
+        # (H) When the opt-in Roslyn frontend ran, hand this type's exact base
+        # (H) classifications (keyed by its rel-path + start line) to the split so
+        # (H) INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
+        # (H) for non-C# types or when the frontend is off -> heuristic stands.
+        csharp_base_kinds: dict[str, str] | None = None
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and self.csharp_base_kinds
+            and file_path is not None
+        ):
+            rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
+            csharp_base_kinds = self.csharp_base_kinds.get((rel_path, class_start_line))
         rel.create_class_relationships(
             member_node,
             class_qn,
@@ -768,6 +781,7 @@ class ClassIngestMixin:
             self.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
             defer_inherits=self._deferred_inherits,
+            csharp_base_kinds=csharp_base_kinds,
         )
         if language == cs.SupportedLanguage.CPP:
             # (H) Record this class's member-field types now (from the class body,

@@ -31,6 +31,7 @@ def create_class_relationships(
     interface_implementers: dict[str, set[str]] | None = None,
     defer_cpp_inherits: list[DeferredCppInherit] | None = None,
     defer_inherits: list[DeferredInherit] | None = None,
+    csharp_base_kinds: dict[str, str] | None = None,
 ) -> None:
     cpp_bases: list[tuple[str, str]] | None = None
     if class_node.type in cs.CPP_CLASS_TYPES:
@@ -38,7 +39,7 @@ def create_class_relationships(
         parent_classes = [guess for _, guess in cpp_bases]
     else:
         parent_classes = pe.extract_parent_classes(
-            class_node, module_qn, import_processor, resolve_to_qn
+            class_node, module_qn, import_processor, resolve_to_qn, csharp_base_kinds
         )
     class_inheritance[class_qn] = parent_classes
 
@@ -112,7 +113,7 @@ def create_class_relationships(
         cs.TS_DART_CLASS_DEFINITION,
     ):
         for interface_qn in pe.extract_implemented_interfaces(
-            class_node, module_qn, resolve_to_qn
+            class_node, module_qn, resolve_to_qn, csharp_base_kinds
         ):
             if defer_inherits is not None:
                 defer_inherits.append(

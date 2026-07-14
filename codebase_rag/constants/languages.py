@@ -89,6 +89,12 @@ class CppFrontend(StrEnum):
     HYBRID = "hybrid"
 
 
+class CSharpFrontend(StrEnum):
+    TREESITTER = "treesitter"
+    ROSLYN = "roslyn"
+    HYBRID = "hybrid"
+
+
 # (H) JS/TS import specifier schemes that name genuinely external code (node
 # (H) builtins, package registries, URLs). A specifier with any OTHER scheme
 # (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party

@@ -101,6 +101,12 @@ class DefinitionProcessor(
         # (H) make (the method lives on an unrelated static class). Populated at
         # (H) method ingestion, read by the type-inference engine as a fallback.
         self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
+        # (H) C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
+        # (H) {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
+        # (H) frontend ran, split_csharp_bases reads a base's kind here (exact,
+        # (H) from the semantic model) instead of guessing by the I-prefix
+        # (H) convention; empty when the frontend is off or unavailable.
+        self.csharp_base_kinds: dict[tuple[str, int], dict[str, str]] = {}
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a
