@@ -534,7 +534,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.336"
+version = "0.0.338"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -567,6 +567,7 @@ semantic = [
     { name = "transformers" },
 ]
 test = [
+    { name = "filelock" },
     { name = "libclang" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -621,6 +622,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.3.1" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "diff-match-patch", specifier = ">=20241021" },
+    { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
     { name = "griffe", specifier = ">=1.0,<2" },
     { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=1.7.2" },
     { name = "libclang", marker = "extra == 'test'", specifier = ">=18.1.1" },

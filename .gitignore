@@ -29,6 +29,7 @@ site/
 evals/results/l3_workspace/
 # Rust oracle build artifacts (the source + Cargo.lock are committed)
 evals/oracles/rs_oracle/target/
+evals/oracles/rs_oracle/.build.lock
 # TypeScript oracle deps (the source + package-lock.json are committed)
 evals/oracles/ts_oracle/node_modules/
 # Java oracle compiled classes (the source is committed)

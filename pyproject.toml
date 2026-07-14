@@ -92,6 +92,7 @@ test = [
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
+    "filelock>=3.12",
 ]
 
 treesitter-full = [
