@@ -60,9 +60,20 @@ def definition_header_nodes(node: Node) -> list[Node]:
 
 def call_name(call_node: Node) -> str | None:
     fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-    if fn is None or fn.text is None:
+    if fn is not None:
+        return fn.text.decode(cs.ENCODING_UTF8) if fn.text is not None else None
+    # (H) Java `method_invocation` has no `function` field: it exposes `object` (the
+    # (H) receiver, absent for an unqualified/static-imported call) and `name`.
+    # (H) Reconstruct the dotted callee (`System.out.println`) so it matches the
+    # (H) registry keys, exactly as the `function` field's text would for other langs.
+    name = call_node.child_by_field_name(cs.TS_FIELD_NAME)
+    if name is None or name.text is None:
         return None
-    return fn.text.decode(cs.ENCODING_UTF8)
+    method = name.text.decode(cs.ENCODING_UTF8)
+    obj = call_node.child_by_field_name(cs.FIELD_OBJECT)
+    if obj is not None and obj.text is not None:
+        return f"{obj.text.decode(cs.ENCODING_UTF8)}{cs.SEPARATOR_DOT}{method}"
+    return method
 
 
 def is_require_alias(declarator: Node, call_type: str) -> bool:

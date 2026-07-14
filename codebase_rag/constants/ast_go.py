@@ -37,6 +37,10 @@ TS_GO_IDENTIFIER = "identifier"
 TS_GO_CONST_SPEC = "const_spec"
 TS_GO_RANGE_CLAUSE = "range_clause"
 TS_GO_BLOCK = "block"
+# (H) Go wraps a block's statements in a single `statement_list` node (unlike JS/Java,
+# (H) whose block children are the statements directly); the source-order I/O walk
+# (H) unwraps it so per-statement shadowing sees the real statement boundaries.
+TS_GO_STATEMENT_LIST = "statement_list"
 TS_GO_INTERPRETED_STRING = "interpreted_string_literal"
 TS_GO_INTERPRETED_STRING_CONTENT = "interpreted_string_literal_content"
 TS_GO_INDEX_EXPRESSION = "index_expression"

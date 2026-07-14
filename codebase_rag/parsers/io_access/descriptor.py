@@ -32,10 +32,39 @@ class LanguageDescriptor:
     # (H) Extra declaration node types (beyond declarator_type) whose bound names also
     # (H) shadow a builtin -- Go's `var`/`const`/`range` specs; empty for JS/TS.
     extra_declarator_types: frozenset[str]
+    # (H) Loop-clause declaration nodes (Java for-each, Go `range`) whose bound var is
+    # (H) in scope in the loop BODY only -- NOT the iterable header (evaluated before
+    # (H) the var binds) nor sibling statements. The source-order walk seeds only the
+    # (H) body with these, so a sink in the iterable still resolves to the global.
+    loop_declarator_types: frozenset[str]
+    # (H) A wrapper node that holds a block's statements as its children (Go's
+    # (H) `statement_list`); None where a block's children ARE the statements (JS,
+    # (H) Java). The source-order walk unwraps it so per-statement shadowing sees the
+    # (H) real statement boundaries instead of one giant container "statement".
+    statement_container_type: str | None
     # (H) True when a dotted sink call requires its head to be an imported package
     # (H) (Go always imports stdlib; a package-scope `var os` is not the stdlib os).
     # (H) False for JS/TS, whose sinks include unimported globals (`console`, `fetch`).
     sinks_require_import: bool
+    # (H) True when declarations hoist over the whole block (JS `function`/`var`, and
+    # (H) const/let are lexically in scope before their line via the TDZ), so a local
+    # (H) shadows every use in the block. False for declare-at-point languages (Go,
+    # (H) Java), where a local shadows only the uses that FOLLOW its declaration -- so
+    # (H) the walk must add declarations in source order, not block-wide up front.
+    hoisted_declarations: bool
+    # (H) Whether a local is in scope in its OWN initializer (and later comma-declarators
+    # (H) in the same statement). True for Java (JLS 6.3: `T System = System.getenv()`
+    # (H) resolves the local) -> add the name BEFORE walking the statement. False for Go
+    # (H) (scope starts AFTER the ShortVarDecl: `os := os.Getenv()` reads the package)
+    # (H) -> add it AFTER. Only consulted when hoisted_declarations is False.
+    decl_in_own_initializer: bool
+    # (H) The declaration-statement node whose declarators must be scoped in source
+    # (H) order within the statement (Java `local_variable_declaration`): in
+    # (H) `T x = sink(), System = ...` the first initializer runs before `System` binds,
+    # (H) so each declarator's initializer sees only the declarators up to itself. None
+    # (H) where no such per-declarator ordering is needed (Go's list-assign RHS is
+    # (H) evaluated wholesale; JS is hoisted).
+    declaration_statement_type: str | None
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -64,7 +93,12 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_STATEMENT_BLOCK,
     extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
     sinks_require_import=False,
+    hoisted_declarations=True,
+    decl_in_own_initializer=True,
+    declaration_statement_type=None,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -94,7 +128,14 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     extra_declarator_types=frozenset(
         {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
     ),
+    loop_declarator_types=frozenset({cs.TS_GO_RANGE_CLAUSE}),
+    statement_container_type=cs.TS_GO_STATEMENT_LIST,
     sinks_require_import=True,
+    # (H) Go is declare-at-point (`:=`/`var` bind from that line on), so a local named
+    # (H) after a valid package call must not retroactively shadow it -- source order.
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
@@ -104,6 +145,46 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     subscript_index_field=cs.TS_GO_FIELD_INDEX,
 )
 
+_JAVA_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_JAVA_METHOD_INVOCATION,
+    string_type=cs.TS_JAVA_STRING_LITERAL,
+    string_content_type=cs.TS_STRING_FRAGMENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_METHOD_DECLARATION,
+            cs.TS_CONSTRUCTOR_DECLARATION,
+            cs.TS_JAVA_LAMBDA_EXPRESSION,
+        }
+    )
+    | cs.JAVA_CLASS_NODE_TYPES,
+    # (H) Java locals that shadow the `System`/`Files` global head: a
+    # (H) `variable_declarator` (`Object System = ...`), a `formal_parameter`, and an
+    # (H) `enhanced_for_statement` (for-each) loop var (extra_declarator_types).
+    identifier_type=cs.TS_IDENTIFIER,
+    declarator_type=cs.TS_VARIABLE_DECLARATOR,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_JAVA_BLOCK,
+    extra_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    loop_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    statement_container_type=None,
+    # (H) Java's System/Files sink heads are java.lang / java.nio globals that never
+    # (H) appear in import_map, so requiring an import would reject every sink.
+    sinks_require_import=False,
+    # (H) Java locals are declare-at-point (in scope from their statement on), so a
+    # (H) later local must not shadow an earlier same-named sink call -- source order.
+    hoisted_declarations=False,
+    decl_in_own_initializer=True,
+    declaration_statement_type=cs.TS_LOCAL_VARIABLE_DECLARATION,
+    # (H) Inert (no IO_MEMBER_READS for Java): env access is a call. Filled with Java's
+    # (H) field_access (object/field) and array_access (index) shapes for correctness.
+    member_expression_type=cs.TS_FIELD_ACCESS,
+    subscript_type=cs.TS_JAVA_ARRAY_ACCESS,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.JAVA_FIELD_FIELD,
+    subscript_index_field=cs.JAVA_FIELD_INDEX,
+)
+
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
 # (H) handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -111,4 +192,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TSX: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.GO: _GO_DESCRIPTOR,
+    cs.SupportedLanguage.JAVA: _JAVA_DESCRIPTOR,
 }

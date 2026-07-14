@@ -35,6 +35,18 @@ TS_RECORD_DECLARATION = "record_declaration"
 TS_TRUE = "true"
 TS_FALSE = "false"
 
+# (H) Java I/O direct-sink walk node types (issue #714). string_literal wraps a
+# (H) `string_fragment` (shared with JS); `block` is the method-body lexical scope;
+# (H) `lambda_expression` is a nested scope pruned from the enclosing walk. field_access
+# (H) / array_access describe member/subscript access (inert for Java, which has no
+# (H) IO_MEMBER_READS entry -- Java env access is a call, System.getenv, not a member).
+TS_JAVA_STRING_LITERAL = "string_literal"
+TS_JAVA_BLOCK = "block"
+TS_JAVA_LAMBDA_EXPRESSION = "lambda_expression"
+TS_JAVA_ARRAY_ACCESS = "array_access"
+JAVA_FIELD_FIELD = "field"
+JAVA_FIELD_INDEX = "index"
+
 # (H) Tree-sitter field names for child_by_field_name
 TS_FIELD_NAME = "name"
 TS_FIELD_TYPE = "type"
