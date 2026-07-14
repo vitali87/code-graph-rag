@@ -186,6 +186,16 @@ class TestBeamMultipleEos:
         result = beam.buildTargetTokens(preds)
         assert len(result[0]) == 1
 
+    def test_advance_records_completion_on_alternate_eos(self) -> None:
+        # (H) advance must record a finished hypothesis and set eosTop when the top
+        # (H) token is any configured EOS id (not just the first).
+        beam = Beam(size=1, eos=[2, 99], device=torch.device("cpu"))
+        word_probs = torch.full((1, 100), -1e9)
+        word_probs[0, 99] = 0.0
+        beam.advance(word_probs)
+        assert len(beam.finished) == 1
+        assert beam.eosTop is True
+
 
 class TestForwardAttentionMask:
     def _make_uninitialized(self, pad_id: int) -> UniXcoder:

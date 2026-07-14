@@ -243,7 +243,7 @@ class Beam:
         self.nextYs.append(bestScoresId - prevK * numWords)
 
         for i in range(self.nextYs[-1].size(0)):
-            if self.nextYs[-1][i] == self._eos:
+            if int(self.nextYs[-1][i]) in self._eos:
                 s = self.scores[i]
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
