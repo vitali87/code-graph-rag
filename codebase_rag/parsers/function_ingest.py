@@ -46,6 +46,25 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
 
 
+def _nearest_preceding_csharp_type(
+    func_node: Node, class_node_types: frozenset[str]
+) -> Node | None:
+    # (H) Find the class a `#if`-detached member belongs to: scan preceding siblings
+    # (H) at each ancestor level (a `#if`-guarded member is wrapped in a preproc_if,
+    # (H) so its OWN siblings never include the truncated class) up to the root,
+    # (H) returning the nearest class-like node. For the truncation case this is the
+    # (H) class whose body ended early, spilling this member after it.
+    node: Node | None = func_node
+    while node is not None:
+        sib = node.prev_sibling
+        while sib is not None:
+            if sib.type in class_node_types:
+                return sib
+            sib = sib.prev_sibling
+        node = node.parent
+    return None
+
+
 def _java_anon_base_for_function(
     func_node: Node, class_node_types: frozenset[str]
 ) -> str | None:
@@ -178,6 +197,8 @@ class FunctionIngestMixin:
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
+    csharp_methods: set[str]
+    csharp_override_methods: set[str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -223,6 +244,19 @@ class FunctionIngestMixin:
                     and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
                 ):
                     continue
+
+            # (H) A C# member declaration (method/property/operator/ctor) that a
+            # (H) `#if`-truncated class node detached into the namespace's
+            # (H) declaration_list reaches here with no class ancestor. It is a real
+            # (H) class member by grammar invariant, so recover its class and emit it
+            # (H) as a Method rather than mislabelling it a module Function.
+            if (
+                language == cs.SupportedLanguage.CSHARP
+                and self._recover_csharp_orphan_method(
+                    func_node, module_qn, lang_config, lang_queries, file_path
+                )
+            ):
+                continue
 
             if language == cs.SupportedLanguage.CPP:
                 if self._handle_cpp_out_of_class_method(
@@ -1200,6 +1234,91 @@ class FunctionIngestMixin:
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
+
+    def _csharp_scope_qn(self, node: Node, module_qn: str) -> str:
+        # (H) Qualified name of a C# scope node (class/namespace) via the same walk
+        # (H) the definition FQN pass uses, so a recovered class qn matches the one
+        # (H) the class-ingest pass registered. `node` is itself a scope type, so
+        # (H) start the walk at it (its own name is the innermost segment).
+        fqn_config = LANGUAGE_FQN_SPECS[cs.SupportedLanguage.CSHARP]
+        parts: list[str] = []
+        current: Node | None = node
+        while current is not None:
+            if current.type in fqn_config.scope_node_types and (
+                scope_name := fqn_config.get_name(current)
+            ):
+                parts.append(scope_name)
+            current = current.parent
+        if not parts:
+            return module_qn
+        parts.reverse()
+        return module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+
+    def _recover_csharp_orphan_method(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        # (H) A C# method/property/operator/ctor is grammatically only ever a type
+        # (H) member; a `local_function_statement` is the real top-level function, so
+        # (H) it is deliberately excluded and left to the Function path.
+        if func_node.type not in cs.CSHARP_MEMBER_ONLY_TYPES:
+            return False
+        class_node = _nearest_preceding_csharp_type(
+            func_node, frozenset(lang_config.class_node_types)
+        )
+        if class_node is None:
+            return False
+
+        from .class_ingest.utils import csharp_has_override_modifier
+        from .csharp import utils as csharp_utils
+
+        class_qn = self._csharp_scope_qn(class_node, module_qn)
+        cs_name, cs_params = csharp_utils.extract_method_signature(func_node)
+        method_qualified_name = None
+        if cs_name and cs_params:
+            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
+            method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
+
+        ingested_qn = ingest_method(
+            func_node,
+            class_qn,
+            cs.NodeLabel.CLASS,
+            self.ingestor,
+            self.function_registry,
+            self.simple_name_lookup,
+            self._get_docstring,
+            cs.SupportedLanguage.CSHARP,
+            lang_queries=lang_queries,
+            method_qualified_name=method_qualified_name,
+            file_path=file_path,
+            repo_path=self.repo_path,
+            # (H) The class node was parse-truncated; defer the containment so it
+            # (H) resolves to DEFINES_METHOD if the class registered, else an
+            # (H) audit-safe module DEFINES (never a dangling edge).
+            defer_containment=self._deferred_parent_links,
+            module_qn=module_qn,
+        )
+        if ingested_qn is None:
+            return False
+        record_cpp_definition_span(
+            self.cpp_definition_spans,
+            cs.SupportedLanguage.CSHARP,
+            file_path,
+            self.repo_path,
+            func_node,
+            cs.NodeLabel.METHOD.value,
+            ingested_qn,
+        )
+        # (H) Track it like an in-class C# method so the override walk can gate a
+        # (H) class-parent OVERRIDES on the `override` modifier.
+        self.csharp_methods.add(ingested_qn)
+        if csharp_has_override_modifier(func_node):
+            self.csharp_override_methods.add(ingested_qn)
+        return True
 
     def _find_enclosing_function_node(
         self, func_node: Node, lang_config: LanguageSpec
