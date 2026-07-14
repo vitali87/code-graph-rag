@@ -137,6 +137,11 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "parser_loader.py",
 )
 PY_SOURCE_GLOB = "*.py"
+# (H) The bundled Roslyn C# frontend tool is parser code too, even though it is
+# (H) .cs/.csproj rather than Python: an edit to it changes the semantic edges it
+# (H) produces, so its sources are folded into the parser fingerprint.
+PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp_frontend/roslyn"
+PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
 GIT_DIR_NAME = ".git"

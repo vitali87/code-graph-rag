@@ -76,6 +76,19 @@ class TestComputeParserFingerprint:
         (parsers_dir / "some_parser.py").write_text("A = 1\n")
         assert compute_parser_fingerprint(pkg) == compute_parser_fingerprint(pkg)
 
+    def test_changes_when_roslyn_tool_source_changes(self, tmp_path: Path) -> None:
+        # (H) The bundled Roslyn frontend tool (.cs/.csproj) is parser code: an
+        # (H) edit to it must change the fingerprint so a re-index warns even when
+        # (H) the user's C# sources are unchanged (issue #738).
+        pkg = tmp_path / "pkg"
+        tool_dir = pkg / cs.PARSER_FINGERPRINT_TOOL_DIR
+        tool_dir.mkdir(parents=True)
+        source = tool_dir / "Frontend.cs"
+        source.write_text("class A { }\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("class A { void M() { } }\n")
+        assert compute_parser_fingerprint(pkg) != before
+
     def test_changes_when_csharp_frontend_setting_changes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

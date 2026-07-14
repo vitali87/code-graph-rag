@@ -48,6 +48,12 @@ def _fingerprint_sources(root: Path) -> list[Path]:
         for name in cs.PARSER_FINGERPRINT_SOURCE_FILES
         if (path := root / name).is_file()
     )
+    # (H) The bundled Roslyn frontend tool (.cs/.csproj) is parser code even though
+    # (H) it is not Python; an edit to it changes the semantic edges produced, so a
+    # (H) tool change must trip the staleness warning.
+    tool_dir = root / cs.PARSER_FINGERPRINT_TOOL_DIR
+    for pattern in cs.PARSER_FINGERPRINT_TOOL_GLOBS:
+        sources.extend(path for path in tool_dir.glob(pattern) if path.is_file())
     return sorted(sources)
 
 
