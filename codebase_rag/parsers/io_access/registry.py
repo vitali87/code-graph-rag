@@ -248,6 +248,10 @@ _RUST_CALL_METHODS: tuple[
     ("fs", "read", ResourceKind.FILE, IODirection.READ, 0),
     ("fs", "write", ResourceKind.FILE, IODirection.WRITE, 0),
     ("fs", "remove_file", ResourceKind.FILE, IODirection.WRITE, 0),
+    ("fs", "create_dir", ResourceKind.FILE, IODirection.WRITE, 0),
+    ("fs", "create_dir_all", ResourceKind.FILE, IODirection.WRITE, 0),
+    ("fs", "remove_dir", ResourceKind.FILE, IODirection.WRITE, 0),
+    ("fs", "remove_dir_all", ResourceKind.FILE, IODirection.WRITE, 0),
 )
 
 _RUST_SINKS: tuple[IOSink, ...] = tuple(

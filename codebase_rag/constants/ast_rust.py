@@ -45,6 +45,16 @@ TS_RS_STRING_LITERAL = "string_literal"
 TS_RS_STRING_CONTENT = "string_content"
 TS_RS_BLOCK = "block"
 TS_RS_FIELD_MACRO = "macro"
+# (H) A macro body is a flat `token_tree` of raw tokens (`::` and `(...)` included),
+# (H) not a parse tree, so a call inside `println!(..)` has no call_expression node.
+TS_RS_TOKEN_TREE = "token_tree"
+TS_RS_TOKEN_SCOPE = "::"
+# (H) `s.field` is a field_expression (value/field); `arr[i]` an index_expression
+# (H) (unnamed children in this grammar). Inert for I/O (Rust env access is a call),
+# (H) wired for correctness / future value-level sinks.
+TS_RS_INDEX_EXPRESSION = "index_expression"
+RS_FIELD_FIELD = "field"
+RS_FIELD_INDEX = "index"
 
 # (H) Rust node types for local-variable type inference (receiver-dispatch)
 TS_RS_LET_DECLARATION = "let_declaration"

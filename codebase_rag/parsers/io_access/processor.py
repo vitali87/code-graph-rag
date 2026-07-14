@@ -60,8 +60,6 @@ class IOAccessProcessor:
         # (H) When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
         self._enabled = selection.io_enabled
-        # (H) Per-language macro sink table, (re)set at the start of each caller walk.
-        self._macro_sinks: dict[str, IOSink] = {}
 
     def process_io_for_caller(
         self,
@@ -78,9 +76,10 @@ class IOAccessProcessor:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         sink_by_name = {s.callee: s for s in sinks}
-        # (H) Per-language macro sink table (Rust print macros), read during the walk by
-        # (H) _emit_macro. Set per caller; the walk is single-threaded, so no re-entrancy.
-        self._macro_sinks = IO_MACRO_SINKS.get(language, {})
+        # (H) Per-language macro sink table (Rust print macros), threaded through the
+        # (H) walk to _emit_macro as a parameter (not instance state) so the processor
+        # (H) stays stateless, mirroring sink_by_name.
+        macro_sinks = IO_MACRO_SINKS.get(language, {})
         # (H) Non-Python languages take a lean direct-sink walk (issue #714): match
         # (H) call sinks and emit, without Python's handle/scope machinery (streams
         # (H) and data-flow are a follow-up). Python keeps the full handle-aware walk.
@@ -92,6 +91,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    macro_sinks,
                     IO_MEMBER_READS.get(language, ()),
                     descriptor,
                 )
@@ -278,6 +278,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -308,6 +309,7 @@ class IOAccessProcessor:
             caller_spec,
             import_map,
             sink_by_name,
+            macro_sinks,
             member_reads,
             descriptor,
         )
@@ -319,6 +321,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -353,6 +356,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    macro_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -385,6 +389,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    macro_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -400,6 +405,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    macro_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -412,6 +418,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -431,6 +438,7 @@ class IOAccessProcessor:
                 caller_spec,
                 import_map,
                 sink_by_name,
+                macro_sinks,
                 member_reads,
                 descriptor,
             )
@@ -463,6 +471,7 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
@@ -485,6 +494,7 @@ class IOAccessProcessor:
                     caller_spec,
                     import_map,
                     sink_by_name,
+                    macro_sinks,
                     member_reads,
                     descriptor,
                 )
@@ -496,10 +506,14 @@ class IOAccessProcessor:
             elif (
                 descriptor.macro_type is not None and node.type == descriptor.macro_type
             ):
-                # (H) A macro sink (`println!`) writes STDOUT; still descend so a real
-                # (H) call sink inside the macro args (`println!("{}", env::var("X"))`)
-                # (H) is also caught.
-                self._emit_macro(node, caller_spec)
+                # (H) A macro sink (`println!`) writes STDOUT AND may inline a real call
+                # (H) sink in its args (`println!("{}", env::var("X"))`); tree-sitter
+                # (H) flattens the macro body to raw tokens (no call_expression node), so
+                # (H) _emit_macro reconstructs scoped calls from the token stream itself.
+                self._emit_macro(
+                    node, caller_spec, import_map, sink_by_name, macro_sinks, in_scope
+                )
+                continue
             elif member_reads and node.type in (
                 descriptor.member_expression_type,
                 descriptor.subscript_type,
@@ -509,16 +523,111 @@ class IOAccessProcessor:
                 )
             stack.extend(node.named_children)
 
-    def _emit_macro(self, node: Node, caller_spec: tuple[str, str, str]) -> None:
+    def _emit_macro(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        in_scope: frozenset[str],
+    ) -> None:
         # (H) Match a macro invocation's name (`macro` field) against the per-language
-        # (H) macro sink table (Rust `println!`/`eprintln!` -> STDOUT). The target is a
-        # (H) format template, so the resource identity is always <dynamic>.
+        # (H) macro sink table (Rust `println!`/`eprintln!` -> STDOUT); the target is a
+        # (H) format template, so the STDOUT identity is always <dynamic>. Then scan the
+        # (H) macro's token_tree for an inlined call sink (`println!("{}", env::var("X"))`).
+        # (H) ponytail: a macro name is matched by text alone; a locally redefined macro
+        # (H) (`macro_rules! println`) would false-match. Tracking macro shadowing is the
+        # (H) upgrade path if that pathological case ever matters.
         macro = node.child_by_field_name(cs.TS_RS_FIELD_MACRO)
         if macro is None or macro.text is None:
             return
-        sink = self._macro_sinks.get(macro.text.decode(cs.ENCODING_UTF8))
+        sink = macro_sinks.get(macro.text.decode(cs.ENCODING_UTF8))
         if sink is not None:
             self._emit(caller_spec, sink.direction, sink.kind, DYNAMIC_TARGET)
+        for child in node.named_children:
+            if child.type == cs.TS_RS_TOKEN_TREE:
+                self._scan_token_tree_calls(
+                    child, caller_spec, import_map, sink_by_name, in_scope
+                )
+
+    def _scan_token_tree_calls(
+        self,
+        token_tree: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        in_scope: frozenset[str],
+    ) -> None:
+        # (H) tree-sitter flattens a Rust macro body to raw tokens, so an inlined call
+        # (H) (`std::env::var("X")`) is a run of `identifier` joined by `::` tokens
+        # (H) followed by its args `token_tree` -- no call_expression node. Rebuild the
+        # (H) scoped name from that run, resolve it against the sink table (respecting
+        # (H) shadowing), and take arg0's string literal as the resource identity.
+        path: list[str] = []
+        expect_sep = False
+        for child in token_tree.children:
+            if child.type == cs.TS_IDENTIFIER and not expect_sep and child.text:
+                path.append(child.text.decode(cs.ENCODING_UTF8))
+                expect_sep = True
+            elif child.type == cs.TS_RS_TOKEN_SCOPE and expect_sep:
+                expect_sep = False
+            elif child.type == cs.TS_RS_TOKEN_TREE:
+                if path:
+                    self._emit_token_tree_call(
+                        "::".join(path),
+                        child,
+                        caller_spec,
+                        import_map,
+                        sink_by_name,
+                        in_scope,
+                    )
+                path, expect_sep = [], False
+                # (H) Recurse for a nested macro / grouped call in the arguments.
+                self._scan_token_tree_calls(
+                    child, caller_spec, import_map, sink_by_name, in_scope
+                )
+            else:
+                path, expect_sep = [], False
+
+    def _emit_token_tree_call(
+        self,
+        raw: str,
+        args: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        in_scope: frozenset[str],
+    ) -> None:
+        # (H) A reconstructed scoped call (name `raw`, `args` = its token_tree). Rust
+        # (H) sinks never require an import, so pass sinks_require_import=False.
+        sink = self._resolve_sink(raw, import_map, sink_by_name, in_scope, False)
+        if sink is None:
+            return
+        # (H) ponytail: only arg0 (or a kwless <dynamic>) is resolved from the flat
+        # (H) token stream -- every Rust I/O sink targets arg 0 or nothing. A sink at a
+        # (H) higher arg index would need positional token counting (upgrade path).
+        identity = DYNAMIC_TARGET
+        if sink.target_arg == 0:
+            identity = self._first_token_arg_string(args)
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    def _first_token_arg_string(self, args: Node) -> str:
+        # (H) arg0 of a flattened call's token_tree: the tokens before the first
+        # (H) top-level comma. It is the resource path only when it is a lone string
+        # (H) literal (`write(path, "x")` has a variable arg0 -> <dynamic>, not "x").
+        arg0: list[Node] = []
+        for child in args.children:
+            if child.type in (cs.CHAR_PAREN_OPEN, cs.CHAR_PAREN_CLOSE):
+                continue
+            if child.type == cs.CHAR_COMMA:
+                break
+            arg0.append(child)
+        if len(arg0) == 1 and arg0[0].type == cs.TS_RS_STRING_LITERAL:
+            return string_literal(
+                arg0[0], cs.TS_RS_STRING_LITERAL, cs.TS_RS_STRING_CONTENT
+            )
+        return DYNAMIC_TARGET
 
     def _emit_member_read(
         self,

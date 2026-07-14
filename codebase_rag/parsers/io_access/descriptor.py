@@ -217,12 +217,13 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     declaration_statement_type=None,
     macro_type=cs.TS_RS_MACRO_INVOCATION,
     # (H) Inert (no IO_MEMBER_READS for Rust): env access is a call (`std::env::var`).
-    # (H) Filled with Rust's field_expression shape for correctness.
+    # (H) Filled with Rust's own field_expression / index_expression shape for
+    # (H) correctness (not Java's field_access), so a future value-level sink is right.
     member_expression_type=cs.TS_RS_FIELD_EXPRESSION,
-    subscript_type=cs.TS_RS_FIELD_EXPRESSION,
+    subscript_type=cs.TS_RS_INDEX_EXPRESSION,
     object_field=cs.FIELD_VALUE,
-    property_field=cs.JAVA_FIELD_FIELD,
-    subscript_index_field=cs.JAVA_FIELD_INDEX,
+    property_field=cs.RS_FIELD_FIELD,
+    subscript_index_field=cs.RS_FIELD_INDEX,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own

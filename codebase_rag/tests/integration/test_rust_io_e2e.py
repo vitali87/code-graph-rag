@@ -45,8 +45,11 @@ _RUST_CODE = """\
 fn leak(name: String) {
     let s = std::env::var("SECRET").unwrap();
     println!("{}", s);
+    print!("{}", s);
     eprintln!("err {}", name);
+    eprint!("err {}", name);
     std::fs::write("out.txt", s);
+    std::fs::create_dir("d");
     let c = std::fs::read_to_string("in.txt");
 }
 """
@@ -55,14 +58,36 @@ fn leak(name: String) {
 def test_rust_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) std::env::var reads ENV::SECRET; println!/eprintln! macros write STDOUT;
-    # (H) std::fs::write / read_to_string are direct FILE write/read. First Rust
-    # (H) increment of issue #714 -- direct calls + print macros, no handles.
+    # (H) std::env::var reads ENV::SECRET; println!/print!/eprintln!/eprint! macros
+    # (H) write STDOUT; std::fs::write / create_dir / read_to_string are direct FILE
+    # (H) write/read. First Rust increment of issue #714 -- direct calls + print
+    # (H) macros, no handles.
     _build(memgraph_ingestor, tmp_path, _RUST_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
     assert (_WRITES, "resource::FILE::out.txt") in edges
+    assert (_WRITES, "resource::FILE::d") in edges
+    assert (_READS, "resource::FILE::in.txt") in edges
+
+
+def test_rust_call_inside_print_macro_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A sink call written INLINE in macro args -- `println!("{}", env::var("X"))`
+    # (H) -- must still emit its READS_FROM. tree-sitter flattens macro bodies into a
+    # (H) token_tree of raw tokens (no call_expression node), so the walk reconstructs
+    # (H) scoped calls from the token stream. The canonical "log a secret" taint case.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "fn f() {\n"
+        '    println!("{}", std::env::var("SECRET"));\n'
+        '    eprintln!("{}", std::fs::read_to_string("in.txt").unwrap());\n'
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::ENV::SECRET") in edges
     assert (_READS, "resource::FILE::in.txt") in edges
 
 
