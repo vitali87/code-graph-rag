@@ -11,8 +11,10 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    first_token_arg_string,
     head_is_genuine_module,
     is_require_alias,
+    iter_token_tree_calls,
     literal_target,
     match_normalised,
     normalise,
@@ -25,16 +27,20 @@ from .processor import IOAccessProcessor
 from .registry import (
     IO_HANDLE_CONSTRUCTORS,
     IO_HANDLE_METHODS,
+    IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
+    IO_STREAM_SINKS,
 )
 
 __all__ = [
     "DYNAMIC_TARGET",
     "IO_HANDLE_CONSTRUCTORS",
     "IO_HANDLE_METHODS",
+    "IO_MACRO_SINKS",
     "IO_MEMBER_READS",
     "IO_SINKS",
+    "IO_STREAM_SINKS",
     "LANGUAGE_DESCRIPTORS",
     "PY_SCOPE_BOUNDARIES",
     "RESOURCE_QN_FORMAT",
@@ -47,8 +53,10 @@ __all__ = [
     "ResourceKind",
     "call_name",
     "definition_header_nodes",
+    "first_token_arg_string",
     "head_is_genuine_module",
     "is_require_alias",
+    "iter_token_tree_calls",
     "literal_target",
     "match_normalised",
     "normalise",

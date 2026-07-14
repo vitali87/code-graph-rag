@@ -12,8 +12,10 @@ from ..call_resolver import CallResolver
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
+    IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
+    IO_STREAM_SINKS,
     LANGUAGE_DESCRIPTORS,
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
@@ -24,14 +26,17 @@ from ..io_access import (
     ResourceKind,
     call_name,
     definition_header_nodes,
+    first_token_arg_string,
     head_is_genuine_module,
     is_require_alias,
+    iter_token_tree_calls,
     literal_target,
     match_normalised,
     registry_match,
     scope_seed_nodes,
     string_literal,
 )
+from ..utils import cpp_declarator_name
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -99,6 +104,10 @@ class _FlowCtx(NamedTuple):
     import_map: dict[str, str]
     read_sinks: dict[str, IOSink]
     write_sinks: dict[str, IOSink]
+    # (H) Write sinks reached NOT by a plain call: Rust `println!` (macro) and C++
+    # (H) `std::cout << x` (stream insertion). Empty for languages without them.
+    macro_sinks: dict[str, IOSink]
+    stream_sinks: dict[str, IOSink]
 
 
 # (H) Languages whose local declarations hoist to the whole function scope (JS/TS
@@ -195,6 +204,8 @@ class FlowProcessor:
             write_sinks={
                 s.callee: s for s in sinks if s.direction == IODirection.WRITE
             },
+            macro_sinks=IO_MACRO_SINKS.get(language, {}),
+            stream_sinks=IO_STREAM_SINKS.get(language, {}),
         )
         # (H) Non-Python languages take a lean STRAIGHT-LINE flow walk (issue #714):
         # (H) taint from a read source (process.env, fetch, fs.readFile) reaching a
@@ -438,6 +449,10 @@ class FlowProcessor:
                 self._lean_bind(node, tainted, jc)
         elif node_type == d.call_type:
             self._js_call(node, tainted, jc)
+        elif d.macro_type is not None and node_type == d.macro_type:
+            self._flow_macro(node, tainted, jc)
+        elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
+            self._flow_stream(node, tainted, jc)
         elif node_type == cs.TS_RETURN_STATEMENT:
             returned = self._js_return_taint(node, tainted, jc)
             if returned is not None:
@@ -453,6 +468,19 @@ class FlowProcessor:
         if left is not None:
             targets = self._lean_targets(left, d)
             values = self._lean_values(node.child_by_field_name(cs.FIELD_RIGHT), d)
+        elif d.declarator_name_field is not None and node.type == d.declarator_type:
+            # (H) The bound name lives under a language-specific field, not `name`/
+            # (H) `left`: Rust `let x = ..` uses `pattern` (a plain identifier), C++
+            # (H) `int x = ..` uses `declarator` (a nested pointer/reference declarator).
+            # (H) Try the plain-identifier path first, then the C++ declarator unwrap.
+            field_node = node.child_by_field_name(d.declarator_name_field)
+            if field_node is None:
+                targets = [None]
+            else:
+                targets = self._lean_targets(field_node, d)
+                if targets == [None]:
+                    targets = [cpp_declarator_name(field_node)]
+            values = self._lean_values(node.child_by_field_name(cs.FIELD_VALUE), d)
         else:
             targets = []
             for name in node.children_by_field_name(cs.TS_FIELD_NAME):
@@ -570,6 +598,15 @@ class FlowProcessor:
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
                 return Taint(frozenset(), frozenset({callee[1]}))
+            # (H) A method chain (`std::env::var("X").unwrap()`): the callee itself is
+            # (H) not a source, but its receiver call may be -- recurse the left spine.
+            # (H) Gated on the receiver being a call (not a bare identifier) so plain
+            # (H) variable taint is never propagated through an arbitrary method.
+            func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            if func is not None and func.type == d.member_expression_type:
+                receiver = func.child_by_field_name(d.object_field)
+                if receiver is not None and receiver.type == d.call_type:
+                    return self._js_expr_taint(receiver, tainted, jc)
         return None
 
     def _js_call(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
@@ -622,6 +659,125 @@ class FlowProcessor:
                 self._deferred_arg_edges.append(
                     (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
                 )
+
+    def _emit_taint_to_sink(
+        self, taint: Taint, kind: ResourceKind, identity: str
+    ) -> None:
+        # (H) A tainted value reaching a write sink: emit resolved origins now, defer
+        # (H) pending callee returns to the fixpoint (mirrors the _js_call write branch).
+        for origin in taint.origins:
+            self._emit_resource_flow(origin, kind, identity)
+        if taint.pending:
+            self._deferred_resource_flows.append((taint.pending, kind, identity))
+
+    def _flow_macro(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # (H) A Rust macro sink (`println!(secret)`) writes STDOUT (identity <dynamic>,
+        # (H) the arg is a format template). tree-sitter flattens the macro body to raw
+        # (H) tokens, so taint reaches it two ways: a tainted local as a bare identifier
+        # (H) token, or a read source inlined as a scoped call in the token stream.
+        macro = node.child_by_field_name(cs.TS_RS_FIELD_MACRO)
+        if macro is None or macro.text is None:
+            return
+        sink = jc.flow.macro_sinks.get(macro.text.decode(cs.ENCODING_UTF8))
+        if sink is None:
+            return
+        for child in node.named_children:
+            if child.type == cs.TS_RS_TOKEN_TREE:
+                for taint in self._macro_arg_taints(child, tainted, jc):
+                    self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+
+    def _macro_arg_taints(
+        self, token_tree: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> list[Taint]:
+        out: list[Taint] = []
+        # (H) A tainted local used directly in the macro args (bare identifier token).
+        for name in self._token_identifiers(token_tree, jc.descriptor.identifier_type):
+            taint = tainted.get(name)
+            if taint is not None:
+                out.append(taint)
+        # (H) A read source inlined as a scoped call (`std::env::var("X")`).
+        for raw, args in iter_token_tree_calls(
+            token_tree,
+            cs.TS_RS_TOKEN_SCOPE,
+            jc.descriptor.identifier_type,
+            cs.TS_RS_TOKEN_TREE,
+        ):
+            sink = self._js_match_sink(raw, jc.flow.read_sinks, jc)
+            if sink is None:
+                continue
+            identity = DYNAMIC_TARGET
+            if sink.target_arg == 0:
+                identity = first_token_arg_string(
+                    args, jc.descriptor.string_type, jc.descriptor.string_content_type
+                )
+            out.append(
+                Taint(
+                    frozenset({HandleBinding(kind=sink.kind, identity=identity)}),
+                    frozenset(),
+                )
+            )
+        return out
+
+    @staticmethod
+    def _token_identifiers(token_tree: Node, identifier_type: str) -> set[str]:
+        # (H) Every identifier token in a flattened macro body. Path segments of an
+        # (H) inlined call (`std`, `env`) are here too but never appear in the taint
+        # (H) map, so matching against `tainted` only picks out real tainted locals.
+        out: set[str] = set()
+        stack = list(token_tree.children)
+        while stack:
+            n = stack.pop()
+            if n.type == identifier_type and n.text:
+                out.add(n.text.decode(cs.ENCODING_UTF8))
+            stack.extend(n.children)
+        return out
+
+    def _flow_stream(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # (H) A C++ stream sink (`std::cout << a << b`) nests left-associatively. Act
+        # (H) only at the TOP of the `<<` chain, walk the `left` spine to the base
+        # (H) operand; if it is a stream sink (cout/cerr), flow the taint of every
+        # (H) inserted operand to STDOUT. A non-stream base (arithmetic `x << 2`) misses.
+        d = jc.descriptor
+        if not self._is_stream_insertion(node, d):
+            return
+        parent = node.parent
+        if parent is not None and self._is_stream_insertion(parent, d):
+            return
+        operands: list[Node] = []
+        base = node
+        while self._is_stream_insertion(base, d):
+            right = base.child_by_field_name(cs.FIELD_RIGHT)
+            if right is not None:
+                operands.append(right)
+            left = base.child_by_field_name(cs.FIELD_LEFT)
+            if left is None:
+                return
+            base = left
+        if base.text is None:
+            return
+        sink = jc.flow.stream_sinks.get(base.text.decode(cs.ENCODING_UTF8))
+        if sink is None:
+            return
+        for operand in operands:
+            taint = self._js_expr_taint(operand, tainted, jc)
+            if taint is not None:
+                self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+
+    @staticmethod
+    def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
+        # (H) A binary_expression whose `operator` field is the stream-insertion token.
+        if (
+            descriptor.stream_sink_type is None
+            or node.type != descriptor.stream_sink_type
+        ):
+            return False
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return (
+            operator is not None
+            and operator.text is not None
+            and operator.text.decode(cs.ENCODING_UTF8)
+            == descriptor.stream_sink_operator
+        )
 
     def _js_arg_taints(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
@@ -725,6 +881,19 @@ class FlowProcessor:
         # (H) the builtin; the import-normalised name matches first (so an aliased
         # (H) builtin resolves), then the raw dotted name only when its head resolves
         # (H) to the genuine module (node:/require/ESM), never a shadowing local module.
+        # (H) Rust (scope_separator="::") keys sinks under the full `std::` form: expand
+        # (H) the head through the import map on `::` (`use std::env; env::var` ->
+        # (H) `std::env::var`; a fully-qualified `std::env::var` has an unimported `std`
+        # (H) head and stays as-is); a head bound to a local name is shadowed.
+        scope_sep = jc.descriptor.scope_separator
+        if scope_sep is not None:
+            scoped_head, _, scoped_rest = raw.partition(scope_sep)
+            if scoped_head in jc.local_names:
+                return None
+            base = jc.flow.import_map.get(scoped_head)
+            if base is not None:
+                raw = f"{base}{scope_sep}{scoped_rest}" if scoped_rest else base
+            return sink_map.get(raw)
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in jc.local_names:
             return None

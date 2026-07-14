@@ -20,8 +20,10 @@ from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
     call_name,
     definition_header_nodes,
+    first_token_arg_string,
     head_is_genuine_module,
     is_require_alias,
+    iter_token_tree_calls,
     literal_target,
     match_normalised,
     registry_match,
@@ -632,37 +634,15 @@ class IOAccessProcessor:
         in_scope: frozenset[str],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) tree-sitter flattens a Rust macro body to raw tokens, so an inlined call
-        # (H) (`std::env::var("X")`) is a run of `identifier` joined by `::` tokens
-        # (H) followed by its args `token_tree` -- no call_expression node. Rebuild the
-        # (H) scoped name from that run, resolve it against the sink table (respecting
-        # (H) shadowing), and take arg0's string literal as the resource identity.
-        path: list[str] = []
-        expect_sep = False
-        for child in token_tree.children:
-            if child.type == cs.TS_IDENTIFIER and not expect_sep and child.text:
-                path.append(child.text.decode(cs.ENCODING_UTF8))
-                expect_sep = True
-            elif child.type == cs.TS_RS_TOKEN_SCOPE and expect_sep:
-                expect_sep = False
-            elif child.type == cs.TS_RS_TOKEN_TREE:
-                if path:
-                    self._emit_token_tree_call(
-                        cs.TS_RS_TOKEN_SCOPE.join(path),
-                        child,
-                        caller_spec,
-                        import_map,
-                        sink_by_name,
-                        in_scope,
-                        descriptor,
-                    )
-                path, expect_sep = [], False
-                # (H) Recurse for a nested macro / grouped call in the arguments.
-                self._scan_token_tree_calls(
-                    child, caller_spec, import_map, sink_by_name, in_scope, descriptor
-                )
-            else:
-                path, expect_sep = [], False
+        # (H) Rebuild each inlined scoped call from the flat token stream (shared with
+        # (H) the flow walk), resolve it against the sink table (respecting shadowing),
+        # (H) and take arg0's string literal as the resource identity.
+        for raw, args in iter_token_tree_calls(
+            token_tree, cs.TS_RS_TOKEN_SCOPE, cs.TS_IDENTIFIER, cs.TS_RS_TOKEN_TREE
+        ):
+            self._emit_token_tree_call(
+                raw, args, caller_spec, import_map, sink_by_name, in_scope, descriptor
+            )
 
     def _emit_token_tree_call(
         self,
@@ -691,25 +671,10 @@ class IOAccessProcessor:
         # (H) higher arg index would need positional token counting (upgrade path).
         identity = DYNAMIC_TARGET
         if sink.target_arg == 0:
-            identity = self._first_token_arg_string(args)
-        self._emit(caller_spec, sink.direction, sink.kind, identity)
-
-    def _first_token_arg_string(self, args: Node) -> str:
-        # (H) arg0 of a flattened call's token_tree: the tokens before the first
-        # (H) top-level comma. It is the resource path only when it is a lone string
-        # (H) literal (`write(path, "x")` has a variable arg0 -> <dynamic>, not "x").
-        arg0: list[Node] = []
-        for child in args.children:
-            if child.type in (cs.CHAR_PAREN_OPEN, cs.CHAR_PAREN_CLOSE):
-                continue
-            if child.type == cs.CHAR_COMMA:
-                break
-            arg0.append(child)
-        if len(arg0) == 1 and arg0[0].type == cs.TS_RS_STRING_LITERAL:
-            return string_literal(
-                arg0[0], cs.TS_RS_STRING_LITERAL, cs.TS_RS_STRING_CONTENT
+            identity = first_token_arg_string(
+                args, cs.TS_RS_STRING_LITERAL, cs.TS_RS_STRING_CONTENT
             )
-        return DYNAMIC_TARGET
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
 
     def _emit_member_read(
         self,

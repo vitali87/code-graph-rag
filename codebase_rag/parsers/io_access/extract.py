@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -159,6 +161,53 @@ def string_literal(
     for child in arg.named_children:
         if child.type == content_type and child.text is not None:
             return child.text.decode(cs.ENCODING_UTF8)
+    return DYNAMIC_TARGET
+
+
+def iter_token_tree_calls(
+    token_tree: Node,
+    scope_separator: str,
+    identifier_type: str,
+    token_tree_type: str,
+) -> Iterator[tuple[str, Node]]:
+    # (H) tree-sitter flattens a Rust macro body to a token_tree of raw tokens, so an
+    # (H) inlined scoped call (`std::env::var("X")`) is a run of `identifier` joined by
+    # (H) the scope token (whose node type IS the separator, e.g. "::") followed by its
+    # (H) args token_tree -- no call_expression node. Yield (reconstructed dotted name,
+    # (H) args token_tree) for each such run, recursing into nested groups. Shared by
+    # (H) the io walk (sink emission) and the flow walk (taint into a macro sink).
+    path: list[str] = []
+    expect_sep = False
+    for child in token_tree.children:
+        if child.type == identifier_type and not expect_sep and child.text:
+            path.append(child.text.decode(cs.ENCODING_UTF8))
+            expect_sep = True
+        elif child.type == scope_separator and expect_sep:
+            expect_sep = False
+        elif child.type == token_tree_type:
+            if path:
+                yield scope_separator.join(path), child
+            path, expect_sep = [], False
+            yield from iter_token_tree_calls(
+                child, scope_separator, identifier_type, token_tree_type
+            )
+        else:
+            path, expect_sep = [], False
+
+
+def first_token_arg_string(args: Node, string_type: str, content_type: str) -> str:
+    # (H) arg0 of a flattened call's token_tree: the tokens before the first top-level
+    # (H) comma. It is a resource path only when it is a lone string literal
+    # (H) (`write(path, "x")` has a variable arg0 -> <dynamic>, not "x").
+    arg0: list[Node] = []
+    for child in args.children:
+        if child.type in (cs.CHAR_PAREN_OPEN, cs.CHAR_PAREN_CLOSE):
+            continue
+        if child.type == cs.CHAR_COMMA:
+            break
+        arg0.append(child)
+    if len(arg0) == 1 and arg0[0].type == string_type:
+        return string_literal(arg0[0], string_type, content_type)
     return DYNAMIC_TARGET
 
 
