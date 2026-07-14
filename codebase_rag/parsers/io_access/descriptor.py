@@ -36,6 +36,12 @@ class LanguageDescriptor:
     # (H) (Go always imports stdlib; a package-scope `var os` is not the stdlib os).
     # (H) False for JS/TS, whose sinks include unimported globals (`console`, `fetch`).
     sinks_require_import: bool
+    # (H) True when declarations hoist over the whole block (JS `function`/`var`, and
+    # (H) const/let are lexically in scope before their line via the TDZ), so a local
+    # (H) shadows every use in the block. False for declare-at-point languages (Go,
+    # (H) Java), where a local shadows only the uses that FOLLOW its declaration -- so
+    # (H) the walk must add declarations in source order, not block-wide up front.
+    hoisted_declarations: bool
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -65,6 +71,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     block_scope_type=cs.TS_STATEMENT_BLOCK,
     extra_declarator_types=frozenset(),
     sinks_require_import=False,
+    hoisted_declarations=True,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -95,6 +102,9 @@ _GO_DESCRIPTOR = LanguageDescriptor(
         {cs.TS_GO_VAR_SPEC, cs.TS_GO_CONST_SPEC, cs.TS_GO_RANGE_CLAUSE}
     ),
     sinks_require_import=True,
+    # (H) Go is declare-at-point (`:=`/`var` bind from that line on), so a local named
+    # (H) after a valid package call must not retroactively shadow it -- source order.
+    hoisted_declarations=False,
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
@@ -120,7 +130,7 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     # (H) Java locals that shadow the `System`/`Files` global head: a
     # (H) `variable_declarator` (`Object System = ...`), a `formal_parameter`, and an
     # (H) `enhanced_for_statement` (for-each) loop var (extra_declarator_types).
-    identifier_type=cs.TS_PY_IDENTIFIER,
+    identifier_type=cs.TS_IDENTIFIER,
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_JAVA_BLOCK,
@@ -128,6 +138,9 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     # (H) Java's System/Files sink heads are java.lang / java.nio globals that never
     # (H) appear in import_map, so requiring an import would reject every sink.
     sinks_require_import=False,
+    # (H) Java locals are declare-at-point (in scope from their statement on), so a
+    # (H) later local must not shadow an earlier same-named sink call -- source order.
+    hoisted_declarations=False,
     # (H) Inert (no IO_MEMBER_READS for Java): env access is a call. Filled with Java's
     # (H) field_access (object/field) and array_access (index) shapes for correctness.
     member_expression_type=cs.TS_FIELD_ACCESS,

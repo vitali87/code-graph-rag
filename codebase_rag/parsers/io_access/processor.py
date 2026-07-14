@@ -316,27 +316,65 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # (H) Names in scope for calls in THESE statements: the enclosing scopes'
-        # (H) names plus this block's own const/let/function declarations. A
-        # (H) `const fs = require('fs')` declarator is an import alias (the genuine
-        # (H) module, resolved by _resolve_sink), so _block_declarations skips it;
-        # (H) but a local `const fs = {}` IS a shadow, even if `fs` is imported
-        # (H) module-wide, so import names are NOT blanket-removed here.
-        # (H) ponytail: order-INSENSITIVE within a block -- every declaration shadows
-        # (H) the whole block. Correct for JS (function/var hoist; const/let before
-        # (H) use is a TDZ error), but for Go's declare-at-point `:=`/`var` a local
-        # (H) declared LATER over-suppresses an earlier valid package call in the same
-        # (H) block -- a rare false NEGATIVE (redeclaring a used package name). An
-        # (H) order-sensitive walk is the upgrade if that ever matters.
-        in_scope = inherited | self._block_declarations(statements, descriptor)
-        stack = list(statements)
+        # (H) Names in scope for calls in these statements: the enclosing scopes'
+        # (H) names plus this block's own declarations. A `const fs = require('fs')`
+        # (H) declarator is an import alias (the genuine module, resolved by
+        # (H) _resolve_sink), so _block_declarations skips it; but a local
+        # (H) `const fs = {}` IS a shadow, even if `fs` is imported module-wide, so
+        # (H) import names are NOT blanket-removed here.
+        if descriptor.hoisted_declarations:
+            # (H) JS/TS: declarations hoist / are lexically in scope block-wide (a use
+            # (H) before a const/let is a TDZ error, not the outer name), so every
+            # (H) declaration shadows the whole block at once.
+            in_scope = inherited | self._block_declarations(statements, descriptor)
+            for stmt in statements:
+                self._walk_stmt_sinks(
+                    stmt,
+                    in_scope,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    member_reads,
+                    descriptor,
+                )
+            return
+        # (H) Declare-at-point languages (Go, Java): a local is in scope only from its
+        # (H) own statement onward, so grow the shadow set in SOURCE ORDER. A call
+        # (H) BEFORE a later same-named local is the real global and still emits; the
+        # (H) local shadows only the calls that follow it.
+        live = set(inherited)
+        for stmt in statements:
+            live |= self._block_declarations([stmt], descriptor)
+            self._walk_stmt_sinks(
+                stmt,
+                frozenset(live),
+                caller_spec,
+                import_map,
+                sink_by_name,
+                member_reads,
+                descriptor,
+            )
+
+    def _walk_stmt_sinks(
+        self,
+        stmt: Node,
+        in_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Emit the direct sinks / member reads within one statement subtree, under
+        # (H) the given in-scope shadow set. A nested { } is a child lexical scope:
+        # (H) recurse via _walk_scope so its declarations shadow only inside it (and,
+        # (H) for declare-at-point langs, in its own source order).
+        stack = [stmt]
         while stack:
             node = stack.pop()
             # (H) Nested function/method: its own caller, walked separately.
             if node.type in descriptor.nested_scope_types:
                 continue
-            # (H) A nested { } is a child lexical scope: recurse with this block's
-            # (H) names inherited, so its declarations shadow only inside it.
             if node.type == descriptor.block_scope_type:
                 self._walk_scope(
                     list(node.named_children),
@@ -464,6 +502,13 @@ class IOAccessProcessor:
             # (H) field(s) are the bound locals.
             for child in node.children_by_field_name(cs.TS_FIELD_NAME):
                 self._pattern_names(child, descriptor, out)
+        elif node_type == cs.TS_SPREAD_PARAMETER:
+            # (H) Java varargs `void f(Object... System)`: the type is a sibling and the
+            # (H) bound name lives in a `variable_declarator` child (its `name` field).
+            for child in node.named_children:
+                if child.type == descriptor.declarator_type:
+                    for name in child.children_by_field_name(cs.TS_FIELD_NAME):
+                        self._pattern_names(name, descriptor, out)
         elif node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,

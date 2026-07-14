@@ -195,21 +195,41 @@ _GO_SINKS: tuple[IOSink, ...] = (
 # (H) `System`/`Files` still shadows it. Java has no keyword args, so the env key /
 # (H) path is positional arg 0. Handle-based I/O (java.io/java.nio streams, java.sql
 # (H) Statement.execute*, HttpClient) and static-imported bare calls are a follow-up.
-_JAVA_SINKS: tuple[IOSink, ...] = (
+_JAVA_SYSTEM_SINKS: tuple[IOSink, ...] = (
     IOSink("System.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
     IOSink("System.out.println", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.out.print", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.out.printf", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.out.format", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.out.write", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.err.println", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.err.print", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.err.printf", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("Files.readString", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink("Files.readAllLines", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink("Files.readAllBytes", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink("Files.lines", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink("Files.writeString", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
-    IOSink("Files.write", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("System.err.format", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.err.write", ResourceKind.STDOUT, IODirection.WRITE),
+)
+
+# (H) java.nio.file.Files static sinks. Registered under BOTH the simple `Files.X`
+# (H) (bare call, Files not in import_map) and the fully-qualified
+# (H) `java.nio.file.Files.X` key: with `import java.nio.file.Files` the call
+# (H) normalises to the FQN, and a fully-qualified call carries the FQN in its text --
+# (H) so both the imported and the qualified-call cases resolve.
+_JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
+    ("readString", IODirection.READ),
+    ("readAllLines", IODirection.READ),
+    ("readAllBytes", IODirection.READ),
+    ("lines", IODirection.READ),
+    ("writeString", IODirection.WRITE),
+    ("write", IODirection.WRITE),
+)
+
+_JAVA_SINKS: tuple[IOSink, ...] = (
+    *_JAVA_SYSTEM_SINKS,
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
+        for method, direction in _JAVA_FILES_METHODS
+        for prefix in ("Files", "java.nio.file.Files")
+    ),
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {

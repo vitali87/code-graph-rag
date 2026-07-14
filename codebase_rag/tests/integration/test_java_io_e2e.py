@@ -114,3 +114,85 @@ def test_java_local_var_shadows_system(
         "}\n",
     )
     assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
+
+
+def test_java_call_before_decl_still_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) Java locals are declare-at-point: a call BEFORE a same-named local is the
+    # (H) real global, so it must still emit. A later `Object System` shadows only the
+    # (H) calls that follow it, not this earlier System.getenv (source-order shadowing).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f() {\n"
+        '        System.getenv("A");\n'
+        "        Object System = make();\n"
+        '        System.getenv("B");\n'
+        "    }\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::ENV::A") in edges
+    assert (_READS, "resource::ENV::B") not in edges
+
+
+def test_java_imported_files_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) `import java.nio.file.Files` maps Files -> java.nio.file.Files, so the call
+    # (H) normalises to java.nio.file.Files.readString; the FQN sink key must match so
+    # (H) the FILE read still emits (the common, imported case).
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "import java.nio.file.Files;\n"
+        "class App {\n"
+        "    void load() {\n"
+        "        String cfg = Files.readString(configPath());\n"
+        "    }\n"
+        "}\n",
+    )
+    assert any(
+        rel == _READS and qn.endswith("FILE::<dynamic>")
+        for rel, qn in _io_edges(memgraph_ingestor)
+    )
+
+
+def test_java_fully_qualified_files_emits(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A fully-qualified call `java.nio.file.Files.write(...)` (no import) also hits
+    # (H) the FQN sink key.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void save(byte[] b) {\n"
+        "        java.nio.file.Files.write(outPath(), b);\n"
+        "    }\n"
+        "}\n",
+    )
+    assert any(
+        rel == _WRITES and qn.endswith("FILE::<dynamic>")
+        for rel, qn in _io_edges(memgraph_ingestor)
+    )
+
+
+def test_java_varargs_shadows_system(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) A varargs parameter `Object... System` is a `spread_parameter` (no `name`
+    # (H) field; the bound name is its plain identifier child). It shadows the global
+    # (H) just like a plain parameter, so no ENV read may be emitted.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f(Object... System) {\n"
+        '        System.getenv("SECRET");\n'
+        "    }\n"
+        "}\n",
+    )
+    assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
