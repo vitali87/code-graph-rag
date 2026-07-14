@@ -367,20 +367,67 @@ class IOAccessProcessor:
         for stmt in statements:
             loop_vars = self._loop_declarations(stmt, descriptor)
             plain = self._block_declarations([stmt], descriptor) - loop_vars
-            if descriptor.decl_in_own_initializer:
-                live |= plain
+            if (
+                descriptor.declaration_statement_type is not None
+                and stmt.type == descriptor.declaration_statement_type
+            ):
+                # (H) Java multi-declarator: each declarator's initializer sees only the
+                # (H) declarators up to and including itself, so walk them in source order.
+                self._walk_declaration_ordered(
+                    stmt,
+                    frozenset(live),
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    member_reads,
+                    descriptor,
+                )
+            else:
+                # (H) decl_in_own_initializer (Java): the name is in scope in its own
+                # (H) initializer, so seed BEFORE walking; Go (=False): the initializer
+                # (H) still reads the global, so the name is added only AFTER (below).
+                pre = live | plain if descriptor.decl_in_own_initializer else live
+                self._walk_stmt_sinks(
+                    stmt,
+                    frozenset(pre),
+                    loop_vars,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    member_reads,
+                    descriptor,
+                )
+            live |= plain
+
+    def _walk_declaration_ordered(
+        self,
+        stmt: Node,
+        base_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # (H) Walk a declaration statement's declarators in SOURCE ORDER (Java
+        # (H) `local_variable_declaration`): a declarator's name enters scope for its own
+        # (H) initializer (JLS 6.3) and the following declarators, so an EARLIER
+        # (H) initializer's sink is not shadowed by a LATER declarator's name.
+        cur = set(base_scope)
+        for child in stmt.named_children:
+            if child.type != descriptor.declarator_type:
+                continue
+            cur |= self._declarator_names(child, descriptor)
             self._walk_stmt_sinks(
-                stmt,
-                frozenset(live),
-                loop_vars,
+                child,
+                frozenset(cur),
+                frozenset(),
                 caller_spec,
                 import_map,
                 sink_by_name,
                 member_reads,
                 descriptor,
             )
-            if not descriptor.decl_in_own_initializer:
-                live |= plain
 
     def _loop_declarations(
         self, stmt: Node, descriptor: LanguageDescriptor

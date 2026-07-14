@@ -198,6 +198,25 @@ def test_java_multi_declarator_second_init_shadowed(
     assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
 
 
+def test_java_earlier_declarator_init_not_shadowed(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) In `Object x = System.getenv("A"), System = make()` the sink is in the FIRST
+    # (H) declarator's initializer, which runs BEFORE the second declarator binds
+    # (H) `System` (JLS 6.3: a name is in scope only from its own declarator on), so
+    # (H) System.getenv there is the global and must emit.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "class App {\n"
+        "    void f() {\n"
+        '        Object x = System.getenv("A"), System = make();\n'
+        "    }\n"
+        "}\n",
+    )
+    assert (_READS, "resource::ENV::A") in _io_edges(memgraph_ingestor)
+
+
 def test_java_foreach_iterable_call_not_shadowed(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
