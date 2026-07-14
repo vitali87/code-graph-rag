@@ -194,6 +194,13 @@ class AppConfig(BaseSettings):
     # (H) compile_commands.json is missing, so it is safe as the default and
     # (H) strictly better (macros, includes, expansion calls) with one.
     CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
+    # (H) Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter
+    # (H) because HYBRID needs a dotnet SDK + a restorable .csproj/.sln; when
+    # (H) either is missing it degrades to tree-sitter, so it is safe to enable
+    # (H) but not to assume. HYBRID augments (base-vs-interface, overload and
+    # (H) extension binding, partial-class identity); tree-sitter stays the
+    # (H) standalone-correct backbone.
+    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.TREESITTER
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )

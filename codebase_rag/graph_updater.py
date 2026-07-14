@@ -28,6 +28,11 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
+from .parsers.csharp_frontend import (
+    csharp_frontend_available,
+    find_csharp_project,
+    run_csharp_frontend,
+)
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -621,6 +626,32 @@ class GraphUpdater:
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
 
+    def _run_csharp_frontend(self) -> None:
+        # (H) Optional Roslyn semantic pre-pass. ROSLYN/HYBRID: load the repo's
+        # (H) real .csproj/.sln via MSBuildWorkspace and hand Pass 2 a
+        # (H) base-classification oracle so split_csharp_bases emits exact
+        # (H) INHERITS-vs-IMPLEMENTS edges instead of the I-prefix heuristic.
+        # (H) Missing dotnet, project, or a build/restore failure all fall back
+        # (H) to pure tree-sitter (an empty oracle).
+        # (H) Reset first so a reused updater (watch mode) that previously ran
+        # (H) hybrid does not keep applying the old oracle on a later run that has
+        # (H) the frontend off or cannot run it. Mirrors _run_cpp_frontend's reset.
+        self.factory.definition_processor.csharp_base_kinds = {}
+        if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
+            return
+        project = find_csharp_project(self.repo_path)
+        if project is None:
+            # (H) Skip silently when there is no C# project: nothing to augment,
+            # (H) and building the net tool for a non-C# repo would be wasteful.
+            return
+        if not csharp_frontend_available():
+            logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
+            return
+        logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
+        base_kinds = run_csharp_frontend(self.repo_path)
+        self.factory.definition_processor.csharp_base_kinds = base_kinds
+        logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(base_kinds)))
+
     def _tightest_containing_span(
         self, rel_path: str, line: int
     ) -> CppDefinitionSpan | None:
@@ -756,6 +787,11 @@ class GraphUpdater:
         # (H) covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+
+        # (H) The C# Roslyn frontend must run before Pass 2: it produces a
+        # (H) base-classification oracle that split_csharp_bases consults while
+        # (H) ingesting each type's INHERITS/IMPLEMENTS edges during Pass 2.
+        self._run_csharp_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
