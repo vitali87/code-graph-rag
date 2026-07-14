@@ -47,3 +47,15 @@ def test_oracle_builds_once_then_execs_binary_directly(
     assert len(build_cmds) == 1, f"binary must be built exactly once: {commands}"
     assert not run_cmds, f"must never use `cargo run` (the racy path): {commands}"
     assert len(exec_cmds) == 2, f"each payload call execs the binary: {commands}"
+
+
+@pytest.mark.parametrize(
+    ("os_name", "expected_suffix"),
+    [("nt", ec.EXE_SUFFIX_WINDOWS), ("posix", "")],
+)
+def test_binary_path_uses_platform_exe_suffix(
+    os_name: str, expected_suffix: str
+) -> None:
+    # (H) Cargo emits rs_oracle.exe on Windows; direct exec must target the real
+    # (H) filename or Windows workers build then fail to exec a nonexistent path.
+    assert ro._exe_suffix(os_name) == expected_suffix

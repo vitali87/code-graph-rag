@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from functools import lru_cache
@@ -46,7 +47,13 @@ def _binary_path() -> Path:
         check=True,
     )
     target_dir = Path(json.loads(proc.stdout)[ec.CARGO_META_TARGET_DIR_KEY])
-    return target_dir / ec.CARGO_RELEASE_DIRNAME / ec.RS_ORACLE_BIN
+    return target_dir / ec.CARGO_RELEASE_DIRNAME / (ec.RS_ORACLE_BIN + _exe_suffix())
+
+
+def _exe_suffix(os_name: str = os.name) -> str:
+    # (H) Cargo appends `.exe` to the binary on Windows; direct exec must use the
+    # (H) real filename (the old `cargo run` delegated this to cargo).
+    return ec.EXE_SUFFIX_WINDOWS if os_name == ec.OS_NT else ""
 
 
 def _sources_newer_than(binary: Path) -> bool:
