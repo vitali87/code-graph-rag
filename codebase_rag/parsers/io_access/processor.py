@@ -354,16 +354,21 @@ class IOAccessProcessor:
         # (H) Declare-at-point languages (Go, Java): a local is in scope only from its
         # (H) own declaration onward, so grow the shadow set in SOURCE ORDER. A call
         # (H) BEFORE a later same-named local is the real global and still emits; the
-        # (H) local shadows only the statements from its own on. A plain local is in
-        # (H) scope from its own initializer (JLS 6.3: `T System = System.getenv()` and
-        # (H) later comma-declarators see it), so its name is added to `live` BEFORE the
-        # (H) statement is walked. Loop-clause vars are the exception: in scope in the
-        # (H) BODY only (not the iterable header, evaluated before the var binds, nor
-        # (H) sibling statements), so they are seeded via body_extra and NOT added here.
+        # (H) local shadows only the statements from its own on. Whether the declaring
+        # (H) statement's OWN initializer sees the name is language-specific
+        # (H) (decl_in_own_initializer): Java adds it BEFORE walking (JLS 6.3:
+        # (H) `T System = System.getenv()` and later comma-declarators resolve the
+        # (H) local); Go adds it AFTER (scope starts after the ShortVarDecl, so
+        # (H) `os := os.Getenv()` still reads the package). Loop-clause vars are always
+        # (H) the exception: in scope in the BODY only (not the iterable header,
+        # (H) evaluated before the var binds, nor sibling statements), so they are
+        # (H) seeded via body_extra and never added to `live` here.
         live = set(inherited)
         for stmt in statements:
             loop_vars = self._loop_declarations(stmt, descriptor)
-            live |= self._block_declarations([stmt], descriptor) - loop_vars
+            plain = self._block_declarations([stmt], descriptor) - loop_vars
+            if descriptor.decl_in_own_initializer:
+                live |= plain
             self._walk_stmt_sinks(
                 stmt,
                 frozenset(live),
@@ -374,6 +379,8 @@ class IOAccessProcessor:
                 member_reads,
                 descriptor,
             )
+            if not descriptor.decl_in_own_initializer:
+                live |= plain
 
     def _loop_declarations(
         self, stmt: Node, descriptor: LanguageDescriptor

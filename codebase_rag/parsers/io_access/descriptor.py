@@ -52,6 +52,12 @@ class LanguageDescriptor:
     # (H) Java), where a local shadows only the uses that FOLLOW its declaration -- so
     # (H) the walk must add declarations in source order, not block-wide up front.
     hoisted_declarations: bool
+    # (H) Whether a local is in scope in its OWN initializer (and later comma-declarators
+    # (H) in the same statement). True for Java (JLS 6.3: `T System = System.getenv()`
+    # (H) resolves the local) -> add the name BEFORE walking the statement. False for Go
+    # (H) (scope starts AFTER the ShortVarDecl: `os := os.Getenv()` reads the package)
+    # (H) -> add it AFTER. Only consulted when hoisted_declarations is False.
+    decl_in_own_initializer: bool
     # (H) Member/subscript access node types + fields, for env reads like
     # (H) `process.env.X` (member) and `process.env['X']` (subscript).
     member_expression_type: str
@@ -84,6 +90,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     statement_container_type=None,
     sinks_require_import=False,
     hoisted_declarations=True,
+    decl_in_own_initializer=True,
     member_expression_type=cs.TS_MEMBER_EXPRESSION,
     subscript_type=cs.TS_SUBSCRIPT_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
@@ -119,6 +126,7 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     # (H) Go is declare-at-point (`:=`/`var` bind from that line on), so a local named
     # (H) after a valid package call must not retroactively shadow it -- source order.
     hoisted_declarations=False,
+    decl_in_own_initializer=False,
     # (H) Inert for Go (no IO_MEMBER_READS entry): Go env access is a call
     # (H) (`os.Getenv`), not member access. Filled with Go's selector/subscript shapes.
     member_expression_type=cs.TS_GO_SELECTOR_EXPRESSION,
@@ -157,6 +165,7 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     # (H) Java locals are declare-at-point (in scope from their statement on), so a
     # (H) later local must not shadow an earlier same-named sink call -- source order.
     hoisted_declarations=False,
+    decl_in_own_initializer=True,
     # (H) Inert (no IO_MEMBER_READS for Java): env access is a call. Filled with Java's
     # (H) field_access (object/field) and array_access (index) shapes for correctness.
     member_expression_type=cs.TS_FIELD_ACCESS,
