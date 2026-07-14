@@ -253,40 +253,150 @@ class FlowProcessor:
         else:
             statements = [body]
         tainted: _TaintMap = {}
-        # (H) ponytail: flat source-order walk, not path-sensitive (that is the JS
-        # (H) follow-up); a single taint map, nested functions pruned as their own
-        # (H) callers. Reuses the shared summary/deferred/finalize machinery (#712).
+        if ctx.language in _HOISTED_DECL_LANGS:
+            # (H) Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
+            # (H) loop, and try branch is evaluated against a COPY of the incoming
+            # (H) state and unioned at the merge, so taint surviving on ANY path
+            # (H) survives and a kill counts only when it happens on EVERY path.
+            for node in statements:
+                tainted = self._walk_js_stmt(node, tainted, jc)
+        else:
+            # (H) Go keeps the flat source-order walk: its shadow set is grown in
+            # (H) source order (_register_shadows), which a branch-copying walk would
+            # (H) break. Path-sensitivity for Go is a separate follow-up.
+            self._flat_flow_walk(statements, tainted, jc)
+        if self._acc_returns_taint:
+            self._summaries[ctx.caller_qn] = self._acc_return_taint
+
+    def _flat_flow_walk(
+        self, statements: list[Node], tainted: _TaintMap, jc: _JsCtx
+    ) -> None:
+        # (H) Flat source-order DFS (Go): a single taint map, nested functions pruned
+        # (H) as their own callers. Reuses the shared summary/deferred/finalize (#712).
         stack = list(reversed(statements))
         while stack:
             node = stack.pop()
-            node_type = node.type
-            if node_type in descriptor.nested_scope_types:
+            if node.type in jc.descriptor.nested_scope_types:
                 continue
-            if node_type == descriptor.declarator_type or node_type in (
-                cs.TS_ASSIGNMENT_EXPRESSION,
-                cs.TS_GO_ASSIGNMENT_STATEMENT,
-            ):
-                self._lean_bind(node, tainted, jc)
-            elif node_type in descriptor.extra_declarator_types:
-                # (H) Go `var`/`const` bind like a declarator; a `range` clause rebinds
-                # (H) its loop vars to (untainted) iteration elements, so kill any taint
-                # (H) they carried under those names before the loop.
-                if node_type == cs.TS_GO_RANGE_CLAUSE:
-                    self._lean_kill(node, tainted, jc)
-                else:
-                    self._lean_bind(node, tainted, jc)
-            elif node_type == descriptor.call_type:
-                self._js_call(node, tainted, jc)
-            elif node_type == cs.TS_RETURN_STATEMENT:
-                returned = self._js_return_taint(node, tainted, jc)
-                if returned is not None:
-                    self._acc_returns_taint = True
-                    self._acc_return_taint = _merge_taint(
-                        self._acc_return_taint, returned
-                    )
+            self._apply_js_leaf(node, tainted, jc)
             stack.extend(reversed(node.named_children))
-        if self._acc_returns_taint:
-            self._summaries[ctx.caller_qn] = self._acc_return_taint
+
+    def _walk_js_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) Path-sensitive walk for JS/TS: control-flow nodes branch-and-merge, every
+        # (H) other node applies its leaf effect and threads state through its children
+        # (H) in source order (so a nested call in an argument is still seen).
+        node_type = node.type
+        if node_type in jc.descriptor.nested_scope_types:
+            return state
+        if node_type == cs.TS_JS_IF_STATEMENT:
+            return self._walk_js_if(node, state, jc)
+        if node_type in (
+            cs.TS_JS_WHILE_STATEMENT,
+            cs.TS_JS_FOR_STATEMENT,
+            cs.TS_JS_FOR_IN_STATEMENT,
+        ):
+            return self._walk_js_loop(node, state, jc)
+        if node_type == cs.TS_JS_TRY_STATEMENT:
+            return self._walk_js_try(node, state, jc)
+        self._apply_js_leaf(node, state, jc)
+        for child in node.named_children:
+            state = self._walk_js_stmt(child, state, jc)
+        return state
+
+    def _walk_js_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The condition runs on all paths; each of the then / else(-if) / implicit
+        # (H) skip paths is walked against a copy and unioned (MAY join).
+        cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
+        if cond is not None:
+            state = self._walk_js_stmt(cond, state, jc)
+        branch_exits: list[_TaintMap] = []
+        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+        if consequence is not None:
+            branch_exits.append(self._walk_js_stmt(consequence, dict(state), jc))
+        alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
+        if alternative is not None:
+            # (H) else_clause holds either a block or a nested if (else-if chain); the
+            # (H) recursion handles both and merges within.
+            branch_exits.append(self._walk_js_stmt(alternative, dict(state), jc))
+        else:
+            # (H) No else: the skip path preserves the incoming state.
+            branch_exits.append(dict(state))
+        return self._merge(branch_exits)
+
+    def _walk_js_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The initializer/condition/iterable runs before the body; the body runs
+        # (H) zero or more times, so union the skip path with one pass, then re-walk
+        # (H) once from that merge to catch taint carried from a later iteration into
+        # (H) an earlier statement. ponytail: two passes, not a full fixpoint; edges
+        # (H) are MERGE-idempotent so the re-walk never duplicates them.
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        # (H) A C-style for's `increment` runs AFTER the body each iteration, not in
+        # (H) the header, so skip it below and walk it after each body pass instead.
+        increment = (
+            node.child_by_field_name(cs.FIELD_INCREMENT)
+            if node.type == cs.TS_JS_FOR_STATEMENT
+            else None
+        )
+        skip_ids = {n.id for n in (body, increment) if n is not None}
+        for child in node.named_children:
+            if child.id in skip_ids:
+                continue
+            state = self._walk_js_stmt(child, state, jc)
+        if body is not None:
+            once = self._walk_js_stmt(body, dict(state), jc)
+            if increment is not None:
+                once = self._walk_js_stmt(increment, once, jc)
+            merged = self._merge([state, once])
+            twice = self._walk_js_stmt(body, dict(merged), jc)
+            if increment is not None:
+                twice = self._walk_js_stmt(increment, twice, jc)
+            state = self._merge([state, twice])
+        return state
+
+    def _walk_js_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The try body may run fully (no-throw path) or partially before a catch;
+        # (H) seed the handler with union(pre, body_exit) so taint introduced before a
+        # (H) throw still reaches it. A finally runs on the merged state of both.
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        body_exit = (
+            self._walk_js_stmt(body, dict(state), jc)
+            if body is not None
+            else dict(state)
+        )
+        branch_exits: list[_TaintMap] = [body_exit]
+        handler = node.child_by_field_name(cs.FIELD_HANDLER)
+        if handler is not None:
+            branch_exits.append(
+                self._walk_js_stmt(handler, self._merge([state, body_exit]), jc)
+            )
+        merged = self._merge(branch_exits)
+        finalizer = node.child_by_field_name(cs.FIELD_FINALIZER)
+        if finalizer is not None:
+            merged = self._walk_js_stmt(finalizer, merged, jc)
+        return merged
+
+    def _apply_js_leaf(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # (H) The leaf effect of one node on the taint map: bind (JS/Go), Go range
+        # (H) kill, a call's sink/arg edges, or a return's contribution to the summary.
+        node_type = node.type
+        d = jc.descriptor
+        if node_type == d.declarator_type or node_type in (
+            cs.TS_ASSIGNMENT_EXPRESSION,
+            cs.TS_GO_ASSIGNMENT_STATEMENT,
+        ):
+            self._lean_bind(node, tainted, jc)
+        elif node_type in d.extra_declarator_types:
+            if node_type == cs.TS_GO_RANGE_CLAUSE:
+                self._lean_kill(node, tainted, jc)
+            else:
+                self._lean_bind(node, tainted, jc)
+        elif node_type == d.call_type:
+            self._js_call(node, tainted, jc)
+        elif node_type == cs.TS_RETURN_STATEMENT:
+            returned = self._js_return_taint(node, tainted, jc)
+            if returned is not None:
+                self._acc_returns_taint = True
+                self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
     def _lean_bind(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
         # (H) Bind LHS name(s) to their RHS taint across the grammars: JS uses a single
