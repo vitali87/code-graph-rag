@@ -101,6 +101,28 @@ def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
     assert result[("G.cs", 5)]["Base"] == "class"
 
 
+def test_frontend_off_clears_stale_base_kinds(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) A reused updater (watch mode) that ran hybrid must not keep applying the
+    # (H) old oracle when a later run has the frontend off: the early return still
+    # (H) resets the map to empty so Pass 2 falls back to the heuristic.
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    updater = gu.GraphUpdater(
+        ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
+    )
+    updater.factory.definition_processor.csharp_base_kinds = {
+        ("Stale.cs", 1): {"Old": "class"}
+    }
+    monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+
+    updater._run_csharp_frontend()
+
+    assert updater.factory.definition_processor.csharp_base_kinds == {}
+
+
 def test_default_treesitter_keeps_iprefix_heuristic(temp_repo: Path) -> None:
     root = temp_repo / "defaultproj"
     _write_project(root)

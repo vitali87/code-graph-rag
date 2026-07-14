@@ -633,6 +633,10 @@ class GraphUpdater:
         # (H) INHERITS-vs-IMPLEMENTS edges instead of the I-prefix heuristic.
         # (H) Missing dotnet, project, or a build/restore failure all fall back
         # (H) to pure tree-sitter (an empty oracle).
+        # (H) Reset first so a reused updater (watch mode) that previously ran
+        # (H) hybrid does not keep applying the old oracle on a later run that has
+        # (H) the frontend off or cannot run it. Mirrors _run_cpp_frontend's reset.
+        self.factory.definition_processor.csharp_base_kinds = {}
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
             return
         project = find_csharp_project(self.repo_path)
