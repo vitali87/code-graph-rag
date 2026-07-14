@@ -82,7 +82,11 @@ include = ["codebase_rag*", "codec*", "cgr*"]
 exclude = ["*.tests", "*.tests.*"]
 
 [tool.setuptools.package-data]
-codebase_rag = ["docker-compose.yaml"]
+codebase_rag = [
+    "docker-compose.yaml",
+    "parsers/csharp_frontend/roslyn/*.cs",
+    "parsers/csharp_frontend/roslyn/*.csproj",
+]
 
 [project.optional-dependencies]
 test = [

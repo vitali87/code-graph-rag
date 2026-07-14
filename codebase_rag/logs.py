@@ -27,6 +27,17 @@ CPP_FRONTEND_HYBRID_PENDING = (
 )
 CPP_FRONTEND_MACRO_CALLS = "Resolved {count} hybrid macro CALLS edge(s)"
 CPP_FRONTEND_EXPANSION_CALLS = "Resolved {count} hybrid expansion CALLS edge(s)"
+CSHARP_FRONTEND_RUNNING = "--- C# Roslyn frontend: {path} ---"
+CSHARP_FRONTEND_UNAVAILABLE = (
+    "C# Roslyn frontend enabled but dotnet is unavailable; using tree-sitter"
+)
+CSHARP_FRONTEND_NO_PROJECT = (
+    "C# Roslyn frontend enabled but no .csproj/.sln found; using tree-sitter"
+)
+CSHARP_FRONTEND_BUILD_FAILED = (
+    "C# Roslyn frontend tool failed to build; using tree-sitter"
+)
+CSHARP_FRONTEND_TYPES = "C# Roslyn frontend classified {count} type base list(s)"
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
