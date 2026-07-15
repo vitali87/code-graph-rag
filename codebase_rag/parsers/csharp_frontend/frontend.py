@@ -1,12 +1,14 @@
 # (H) Roslyn semantic frontend for C# hybrid mode (issue #738). Runs a bundled net
 # (H) console tool (`roslyn/`) that loads the target repo's real .csproj/.sln via
-# (H) MSBuildWorkspace and emits, per type declaration keyed on (rel_file,
-# (H) start_line) matching cgr's tree-sitter node span, each base type classified
-# (H) class/interface by the resolved symbol. The tree-sitter C# split
-# (H) (split_csharp_bases) consults these and falls back to its I-prefix heuristic
-# (H) for any base the semantic model could not resolve. Everything degrades
-# (H) gracefully: no dotnet, no project, or a build/restore failure all leave the
-# (H) map empty, so indexing stays pure tree-sitter.
+# (H) MSBuildWorkspace and emits location-keyed semantic facts the tree-sitter
+# (H) heuristics cannot derive: per-type base classifications (INHERITS vs
+# (H) IMPLEMENTS), per-invocation exact call targets (overloads by argument
+# (H) types, extension methods via the reduced form), partial-type declaration
+# (H) groups (exact symbol identity across files), and LINQ query-operator
+# (H) calls (query syntax has no invocation nodes). Every join key that misses
+# (H) falls back to the tree-sitter heuristics, and no dotnet, no project, or a
+# (H) build/restore failure all leave the facts empty, so indexing stays pure
+# (H) tree-sitter.
 from __future__ import annotations
 
 import json
@@ -15,6 +17,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -24,6 +27,49 @@ from ...config import settings
 
 # (H) Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
 BaseKindMap = dict[tuple[str, int], dict[str, str]]
+
+# (H) Call-site join key: (rel_file, name_token_line, name_token_col, simple_name).
+# (H) The NAME token, not the expression start: nested invocations
+# (H) (`Make().Handle(x)` wraps `Make()`) share a start position, but their name
+# (H) tokens never collide. Columns are BYTE offsets on both sides: the tool
+# (H) re-measures Roslyn's UTF-16 columns in UTF-8 bytes to match tree-sitter.
+CallSiteKey = tuple[str, int, int, str]
+
+
+class CSharpCallSite(NamedTuple):
+    """Resolved target of one invocation: the declaration cgr ingested."""
+
+    name: str
+    target_file: str
+    target_line: int
+    target_col: int
+
+
+class CSharpQueryCall(NamedTuple):
+    """One LINQ query operator call, keyed on the enclosing member's decl."""
+
+    caller_file: str
+    caller_line: int
+    caller_col: int
+    target_file: str
+    target_line: int
+    target_col: int
+
+
+class CSharpSemanticFacts(NamedTuple):
+    """Everything one Roslyn frontend run learned about the repo."""
+
+    base_kinds: BaseKindMap
+    call_sites: dict[CallSiteKey, CSharpCallSite]
+    partial_groups: list[list[tuple[str, int]]]
+    query_calls: list[CSharpQueryCall]
+
+
+def _empty_facts() -> CSharpSemanticFacts:
+    # (H) A fresh instance per failure path: the maps are handed to mutable
+    # (H) processor state, so a shared constant would alias across runs.
+    return CSharpSemanticFacts({}, {}, [], [])
+
 
 _DOTNET = "dotnet"
 _TOOL_SRC = Path(__file__).parent / "roslyn"
@@ -154,14 +200,14 @@ def _restore(dotnet: str, project: Path) -> None:
         return
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> BaseKindMap:
+def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
         # (H) No output at all: the tool crashed before printing its JSON line.
         logger.error(
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
-        return {}
+        return _empty_facts()
     try:
         payload = json.loads(lines[-1])
     except json.JSONDecodeError:
@@ -170,13 +216,41 @@ def _parse_payload(stdout: str, stderr: str = "") -> BaseKindMap:
         logger.error(
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
-        return {}
-    return {
-        (type_fact["file"], int(type_fact["line"])): _base_kinds(
-            type_fact.get("bases", [])
-        )
-        for type_fact in payload.get("types", [])
-    }
+        return _empty_facts()
+    return CSharpSemanticFacts(
+        base_kinds={
+            (type_fact["file"], int(type_fact["line"])): _base_kinds(
+                type_fact.get("bases", [])
+            )
+            for type_fact in payload.get("types", [])
+        },
+        call_sites={
+            (
+                site["file"],
+                int(site["line"]),
+                int(site["col"]),
+                site["name"],
+            ): CSharpCallSite(
+                site["name"], site["tfile"], int(site["tline"]), int(site["tcol"])
+            )
+            for site in payload.get("calls", [])
+        },
+        partial_groups=[
+            [(decl["file"], int(decl["line"])) for decl in group]
+            for group in payload.get("partials", [])
+        ],
+        query_calls=[
+            CSharpQueryCall(
+                query["file"],
+                int(query["line"]),
+                int(query["col"]),
+                query["tfile"],
+                int(query["tline"]),
+                int(query["tcol"]),
+            )
+            for query in payload.get("queries", [])
+        ],
+    )
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
@@ -198,16 +272,16 @@ def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
     return kinds
 
 
-def run_csharp_frontend(repo_path: Path) -> BaseKindMap:
+def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
     dotnet = shutil.which(_DOTNET)
     if dotnet is None:
-        return {}
+        return _empty_facts()
     project = find_csharp_project(repo_path)
     if project is None:
-        return {}
+        return _empty_facts()
     dll = _build_tool(dotnet)
     if dll is None:
-        return {}
+        return _empty_facts()
     _restore(dotnet, project)
     try:
         proc = subprocess.run(
@@ -223,5 +297,5 @@ def run_csharp_frontend(repo_path: Path) -> BaseKindMap:
             },
         )
     except (subprocess.SubprocessError, OSError):
-        return {}
+        return _empty_facts()
     return _parse_payload(proc.stdout, proc.stderr)

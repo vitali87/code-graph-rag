@@ -1494,6 +1494,41 @@ class CallProcessor:
                             receiver = expr_node.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
+                case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION if (
+                    language == cs.SupportedLanguage.CSHARP
+                ):
+                    # (H) C# conditional call `recv?.Method(...)`: the method name
+                    # (H) lives on the member_binding child. Emit the same
+                    # (H) `recv.Method` chain as the unconditional form so the
+                    # (H) resolver (or its exact Roslyn call fact) can bind it.
+                    binding = next(
+                        (
+                            child
+                            for child in func_child.children
+                            if child.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+                        ),
+                        None,
+                    )
+                    name_node = (
+                        binding.child_by_field_name(cs.FIELD_NAME)
+                        if binding is not None
+                        else None
+                    )
+                    if name_node and name_node.text:
+                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        receiver_node = (
+                            func_child.named_children[0]
+                            if (func_child.named_children)
+                            else None
+                        )
+                        if (
+                            receiver_node is not None
+                            and receiver_node is not binding
+                            and receiver_node.text
+                        ):
+                            receiver = receiver_node.text.decode(cs.ENCODING_UTF8)
+                            return f"{receiver}{cs.SEPARATOR_DOT}{method}"
+                        return method
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 

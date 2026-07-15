@@ -38,6 +38,16 @@ CSHARP_FRONTEND_BUILD_FAILED = (
     "C# Roslyn frontend tool failed to build; using tree-sitter"
 )
 CSHARP_FRONTEND_TYPES = "C# Roslyn frontend classified {count} type base list(s)"
+CSHARP_FRONTEND_FACTS = (
+    "C# Roslyn frontend facts: {calls} call site(s), {partials} partial group(s), "
+    "{queries} query call(s)"
+)
+CSHARP_FRONTEND_PARTIALS_JOINED = (
+    "C# Roslyn frontend merged {count} partial-type group(s)"
+)
+CSHARP_FRONTEND_QUERY_EDGES = (
+    "C# Roslyn frontend emitted {count} LINQ query CALLS edge(s)"
+)
 CSHARP_FRONTEND_PARSE_FAILED = (
     "C# Roslyn frontend produced no parseable JSON; using tree-sitter.\n"
     "stdout: {stdout}\nstderr: {stderr}"
