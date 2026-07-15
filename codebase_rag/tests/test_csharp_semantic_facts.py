@@ -128,6 +128,11 @@ public class App
     {
         Make().Handle("x");
     }
+
+    public void GoSafe(C c)
+    {
+        c?.Handle("y");
+    }
 }
 """
 
@@ -164,7 +169,44 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
 
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
-    assert not any(ce.endswith("Handle(int)") for _, ce in calls), calls
+    # (H) Scoped to the fact-driven caller: GoSafe has no fact in THIS test, so
+    # (H) its call legitimately falls back to the arity heuristic's guess.
+    assert not any(
+        ca.endswith("N.App.Go") and ce.endswith("Handle(int)") for ca, ce in calls
+    ), calls
+
+
+def test_call_fact_resolves_conditional_access_invocation(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `c?.Handle("y")`: tree-sitter wraps the callee in a
+    # (H) conditional_access_expression (not a member_access_expression), so the
+    # (H) heuristic path never types it; the Roslyn fact keyed on the
+    # (H) member_binding name token must still join.
+    root = temp_repo / "condproj"
+    root.mkdir()
+    (root / "Code.cs").write_text(_OVERLOAD_SRC, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    call_line, call_col = _loc(_OVERLOAD_SRC, 'Handle("y")')
+    target_line, target_col = _loc(_OVERLOAD_SRC, "public void Handle(string s)")
+    facts = CSharpSemanticFacts(
+        base_kinds={},
+        call_sites={
+            ("Code.cs", call_line, call_col, "Handle"): CSharpCallSite(
+                "Handle", "Code.cs", target_line, target_col
+            )
+        },
+        partial_groups=[],
+        query_calls=[],
+    )
+    _hybrid(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert _has(calls, "N.App.GoSafe(C)", "N.C.Handle(string)"), calls
 
 
 _PART_A = """namespace N;
@@ -443,6 +485,8 @@ def test_hybrid_end_to_end_produces_semantic_edges(
 
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
+    # (H) The conditional-access form binds through the real Roslyn fact too.
+    assert _has(calls, "N.App.GoSafe(C)", "N.C.Handle(string)"), calls
     assert not any(ce.endswith("Handle(int)") for _, ce in calls), calls
     assert _has(calls, "N.User.Go(W)", "N.W.FromOther"), calls
     assert any(

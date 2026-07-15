@@ -308,6 +308,20 @@ class CSharpTypeInferenceEngine:
             return func.child_by_field_name(cs.FIELD_NAME)
         if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
             return func
+        if func.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+            # (H) `recv?.Method(...)`: the name lives on the member_binding child
+            # (H) (same token Roslyn keys its MemberBindingExpressionSyntax fact
+            # (H) on).
+            binding = next(
+                (
+                    child
+                    for child in func.children
+                    if child.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+                ),
+                None,
+            )
+            if binding is not None:
+                return binding.child_by_field_name(cs.FIELD_NAME)
         return None
 
     def _declared_location(

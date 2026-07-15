@@ -123,6 +123,11 @@ TS_CSHARP_FIELD_DECLARATION = "field_declaration"
 TS_CSHARP_INVOCATION_EXPRESSION = "invocation_expression"
 TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
+# (H) A conditional call `recv?.Method(...)`: the invocation's `function` field
+# (H) is a conditional_access_expression whose member_binding_expression child
+# (H) carries the method name.
+TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION = "conditional_access_expression"
+TS_CSHARP_MEMBER_BINDING_EXPRESSION = "member_binding_expression"
 TS_CSHARP_FIELD_EXPRESSION = "expression"
 TS_CSHARP_THIS = "this"
 TS_CSHARP_ARGUMENT = "argument"
