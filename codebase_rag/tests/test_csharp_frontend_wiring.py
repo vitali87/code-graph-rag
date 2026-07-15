@@ -94,7 +94,7 @@ def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
             ]
         }
     )
-    result = _parse_payload(payload)
+    result = _parse_payload(payload).base_kinds
     assert "Widget" not in result[("F.cs", 3)]
     assert result[("F.cs", 3)]["Handler"] == "interface"
     # (H) A duplicate that agrees on kind is unambiguous, so it survives.
@@ -149,7 +149,7 @@ def test_roslyn_frontend_corrects_base_classification(
     # (H) which case there is nothing to assert (the frontend degraded to
     # (H) tree-sitter, covered by the default-path test above).
     facts = run_csharp_frontend(root)
-    if not facts:
+    if not facts.base_kinds:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
