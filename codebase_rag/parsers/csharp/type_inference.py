@@ -8,11 +8,15 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import (
+    FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
     SimpleNameLookup,
 )
+from ...utils.path_utils import cached_relative_path
+from ..csharp_frontend import CallSiteKey, CSharpCallSite
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 from .utils import _normalize_type_name
@@ -59,6 +63,9 @@ class CSharpTypeInferenceEngine:
         "class_field_types",
         "csharp_partial_groups",
         "csharp_extension_methods",
+        "csharp_call_sites",
+        "function_locations",
+        "_rel_to_module",
     )
 
     def __init__(
@@ -75,6 +82,8 @@ class CSharpTypeInferenceEngine:
         class_field_types: dict[str, dict[str, str]],
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
+        csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -92,6 +101,15 @@ class CSharpTypeInferenceEngine:
         self.csharp_extension_methods = (
             csharp_extension_methods if csharp_extension_methods is not None else {}
         )
+        # (H) Shared references (populated by the Roslyn frontend / Pass 2 after
+        # (H) this engine is constructed), so `or {}` would lose them.
+        self.csharp_call_sites = (
+            csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        self.function_locations = (
+            function_locations if function_locations is not None else {}
+        )
+        self._rel_to_module: dict[str, str] = {}
 
     # (H) --- variable/field/parameter type map -------------------------------
 
@@ -204,6 +222,13 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        # (H) A Roslyn call fact for this exact site wins over every heuristic:
+        # (H) it is the compiler's own overload resolution (argument types, not
+        # (H) arity) and covers receivers no syntax walk can type (chained
+        # (H) returns) plus reduced extension methods. Any key miss falls
+        # (H) through to the heuristics below.
+        if semantic := self._semantic_call_target(call_node, module_qn):
+            return semantic
         func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             # (H) A bare `Foo(...)` is resolved by the generic simple-name path.
@@ -243,6 +268,71 @@ class CSharpTypeInferenceEngine:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
                 return cs.NodeLabel.METHOD.value, name_hit
         return None
+
+    def _semantic_call_target(
+        self, call_node: Node, module_qn: str
+    ) -> tuple[str, str] | None:
+        if not self.csharp_call_sites:
+            return None
+        name_node = self._callee_name_node(call_node)
+        if name_node is None:
+            return None
+        name = safe_decode_text(name_node)
+        if not name:
+            return None
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None:
+            return None
+        rel = cached_relative_path(file_path, self.repo_path).as_posix()
+        # (H) Keyed on the callee NAME token (nested invocations share an
+        # (H) expression start, never a name token), with generic arguments
+        # (H) stripped to match Roslyn's symbol name.
+        key: CallSiteKey = (
+            rel,
+            name_node.start_point[0] + 1,
+            name_node.start_point[1],
+            name.split(cs.CHAR_ANGLE_OPEN, 1)[0],
+        )
+        fact = self.csharp_call_sites.get(key)
+        if fact is None:
+            return None
+        return self._declared_location(
+            fact.target_file, fact.target_line, fact.target_col
+        )
+
+    def _callee_name_node(self, call_node: Node) -> Node | None:
+        func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        if func.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return func.child_by_field_name(cs.FIELD_NAME)
+        if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
+            return func
+        return None
+
+    def _declared_location(
+        self, rel_file: str, line: int, col: int
+    ) -> tuple[str, str] | None:
+        # (H) The fact's target declaration location resolves through the exact
+        # (H) (module_qn, start_line, start_col) record Pass 2 registered, so the
+        # (H) returned label/qn are the ingested node's, signature included.
+        target_module = self._module_qn_for_rel_file(rel_file)
+        if target_module is None:
+            return None
+        location = self.function_locations.get((target_module, line, col))
+        if location is None:
+            return None
+        return location.label, location.qualified_name
+
+    def _module_qn_for_rel_file(self, rel_file: str) -> str | None:
+        # (H) Lazy inverse of module_qn_to_file_path (which Pass 2 fills after
+        # (H) this engine is constructed); rebuilt when new modules appeared.
+        if len(self._rel_to_module) != len(self.module_qn_to_file_path):
+            self._rel_to_module = {
+                cached_relative_path(path, self.repo_path).as_posix(): qn
+                for qn, path in self.module_qn_to_file_path.items()
+            }
+        return self._rel_to_module.get(rel_file)
 
     def _try_extension_call(
         self,

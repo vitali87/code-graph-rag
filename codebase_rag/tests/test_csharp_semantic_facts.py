@@ -410,6 +410,46 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     ), facts.query_calls
 
 
+def test_hybrid_end_to_end_produces_semantic_edges(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) The full pipeline with REAL Roslyn facts (no synthetic maps): proves
+    # (H) the tool's emitted line/col keys actually match tree-sitter's node
+    # (H) positions and the Pass-2 registries, end to end.
+    from codebase_rag.parsers.csharp_frontend import (
+        csharp_frontend_available,
+        run_csharp_frontend,
+    )
+
+    if not csharp_frontend_available():
+        pytest.skip("dotnet not available")
+    root = temp_repo / "hybride2e"
+    (root / "dirA").mkdir(parents=True)
+    (root / "dirB").mkdir()
+    (root / "Code.cs").write_text(_OVERLOAD_SRC, encoding="utf-8")
+    (root / "Linq.cs").write_text(_E2E_LINQ, encoding="utf-8")
+    (root / "dirA" / "Part1.cs").write_text(_PART_A, encoding="utf-8")
+    (root / "dirB" / "Part2.cs").write_text(_PART_B, encoding="utf-8")
+    (root / "Caller.cs").write_text(_PART_CALLER, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    facts = run_csharp_frontend(root)
+    if not facts.call_sites:
+        pytest.skip("Roslyn frontend could not build/restore in this environment")
+
+    monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
+    assert not any(ce.endswith("Handle(int)") for _, ce in calls), calls
+    assert _has(calls, "N.User.Go(W)", "N.W.FromOther"), calls
+    assert any(
+        ca.endswith("N.Q.Go(Src)") and ".Ops.Select(" in ce for ca, ce in calls
+    ), calls
+
+
 def test_frontend_off_clears_stale_semantic_facts(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

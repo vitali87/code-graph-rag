@@ -4,13 +4,16 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 from ..types_defs import (
     ASTNode,
+    FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     LanguageQueries,
     NodeType,
     SimpleNameLookup,
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
+from .csharp_frontend import CallSiteKey, CSharpCallSite
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -39,6 +42,8 @@ class TypeInferenceEngine:
         "method_return_types",
         "csharp_partial_groups",
         "csharp_extension_methods",
+        "csharp_call_sites",
+        "function_locations",
         "_java_type_inference",
         "_csharp_type_inference",
         "_lua_type_inference",
@@ -65,6 +70,8 @@ class TypeInferenceEngine:
         method_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
+        csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -105,6 +112,15 @@ class TypeInferenceEngine:
         # (H) receiver-binding fallback.
         self.csharp_extension_methods = (
             csharp_extension_methods if csharp_extension_methods is not None else {}
+        )
+        # (H) Shared references (as with class_field_types): the Roslyn call-site
+        # (H) facts and the Pass-2 function-location registry, both populated
+        # (H) after construction and read by the C# resolver's semantic path.
+        self.csharp_call_sites = (
+            csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        self.function_locations = (
+            function_locations if function_locations is not None else {}
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
@@ -166,6 +182,8 @@ class TypeInferenceEngine:
                 class_field_types=self.class_field_types,
                 csharp_partial_groups=self.csharp_partial_groups,
                 csharp_extension_methods=self.csharp_extension_methods,
+                csharp_call_sites=self.csharp_call_sites,
+                function_locations=self.function_locations,
             )
         return self._csharp_type_inference
 

@@ -23,6 +23,7 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
+from .csharp_frontend import CallSiteKey, CSharpCallSite
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
@@ -107,6 +108,15 @@ class DefinitionProcessor(
         # (H) from the semantic model) instead of guessing by the I-prefix
         # (H) convention; empty when the frontend is off or unavailable.
         self.csharp_base_kinds: dict[tuple[str, int], dict[str, str]] = {}
+        # (H) C# Roslyn hybrid frontend (issue #738): per-invocation exact call
+        # (H) targets keyed on the callee NAME token location. The C# resolver
+        # (H) consults this before any heuristic; MUTATED IN PLACE across runs
+        # (H) because the type-inference engine holds a reference.
+        self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        # (H) (rel_file, type_start_line) -> class qn for every ingested C# type,
+        # (H) the reverse of the Roslyn fact keys, so partial declaration groups
+        # (H) join back to the Pass-2 Class nodes.
+        self.csharp_type_locations: dict[tuple[str, int], str] = {}
         # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
         # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
         # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a

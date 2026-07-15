@@ -29,6 +29,7 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend_hybrid,
 )
 from .parsers.csharp_frontend import (
+    CSharpQueryCall,
     csharp_frontend_available,
     find_csharp_project,
     run_csharp_frontend,
@@ -39,6 +40,7 @@ from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
+    FunctionLocation,
     FunctionRegistry,
     LanguageQueries,
     NodeType,
@@ -542,6 +544,11 @@ class GraphUpdater:
         # (H) an expansion call's CALLEE may live in an UNCHANGED file whose
         # (H) spans Pass 2 never recorded this run.
         self._rehydrated_cpp_spans: dict[str, list[CppDefinitionSpan]] = {}
+        # (H) C# Roslyn hybrid facts awaiting their join point: partial
+        # (H) declaration groups join to Class qns after Pass 2, and LINQ
+        # (H) query-operator calls join to function locations after Pass 3.
+        self._csharp_partial_decls: list[list[tuple[str, int]]] = []
+        self._csharp_query_calls: list[CSharpQueryCall] = []
         # (H) Files (re)parsed by Pass 2 this run: the only files whose
         # (H) definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -628,15 +635,22 @@ class GraphUpdater:
 
     def _run_csharp_frontend(self) -> None:
         # (H) Optional Roslyn semantic pre-pass. ROSLYN/HYBRID: load the repo's
-        # (H) real .csproj/.sln via MSBuildWorkspace and hand Pass 2 a
-        # (H) base-classification oracle so split_csharp_bases emits exact
-        # (H) INHERITS-vs-IMPLEMENTS edges instead of the I-prefix heuristic.
-        # (H) Missing dotnet, project, or a build/restore failure all fall back
-        # (H) to pure tree-sitter (an empty oracle).
+        # (H) real .csproj/.sln via MSBuildWorkspace and collect the semantic
+        # (H) facts syntax alone cannot derive: exact INHERITS-vs-IMPLEMENTS
+        # (H) base kinds (consumed during Pass 2), exact per-invocation call
+        # (H) targets (consumed during Pass 3), partial-type identity groups
+        # (H) (joined after Pass 2), and LINQ query-operator calls (emitted
+        # (H) after Pass 3). Missing dotnet, project, or a build/restore
+        # (H) failure all fall back to pure tree-sitter (empty facts).
         # (H) Reset first so a reused updater (watch mode) that previously ran
-        # (H) hybrid does not keep applying the old oracle on a later run that has
-        # (H) the frontend off or cannot run it. Mirrors _run_cpp_frontend's reset.
-        self.factory.definition_processor.csharp_base_kinds = {}
+        # (H) hybrid does not keep applying stale facts on a later run that has
+        # (H) the frontend off or cannot run it. csharp_call_sites is mutated in
+        # (H) place because the type-inference engine holds a reference.
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = {}
+        dp.csharp_call_sites.clear()
+        self._csharp_partial_decls = []
+        self._csharp_query_calls = []
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
             return
         project = find_csharp_project(self.repo_path)
@@ -648,9 +662,84 @@ class GraphUpdater:
             logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
         logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
-        base_kinds = run_csharp_frontend(self.repo_path)
-        self.factory.definition_processor.csharp_base_kinds = base_kinds
-        logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(base_kinds)))
+        facts = run_csharp_frontend(self.repo_path)
+        dp.csharp_base_kinds = facts.base_kinds
+        dp.csharp_call_sites.update(facts.call_sites)
+        self._csharp_partial_decls = facts.partial_groups
+        self._csharp_query_calls = facts.query_calls
+        logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
+        logger.info(
+            ls.CSHARP_FRONTEND_FACTS.format(
+                calls=len(facts.call_sites),
+                partials=len(facts.partial_groups),
+                queries=len(facts.query_calls),
+            )
+        )
+
+    def _join_csharp_partials(self) -> None:
+        # (H) Replace the directory-keyed syntactic partial grouping with the
+        # (H) Roslyn symbol-identity groups wherever Roslyn saw the type: parts
+        # (H) in DIFFERENT directories of one project merge (the syntactic rule
+        # (H) deliberately under-merges there), and unrelated same-name types a
+        # (H) syntactic merge would conflate split apart (each arrives as its
+        # (H) own group). Group lists stay SHARED objects because the resolver
+        # (H) compares them by identity.
+        if not self._csharp_partial_decls:
+            return
+        dp = self.factory.definition_processor
+        groups: list[list[str]] = []
+        covered: set[str] = set()
+        for decls in self._csharp_partial_decls:
+            qns = sorted({qn for d in decls if (qn := dp.csharp_type_locations.get(d))})
+            covered.update(qns)
+            if len(qns) > 1:
+                groups.append(qns)
+        for qn in covered:
+            old = dp.csharp_partial_groups.pop(qn, None)
+            if old is not None and qn in old:
+                # (H) Also shrink the shared syntactic list so members NOT
+                # (H) covered by Roslyn stop spanning to this part.
+                old.remove(qn)
+        for group in groups:
+            for qn in group:
+                dp.csharp_partial_groups[qn] = group
+        if groups:
+            logger.info(ls.CSHARP_FRONTEND_PARTIALS_JOINED.format(count=len(groups)))
+
+    def _emit_csharp_query_calls(self) -> None:
+        # (H) LINQ query syntax has no invocation nodes for tree-sitter to see;
+        # (H) each Roslyn query-operator fact becomes a direct CALLS edge, both
+        # (H) ends resolved through the Pass-2 function-location registry (a
+        # (H) miss on either end drops the fact rather than risk a dangling
+        # (H) edge).
+        if not self._csharp_query_calls:
+            return
+        dp = self.factory.definition_processor
+        rel_to_module = {
+            cached_relative_path(path, self.repo_path).as_posix(): qn
+            for qn, path in dp.module_qn_to_file_path.items()
+        }
+
+        def located(rel_file: str, line: int, col: int) -> FunctionLocation | None:
+            module_qn = rel_to_module.get(rel_file)
+            if module_qn is None:
+                return None
+            return dp.function_locations.get((module_qn, line, col))
+
+        emitted = 0
+        for fact in self._csharp_query_calls:
+            caller = located(fact.caller_file, fact.caller_line, fact.caller_col)
+            target = located(fact.target_file, fact.target_line, fact.target_col)
+            if caller is None or target is None:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+                cs.RelationshipType.CALLS,
+                (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+            )
+            emitted += 1
+        if emitted:
+            logger.info(ls.CSHARP_FRONTEND_QUERY_EDGES.format(count=emitted))
 
     def _tightest_containing_span(
         self, rel_path: str, line: int
@@ -796,6 +885,10 @@ class GraphUpdater:
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        # (H) Partial groups join AFTER Pass 2: the Roslyn declaration
+        # (H) locations resolve against the Class qns Pass 2 just registered.
+        self._join_csharp_partials()
+
         # (H) HYBRID must run after Pass 2: an incremental run deletes each
         # (H) changed file's Module subtree before re-parsing it, so macro
         # (H) nodes and include IMPORTS emitted earlier would be deleted with
@@ -891,6 +984,10 @@ class GraphUpdater:
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
+
+        # (H) LINQ query-operator edges join AFTER Pass 3 with the complete
+        # (H) function-location registry (both ends must be registered nodes).
+        self._emit_csharp_query_calls()
 
         self.factory.definition_processor.process_all_method_overrides()
 

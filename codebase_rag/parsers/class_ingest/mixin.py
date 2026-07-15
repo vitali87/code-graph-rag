@@ -153,6 +153,7 @@ class ClassIngestMixin:
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
+    csharp_type_locations: dict[tuple[str, int], str]
     class_field_guard_inner: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
@@ -759,13 +760,16 @@ class ClassIngestMixin:
         # (H) INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
         # (H) for non-C# types or when the frontend is off -> heuristic stands.
         csharp_base_kinds: dict[str, str] | None = None
-        if (
-            language == cs.SupportedLanguage.CSHARP
-            and self.csharp_base_kinds
-            and file_path is not None
-        ):
+        if language == cs.SupportedLanguage.CSHARP and file_path is not None:
             rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
-            csharp_base_kinds = self.csharp_base_kinds.get((rel_path, class_start_line))
+            # (H) Reverse index for the Roslyn frontend's location-keyed facts:
+            # (H) partial declaration groups join back to these Class qns after
+            # (H) Pass 2.
+            self.csharp_type_locations[(rel_path, class_start_line)] = class_qn
+            if self.csharp_base_kinds:
+                csharp_base_kinds = self.csharp_base_kinds.get(
+                    (rel_path, class_start_line)
+                )
         rel.create_class_relationships(
             member_node,
             class_qn,
@@ -1054,6 +1058,17 @@ class ClassIngestMixin:
             # (H) override walk gates class-parent matches: an implicit hide or a
             # (H) `new` shadow is not an override, unlike an interface impl.
             if language == cs.SupportedLanguage.CSHARP and ingested_qn is not None:
+                if module_qn is not None:
+                    # (H) Record where this member landed so the Roslyn frontend's
+                    # (H) declaration-location facts (call targets, query callers)
+                    # (H) resolve to the exact registered qn and label.
+                    self.function_locations[
+                        function_span_key(module_qn, method_node)
+                    ] = FunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=ingested_qn,
+                        container_qn=class_qn,
+                    )
                 self.csharp_methods.add(ingested_qn)
                 if csharp_has_override_modifier(method_node):
                     self.csharp_override_methods.add(ingested_qn)

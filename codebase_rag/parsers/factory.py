@@ -127,6 +127,8 @@ class ProcessorFactory:
                 method_return_types=self.definition_processor.method_return_types,
                 csharp_partial_groups=self.definition_processor.csharp_partial_groups,
                 csharp_extension_methods=self.definition_processor.csharp_extension_methods,
+                csharp_call_sites=self.definition_processor.csharp_call_sites,
+                function_locations=self.definition_processor.function_locations,
             )
         return self._type_inference
 
