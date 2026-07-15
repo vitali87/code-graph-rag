@@ -204,13 +204,15 @@ public static class Frontend
             {
                 return;
             }
-            var pos = nameToken.GetLocation().GetLineSpan().StartLinePosition;
+            var location = nameToken.GetLocation();
+            var pos = location.GetLineSpan().StartLinePosition;
+            var col = ByteCol(location, pos);
             var name = nameToken.ValueText;
-            if (!_seenCalls.Add((rel, pos.Line + 1, pos.Character, name)))
+            if (!_seenCalls.Add((rel, pos.Line + 1, col, name)))
             {
                 return;
             }
-            _calls.Add(new CallFact(rel, pos.Line + 1, pos.Character, name, target.File, target.Line, target.Col));
+            _calls.Add(new CallFact(rel, pos.Line + 1, col, name, target.File, target.Line, target.Col));
         }
 
         // Query syntax desugars to operator method calls with no invocation nodes;
@@ -222,18 +224,20 @@ public static class Frontend
             {
                 return;
             }
-            var pos = caller.GetLocation().GetLineSpan().StartLinePosition;
+            var callerLocation = caller.GetLocation();
+            var pos = callerLocation.GetLineSpan().StartLinePosition;
+            var col = ByteCol(callerLocation, pos);
             foreach (var op in QueryOperators(model, query))
             {
                 if (FirstPartyDecl(DeclaredMethod(op)) is not { } target)
                 {
                     continue;
                 }
-                if (!_seenQueries.Add((rel, pos.Line + 1, pos.Character, target.File, target.Line, op.Name)))
+                if (!_seenQueries.Add((rel, pos.Line + 1, col, target.File, target.Line, op.Name)))
                 {
                     continue;
                 }
-                _queries.Add(new QueryFact(rel, pos.Line + 1, pos.Character, op.Name, target.File, target.Line, target.Col));
+                _queries.Add(new QueryFact(rel, pos.Line + 1, col, op.Name, target.File, target.Line, target.Col));
             }
         }
 
@@ -256,8 +260,9 @@ public static class Frontend
             {
                 return null;
             }
-            var pos = reference.GetSyntax().GetLocation().GetLineSpan().StartLinePosition;
-            return new DeclLoc(Rel(path), pos.Line + 1, pos.Character);
+            var location = reference.GetSyntax().GetLocation();
+            var pos = location.GetLineSpan().StartLinePosition;
+            return new DeclLoc(Rel(path), pos.Line + 1, ByteCol(location, pos));
         }
     }
 
@@ -324,6 +329,22 @@ public static class Frontend
 
     private static LinePosition StartOf(SyntaxNode node) =>
         node.GetLocation().GetLineSpan().StartLinePosition;
+
+    // The Python join compares columns against tree-sitter's start_point, which
+    // counts BYTES, while Roslyn's LinePosition.Character counts UTF-16 code
+    // units. Re-measure the line prefix in UTF-8 bytes so a non-ASCII character
+    // earlier on the line cannot desynchronise the key.
+    private static int ByteCol(Location location, LinePosition pos)
+    {
+        var text = location.SourceTree?.GetText();
+        if (text is null)
+        {
+            return pos.Character;
+        }
+        var line = text.Lines[pos.Line];
+        var prefix = text.ToString(new TextSpan(line.Start, pos.Character));
+        return System.Text.Encoding.UTF8.GetByteCount(prefix);
+    }
 
     private static List<BaseFact> ClassifyBases(SemanticModel model, TypeDeclarationSyntax typeDecl)
     {

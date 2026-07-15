@@ -31,8 +31,8 @@ BaseKindMap = dict[tuple[str, int], dict[str, str]]
 # (H) Call-site join key: (rel_file, name_token_line, name_token_col, simple_name).
 # (H) The NAME token, not the expression start: nested invocations
 # (H) (`Make().Handle(x)` wraps `Make()`) share a start position, but their name
-# (H) tokens never collide. The name doubles as a guard against a rare same-line
-# (H) byte-vs-UTF-16 column coincidence.
+# (H) tokens never collide. Columns are BYTE offsets on both sides: the tool
+# (H) re-measures Roslyn's UTF-16 columns in UTF-8 bytes to match tree-sitter.
 CallSiteKey = tuple[str, int, int, str]
 
 

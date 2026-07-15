@@ -450,6 +450,58 @@ def test_hybrid_end_to_end_produces_semantic_edges(
     ), calls
 
 
+_UNICODE_SRC = """namespace N;
+
+public class C
+{
+    public void Handle(int x) { }
+    public void Handle(string s) { }
+}
+
+public class App
+{
+    public C Make() { return new C(); }
+
+    public void Go()
+    {
+        var s = "café"; Make().Handle(s);
+    }
+}
+"""
+
+
+def test_call_fact_survives_non_ascii_prefix_on_line(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) tree-sitter columns are BYTE offsets; Roslyn's LinePosition.Character
+    # (H) is UTF-16 code units. A non-ASCII character before the callee name
+    # (H) token on the same line makes the two diverge, so the tool must emit
+    # (H) byte columns or the join silently misses. Real facts end to end.
+    from codebase_rag.parsers.csharp_frontend import (
+        csharp_frontend_available,
+        run_csharp_frontend,
+    )
+
+    if not csharp_frontend_available():
+        pytest.skip("dotnet not available")
+    root = temp_repo / "unicodeproj"
+    root.mkdir()
+    (root / "Code.cs").write_text(_UNICODE_SRC, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    facts = run_csharp_frontend(root)
+    if not facts.call_sites:
+        pytest.skip("Roslyn frontend could not build/restore in this environment")
+
+    monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
+    assert not any(ce.endswith("Handle(int)") for _, ce in calls), calls
+
+
 def test_frontend_off_clears_stale_semantic_facts(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
