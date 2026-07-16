@@ -14,7 +14,10 @@ from codebase_rag.parsers.csharp_frontend import (
     csharp_frontend_available,
     run_csharp_frontend,
 )
-from codebase_rag.parsers.csharp_frontend.frontend import _parse_payload
+from codebase_rag.parsers.csharp_frontend.frontend import (
+    _parse_payload,
+    find_csharp_project,
+)
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -62,6 +65,89 @@ def _has(pairs: set[tuple[str, str]], child_suffix: str, parent_suffix: str) -> 
     return any(
         ch.endswith(child_suffix) and pa.endswith(parent_suffix) for ch, pa in pairs
     )
+
+
+_SLNX = """<Solution>
+  <Project Path="Sample.csproj" />
+</Solution>
+"""
+
+_EMPTY_PAYLOAD = '{"types":[],"calls":[],"partials":[],"queries":[]}'
+
+
+def test_find_csharp_project_discovers_slnx_solution(temp_repo: Path) -> None:
+    # (H) Repos migrated to the XML solution format ship a .slnx and no .sln
+    # (H) (e.g. Polly); missing it silently degrades hybrid to one csproj.
+    root = temp_repo / "slnxroot"
+    _write_project(root)
+    (root / "Sample.slnx").write_text(_SLNX, encoding="utf-8")
+
+    found = find_csharp_project(root)
+
+    assert found is not None
+    assert found.name == "Sample.slnx"
+
+
+def test_parse_payload_warns_with_tool_stderr_when_facts_empty() -> None:
+    # (H) A zero-fact run (SDK pin mismatch, unloadable solution) must surface
+    # (H) the tool's stderr diagnostics instead of looking identical to success.
+    from loguru import logger
+
+    records: list[str] = []
+    sink_id = logger.add(records.append, level="WARNING")
+    try:
+        facts = _parse_payload(_EMPTY_PAYLOAD, stderr="[projects] 0")
+    finally:
+        logger.remove(sink_id)
+
+    assert facts.base_kinds == {}
+    assert any("[projects] 0" in r for r in records), records
+
+
+def test_parse_payload_stays_quiet_when_facts_present() -> None:
+    from loguru import logger
+
+    payload = json.dumps(
+        {"types": [{"file": "F.cs", "line": 3, "name": "B", "bases": []}]}
+    )
+    records: list[str] = []
+    sink_id = logger.add(records.append, level="WARNING")
+    try:
+        _parse_payload(payload, stderr="[projects] 1")
+    finally:
+        logger.remove(sink_id)
+
+    assert not records, records
+
+
+def test_roslyn_tool_opens_slnx_solution(temp_repo: Path) -> None:
+    if not csharp_frontend_available():
+        pytest.skip("dotnet not available")
+    # (H) Environment self-gate on a sibling csproj-only project: only when the
+    # (H) plain path provably works may the .slnx path be required to work too,
+    # (H) so a .slnx regression cannot hide behind the skip.
+    plain = temp_repo / "plainproj"
+    _write_project(plain)
+    if not run_csharp_frontend(plain).base_kinds:
+        pytest.skip("Roslyn frontend could not build/restore in this environment")
+
+    # (H) Two projects under one .slnx: the csproj fallback loads exactly one of
+    # (H) them, so facts from BOTH prove the solution itself was opened.
+    root = temp_repo / "slnxproj"
+    root.mkdir()
+    for member in ("A", "B"):
+        sub = root / member
+        _write_project(sub)
+        (sub / "Sample.csproj").rename(sub / f"{member}.csproj")
+    (root / "Two.slnx").write_text(
+        '<Solution>\n  <Project Path="A/A.csproj" />\n'
+        '  <Project Path="B/B.csproj" />\n</Solution>\n',
+        encoding="utf-8",
+    )
+
+    fact_files = {file for file, _ in run_csharp_frontend(root).base_kinds}
+    assert any(f.startswith("A/") for f in fact_files), fact_files
+    assert any(f.startswith("B/") for f in fact_files), fact_files
 
 
 def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
