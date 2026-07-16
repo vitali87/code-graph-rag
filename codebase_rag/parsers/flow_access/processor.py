@@ -129,7 +129,6 @@ _FLAT_LOOP_TYPES = frozenset(
     {
         cs.TS_JS_FOR_STATEMENT,
         cs.TS_JS_WHILE_STATEMENT,
-        cs.TS_DO_STATEMENT,
         cs.TS_ENHANCED_FOR_STATEMENT,
         cs.TS_CPP_FOR_RANGE_LOOP,
         cs.TS_RS_FOR_EXPRESSION,
@@ -319,6 +318,8 @@ class FlowProcessor:
             return self._walk_flat_if(node, state, jc)
         if node_type in _FLAT_LOOP_TYPES:
             return self._walk_flat_loop(node, state, jc)
+        if node_type == cs.TS_DO_STATEMENT:
+            return self._walk_flat_do(node, state, jc)
         if node_type in _FLAT_TRY_TYPES:
             return self._walk_flat_try(node, state, jc)
         if node_type == cs.TS_RS_MATCH_EXPRESSION:
@@ -375,6 +376,29 @@ class FlowProcessor:
             twice = self._walk_flat_stmt(update, twice, jc)
         self._restore_shadows(pre_loop_shadows, jc)
         return self._merge([state, twice])
+
+    def _walk_flat_do(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) A do-while body ALWAYS runs at least once, so the pre-loop state is
+        # (H) NOT part of the exit merge (a kill in the body kills on every path),
+        # (H) and the condition runs AFTER each body pass, so a sink there sees
+        # (H) the body's taint. Exit = merge(one iteration, two iterations); the
+        # (H) second pass catches loop-carried taint exactly like _walk_flat_loop.
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        condition = node.child_by_field_name(cs.TS_FIELD_CONDITION)
+        pre_shadows = set(jc.local_names)
+        once = dict(state)
+        if body is not None:
+            once = self._walk_flat_stmt(body, once, jc)
+        if condition is not None:
+            once = self._walk_flat_stmt(condition, once, jc)
+        self._restore_shadows(pre_shadows, jc)
+        twice = dict(once)
+        if body is not None:
+            twice = self._walk_flat_stmt(body, twice, jc)
+        if condition is not None:
+            twice = self._walk_flat_stmt(condition, twice, jc)
+        self._restore_shadows(pre_shadows, jc)
+        return self._merge([once, twice])
 
     def _walk_flat_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
         # (H) The try body may run fully (no-throw path) or partially before a
