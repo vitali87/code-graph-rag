@@ -55,18 +55,23 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 
 ## Available Tools
 
+<!-- SECTION:mcp_tools -->
 | Tool | Description |
-|------|-------------|
-| `list_projects` | List all indexed projects in the knowledge graph database |
-| `delete_project` | Delete a specific project from the knowledge graph database |
-| `wipe_database` | Completely wipe the entire database (cannot be undone) |
-| `index_repository` | Parse and ingest the repository into the knowledge graph |
-| `query_code_graph` | Query the codebase knowledge graph using natural language |
-| `get_code_snippet` | Retrieve source code for a function, class, or method by qualified name |
-| `surgical_replace_code` | Surgically replace an exact code block using diff-match-patch |
-| `read_file` | Read file contents with pagination support |
-| `write_file` | Write content to a file |
-| `list_directory` | List directory contents |
+|----|-----------|
+| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
+| `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
+| `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
+| `index_repository` | WARNING: Clears all data for the current project including its embeddings. Parse and ingest the repository into the Memgraph knowledge graph. Use update_repository for incremental updates. Only use when explicitly requested. |
+| `update_repository` | Update the repository in the Memgraph knowledge graph without clearing existing data. Use this for incremental updates. |
+| `query_code_graph` | Query the codebase knowledge graph using natural language. Use semantic_search unless you know the exact names of classes/functions you are searching for. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
+| `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
+| `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
+| `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
+| `write_file` | Write content to a file, creating it if it doesn't exist. |
+| `list_directory` | List contents of a directory in the project. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
+| `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
+<!-- /SECTION:mcp_tools -->
 
 ## Example Usage
 

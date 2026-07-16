@@ -49,7 +49,7 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 | `--batch-size` | Override Memgraph flush batch size |
 | `--reference-document` | Path to reference documentation for guided optimization |
 
-Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
+Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 
 ### `cgr dead-code`
 
