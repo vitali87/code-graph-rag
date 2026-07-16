@@ -329,6 +329,23 @@ def test_java_connection_statement_query(tmp_path: Path) -> None:
     assert _has(rels, "A.fetch", READS_FROM, "resource::DATABASE::<dynamic>")
 
 
+def test_java_fully_qualified_new_constructor(tmp_path: Path) -> None:
+    # (H) `new java.io.FileWriter("out.txt")`: the fully qualified constructor
+    # (H) type must bind exactly like the simple name (greploop P1).
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void save(String s) throws Exception {\n"
+            '    java.io.FileWriter w = new java.io.FileWriter("out.txt");\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.save", WRITES_TO, "resource::FILE::out.txt")
+
+
 def test_java_scanner_new_file_identity(tmp_path: Path) -> None:
     # (H) `new Scanner(new File("x"))`: Scanner is a wrapper; File is not a handle
     # (H) itself but carries the identity literal.
