@@ -167,6 +167,26 @@ def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
     assert not _has(rels, "main.f", WRITES_TO, "resource::FILE::data.txt")
 
 
+def test_go_block_local_handle_does_not_leak(tmp_path: Path) -> None:
+    # (H) A handle declared inside a nested block is out of scope after the
+    # (H) block; a same-named use outside must not attribute to it (greploop P1).
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func load(f Reader, buf []byte) {\n"
+            "\t{\n"
+            '\t\tf, _ := os.OpenFile("a.txt", os.O_RDONLY, 0)\n'
+            "\t\t_ = f\n"
+            "\t}\n"
+            "\tf.Read(buf)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "main.load", READS_FROM, "resource::FILE::a.txt")
+
+
 def test_go_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
     files = {
         "main.go": (
