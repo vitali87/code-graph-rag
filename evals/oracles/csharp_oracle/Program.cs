@@ -208,6 +208,16 @@ string BaseRel(string name, int index, bool isInterface)
 
 void EmitMember(string rel, MemberDeclarationSyntax member)
 {
+    // A directive-split expression body is ill-formed once the directives are
+    // neutralized (two bodies); Roslyn error-recovers the second branch's
+    // expression as a phantom member declaration (issue #768). A declaration
+    // carrying parse errors is a recovery artifact, never a source fact cgr
+    // should be graded against; real repos compile, so genuine members are
+    // diagnostic-free.
+    if (member.ContainsDiagnostics)
+    {
+        return;
+    }
     var (line, endLine) = Span(member);
     nodes.Add(new Def(KindMethod, rel, line, endLine, MemberName(member)));
     var owner = EnclosingType(member);
