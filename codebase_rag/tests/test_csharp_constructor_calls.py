@@ -135,6 +135,34 @@ public class App {
     ), instantiates
 
 
+def test_target_typed_new_in_indexer_body_emits_instantiates(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An indexer's return position is typed like a property's: both the
+    # (H) expression-bodied form and a `return new();` inside a get accessor.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget() {}
+}
+public class App {
+    public Widget this[int i] => new();
+}
+public class App2 {
+    public Widget this[int i] { get { return new(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    assert len([t for _, t in instantiates if t.endswith("N.Widget")]) == 2, (
+        instantiates
+    )
+
+
 def test_target_typed_new_strips_generic_arguments(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
