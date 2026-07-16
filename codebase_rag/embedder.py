@@ -137,16 +137,13 @@ if has_torch() and has_transformers():
 
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
-        try:
-            model = UniXcoder(cs.UNIXCODER_MODEL)
-            model.eval()
-            device = _select_device()
-            if device != cs.EmbeddingDevice.CPU:
-                model = model.to(device)
-            return model
-        except Exception:
-            logger.exception("Failed to initialize UniXcoder model.")
-            raise 
+        model = UniXcoder(cs.UNIXCODER_MODEL)
+        model.eval()
+        device = _select_device()
+        if device != cs.EmbeddingDevice.CPU:
+            model = model.to(device)
+        return model
+
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
         try:
