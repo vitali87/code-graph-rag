@@ -214,6 +214,8 @@ _JAVA_SYSTEM_SINKS: tuple[IOSink, ...] = (
 # (H) `java.nio.file.Files.X` key: with `import java.nio.file.Files` the call
 # (H) normalises to the FQN, and a fully-qualified call carries the FQN in its text --
 # (H) so both the imported and the qualified-call cases resolve.
+_JAVA_FILES_PREFIXES: tuple[str, ...] = ("Files", "java.nio.file.Files")
+
 _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
     ("readString", IODirection.READ),
     ("readAllLines", IODirection.READ),
@@ -228,7 +230,7 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
     *(
         IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
         for method, direction in _JAVA_FILES_METHODS
-        for prefix in ("Files", "java.nio.file.Files")
+        for prefix in _JAVA_FILES_PREFIXES
     ),
 )
 
@@ -239,6 +241,11 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
 # (H) `::` path is not shadowable by a local, so no import-gating needed). Rust has no
 # (H) keyword args -> path/key is positional arg 0. File handles (`File::open`,
 # (H) `BufReader`) and the print macros (handled separately) are follow-ups here.
+# (H) C++/Rust `std` namespace prefix; C++ sinks key both the bare (C linkage /
+# (H) `using namespace std`) and qualified spellings.
+_STD_PREFIX = "std::"
+_CPP_SINK_PREFIXES: tuple[str, ...] = ("", _STD_PREFIX)
+
 _RUST_CALL_METHODS: tuple[
     tuple[str, str, ResourceKind, IODirection, int | None], ...
 ] = (
@@ -259,7 +266,7 @@ _RUST_CALL_METHODS: tuple[
 # (H) import map (fs -> std::fs); keying the bare `fs::write` too would overmatch a
 # (H) local `mod fs { fn write() }` that never touches std.
 _RUST_SINKS: tuple[IOSink, ...] = tuple(
-    IOSink(f"std::{module}::{fn}", kind, direction, target_arg=arg)
+    IOSink(f"{_STD_PREFIX}{module}::{fn}", kind, direction, target_arg=arg)
     for module, fn, kind, direction, arg in _RUST_CALL_METHODS
 )
 
@@ -281,7 +288,7 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
 _CPP_SINKS: tuple[IOSink, ...] = tuple(
     IOSink(f"{prefix}{fn}", kind, direction, target_arg=arg)
     for fn, kind, direction, arg in _CPP_CALL_METHODS
-    for prefix in ("", "std::")
+    for prefix in _CPP_SINK_PREFIXES
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
@@ -312,7 +319,7 @@ IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
 _CPP_STREAM_SINKS: dict[str, IOSink] = {
     f"{prefix}{name}": IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
     for name in ("cout", "cerr", "clog", "wcout", "wcerr", "wclog")
-    for prefix in ("", "std::")
+    for prefix in _CPP_SINK_PREFIXES
 }
 
 IO_STREAM_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
@@ -440,10 +447,10 @@ _GO_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
 _JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
     HandleConstructor(f"{prefix}.{method}", kind, target_arg=arg)
     for method, kind, arg, prefixes in (
-        ("newBufferedReader", ResourceKind.FILE, 0, ("Files", "java.nio.file.Files")),
-        ("newBufferedWriter", ResourceKind.FILE, 0, ("Files", "java.nio.file.Files")),
-        ("newInputStream", ResourceKind.FILE, 0, ("Files", "java.nio.file.Files")),
-        ("newOutputStream", ResourceKind.FILE, 0, ("Files", "java.nio.file.Files")),
+        ("newBufferedReader", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newBufferedWriter", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newInputStream", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newOutputStream", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
         (
             "getConnection",
             ResourceKind.DATABASE,
@@ -478,13 +485,15 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
 # (H) its writer-wrapping overload resolves via IO_NEW_HANDLE_WRAPPERS first.
 # (H) Each Java new-type is keyed under BOTH its simple and fully qualified
 # (H) written form (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
+_JAVA_IO_PACKAGE = "java.io"
+
 _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
-    ("FileReader", "java.io", ResourceKind.FILE),
-    ("FileInputStream", "java.io", ResourceKind.FILE),
-    ("FileWriter", "java.io", ResourceKind.FILE),
-    ("FileOutputStream", "java.io", ResourceKind.FILE),
-    ("PrintWriter", "java.io", ResourceKind.FILE),
-    ("RandomAccessFile", "java.io", ResourceKind.FILE),
+    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
     ("Socket", "java.net", ResourceKind.SOCKET),
 )
 
@@ -500,13 +509,13 @@ IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstruct
 # (H) either a nested handle constructor (`new BufferedReader(new FileReader(p))`)
 # (H) or an already-bound handle variable.
 _JAVA_NEW_WRAPPER_TYPES: tuple[tuple[str, str], ...] = (
-    ("BufferedReader", "java.io"),
-    ("BufferedWriter", "java.io"),
-    ("BufferedInputStream", "java.io"),
-    ("BufferedOutputStream", "java.io"),
-    ("InputStreamReader", "java.io"),
-    ("OutputStreamWriter", "java.io"),
-    ("PrintWriter", "java.io"),
+    ("BufferedReader", _JAVA_IO_PACKAGE),
+    ("BufferedWriter", _JAVA_IO_PACKAGE),
+    ("BufferedInputStream", _JAVA_IO_PACKAGE),
+    ("BufferedOutputStream", _JAVA_IO_PACKAGE),
+    ("InputStreamReader", _JAVA_IO_PACKAGE),
+    ("OutputStreamWriter", _JAVA_IO_PACKAGE),
+    ("PrintWriter", _JAVA_IO_PACKAGE),
     ("Scanner", "java.util"),
 )
 
@@ -537,7 +546,7 @@ IO_TYPE_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, ResourceKind]]
     cs.SupportedLanguage.CPP: {
         f"{prefix}{name}": ResourceKind.FILE
         for name in ("ifstream", "ofstream", "fstream")
-        for prefix in ("", "std::")
+        for prefix in _CPP_SINK_PREFIXES
     },
 }
 
