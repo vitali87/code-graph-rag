@@ -8,20 +8,24 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 
 ## Support Matrix
 
+<!-- SECTION:supported_languages -->
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
-|----------|--------|------------|-----------|-----------------|---------|-------------------|---------------------|
-| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | Yes | Yes | Yes | Yes | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
-| Dart | Fully Supported | .dart | Yes | Yes | Yes | Yes | Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies |
-| Java | Fully Supported | .java | Yes | Yes | Yes | No | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
-| JavaScript | Fully Supported | .js, .jsx | Yes | Yes | Yes | No | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
-| Lua | Fully Supported | .lua | Yes | No | Yes | No | Local/global functions, metatables, closures, coroutines |
-| Python | Fully Supported | .py | Yes | Yes | Yes | Yes | Type inference, decorators, nested functions |
-| Rust | Fully Supported | .rs | Yes | Yes | Yes | Yes | impl blocks, associated functions, macro_rules! macros |
-| TypeScript | Fully Supported | .ts, .tsx | Yes | Yes | Yes | No | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| C# | In Development | .cs | Yes | Yes | Yes | No | Classes, interfaces, generics (planned) |
-| Go | In Development | .go | Yes | Yes | Yes | No | Methods, type declarations |
-| PHP | Fully Supported | .php | Yes | Yes | Yes | No | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
-| Scala | In Development | .scala, .sc | Yes | Yes | Yes | No | Case classes, objects |
+|--------|------|----------|---------|---------------|-------|-----------------|-------------------|
+| C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
+| C# | Fully Supported | .cs | ✓ | ✓ | ✓ | - | Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives |
+| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces, preprocessor macros |
+| Dart | Fully Supported | .dart | ✓ | ✓ | ✓ | - | Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies |
+| Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
+| Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
+| JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
+| PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
+| Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
+| Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
+| TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
+| TypeScript | Fully Supported | .ts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
+| Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
+<!-- /SECTION:supported_languages -->
 
 ## Language-Agnostic Design
 

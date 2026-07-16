@@ -49,7 +49,7 @@ cgr optimize javascript --repo-path /path/to/frontend \
 
 ## Supported Languages
 
-All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
+All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 
 ## How It Works
 

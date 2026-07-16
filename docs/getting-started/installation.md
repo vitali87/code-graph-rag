@@ -44,7 +44,7 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 pip install code-graph-rag
 ```
 
-With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C++, Lua):
+With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lua, PHP, C#, Dart):
 
 ```bash
 pip install 'code-graph-rag[treesitter-full]'
