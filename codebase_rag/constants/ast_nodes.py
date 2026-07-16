@@ -98,6 +98,9 @@ TS_RS_TRAIT_BOUNDS = "trait_bounds"
 FIELD_VALUE = "value"
 FIELD_LEFT = "left"
 FIELD_RIGHT = "right"
+# (H) A C-style for's post-iteration clause: Java/C++ hold it in an `update`
+# (H) field on the loop node, Go inside its `for_clause`.
+FIELD_UPDATE = "update"
 FIELD_FIELD = "field"
 FIELD_SCOPE = "scope"
 FIELD_SUPERCLASS = "superclass"
@@ -224,6 +227,8 @@ TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
 # (H) Plain call/constructor argument list (C++ `in("x.txt")` init_declarator
 # (H) value, Java `new FileWriter("x")` arguments).
 TS_ARGUMENT_LIST = "argument_list"
+# (H) `do { .. } while (cond)` -- same node type in the Java and C++ grammars.
+TS_DO_STATEMENT = "do_statement"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
 

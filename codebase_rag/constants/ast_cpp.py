@@ -181,6 +181,7 @@ CPP_OP_LEFT_SHIFT = "<<"
 # (H) Stream-extraction operator; on a bound fstream handle (`in >> word`) it is a
 # (H) READ of that handle's resource (issue #714).
 CPP_OP_RIGHT_SHIFT = ">>"
+TS_CPP_FOR_RANGE_LOOP = "for_range_loop"
 # (H) field_expression = `obj.field` (argument/field); subscript_expression =
 # (H) `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
 # (H) correctness / future value-level sinks.

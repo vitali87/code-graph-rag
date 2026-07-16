@@ -36,6 +36,9 @@ TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
 TS_GO_IDENTIFIER = "identifier"
 TS_GO_CONST_SPEC = "const_spec"
 TS_GO_RANGE_CLAUSE = "range_clause"
+# (H) The init;cond;post header of a C-style Go for; its post statement lives in
+# (H) an `update` field.
+TS_GO_FOR_CLAUSE = "for_clause"
 TS_GO_BLOCK = "block"
 # (H) Go wraps a block's statements in a single `statement_list` node (unlike JS/Java,
 # (H) whose block children are the statements directly); the source-order I/O walk
@@ -53,6 +56,9 @@ TS_GO_LITERAL_VALUE = "literal_value"
 TS_GO_KEYED_ELEMENT = "keyed_element"
 TS_GO_LITERAL_ELEMENT = "literal_element"
 TS_GO_UNARY_EXPRESSION = "unary_expression"
+# (H) `[]byte(s)` / `string(b)`: value-preserving conversion, unwrapped by the
+# (H) lean flow walk so the operand's taint carries through (issue #714).
+TS_GO_TYPE_CONVERSION_EXPRESSION = "type_conversion_expression"
 TS_GO_POINTER_TYPE = "pointer_type"
 # (H) Go composite types a method may return; a chained call lands on the CONTAINER,
 # (H) not its element, so return-type inference must not unwrap these to an element

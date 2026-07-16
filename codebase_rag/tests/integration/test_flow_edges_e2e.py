@@ -114,25 +114,25 @@ def test_io_and_flow_edges_survive_the_memgraph_round_trip(
 ) -> None:
     _index(memgraph_ingestor, flow_project, io=True)
 
-    # Resource endpoints exist (no dangling FLOWS_TO edge).
+    # (H) Resource endpoints exist (no dangling FLOWS_TO edge).
     resources = _resource_qns(memgraph_ingestor)
     assert ENV_K in resources
     assert STDOUT in resources
 
-    # READS_FROM / WRITES_TO landed alongside FLOWS_TO.
+    # (H) READS_FROM / WRITES_TO landed alongside FLOWS_TO.
     types = _rel_types(memgraph_ingestor)
     assert cs.RelationshipType.READS_FROM.value in types
     assert cs.RelationshipType.WRITES_TO.value in types
     assert cs.RelationshipType.FLOWS_TO.value in types
 
     flows = _flows(memgraph_ingestor)
-    # resource -> resource: the env value reaches stdout.
+    # (H) resource -> resource: the env value reaches stdout.
     assert _has(flows, ENV_K, STDOUT, kind=FlowKind.RESOURCE.value)
-    # arg flow: a tainted local passed into forward().
+    # (H) arg flow: a tainted local passed into forward().
     assert _has(
         flows, "flow.leak", "flow.forward", kind=FlowKind.ARG.value, via="arg:0"
     )
-    # return flow: build() returns a tainted value into leak().
+    # (H) return flow: build() returns a tainted value into leak().
     assert _has(
         flows, "flow.build", "flow.leak", kind=FlowKind.RETURN.value, via="return"
     )
@@ -269,3 +269,29 @@ def test_cooccurrence_is_not_flow(
     flows = _flows(memgraph_ingestor)
     assert not any((f["to"] or "").endswith("flow.helper") for f in flows)
     assert not _has(flows, ENV_K, STDOUT)
+
+
+def test_go_loop_carried_flow_survives_round_trip(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 lean-flow depth: a later loop iteration carries the ENV read
+    # (H) back to the file write of an earlier statement (two-pass loop walk).
+    project = tmp_path / "go_flow_project"
+    project.mkdir()
+    (project / "main.go").write_text(
+        "package main\n\n"
+        'import "os"\n\n'
+        "func work(s string) {\n"
+        "\tfor i := 0; i < 2; i++ {\n"
+        '\t\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+        '\t\ts = os.Getenv("SECRET")\n'
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _index(memgraph_ingestor, project, io=True)
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::FILE::out.txt",
+    )

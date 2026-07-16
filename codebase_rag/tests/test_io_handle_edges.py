@@ -405,6 +405,27 @@ def test_java_statement_execute_sql_refinement(tmp_path: Path) -> None:
     assert not _has(rels, "A.fetch", WRITES_TO, "resource::DATABASE::<dynamic>")
 
 
+def test_java_try_with_resources_binds_reader_handle(tmp_path: Path) -> None:
+    # (H) The idiomatic home of a Java handle is a try-with-resources header:
+    # (H) the `resource` declaration must bind exactly like a local declarator.
+    files = {
+        "A.java": (
+            "import java.io.BufferedReader;\n"
+            "import java.io.FileReader;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            "    try (BufferedReader br ="
+            ' new BufferedReader(new FileReader("in.txt"))) {\n'
+            "      String line = br.readLine();\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::in.txt")
+
+
 # (H) Rust tests below.
 
 

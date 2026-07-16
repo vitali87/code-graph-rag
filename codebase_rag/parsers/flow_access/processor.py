@@ -120,6 +120,28 @@ _HOISTED_DECL_LANGS = frozenset(
     {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
 )
 
+# (H) Branch-and-merge node types for the non-hoisted flat walk (issue #714
+# (H) follow-up): each grammar spells its conditionals/loops/try with these type
+# (H) names, and the sets are unions across Go/Java/Rust/C++ (a type absent from
+# (H) one grammar simply never appears in its trees).
+_FLAT_IF_TYPES = frozenset({cs.TS_JS_IF_STATEMENT, cs.TS_RS_IF_EXPRESSION})
+_FLAT_LOOP_TYPES = frozenset(
+    {
+        cs.TS_JS_FOR_STATEMENT,
+        cs.TS_JS_WHILE_STATEMENT,
+        cs.TS_ENHANCED_FOR_STATEMENT,
+        cs.TS_CPP_FOR_RANGE_LOOP,
+        cs.TS_RS_FOR_EXPRESSION,
+        cs.TS_RS_WHILE_EXPRESSION,
+    }
+)
+# (H) Loops whose body ALWAYS runs at least once (do-while, Rust `loop`): no
+# (H) zero-iteration skip path in the exit merge.
+_FLAT_MANDATORY_LOOP_TYPES = frozenset({cs.TS_DO_STATEMENT, cs.TS_RS_LOOP_EXPRESSION})
+_FLAT_TRY_TYPES = frozenset(
+    {cs.TS_JS_TRY_STATEMENT, cs.TS_TRY_WITH_RESOURCES_STATEMENT}
+)
+
 
 class _JsCtx(NamedTuple):
     # (H) Per-caller constants for the lean non-Python flow walk (issue #714).
@@ -287,19 +309,178 @@ class FlowProcessor:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
     def _walk_flat_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
-        # (H) Structured walk for the non-hoisted flat languages (Go, Java): only
-        # (H) if_statement branches-and-merges; every other node applies its leaf effect
-        # (H) and threads state through its children in source order (so a nested call in
-        # (H) an argument, or a loop/try body, is still seen -- one pass, as before).
+        # (H) Structured walk for the non-hoisted flat languages (Go, Java, Rust,
+        # (H) C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
+        # (H) every other node applies its leaf effect and threads state through its
+        # (H) children in source order (so a nested call in an argument is seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
             return state
-        if node_type == cs.TS_JS_IF_STATEMENT:
+        if node_type in _FLAT_IF_TYPES:
             return self._walk_flat_if(node, state, jc)
+        if node_type in _FLAT_LOOP_TYPES:
+            return self._walk_flat_loop(node, state, jc)
+        if node_type in _FLAT_MANDATORY_LOOP_TYPES:
+            return self._walk_flat_mandatory_loop(node, state, jc)
+        if node_type in _FLAT_TRY_TYPES:
+            return self._walk_flat_try(node, state, jc)
+        if node_type == cs.TS_RS_MATCH_EXPRESSION:
+            return self._walk_flat_match(node, state, jc)
         self._apply_js_leaf(node, state, jc)
         for child in node.named_children:
             state = self._walk_flat_stmt(child, state, jc)
         return state
+
+    def _walk_flat_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The body runs zero or more times: union the skip path with one pass,
+        # (H) then re-walk once from that merge so taint carried from a later
+        # (H) iteration into an earlier statement is caught (same two-pass
+        # (H) approximation as the JS/Python loop walks; edges are
+        # (H) MERGE-idempotent so the re-walk never duplicates them). Header
+        # (H) declarations (a Go `for i := 0` / range var) stay shadowed for both
+        # (H) body passes; body-local shadows reset between passes and the whole
+        # (H) loop's shadows reset on exit. A Java enhanced-for is ITSELF the
+        # (H) binding node (extra_declarator_types), so its leaf effect (binding
+        # (H) the loop var to the iterable's taint) runs before the body.
+        pre_loop_shadows = set(jc.local_names)
+        if node.type in jc.descriptor.extra_declarator_types:
+            self._apply_js_leaf(node, state, jc)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        state, update = self._walk_loop_header(node, state, jc, body)
+        if body is None:
+            self._restore_shadows(pre_loop_shadows, jc)
+            return state
+        header_shadows = set(jc.local_names)
+        once = self._walk_flat_stmt(body, dict(state), jc)
+        if update is not None:
+            once = self._walk_flat_stmt(update, once, jc)
+        self._restore_shadows(header_shadows, jc)
+        merged = self._merge([state, once])
+        twice = self._walk_flat_stmt(body, dict(merged), jc)
+        if update is not None:
+            twice = self._walk_flat_stmt(update, twice, jc)
+        self._restore_shadows(pre_loop_shadows, jc)
+        return self._merge([state, twice])
+
+    def _walk_loop_header(
+        self, node: Node, state: _TaintMap, jc: _JsCtx, body: Node | None
+    ) -> tuple[_TaintMap, Node | None]:
+        # (H) Walk the pre-body header children and return the update clause
+        # (H) unwalked: a C-style for's update runs only AFTER a completed body
+        # (H) iteration -- never on the zero-iteration path and never before the
+        # (H) first body pass -- so the caller walks it after each body pass.
+        # (H) Java/C++ hold it in an `update` field on the loop node; Go nests
+        # (H) it inside the for_clause.
+        update = node.child_by_field_name(cs.FIELD_UPDATE)
+        for child in node.named_children:
+            if body is not None and child.id == body.id:
+                continue
+            if update is not None and child.id == update.id:
+                continue
+            if child.type == cs.TS_GO_FOR_CLAUSE and update is None:
+                update = child.child_by_field_name(cs.FIELD_UPDATE)
+                state = self._walk_go_for_clause(child, update, state, jc)
+                continue
+            state = self._walk_flat_stmt(child, state, jc)
+        return state, update
+
+    def _walk_go_for_clause(
+        self, clause: Node, update: Node | None, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
+        # (H) Go's init;cond;post for_clause: walk everything but the post
+        # (H) (update) statement, which the loop walk defers past the body.
+        for part in clause.named_children:
+            if update is None or part.id != update.id:
+                state = self._walk_flat_stmt(part, state, jc)
+        return state
+
+    def _walk_flat_mandatory_loop(
+        self, node: Node, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
+        # (H) A do-while / Rust `loop` body ALWAYS runs at least once, so the
+        # (H) pre-loop state is NOT part of the exit merge (a kill in the body
+        # (H) kills on every straight-line path), and a do-while condition runs
+        # (H) AFTER each body pass, so a sink there sees the body's taint
+        # (H) (Rust `loop` has no condition field). Exit = merge(one iteration,
+        # (H) two iterations); the second pass catches loop-carried taint
+        # (H) exactly like _walk_flat_loop. `break` is not modelled: a kill
+        # (H) below a conditional break still counts, the accepted flat-walk
+        # (H) approximation.
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        condition = node.child_by_field_name(cs.TS_FIELD_CONDITION)
+        pre_shadows = set(jc.local_names)
+        once = dict(state)
+        if body is not None:
+            once = self._walk_flat_stmt(body, once, jc)
+        if condition is not None:
+            once = self._walk_flat_stmt(condition, once, jc)
+        self._restore_shadows(pre_shadows, jc)
+        twice = dict(once)
+        if body is not None:
+            twice = self._walk_flat_stmt(body, twice, jc)
+        if condition is not None:
+            twice = self._walk_flat_stmt(condition, twice, jc)
+        self._restore_shadows(pre_shadows, jc)
+        return self._merge([once, twice])
+
+    def _walk_flat_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) The try body may run fully (no-throw path) or partially before a
+        # (H) catch, so each handler is seeded with union(pre, body_exit): taint
+        # (H) killed inside the body still reaches the handler, since the throw
+        # (H) may precede the kill. A finally runs on the merged state.
+        pre_shadows = set(jc.local_names)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        # (H) try-with-resources: the resource declarations run before the body
+        # (H) on EVERY path (a throwing body still ran them), so the non-body,
+        # (H) non-handler children (the resource_specification) walk into the
+        # (H) pre-body state that also seeds each catch. The catch/finally node
+        # (H) type strings are shared verbatim by the JS, Java, and C++ grammars.
+        for child in node.named_children:
+            if child.type in (cs.TS_JS_CATCH_CLAUSE, cs.TS_JS_FINALLY_CLAUSE):
+                continue
+            if body is not None and child.id == body.id:
+                continue
+            state = self._walk_flat_stmt(child, state, jc)
+        body_exit = (
+            self._walk_flat_stmt(body, dict(state), jc)
+            if body is not None
+            else dict(state)
+        )
+        self._restore_shadows(pre_shadows, jc)
+        branch_exits: list[_TaintMap] = [body_exit]
+        finally_clause: Node | None = None
+        for child in node.named_children:
+            if child.type == cs.TS_JS_CATCH_CLAUSE:
+                branch_exits.append(
+                    self._walk_flat_stmt(child, self._merge([state, body_exit]), jc)
+                )
+                self._restore_shadows(pre_shadows, jc)
+            elif child.type == cs.TS_JS_FINALLY_CLAUSE:
+                finally_clause = child
+        merged = self._merge(branch_exits)
+        if finally_clause is not None:
+            merged = self._walk_flat_stmt(finally_clause, merged, jc)
+            self._restore_shadows(pre_shadows, jc)
+        return merged
+
+    def _walk_flat_match(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) Rust match: the scrutinee runs on all paths; each arm is walked
+        # (H) against a copy and unioned (MAY join). Arms are exhaustive, so the
+        # (H) merge is over the arms only (no implicit skip path).
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        if value is not None:
+            state = self._walk_flat_stmt(value, state, jc)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return state
+        pre_shadows = set(jc.local_names)
+        arm_exits: list[_TaintMap] = []
+        for arm in body.named_children:
+            if arm.type != cs.TS_RS_MATCH_ARM:
+                continue
+            arm_exits.append(self._walk_flat_stmt(arm, dict(state), jc))
+            self._restore_shadows(pre_shadows, jc)
+        return self._merge(arm_exits) if arm_exits else state
 
     def _walk_flat_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
         # (H) The header (any initializer + condition) runs on all paths; each of the
@@ -526,6 +707,16 @@ class FlowProcessor:
         if node_type in (cs.TS_AWAIT_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
             # (H) Unwrap `await expr` and `(expr)` to the inner source expression.
             return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
+        if node_type == cs.TS_GO_TYPE_CONVERSION_EXPRESSION:
+            # (H) Go `[]byte(s)` / `string(b)`: value-preserving, taint carries.
+            return self._js_expr_taint(
+                node.child_by_field_name(cs.TS_GO_FIELD_OPERAND), tainted, jc
+            )
+        if node_type == cs.TS_RS_REFERENCE_EXPRESSION:
+            # (H) Rust `&s` / `&mut s`: a borrow of a tainted value is tainted.
+            return self._js_expr_taint(
+                node.child_by_field_name(cs.FIELD_VALUE), tainted, jc
+            )
         if node_type == d.identifier_type:
             return (
                 tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None

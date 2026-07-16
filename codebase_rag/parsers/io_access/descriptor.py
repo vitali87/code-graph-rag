@@ -187,13 +187,18 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     )
     | cs.JAVA_CLASS_NODE_TYPES,
     # (H) Java locals that shadow the `System`/`Files` global head: a
-    # (H) `variable_declarator` (`Object System = ...`), a `formal_parameter`, and an
-    # (H) `enhanced_for_statement` (for-each) loop var (extra_declarator_types).
+    # (H) `variable_declarator` (`Object System = ...`), a `formal_parameter`, an
+    # (H) `enhanced_for_statement` (for-each) loop var, and a try-with-resources
+    # (H) `resource` declaration (extra_declarator_types) -- the latter binds via
+    # (H) `name`/`value` exactly like a declarator, so it also carries handle and
+    # (H) taint bindings.
     identifier_type=cs.TS_IDENTIFIER,
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
     block_scope_type=cs.TS_JAVA_BLOCK,
-    extra_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
+    extra_declarator_types=frozenset(
+        {cs.TS_ENHANCED_FOR_STATEMENT, cs.TS_JAVA_RESOURCE}
+    ),
     loop_declarator_types=frozenset({cs.TS_ENHANCED_FOR_STATEMENT}),
     statement_container_type=None,
     # (H) Java's System/Files sink heads are java.lang / java.nio globals that never
