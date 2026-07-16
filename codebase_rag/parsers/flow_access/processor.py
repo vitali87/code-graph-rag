@@ -133,8 +133,12 @@ _FLAT_LOOP_TYPES = frozenset(
         cs.TS_CPP_FOR_RANGE_LOOP,
         cs.TS_RS_FOR_EXPRESSION,
         cs.TS_RS_WHILE_EXPRESSION,
-        cs.TS_RS_LOOP_EXPRESSION,
     }
+)
+# (H) Loops whose body ALWAYS runs at least once (do-while, Rust `loop`): no
+# (H) zero-iteration skip path in the exit merge.
+_FLAT_MANDATORY_LOOP_TYPES = frozenset(
+    {cs.TS_DO_STATEMENT, cs.TS_RS_LOOP_EXPRESSION}
 )
 _FLAT_TRY_TYPES = frozenset(
     {cs.TS_JS_TRY_STATEMENT, cs.TS_TRY_WITH_RESOURCES_STATEMENT}
@@ -318,8 +322,8 @@ class FlowProcessor:
             return self._walk_flat_if(node, state, jc)
         if node_type in _FLAT_LOOP_TYPES:
             return self._walk_flat_loop(node, state, jc)
-        if node_type == cs.TS_DO_STATEMENT:
-            return self._walk_flat_do(node, state, jc)
+        if node_type in _FLAT_MANDATORY_LOOP_TYPES:
+            return self._walk_flat_mandatory_loop(node, state, jc)
         if node_type in _FLAT_TRY_TYPES:
             return self._walk_flat_try(node, state, jc)
         if node_type == cs.TS_RS_MATCH_EXPRESSION:
@@ -377,12 +381,18 @@ class FlowProcessor:
         self._restore_shadows(pre_loop_shadows, jc)
         return self._merge([state, twice])
 
-    def _walk_flat_do(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
-        # (H) A do-while body ALWAYS runs at least once, so the pre-loop state is
-        # (H) NOT part of the exit merge (a kill in the body kills on every path),
-        # (H) and the condition runs AFTER each body pass, so a sink there sees
-        # (H) the body's taint. Exit = merge(one iteration, two iterations); the
-        # (H) second pass catches loop-carried taint exactly like _walk_flat_loop.
+    def _walk_flat_mandatory_loop(
+        self, node: Node, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
+        # (H) A do-while / Rust `loop` body ALWAYS runs at least once, so the
+        # (H) pre-loop state is NOT part of the exit merge (a kill in the body
+        # (H) kills on every straight-line path), and a do-while condition runs
+        # (H) AFTER each body pass, so a sink there sees the body's taint
+        # (H) (Rust `loop` has no condition field). Exit = merge(one iteration,
+        # (H) two iterations); the second pass catches loop-carried taint
+        # (H) exactly like _walk_flat_loop. `break` is not modelled: a kill
+        # (H) below a conditional break still counts, the accepted flat-walk
+        # (H) approximation.
         body = node.child_by_field_name(cs.FIELD_BODY)
         condition = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         pre_shadows = set(jc.local_names)
