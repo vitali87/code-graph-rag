@@ -66,6 +66,37 @@ def test_cgr_matches_oracle_on_clean_csharp_project(tmp_path: Path) -> None:
     assert cgr == oracle
 
 
+@needs_dotnet
+def test_creation_of_implicit_ctor_class_counts_via_instantiates(
+    tmp_path: Path,
+) -> None:
+    # (H) `new Builder()` where Builder declares NO explicit constructor: the
+    # (H) oracle records the creation site by type name, and cgr has no ctor
+    # (H) node to CALL, only an INSTANTIATES edge to the class -- which must
+    # (H) count (Polly's ResiliencePipelineBuilder, 65 sites). A ctor
+    # (H) declared on an arity sibling (Builder<T>) puts the name in the
+    # (H) declared universe either way.
+    (tmp_path / "Builder.cs").write_text(
+        "namespace N;\npublic sealed class Builder {\n"
+        "    public void Add() { }\n"
+        "}\n"
+        "public sealed class Builder<T> {\n"
+        "    public Builder() { }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Use.cs").write_text(
+        "namespace N;\npublic class Use {\n"
+        "    public Builder MakeIt() { return new Builder(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    oracle, declared = oracle_csharp_call_edges(tmp_path)
+    assert ("Use.cs", "Builder") in oracle
+    cgr = cgr_csharp_call_edges(tmp_path, tmp_path.name, declared)
+    assert ("Use.cs", "Builder") in cgr, cgr
+
+
 def test_score_csharp_retrieval_prf() -> None:
     result = score_csharp_retrieval(
         {("A.cs", "F"), ("A.cs", "G")}, {("A.cs", "F"), ("B.cs", "H")}
