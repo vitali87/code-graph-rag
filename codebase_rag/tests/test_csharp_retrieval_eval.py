@@ -97,6 +97,29 @@ def test_creation_of_implicit_ctor_class_counts_via_instantiates(
     assert ("Use.cs", "Builder") in cgr, cgr
 
 
+@needs_dotnet
+def test_creation_of_ctorless_type_is_in_the_graded_universe(tmp_path: Path) -> None:
+    # (H) A type with NO explicit constructor anywhere still has creation
+    # (H) sites; type names join the declared universe (as Python's retrieval
+    # (H) does, where a class IS a callable) so those sites are graded rather
+    # (H) than silently dropped from both sides.
+    (tmp_path / "Plain.cs").write_text(
+        "namespace N;\npublic sealed class Plain {\n    public int Value;\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Use.cs").write_text(
+        "namespace N;\npublic class Use {\n"
+        "    public Plain MakeIt() { return new Plain(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    oracle, declared = oracle_csharp_call_edges(tmp_path)
+    assert "Plain" in declared
+    assert ("Use.cs", "Plain") in oracle
+    cgr = cgr_csharp_call_edges(tmp_path, tmp_path.name, declared)
+    assert ("Use.cs", "Plain") in cgr, cgr
+
+
 def test_score_csharp_retrieval_prf() -> None:
     result = score_csharp_retrieval(
         {("A.cs", "F"), ("A.cs", "G")}, {("A.cs", "F"), ("B.cs", "H")}
