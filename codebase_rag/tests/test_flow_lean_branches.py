@@ -274,5 +274,44 @@ def test_java_try_with_resources_taint_flows_to_body_sink(tmp_path: Path) -> Non
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
+def test_java_do_while_kill_has_no_skip_path(tmp_path: Path) -> None:
+    # (H) A do-while body ALWAYS runs at least once, so a kill there is a kill
+    # (H) on every path: no false skip-path flow may survive the loop.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(boolean cond) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    do {\n"
+            '      s = "safe";\n'
+            "    } while (cond);\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_cpp_do_while_condition_sees_body_taint(tmp_path: Path) -> None:
+    # (H) The do-while condition runs AFTER each body iteration, so a sink in
+    # (H) the condition sees the body's taint.
+    files = {
+        "main.cpp": (
+            "#include <cstdio>\n"
+            "#include <cstdlib>\n"
+            "void work() {\n"
+            '    const char* s = "";\n'
+            "    do {\n"
+            '        s = getenv("SECRET");\n'
+            "    } while (printf(s) > 0);\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
