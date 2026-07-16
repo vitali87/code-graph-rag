@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 from codebase_rag.types_defs import NodeType
 
 SKIP = "c_sharp"
@@ -149,3 +149,39 @@ def test_nested_types(csharp_project: Path, mock_ingestor: MagicMock) -> None:
     )
     assert _endswith_any(classes, "N.Outer.Inner")
     assert _endswith_any(methods, "N.Outer.Inner.M")
+
+
+def test_local_function_in_parameterized_method_parents_to_method(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A parameterized method registers with an overload-suffixed qn
+    # (H) (`Run(int)`), so the local function's structurally re-derived parent
+    # (H) (`Run`) misses the registry and the DEFINES edge silently degrades to
+    # (H) the Module (Polly's BulkheadEngine shape). The recorded method
+    # (H) identity must be reused instead.
+    (csharp_project / "Engine.cs").write_text(
+        """
+namespace N;
+public class Sample {
+    public static int Run(int x) {
+        int Local() { return 1; }
+        return Local();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    defines = {
+        (c.args[0][0], c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "DEFINES")
+    }
+    assert any(
+        label == "Method" and parent.endswith("N.Sample.Run(int)")
+        for label, parent, child in defines
+        if child.endswith("Run.Local")
+    ), defines
+    assert not any(
+        label == "Module" for label, _, child in defines if child.endswith("Run.Local")
+    ), defines
