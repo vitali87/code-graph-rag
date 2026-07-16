@@ -346,24 +346,7 @@ class FlowProcessor:
         if node.type in jc.descriptor.extra_declarator_types:
             self._apply_js_leaf(node, state, jc)
         body = node.child_by_field_name(cs.FIELD_BODY)
-        # (H) A C-style for's update clause runs only AFTER a completed body
-        # (H) iteration -- never on the zero-iteration path and never before the
-        # (H) first body pass -- so it is excluded from the pre-body header and
-        # (H) walked after each body pass instead. Java/C++ hold it in an
-        # (H) `update` field on the loop node; Go nests it inside the for_clause.
-        update = node.child_by_field_name(cs.FIELD_UPDATE)
-        for child in node.named_children:
-            if body is not None and child.id == body.id:
-                continue
-            if update is not None and child.id == update.id:
-                continue
-            if child.type == cs.TS_GO_FOR_CLAUSE and update is None:
-                update = child.child_by_field_name(cs.FIELD_UPDATE)
-                for part in child.named_children:
-                    if update is None or part.id != update.id:
-                        state = self._walk_flat_stmt(part, state, jc)
-                continue
-            state = self._walk_flat_stmt(child, state, jc)
+        state, update = self._walk_loop_header(node, state, jc, body)
         if body is None:
             self._restore_shadows(pre_loop_shadows, jc)
             return state
@@ -378,6 +361,38 @@ class FlowProcessor:
             twice = self._walk_flat_stmt(update, twice, jc)
         self._restore_shadows(pre_loop_shadows, jc)
         return self._merge([state, twice])
+
+    def _walk_loop_header(
+        self, node: Node, state: _TaintMap, jc: _JsCtx, body: Node | None
+    ) -> tuple[_TaintMap, Node | None]:
+        # (H) Walk the pre-body header children and return the update clause
+        # (H) unwalked: a C-style for's update runs only AFTER a completed body
+        # (H) iteration -- never on the zero-iteration path and never before the
+        # (H) first body pass -- so the caller walks it after each body pass.
+        # (H) Java/C++ hold it in an `update` field on the loop node; Go nests
+        # (H) it inside the for_clause.
+        update = node.child_by_field_name(cs.FIELD_UPDATE)
+        for child in node.named_children:
+            if body is not None and child.id == body.id:
+                continue
+            if update is not None and child.id == update.id:
+                continue
+            if child.type == cs.TS_GO_FOR_CLAUSE and update is None:
+                update = child.child_by_field_name(cs.FIELD_UPDATE)
+                state = self._walk_go_for_clause(child, update, state, jc)
+                continue
+            state = self._walk_flat_stmt(child, state, jc)
+        return state, update
+
+    def _walk_go_for_clause(
+        self, clause: Node, update: Node | None, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
+        # (H) Go's init;cond;post for_clause: walk everything but the post
+        # (H) (update) statement, which the loop walk defers past the body.
+        for part in clause.named_children:
+            if update is None or part.id != update.id:
+                state = self._walk_flat_stmt(part, state, jc)
+        return state
 
     def _walk_flat_mandatory_loop(
         self, node: Node, state: _TaintMap, jc: _JsCtx
