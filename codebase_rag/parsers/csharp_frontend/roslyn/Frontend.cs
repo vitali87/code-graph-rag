@@ -29,19 +29,24 @@ public static class Frontend
         using var workspace = MSBuildWorkspace.Create();
         // A failed reference or an unloadable project must not abort the whole run;
         // degrade to whatever loaded and let the Python side fall back per-fact.
-        workspace.WorkspaceFailed += (_, e) =>
+        // Hard failures always reach stderr (capped) so a zero-fact run carries
+        // its cause; the full stream stays behind CGR_FE_DEBUG.
+        var failures = 0;
+        const int maxFailureLines = 5;
+        using var failedHandler = workspace.RegisterWorkspaceFailedHandler(e =>
         {
-            if (debug)
+            // The handler fires from parallel project loads, so the counter
+            // must be atomic for the cap and the summary line to be exact.
+            var hard = e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure;
+            var count = hard ? Interlocked.Increment(ref failures) : 0;
+            if (debug || (hard && count <= maxFailureLines))
             {
                 Console.Error.WriteLine($"[WorkspaceFailed] {e.Diagnostic.Kind}: {e.Diagnostic.Message}");
             }
-        };
+        });
 
         var projects = await LoadProjectsAsync(workspace, projectOrSolution, rootFull);
-        if (debug)
-        {
-            Console.Error.WriteLine($"[projects] {projects.Count}");
-        }
+        Console.Error.WriteLine($"[projects] {projects.Count} loaded, {failures} workspace failure(s)");
 
         var collector = new FactCollector(rootFull, IgnoredDirs());
         foreach (var project in projects)
@@ -393,7 +398,8 @@ public static class Frontend
         }
         try
         {
-            if (input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+            if (input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                || input.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
             {
                 var solution = await workspace.OpenSolutionAsync(input);
                 return solution.Projects.ToList();
@@ -403,24 +409,32 @@ public static class Frontend
         }
         catch (Exception ex)
         {
-            if (Environment.GetEnvironmentVariable("CGR_FE_DEBUG") == "1")
-            {
-                Console.Error.WriteLine($"[LoadProjects] {input}: {ex.Message}");
-            }
+            // Always on stderr: a load failure otherwise degrades the whole run
+            // to zero facts with no visible cause.
+            Console.Error.WriteLine($"[LoadProjects] {input}: {ex.Message}");
             return new List<Project>();
         }
     }
 
     private static string? FindProjectOrSolution(string rootFull)
     {
-        var sln = Directory.EnumerateFiles(rootFull, "*.sln", SearchOption.AllDirectories)
-            .OrderBy(p => p.Length).FirstOrDefault();
-        if (sln is not null)
+        // Skip candidates under ignored directories (obj/ holds generated
+        // .csproj copies after a restore), matching the Python discovery.
+        var ignored = IgnoredDirs();
+        foreach (var pattern in new[] { "*.sln", "*.slnx", "*.csproj" })
         {
-            return sln;
+            var found = Directory.EnumerateFiles(rootFull, pattern, SearchOption.AllDirectories)
+                .Where(p => !Path.GetRelativePath(rootFull, p)
+                    .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .SkipLast(1)
+                    .Any(ignored.Contains))
+                .OrderBy(p => p.Length).FirstOrDefault();
+            if (found is not null)
+            {
+                return found;
+            }
         }
-        return Directory.EnumerateFiles(rootFull, "*.csproj", SearchOption.AllDirectories)
-            .OrderBy(p => p.Length).FirstOrDefault();
+        return null;
     }
 
     private static HashSet<string> IgnoredDirs()

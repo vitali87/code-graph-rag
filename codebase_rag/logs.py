@@ -52,6 +52,13 @@ CSHARP_FRONTEND_PARSE_FAILED = (
     "C# Roslyn frontend produced no parseable JSON; using tree-sitter.\n"
     "stdout: {stdout}\nstderr: {stderr}"
 )
+CSHARP_FRONTEND_RUN_FAILED = (
+    "C# Roslyn frontend tool did not finish ({error}); using tree-sitter"
+)
+CSHARP_FRONTEND_NO_FACTS = (
+    "C# Roslyn frontend produced no facts; every join falls back to "
+    "tree-sitter. Tool diagnostics:\n{stderr}"
+)
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
