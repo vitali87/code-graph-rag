@@ -488,13 +488,17 @@ class ClassIngestMixin:
         """
         if entry.parent_qn == entry.child_qn:
             # (H) Parse-time resolution can land on the child ITSELF. A
-            # (H) self-edge is never real, so the written base must refer to a
-            # (H) SHADOWED outer name (thrift's `pub enum Error` implementing
-            # (H) the std `Error` trait): when the module-anchored remainder is
-            # (H) a bare single segment it IS the written name and
-            # (H) externalizes. A dotted remainder (a nested child like
-            # (H) SimpleHashMap.Entry) was never written as such; derivation
-            # (H) would be a lie, so no edge.
+            # (H) self-edge is never real. In C# the written base can be an
+            # (H) ARITY sibling (`class Foo : Foo<object>`, a different type
+            # (H) sharing the simple name); recover it before falling back.
+            # (H) Otherwise the written base must refer to a SHADOWED outer
+            # (H) name (thrift's `pub enum Error` implementing the std `Error`
+            # (H) trait): when the module-anchored remainder is a bare single
+            # (H) segment it IS the written name and externalizes. A dotted
+            # (H) remainder (a nested child like SimpleHashMap.Entry) was
+            # (H) never written as such; derivation would be a lie, so no edge.
+            if (sibling := self._csharp_arity_sibling(entry)) is not None:
+                return sibling, False
             self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
             if entry.parent_qn.startswith(self_prefix):
                 raw = entry.parent_qn[len(self_prefix) :]
@@ -568,6 +572,30 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
+        # (H) Only C# overloads type names by generic arity, so only there can a
+        # (H) base that resolves to the declaring type itself legally name a
+        # (H) DIFFERENT type. The sibling conventionally lives beside the child
+        # (H) (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
+        # (H) type declaration under the module's parent package qualifies;
+        # (H) ambiguity keeps the no-edge answer rather than guessing.
+        if entry.language != cs.SupportedLanguage.CSHARP:
+            return None
+        simple = entry.child_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        package_prefix = (
+            entry.module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+        )
+        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        matches = {
+            qn
+            for qn in self.function_registry.find_ending_with(simple)
+            if qn != entry.child_qn
+            and qn.startswith(package_prefix)
+            and simple in qn.split(cs.SEPARATOR_DOT)
+            and self.function_registry.get(qn) in type_decls
+        }
+        return matches.pop() if len(matches) == 1 else None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
         # (H) True when the package __init__ makes `simple` an attribute of the
