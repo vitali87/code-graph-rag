@@ -224,12 +224,15 @@ void EmitLocalFunction(string rel, LocalFunctionStatementSyntax local)
     var (line, endLine) = Span(local);
     nodes.Add(new Def(KindFunction, rel, line, endLine, local.Identifier.Text));
     var parent = EnclosingCallable(local);
-    if (parent is null)
-    {
-        return;
-    }
-    var parentKind = parent is LocalFunctionStatementSyntax ? KindFunction : KindMethod;
-    var parentRef = new NodeRef(parentKind, rel, Span(parent).Line);
+    // A top-level script function (a Cake build script's helpers) has no
+    // enclosing callable; cgr anchors it to the file module, so mirror that
+    // instead of dropping the containment edge.
+    var parentRef = parent is null
+        ? new NodeRef(KindModule, rel, ModuleLine)
+        : new NodeRef(
+            parent is LocalFunctionStatementSyntax ? KindFunction : KindMethod,
+            rel,
+            Span(parent).Line);
     edges.Add(new Edge(RelDefines, parentRef, new NodeRef(KindFunction, rel, line)));
 }
 
