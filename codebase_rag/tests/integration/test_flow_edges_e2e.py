@@ -269,3 +269,29 @@ def test_cooccurrence_is_not_flow(
     flows = _flows(memgraph_ingestor)
     assert not any((f["to"] or "").endswith("flow.helper") for f in flows)
     assert not _has(flows, ENV_K, STDOUT)
+
+
+def test_go_loop_carried_flow_survives_round_trip(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 lean-flow depth: a later loop iteration carries the ENV read
+    # (H) back to the file write of an earlier statement (two-pass loop walk).
+    project = tmp_path / "go_flow_project"
+    project.mkdir()
+    (project / "main.go").write_text(
+        "package main\n\n"
+        'import "os"\n\n'
+        "func work(s string) {\n"
+        "\tfor i := 0; i < 2; i++ {\n"
+        '\t\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+        '\t\ts = os.Getenv("SECRET")\n'
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _index(memgraph_ingestor, project, io=True)
+    assert _has(
+        _flows(memgraph_ingestor),
+        "resource::ENV::SECRET",
+        "resource::FILE::out.txt",
+    )
