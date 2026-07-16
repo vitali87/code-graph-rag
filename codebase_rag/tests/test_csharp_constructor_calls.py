@@ -140,15 +140,25 @@ def test_target_typed_new_in_indexer_body_emits_instantiates(
 ) -> None:
     # (H) An indexer's return position is typed like a property's: both the
     # (H) expression-bodied form and a `return new();` inside a get accessor.
+    (csharp_project / "Widget.cs").write_text(
+        "namespace N;\npublic class Widget {\n    public Widget() {}\n}\n",
+        encoding="utf-8",
+    )
+    # (H) Two files: an indexer is not a function node, so its creation sites
+    # (H) attribute to the file module and same-file sites would collapse into
+    # (H) one (source, target) pair.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
-public class Widget {
-    public Widget() {}
-}
 public class App {
     public Widget this[int i] => new();
 }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App2.cs").write_text(
+        """
+namespace N;
 public class App2 {
     public Widget this[int i] { get { return new(); } }
 }
@@ -158,9 +168,9 @@ public class App2 {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     instantiates = _pairs(mock_ingestor, "INSTANTIATES")
-    assert len([t for _, t in instantiates if t.endswith("N.Widget")]) == 2, (
-        instantiates
-    )
+    sources = {s for s, t in instantiates if t.endswith("N.Widget")}
+    assert any(s.endswith(".App") for s in sources), instantiates
+    assert any(s.endswith(".App2") for s in sources), instantiates
 
 
 def test_target_typed_new_strips_generic_arguments(

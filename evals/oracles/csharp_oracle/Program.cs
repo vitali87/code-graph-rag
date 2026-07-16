@@ -342,8 +342,9 @@ static string? TargetTypedNewName(ImplicitObjectCreationExpressionSyntax creatio
 }
 
 // A return position is typed by the nearest enclosing callable: methods and
-// local functions name it directly, a property (or its accessor body) via its
-// type. A lambda/anonymous method has no syntactic return type: unresolvable.
+// local functions name it directly, a property or indexer (or their accessor
+// bodies) via its type. A lambda/anonymous method has no syntactic return
+// type: unresolvable.
 static string? EnclosingReturnTypeName(SyntaxNode node)
 {
     for (var ancestor = node.Parent; ancestor is not null; ancestor = ancestor.Parent)
@@ -356,6 +357,8 @@ static string? EnclosingReturnTypeName(SyntaxNode node)
                 return TypeSimpleName(local.ReturnType);
             case PropertyDeclarationSyntax prop:
                 return TypeSimpleName(prop.Type);
+            case IndexerDeclarationSyntax indexer:
+                return TypeSimpleName(indexer.Type);
             case AnonymousFunctionExpressionSyntax:
                 return null;
         }

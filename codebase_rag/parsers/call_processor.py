@@ -1651,10 +1651,10 @@ class CallProcessor:
 
     def _csharp_enclosing_return_type(self, node: Node) -> Node | None:
         # (H) A return position is typed by the nearest enclosing callable:
-        # (H) methods and local functions name it in `returns`, a property (or
-        # (H) its accessor body) in `type`. A lambda/anonymous method carries
-        # (H) no syntactic return type, so a `new()` returned from one is
-        # (H) unresolvable.
+        # (H) methods and local functions name it in `returns`, a property or
+        # (H) indexer (or their accessor bodies) in `type`. A lambda/anonymous
+        # (H) method carries no syntactic return type, so a `new()` returned
+        # (H) from one is unresolvable.
         ancestor = node.parent
         while ancestor is not None:
             if ancestor.type in (
@@ -1662,7 +1662,10 @@ class CallProcessor:
                 cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
             ):
                 return ancestor.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
-            if ancestor.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+            if ancestor.type in (
+                cs.TS_CSHARP_PROPERTY_DECLARATION,
+                cs.TS_CSHARP_INDEXER_DECLARATION,
+            ):
                 return ancestor.child_by_field_name(cs.FIELD_TYPE)
             if ancestor.type in cs.TS_CSHARP_NESTED_SCOPE_TYPES:
                 return None

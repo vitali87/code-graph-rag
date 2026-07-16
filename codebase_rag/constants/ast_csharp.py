@@ -154,6 +154,8 @@ TS_CSHARP_IDENTIFIER = "identifier"
 
 # (H) Expression body `=> expr` on methods, properties, and accessors.
 TS_CSHARP_ARROW_EXPRESSION_CLAUSE = "arrow_expression_clause"
+# (H) `public T this[int i] { ... }`: return-typed via `type` like a property.
+TS_CSHARP_INDEXER_DECLARATION = "indexer_declaration"
 # (H) Some grammar versions wrap a declarator's `= value` initializer in an
 # (H) equals_value_clause node (the pinned grammar hangs the value directly off
 # (H) the declarator); the target-typed-new walk skips it either way, mirroring
