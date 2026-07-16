@@ -585,8 +585,25 @@ class ClassIngestMixin:
         # (H) ambiguity keeps the no-edge answer rather than guessing.
         if entry.language != cs.SupportedLanguage.CSHARP:
             return None
-        simple = entry.child_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        # (H) Same-scope pair (issue #764): when both members share ONE file and
+        # (H) scope, they collide on natural qn and the later one registers as a
+        # (H) DUP_QN_MARKER variant. The variants bucket therefore holds exactly
+        # (H) the same-scope declarations of this simple name; the unique other
+        # (H) type declaration IS the written sibling, whichever of the pair the
+        # (H) child happens to be. More than one other means a 3+ arity family;
+        # (H) refuse rather than guess, matching every other ambiguity tier.
+        natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        same_scope = [
+            qn
+            for qn in self.function_registry.variants(natural)
+            if qn != entry.child_qn and self.function_registry.get(qn) in type_decls
+        ]
+        if len(same_scope) == 1:
+            return same_scope[0]
+        if same_scope:
+            return None
+        simple = natural.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = {
             qn
             for qn in self.function_registry.find_ending_with(simple)
@@ -601,6 +618,17 @@ class ClassIngestMixin:
         if len(in_package) == 1:
             return in_package.pop()
         if in_package:
+            # (H) Multiple same-package candidates can still be ONE type: a
+            # (H) `partial` sibling split across files (Polly's PredicateBuilder,
+            # (H) issue #764 shape 3). When every candidate sits in a single
+            # (H) partial group, pick the deterministic representative; genuine
+            # (H) distinct types keep the no-edge answer.
+            groups = {
+                frozenset(self.csharp_partial_groups.get(qn, (qn,)))
+                for qn in in_package
+            }
+            if len(groups) == 1:
+                return min(in_package)
             return None
         # (H) No same-package sibling: the pair can span projects (Polly's
         # (H) legacy BrokenCircuitException<TResult> : the Polly.Core

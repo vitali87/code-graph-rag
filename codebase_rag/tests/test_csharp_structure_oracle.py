@@ -184,6 +184,30 @@ def test_oracle_interface_bases_are_inherits(tmp_path: Path) -> None:
     assert (cs.RelationshipType.IMPLEMENTS.value, "IShape") not in rels, rels
 
 
+def test_same_scope_arity_pair_inherits_grades_clean(tmp_path: Path) -> None:
+    # (H) Issue #764: a same-file arity pair registers the second type as a
+    # (H) DUP_QN_MARKER variant (ITtl@3); the recovered INHERITS edge targets
+    # (H) that variant qn, and the eval's simple-name reduction must strip the
+    # (H) marker or the true edge grades as one fp + one fn against the
+    # (H) oracle's clean base name.
+    _require_csharp()
+    project = tmp_path / "csharp_arity_pair"
+    project.mkdir()
+    (project / "Ttl.cs").write_text(
+        "namespace N;\n"
+        "public interface ITtl : ITtl<object> { }\n"
+        "public interface ITtl<TResult> { int GetTtl(); }\n",
+        encoding="utf-8",
+    )
+    cgr = extract_cgr_csharp_graph(project, project.name)
+    oracle = run_csharp_oracle(project)
+    result = score_name_edge_types(cgr, oracle, ec.INHERITANCE_NAME_EDGE_TYPES)
+    by_label = {row["label"]: row for row in result.rows}
+    row = by_label.get("INHERITS")
+    assert row is not None, by_label
+    assert row["precision"] == 1.0 and row["recall"] == 1.0, row
+
+
 def test_oracle_anchors_top_level_functions_to_module(tmp_path: Path) -> None:
     # (H) A Cake-style build script declares functions at the top level
     # (H) (local functions of the implicit main); cgr anchors them
