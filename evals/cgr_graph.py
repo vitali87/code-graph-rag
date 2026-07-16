@@ -427,9 +427,13 @@ def extract_cgr_lang_graph(
             if source is not None:
                 # (H) Base simple name: cgr's resolved target may be a dotted qn
                 # (H) (`module.Base`) or a Rust path (`std::io::Read`), so split on
-                # (H) both `.` and `::`.
+                # (H) both `.` and `::`. A same-scope collision registers the base
+                # (H) as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
+                # (H) grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
+                    cs.DUP_QN_MARKER, 1
+                )[0]
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
@@ -656,7 +660,13 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if source is None:
             continue
         if rel_type == cs.RelationshipType.INHERITS.value:
-            target = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            # (H) Same DUP_QN_MARKER strip as the multi-language reducer: a base
+            # (H) registered as a duplicate variant grades by its written name.
+            target = (
+                str(to_val)
+                .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                .split(cs.DUP_QN_MARKER, 1)[0]
+            )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:
             target_path = _internal_target_file(str(to_val), internal_modules)
