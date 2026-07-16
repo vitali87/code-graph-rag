@@ -1438,6 +1438,24 @@ class FunctionIngestMixin:
             return None
         return loc.label, loc.qualified_name
 
+    def _unique_overload_variant(self, parent_qn: str) -> tuple[str, NodeType] | None:
+        # (H) Only signature-suffixed registrations (C# overloads) can match:
+        # (H) the leaf must be the guessed name plus a parenthesized suffix, as
+        # (H) a DIRECT child of the guessed scope (the trie is segment-keyed,
+        # (H) so the paren can't be navigated as a prefix), so plain nested
+        # (H) scopes never collide.
+        scope, _, leaf = parent_qn.rpartition(cs.SEPARATOR_DOT)
+        if not scope:
+            return None
+        wanted = f"{leaf}{cs.CHAR_PAREN_OPEN}"
+        matches = [
+            (qn, node_type)
+            for qn, node_type in self.function_registry.find_with_prefix(scope)
+            if qn.rsplit(cs.SEPARATOR_DOT, 1)[0] == scope
+            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(wanted)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def resolve_deferred_parent_links(self) -> int:
         """Emit deferred non-module DEFINES once every pass has registered.
 
@@ -1455,6 +1473,20 @@ class FunctionIngestMixin:
                     cs.NodeLabel(registered.value),
                     cs.KEY_QUALIFIED_NAME,
                     entry.parent_qn,
+                )
+                rel_type = entry.rel_type
+            elif overload := self._unique_overload_variant(entry.parent_qn):
+                # (H) A C# method registers with an overload-suffixed qn
+                # (H) (`Run(int)`) the structural guess cannot reproduce, so a
+                # (H) local function inside a parameterized method would
+                # (H) otherwise degrade to the module; a UNIQUE suffixed
+                # (H) variant IS that method (ambiguous overloads keep the
+                # (H) module fallback rather than guessing).
+                overload_qn, overload_type = overload
+                parent_spec = (
+                    cs.NodeLabel(overload_type.value),
+                    cs.KEY_QUALIFIED_NAME,
+                    overload_qn,
                 )
                 rel_type = entry.rel_type
             elif (
