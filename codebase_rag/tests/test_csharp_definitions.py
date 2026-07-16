@@ -185,3 +185,34 @@ public class Sample {
     assert not any(
         label == "Module" for label, _, child in defines if child.endswith("Run.Local")
     ), defines
+
+
+def test_local_function_binds_to_the_hosting_overload(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Polly's PredicateBuilder shape: a parameterless overload registers
+    # (H) WITHOUT a signature suffix, exactly matching the structural parent
+    # (H) guess, so a local function inside the parameterized overload was
+    # (H) attached to the wrong method. The recorded span identity must win.
+    (csharp_project / "Overloads.cs").write_text(
+        """
+namespace N;
+public class Builder {
+    public int Go() => 1;
+    public int Go(int x) {
+        int Helper() { return x; }
+        return Helper();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    defines = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "DEFINES")
+    }
+    parents = {parent for parent, child in defines if child.endswith("Go.Helper")}
+    assert any(p.endswith("N.Builder.Go(int)") for p in parents), defines
+    assert not any(p.endswith("N.Builder.Go") for p in parents), defines
