@@ -172,6 +172,34 @@ def test_nongeneric_interface_base_pair_resolves_to_generic_sibling(
     ), inherits
 
 
+def test_arity_pair_across_directories_resolves_project_wide(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Polly's BrokenCircuitException shape: the generic child lives in one
+    # (H) project directory, the non-generic base in another, so the
+    # (H) same-package tier finds nothing and the project-wide tier must
+    # (H) recover the single other declaration.
+    core = csharp_project / "Core"
+    legacy = csharp_project / "Legacy"
+    core.mkdir()
+    legacy.mkdir()
+    (core / "Broken.cs").write_text(
+        "namespace N.Core;\npublic class Broken { }\n",
+        encoding="utf-8",
+    )
+    (legacy / "Broken.TResult.cs").write_text(
+        "namespace N.Legacy;\npublic class Broken<TResult> : Broken { }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        "TResult" in ch and ch.endswith("Broken") and ".Core." in pa
+        for ch, pa in inherits
+    ), inherits
+
+
 def test_enum_underlying_type_is_not_inheritance(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
