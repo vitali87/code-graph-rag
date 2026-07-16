@@ -527,6 +527,11 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
     fallback_label: str | None = None
     fallback_qn: str | None = None
+    # (H) Span key of the parent's NODE when the guess qn cannot carry the
+    # (H) registered identity (a C# overload registers signature-suffixed, so
+    # (H) the parameterless sibling exactly shadows the guess); the resolver
+    # (H) prefers the location recorded for this span over the qn match.
+    parent_span: tuple[str, int, int] | None = None
 
 
 # (H) (module_qn, 1-based start line, 0-based start column) of a function

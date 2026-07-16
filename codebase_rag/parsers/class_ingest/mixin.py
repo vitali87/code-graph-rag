@@ -203,6 +203,9 @@ class ClassIngestMixin:
         child_label: str,
         child_qn: str,
         module_qn: str,
+        fallback_label: str | None = None,
+        fallback_qn: str | None = None,
+        parent_span: FunctionSpanKey | None = None,
     ) -> None: ...
 
     @abstractmethod
@@ -213,7 +216,7 @@ class ClassIngestMixin:
         module_qn: str,
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str]: ...
+    ) -> tuple[str, str, FunctionSpanKey | None]: ...
 
     @abstractmethod
     def _resolve_cpp_class_qn(
@@ -777,11 +780,16 @@ class ClassIngestMixin:
                 leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
                 self.simple_name_lookup[leaf].add(class_qn)
 
-        parent_label, parent_qn = self._determine_function_parent(
+        parent_label, parent_qn, parent_span = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
         )
         self._emit_or_defer_defines(
-            parent_label, parent_qn, node_type, class_qn, module_qn
+            parent_label,
+            parent_qn,
+            node_type,
+            class_qn,
+            module_qn,
+            parent_span=parent_span,
         )
         # (H) For a templated class the canonical node is the template_declaration
         # (H) wrapper, which has no `body` field. Its members -- base clause, fields,
