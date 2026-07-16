@@ -622,6 +622,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_query="""
         (invocation_expression) @call
         (object_creation_expression) @call
+        (implicit_object_creation_expression) @call
         """,
     ),
     cs.SupportedLanguage.DART: LanguageSpec(
