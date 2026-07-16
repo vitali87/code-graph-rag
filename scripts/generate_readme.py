@@ -33,9 +33,13 @@ def replace_sections(readme_content: str, sections: dict[str, str]) -> str:
     return SECTION_PATTERN.sub(replacer, readme_content)
 
 
-def update_file(path: Path, sections: dict[str, str]) -> None:
+def update_file(path: Path, sections: dict[str, str]) -> bool:
     content = path.read_text(encoding="utf-8")
-    path.write_text(replace_sections(content, sections), encoding="utf-8")
+    new_content = replace_sections(content, sections)
+    if new_content == content:
+        return False
+    path.write_text(new_content, encoding="utf-8")
+    return True
 
 
 def main() -> None:
@@ -44,8 +48,8 @@ def main() -> None:
     sections = generate_all_sections(PROJECT_ROOT)
     for relative_path in TARGET_FILES:
         target = PROJECT_ROOT / relative_path
-        update_file(target, sections)
-        logger.success(f"Updated {target}")
+        if update_file(target, sections):
+            logger.success(f"Updated {target}")
 
 
 if __name__ == "__main__":
