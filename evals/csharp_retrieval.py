@@ -25,6 +25,7 @@ from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 console_target = Path(ec.CSHARP_DEFAULT_TARGET)
 
 _CALLS = cs.RelationshipType.CALLS.value
+_INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 CallEdge = tuple[str, str]
@@ -45,7 +46,11 @@ def cgr_csharp_call_edges(
     }
     edges: set[CallEdge] = set()
     for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type != _CALLS:
+        # (H) INSTANTIATES counts too (as in the Python retrieval): `new T()`
+        # (H) on a type with no explicit constructor has no ctor node to CALL,
+        # (H) only an INSTANTIATES edge to the class, while the oracle records
+        # (H) the creation site by type name.
+        if rel_type not in (_CALLS, _INSTANTIATES):
             continue
         path = caller_path.get((str(from_label), str(from_val)))
         if path is None:
