@@ -208,6 +208,66 @@ def test_same_scope_arity_pair_inherits_grades_clean(tmp_path: Path) -> None:
     assert row["precision"] == 1.0 and row["recall"] == 1.0, row
 
 
+def test_oracle_suppresses_preprocessor_split_phantom_members(
+    tmp_path: Path,
+) -> None:
+    # (H) Issue #768: an expression-bodied member whose body is split across
+    # (H) #if/#else has TWO bodies once the directives are neutralized, which is
+    # (H) ill-formed C#; Roslyn ends the member at the first branch's `;` and
+    # (H) error-recovers the second branch's expression as a phantom member
+    # (H) declaration (a Method named `Substring` on Polly's KeyHelper). Error
+    # (H) recovery artifacts are never something cgr should be graded against,
+    # (H) so the oracle must drop them while keeping the real member.
+    _require_csharp()
+    project = tmp_path / "csharp_split_body"
+    project.mkdir()
+    (project / "KeyHelper.cs").write_text(
+        "using System;\n"
+        "namespace N;\n"
+        "public static class KeyHelper\n"
+        "{\n"
+        "    private const int GuidPartLength = 8;\n"
+        "\n"
+        "    public static string GuidPart() =>\n"
+        "#if NET6_0_OR_GREATER\n"
+        "        Guid.NewGuid().ToString()[..GuidPartLength];\n"
+        "#else\n"
+        "        Guid.NewGuid().ToString().Substring(0, GuidPartLength);\n"
+        "#endif\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    oracle = run_csharp_oracle(project)
+    names = {n.name for n in oracle.nodes.values()}
+    assert "GuidPart" in names, names
+    assert "Substring" not in names, names
+
+
+def test_oracle_keeps_members_with_warning_diagnostics(tmp_path: Path) -> None:
+    # (H) The phantom filter must key on ERROR severity only: `#warning` inside
+    # (H) a member body attaches a Warning diagnostic to the member's subtree,
+    # (H) and blanket ContainsDiagnostics would wrongly suppress the valid,
+    # (H) compiling member.
+    _require_csharp()
+    project = tmp_path / "csharp_warning_member"
+    project.mkdir()
+    (project / "W.cs").write_text(
+        "namespace N;\n"
+        "public class W\n"
+        "{\n"
+        "    public int Warned()\n"
+        "    {\n"
+        "#warning still to tune\n"
+        "        return 1;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    oracle = run_csharp_oracle(project)
+    names = {n.name for n in oracle.nodes.values()}
+    assert "Warned" in names, names
+
+
 def test_oracle_anchors_top_level_functions_to_module(tmp_path: Path) -> None:
     # (H) A Cake-style build script declares functions at the top level
     # (H) (local functions of the implicit main); cgr anchors them

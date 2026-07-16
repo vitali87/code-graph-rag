@@ -1000,6 +1000,21 @@ uv run python -m evals.php_l1 --target /path/to/php/repo --project-name myrepo
 
 Validated on `apache/thrift`'s PHP (`lib/php`): 1295 cgr nodes vs 1295 oracle nodes — exact, all kinds 1.0. No cgr gap found.
 
+## L1 (C#) — structure against the Roslyn syntax API
+
+The ninth native oracle is C#, checked against Roslyn's own syntax parser (independent of cgr's tree-sitter frontend and of the opt-in Roslyn semantic frontend).
+
+```bash
+uv run python -m evals.csharp_l1 --target /path/to/csharp/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/csharp_oracle/`): a .NET program parsing every `.cs` file with `CSharpSyntaxTree` and emitting nodes (`Class`/`Interface`/`Enum`/`Method`/`Function`), containment (`DEFINES`, `DEFINES_METHOD`), and inheritance name-edges. Conventions match cgr's model: interface bases are `INHERITS`, class-declared interface bases are `IMPLEMENTS`, top-level script functions anchor to the file `Module`, and `#if`/`#elif`/`#else` directives are neutralized so every branch parses (cgr has no preprocessor and indexes all branches).
+- **Phantom-member suppression** (issue #768): an expression-bodied member whose body is split across `#if`/`#else` has two bodies once the directives are neutralized, which is ill-formed C#; Roslyn ends the member at the first branch's `;` and error-recovers the second branch's expression as a phantom member declaration. Members carrying parse diagnostics are dropped — real repos compile, so genuine members are diagnostic-free. Calls inside every branch still count (the walk visits the recovered expression's descendants).
+- **Known residual**: on such split members the two parsers' recoveries legitimately disagree — tree-sitter stretches the member's span across both branches and can swallow the next member's attribute into the garbled region. On Polly this leaves 1 member start-line disagreement and 2 span mismatches out of 6,551 nodes; neither view of the ill-formed neutralized source is "correct", so this is documented rather than bent to either parser.
+- **cgr side** (`cgr_graph.extract_cgr_csharp_graph`), output to `csharp_scores.csv` / `csharp_diff.json`.
+
+Validated on `App-vNext/Polly` (~6,550 nodes): nodes/DEFINES/DEFINES_METHOD 0.9998, INHERITS and IMPLEMENTS exact 1.0 (224 and 147 edges, same-scope arity pairs included per #764), spans 0.9997. The residual is exactly the documented preprocessor-split artifact.
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.
