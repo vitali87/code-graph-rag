@@ -588,6 +588,13 @@ class IOAccessProcessor:
             if node.type in descriptor.nested_scope_types:
                 continue
             if node.type == descriptor.block_scope_type:
+                # (H) A nested block is a child lexical scope for handles too: a
+                # (H) handle declared inside it is out of scope after the block,
+                # (H) so its binding must not leak to later statements (mirrors
+                # (H) the in_scope shadow set, which is passed by value).
+                snapshot = (
+                    dict(lean_handles.bindings) if lean_handles is not None else None
+                )
                 self._walk_scope(
                     list(node.named_children),
                     in_scope | body_extra,
@@ -600,6 +607,9 @@ class IOAccessProcessor:
                     descriptor,
                     lean_handles,
                 )
+                if lean_handles is not None and snapshot is not None:
+                    lean_handles.bindings.clear()
+                    lean_handles.bindings.update(snapshot)
                 continue
             if lean_handles is not None:
                 self._maybe_bind_lean_handle(
