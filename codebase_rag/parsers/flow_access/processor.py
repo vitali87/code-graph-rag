@@ -137,9 +137,7 @@ _FLAT_LOOP_TYPES = frozenset(
 )
 # (H) Loops whose body ALWAYS runs at least once (do-while, Rust `loop`): no
 # (H) zero-iteration skip path in the exit merge.
-_FLAT_MANDATORY_LOOP_TYPES = frozenset(
-    {cs.TS_DO_STATEMENT, cs.TS_RS_LOOP_EXPRESSION}
-)
+_FLAT_MANDATORY_LOOP_TYPES = frozenset({cs.TS_DO_STATEMENT, cs.TS_RS_LOOP_EXPRESSION})
 _FLAT_TRY_TYPES = frozenset(
     {cs.TS_JS_TRY_STATEMENT, cs.TS_TRY_WITH_RESOURCES_STATEMENT}
 )
