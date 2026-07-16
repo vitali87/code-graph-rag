@@ -199,5 +199,80 @@ def test_cpp_for_loop_carried_taint(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
+def test_go_for_post_statement_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
+    # (H) The for-clause post statement runs only AFTER a completed body
+    # (H) iteration, never on the zero-iteration path: a kill there must not
+    # (H) erase the pre-loop taint.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(n int) {\n"
+            '\ts := os.Getenv("SECRET")\n'
+            '\tfor i := 0; i < n; s = "safe" {\n'
+            "\t}\n"
+            '\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
+def test_java_for_update_kill_runs_after_body_pass(tmp_path: Path) -> None:
+    # (H) The update clause runs after each body iteration, so the FIRST body
+    # (H) pass still sees the pre-loop taint: a kill in the update must not hide
+    # (H) the sink inside the body.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int n) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            '    for (int i = 0; i < n; s = "safe") {\n'
+            "      System.out.println(s);\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_cpp_for_update_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
+    files = {
+        "main.cpp": (
+            "#include <cstdio>\n"
+            "#include <cstdlib>\n"
+            "void work(int n) {\n"
+            '    const char* s = getenv("SECRET");\n'
+            '    for (int i = 0; i < n; s = "") {\n'
+            "    }\n"
+            "    printf(s);\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_java_try_with_resources_taint_flows_to_body_sink(tmp_path: Path) -> None:
+    # (H) The resource declarations of a try-with-resources run before the body
+    # (H) on every path: a taint bound there must reach a sink in the body.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work() throws Exception {\n"
+            '    try (String s = System.getenv("SECRET")) {\n'
+            "      System.out.println(s);\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
