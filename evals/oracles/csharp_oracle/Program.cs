@@ -164,6 +164,7 @@ void EmitBases(string rel, string kind, int line, BaseTypeDeclarationSyntax type
     {
         return;
     }
+    var isInterface = typeDecl is InterfaceDeclarationSyntax;
     var source = new NodeRef(kind, rel, line);
     var index = 0;
     foreach (var baseType in typeDecl.BaseList.Types)
@@ -171,17 +172,23 @@ void EmitBases(string rel, string kind, int line, BaseTypeDeclarationSyntax type
         var name = TypeSimpleName(baseType.Type);
         if (!string.IsNullOrEmpty(name))
         {
-            nameEdges.Add(new NameEdge(BaseRel(name, index), source, name));
+            nameEdges.Add(new NameEdge(BaseRel(name, index, isInterface), source, name));
         }
         index++;
     }
 }
 
-// C# permits at most one base class and it must be first; every later base is an
-// interface. For the first base, prefer what the sources declare it as, then
-// fall back to the I-prefix convention cgr uses for external bases.
-string BaseRel(string name, int index)
+// An interface's bases are all inheritance (interface extends interface),
+// matching cgr's model and the Java oracle. Otherwise C# permits at most one
+// base class and it must be first; every later base is an interface. For the
+// first base, prefer what the sources declare it as, then fall back to the
+// I-prefix convention cgr uses for external bases.
+string BaseRel(string name, int index, bool isInterface)
 {
+    if (isInterface)
+    {
+        return RelInherits;
+    }
     if (index > 0)
     {
         return RelImplements;
