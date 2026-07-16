@@ -243,6 +243,31 @@ def test_oracle_suppresses_preprocessor_split_phantom_members(
     assert "Substring" not in names, names
 
 
+def test_oracle_keeps_members_with_warning_diagnostics(tmp_path: Path) -> None:
+    # (H) The phantom filter must key on ERROR severity only: `#warning` inside
+    # (H) a member body attaches a Warning diagnostic to the member's subtree,
+    # (H) and blanket ContainsDiagnostics would wrongly suppress the valid,
+    # (H) compiling member.
+    _require_csharp()
+    project = tmp_path / "csharp_warning_member"
+    project.mkdir()
+    (project / "W.cs").write_text(
+        "namespace N;\n"
+        "public class W\n"
+        "{\n"
+        "    public int Warned()\n"
+        "    {\n"
+        "#warning still to tune\n"
+        "        return 1;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    oracle = run_csharp_oracle(project)
+    names = {n.name for n in oracle.nodes.values()}
+    assert "Warned" in names, names
+
+
 def test_oracle_anchors_top_level_functions_to_module(tmp_path: Path) -> None:
     # (H) A Cake-style build script declares functions at the top level
     # (H) (local functions of the implicit main); cgr anchors them
