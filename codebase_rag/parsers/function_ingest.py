@@ -994,7 +994,7 @@ class FunctionIngestMixin:
         ):
             return
 
-        parent_type, parent_qn = self._determine_function_parent(
+        parent_type, parent_qn, parent_span = self._determine_function_parent(
             func_node, resolution.qualified_name, module_qn, lang_config, language
         )
         self._emit_or_defer_defines(
@@ -1003,6 +1003,7 @@ class FunctionIngestMixin:
             cs.NodeLabel.FUNCTION,
             resolution.qualified_name,
             module_qn,
+            parent_span=parent_span,
         )
 
         # (H) A Rust closure is a value constructed at its definition site (a `.map`
@@ -1394,6 +1395,7 @@ class FunctionIngestMixin:
         module_qn: str,
         fallback_label: str | None = None,
         fallback_qn: str | None = None,
+        parent_span: FunctionSpanKey | None = None,
     ) -> None:
         # (H) Module nodes always exist, so module-parented edges emit directly.
         # (H) Any other parent may be registered by a later pass (methods land
@@ -1417,6 +1419,7 @@ class FunctionIngestMixin:
                 module_qn=module_qn,
                 fallback_label=fallback_label,
                 fallback_qn=fallback_qn,
+                parent_span=parent_span,
             )
         )
 
@@ -1438,23 +1441,19 @@ class FunctionIngestMixin:
             return None
         return loc.label, loc.qualified_name
 
-    def _unique_overload_variant(self, parent_qn: str) -> tuple[str, NodeType] | None:
-        # (H) Only signature-suffixed registrations (C# overloads) can match:
-        # (H) the leaf must be the guessed name plus a parenthesized suffix, as
-        # (H) a DIRECT child of the guessed scope (the trie is segment-keyed,
-        # (H) so the paren can't be navigated as a prefix), so plain nested
-        # (H) scopes never collide.
-        scope, _, leaf = parent_qn.rpartition(cs.SEPARATOR_DOT)
-        if not scope:
+    def _recorded_parent_at_span(
+        self, entry: DeferredParentLink
+    ) -> FunctionLocation | None:
+        # (H) The span pins the parent NODE, so the location recorded for it in
+        # (H) the class pass carries the exact registered identity, including a
+        # (H) C# overload's signature suffix that the guessed qn cannot (and
+        # (H) that a parameterless sibling overload exactly shadows).
+        if entry.parent_span is None:
             return None
-        wanted = f"{leaf}{cs.CHAR_PAREN_OPEN}"
-        matches = [
-            (qn, node_type)
-            for qn, node_type in self.function_registry.find_with_prefix(scope)
-            if qn.rsplit(cs.SEPARATOR_DOT, 1)[0] == scope
-            and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].startswith(wanted)
-        ]
-        return matches[0] if len(matches) == 1 else None
+        recorded = self.function_locations.get(entry.parent_span)
+        if recorded is None or recorded.qualified_name not in self.function_registry:
+            return None
+        return recorded
 
     def resolve_deferred_parent_links(self) -> int:
         """Emit deferred non-module DEFINES once every pass has registered.
@@ -1468,25 +1467,18 @@ class FunctionIngestMixin:
             return 0
         emitted = 0
         for entry in deferred:
-            if registered := self.function_registry.get(entry.parent_qn):
+            if recorded := self._recorded_parent_at_span(entry):
+                parent_spec = (
+                    cs.NodeLabel(recorded.label),
+                    cs.KEY_QUALIFIED_NAME,
+                    recorded.qualified_name,
+                )
+                rel_type = entry.rel_type
+            elif registered := self.function_registry.get(entry.parent_qn):
                 parent_spec = (
                     cs.NodeLabel(registered.value),
                     cs.KEY_QUALIFIED_NAME,
                     entry.parent_qn,
-                )
-                rel_type = entry.rel_type
-            elif overload := self._unique_overload_variant(entry.parent_qn):
-                # (H) A C# method registers with an overload-suffixed qn
-                # (H) (`Run(int)`) the structural guess cannot reproduce, so a
-                # (H) local function inside a parameterized method would
-                # (H) otherwise degrade to the module; a UNIQUE suffixed
-                # (H) variant IS that method (ambiguous overloads keep the
-                # (H) module fallback rather than guessing).
-                overload_qn, overload_type = overload
-                parent_spec = (
-                    cs.NodeLabel(overload_type.value),
-                    cs.KEY_QUALIFIED_NAME,
-                    overload_qn,
                 )
                 rel_type = entry.rel_type
             elif (
@@ -1590,10 +1582,10 @@ class FunctionIngestMixin:
         module_qn: str,
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, FunctionSpanKey | None]:
         current = func_node.parent
         if not isinstance(current, Node):
-            return cs.NodeLabel.MODULE, module_qn
+            return cs.NodeLabel.MODULE, module_qn, None
 
         file_path = self.module_qn_to_file_path.get(module_qn)
         while current and current.type not in lang_config.module_node_types:
@@ -1627,6 +1619,7 @@ class FunctionIngestMixin:
                     return (
                         cs.NodeLabel.METHOD,
                         f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
+                        None,
                     )
                 # (H) Reuse the enclosing function's REGISTERED identity when
                 # (H) its span is claimed: structural re-derivation produces
@@ -1643,7 +1636,11 @@ class FunctionIngestMixin:
                         and recorded.qualified_name != func_qn
                         and recorded.qualified_name in self.function_registry
                     ):
-                        return cs.NodeLabel(recorded.label), recorded.qualified_name
+                        return (
+                            cs.NodeLabel(recorded.label),
+                            recorded.qualified_name,
+                            None,
+                        )
                 resolution = (
                     self._resolve_function_identity(
                         current, module_qn, language, lang_config, file_path
@@ -1658,7 +1655,18 @@ class FunctionIngestMixin:
                 )
                 if not parent_qn or parent_qn == func_qn:
                     break
-                return parent_label, parent_qn
+                # (H) A C# method registers signature-suffixed (`Run(int)`), a
+                # (H) shape structural re-derivation cannot reproduce, and its
+                # (H) parameterless overload sibling exactly SHADOWS the guess.
+                # (H) Methods register in the class pass after this one, so the
+                # (H) guess carries the parent NODE's span for the deferred
+                # (H) resolver to swap in the recorded identity.
+                span = (
+                    function_span_key(module_qn, current)
+                    if language == cs.SupportedLanguage.CSHARP
+                    else None
+                )
+                return parent_label, parent_qn, span
 
             current = current.parent
 
@@ -1669,6 +1677,6 @@ class FunctionIngestMixin:
             mod_parts := rs_utils.build_module_path(func_node)
         ):
             nested = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(mod_parts)
-            return cs.NodeLabel.MODULE, nested
+            return cs.NodeLabel.MODULE, nested, None
 
-        return cs.NodeLabel.MODULE, module_qn
+        return cs.NodeLabel.MODULE, module_qn, None
