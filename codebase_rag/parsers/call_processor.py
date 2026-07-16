@@ -1621,6 +1621,7 @@ class CallProcessor:
         node = creation_node.parent
         while node is not None and node.type in (
             cs.TS_CSHARP_VARIABLE_DECLARATOR,
+            cs.TS_CSHARP_EQUALS_VALUE_CLAUSE,
             cs.TS_PARENTHESIZED_EXPRESSION,
         ):
             node = node.parent
