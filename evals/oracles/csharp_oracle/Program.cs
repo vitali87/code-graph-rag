@@ -211,10 +211,12 @@ void EmitMember(string rel, MemberDeclarationSyntax member)
     // A directive-split expression body is ill-formed once the directives are
     // neutralized (two bodies); Roslyn error-recovers the second branch's
     // expression as a phantom member declaration (issue #768). A declaration
-    // carrying parse errors is a recovery artifact, never a source fact cgr
+    // carrying parse ERRORS is a recovery artifact, never a source fact cgr
     // should be graded against; real repos compile, so genuine members are
-    // diagnostic-free.
-    if (member.ContainsDiagnostics)
+    // error-free. Warning-severity diagnostics (a `#warning` in the body) are
+    // legal in compiling code and must not suppress the member.
+    if (member.ContainsDiagnostics
+        && member.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
     {
         return;
     }
