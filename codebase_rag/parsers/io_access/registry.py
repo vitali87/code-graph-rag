@@ -476,36 +476,45 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
 # (H) `new`-shaped handle constructors keyed by the written type name (Java
 # (H) `new FileWriter("x")`). PrintWriter appears here for its filename overload;
 # (H) its writer-wrapping overload resolves via IO_NEW_HANDLE_WRAPPERS first.
+# (H) Each Java new-type is keyed under BOTH its simple and fully qualified
+# (H) written form (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
+_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
+    ("FileReader", "java.io", ResourceKind.FILE),
+    ("FileInputStream", "java.io", ResourceKind.FILE),
+    ("FileWriter", "java.io", ResourceKind.FILE),
+    ("FileOutputStream", "java.io", ResourceKind.FILE),
+    ("PrintWriter", "java.io", ResourceKind.FILE),
+    ("RandomAccessFile", "java.io", ResourceKind.FILE),
+    ("Socket", "java.net", ResourceKind.SOCKET),
+)
+
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
     cs.SupportedLanguage.JAVA: {
-        name: HandleConstructor(name, kind, target_arg=0)
-        for name, kind in (
-            ("FileReader", ResourceKind.FILE),
-            ("FileInputStream", ResourceKind.FILE),
-            ("FileWriter", ResourceKind.FILE),
-            ("FileOutputStream", ResourceKind.FILE),
-            ("PrintWriter", ResourceKind.FILE),
-            ("RandomAccessFile", ResourceKind.FILE),
-            ("Socket", ResourceKind.SOCKET),
-        )
+        written: HandleConstructor(written, kind, target_arg=0)
+        for name, package, kind in _JAVA_NEW_HANDLE_TYPES
+        for written in (name, f"{package}.{name}")
     },
 }
 
 # (H) `new`-shaped WRAPPER types: the resource identity comes from arg0, which is
 # (H) either a nested handle constructor (`new BufferedReader(new FileReader(p))`)
 # (H) or an already-bound handle variable.
+_JAVA_NEW_WRAPPER_TYPES: tuple[tuple[str, str], ...] = (
+    ("BufferedReader", "java.io"),
+    ("BufferedWriter", "java.io"),
+    ("BufferedInputStream", "java.io"),
+    ("BufferedOutputStream", "java.io"),
+    ("InputStreamReader", "java.io"),
+    ("OutputStreamWriter", "java.io"),
+    ("PrintWriter", "java.io"),
+    ("Scanner", "java.util"),
+)
+
 IO_NEW_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, frozenset[str]] = {
     cs.SupportedLanguage.JAVA: frozenset(
-        {
-            "BufferedReader",
-            "BufferedWriter",
-            "BufferedInputStream",
-            "BufferedOutputStream",
-            "InputStreamReader",
-            "OutputStreamWriter",
-            "PrintWriter",
-            "Scanner",
-        }
+        written
+        for name, package in _JAVA_NEW_WRAPPER_TYPES
+        for written in (name, f"{package}.{name}")
     ),
 }
 
@@ -550,7 +559,10 @@ IO_IDENTITY_UNWRAP_CALLS: dict[cs.SupportedLanguage, frozenset[str]] = {
 # (H) a wrapper (`new Scanner(new File("x"))`) it resolves to a handle of the
 # (H) mapped kind.
 IO_IDENTITY_UNWRAP_NEW_TYPES: dict[cs.SupportedLanguage, dict[str, ResourceKind]] = {
-    cs.SupportedLanguage.JAVA: {"File": ResourceKind.FILE},
+    cs.SupportedLanguage.JAVA: {
+        "File": ResourceKind.FILE,
+        "java.io.File": ResourceKind.FILE,
+    },
 }
 
 # (H) JS/TS share one method table across the three dialects.
