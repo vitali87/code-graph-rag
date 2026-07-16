@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -588,15 +589,8 @@ class IOAccessProcessor:
             if node.type in descriptor.nested_scope_types:
                 continue
             if node.type == descriptor.block_scope_type:
-                # (H) A nested block is a child lexical scope for handles too: a
-                # (H) handle declared inside it is out of scope after the block,
-                # (H) so its binding must not leak to later statements (mirrors
-                # (H) the in_scope shadow set, which is passed by value).
-                snapshot = (
-                    dict(lean_handles.bindings) if lean_handles is not None else None
-                )
-                self._walk_scope(
-                    list(node.named_children),
+                self._walk_nested_block(
+                    node,
                     in_scope | body_extra,
                     caller_spec,
                     import_map,
@@ -607,60 +601,119 @@ class IOAccessProcessor:
                     descriptor,
                     lean_handles,
                 )
-                if lean_handles is not None and snapshot is not None:
-                    lean_handles.bindings.clear()
-                    lean_handles.bindings.update(snapshot)
                 continue
             if lean_handles is not None:
                 self._maybe_bind_lean_handle(
                     node, in_scope, import_map, descriptor, lean_handles
                 )
-            if node.type == descriptor.call_type:
-                self._emit_direct_call(
-                    node,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    descriptor,
-                    in_scope,
-                    lean_handles,
-                )
-            elif (
-                descriptor.macro_type is not None and node.type == descriptor.macro_type
+            if self._emit_node_sinks(
+                node,
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
             ):
-                # (H) A macro sink (`println!`) writes STDOUT AND may inline a real call
-                # (H) sink in its args (`println!("{}", env::var("X"))`); tree-sitter
-                # (H) flattens the macro body to raw tokens (no call_expression node), so
-                # (H) _emit_macro reconstructs scoped calls from the token stream itself.
-                self._emit_macro(
-                    node,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    in_scope,
-                    descriptor,
-                )
-                continue
-            elif (
-                (stream_sinks or lean_handles is not None)
-                and descriptor.stream_sink_type is not None
-                and node.type == descriptor.stream_sink_type
-            ):
-                # (H) A stream-insertion sink (`std::cout << x`) or a stream operator on
-                # (H) a bound handle (`out << x`, `in >> word`); descend still so a call
-                # (H) sink in an inserted operand (`std::cout << getenv("X")`) is caught.
-                self._emit_stream_sink(
-                    node, caller_spec, stream_sinks, descriptor, lean_handles
-                )
-            elif member_reads and node.type in (
-                descriptor.member_expression_type,
-                descriptor.subscript_type,
-            ):
-                self._emit_member_read(
-                    node, caller_spec, member_reads, in_scope, import_map, descriptor
-                )
-            stack.extend(node.named_children)
+                stack.extend(node.named_children)
+
+    def _walk_nested_block(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
+    ) -> None:
+        # (H) A nested block is a child lexical scope for handles too: a
+        # (H) handle declared inside it is out of scope after the block,
+        # (H) so its binding must not leak to later statements (mirrors
+        # (H) the in_scope shadow set, which is passed by value).
+        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
+        self._walk_scope(
+            list(node.named_children),
+            in_scope,
+            caller_spec,
+            import_map,
+            sink_by_name,
+            macro_sinks,
+            stream_sinks,
+            member_reads,
+            descriptor,
+            lean_handles,
+        )
+        if lean_handles is not None and snapshot is not None:
+            lean_handles.bindings.clear()
+            lean_handles.bindings.update(snapshot)
+
+    def _emit_node_sinks(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
+    ) -> bool:
+        # (H) Emit whatever sink `node` itself is; returns whether the walk should
+        # (H) descend into its children (False only for macros, whose token-stream
+        # (H) body _emit_macro consumes whole).
+        if node.type == descriptor.call_type:
+            self._emit_direct_call(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                descriptor,
+                in_scope,
+                lean_handles,
+            )
+        elif descriptor.macro_type is not None and node.type == descriptor.macro_type:
+            # (H) A macro sink (`println!`) writes STDOUT AND may inline a real call
+            # (H) sink in its args (`println!("{}", env::var("X"))`); tree-sitter
+            # (H) flattens the macro body to raw tokens (no call_expression node), so
+            # (H) _emit_macro reconstructs scoped calls from the token stream itself.
+            self._emit_macro(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                in_scope,
+                descriptor,
+            )
+            return False
+        elif (
+            (stream_sinks or lean_handles is not None)
+            and descriptor.stream_sink_type is not None
+            and node.type == descriptor.stream_sink_type
+        ):
+            # (H) A stream-insertion sink (`std::cout << x`) or a stream operator on
+            # (H) a bound handle (`out << x`, `in >> word`); descend still so a call
+            # (H) sink in an inserted operand (`std::cout << getenv("X")`) is caught.
+            self._emit_stream_sink(
+                node, caller_spec, stream_sinks, descriptor, lean_handles
+            )
+        elif member_reads and node.type in (
+            descriptor.member_expression_type,
+            descriptor.subscript_type,
+        ):
+            self._emit_member_read(
+                node, caller_spec, member_reads, in_scope, import_map, descriptor
+            )
+        return True
 
     def _emit_stream_sink(
         self,
@@ -1039,20 +1092,27 @@ class IOAccessProcessor:
         ):
             return
         targets, values = binding_targets_values(node, descriptor)
+        for name, value in self._paired_binding_values(targets, values):
+            self._apply_lean_binding(
+                name, value, in_scope, import_map, descriptor, lean_handles
+            )
+
+    @staticmethod
+    def _paired_binding_values(
+        targets: list[str | None], values: list[Node]
+    ) -> Iterator[tuple[str, Node | None]]:
+        # (H) Pair each named LHS target with its RHS value. One multi-value call
+        # (H) feeding several LHS (Go `f, err := os.Open(..)`): the handle is the
+        # (H) FIRST return value; the later targets (err) are not handles.
         spread = len(values) == 1 and len(targets) > 1
         for index, name in enumerate(targets):
             if name is None:
                 continue
             if spread:
-                # (H) One multi-value call feeding several LHS (Go `f, err :=
-                # (H) os.Open(..)`): the handle is the FIRST return value; the
-                # (H) later targets (err) are not handles.
                 value = values[0] if index == 0 else None
             else:
                 value = values[index] if index < len(values) else None
-            self._apply_lean_binding(
-                name, value, in_scope, import_map, descriptor, lean_handles
-            )
+            yield name, value
 
     def _apply_lean_binding(
         self,
