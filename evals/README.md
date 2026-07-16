@@ -843,6 +843,38 @@ recall. The residual is the diffuse receiver-type-inference tail every language 
 carries (implicit conversions such as `"" ~>`, deeply generic receivers), not a
 systematic gap.
 
+## Multi-language retrieval (C#) — C# CALLS vs Roslyn
+
+The same harness applied to C#: for each first-party C# symbol, which files call
+it. cgr's C# `CALLS` **and** `INSTANTIATES` edges, reduced to
+`(caller_file, callee_simple_name)`, are graded against invocation and
+object-creation sites extracted by Roslyn (the same oracle as the C# L1 structure
+eval), over the same first-party name universe. `INSTANTIATES` counts because
+`new T()` on a type with no explicit constructor has no ctor node to `CALL` — the
+oracle records the creation site by type name either way, and class names join
+the declared universe so a creation of a fully ctorless type is graded too.
+Roslyn's parser is independent of cgr's tree-sitter C# frontend.
+
+```bash
+uv run python -m evals.csharp_retrieval --target <csharp-sources>
+# opt-in Roslyn semantic frontend (issue #738):
+CSHARP_FRONTEND=hybrid uv run python -m evals.csharp_retrieval --target <csharp-sources>
+```
+
+Requires the `dotnet` toolchain on `PATH`; the eval exits cleanly if it is
+missing. Pinned by `codebase_rag/tests/test_csharp_retrieval_eval.py`, where
+cgr's C# call graph matches the Roslyn oracle on the fixture.
+
+**This is the eval that measures the #738 hybrid frontend's win.** On Polly
+(~600 files), precision is **1.0** in both modes and the hybrid frontend lifts
+recall **0.774 → 0.895** (F1 **0.873 → 0.945**): the location-keyed Roslyn call
+facts resolve the overloads, extension methods, and cross-project dispatch the
+tree-sitter heuristics cannot. The residual misses are dominated by BCL
+name collisions the simple-name universe cannot distinguish (`list.Add` graded
+against a first-party `Add`), plus call sites in projects outside the target's
+solution file (`samples/`, `bench/`), which the frontend deliberately degrades
+to heuristics for.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine

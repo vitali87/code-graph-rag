@@ -18,7 +18,14 @@ _SOURCE = _ORACLE_DIR / ec.CSHARP_ORACLE_SOURCE
 _BUILD_DIR = _ORACLE_DIR / ec.CSHARP_ORACLE_BUILD_DIRNAME
 _DLL = _BUILD_DIR / ec.CSHARP_ORACLE_DLL
 _LOCK = _ORACLE_DIR / ec.CSHARP_ORACLE_BUILD_LOCK
-_CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
+# (H) Class names count as callables: `new T()` on a type with no explicit
+# (H) constructor is a real creation site with no ctor Method to carry the name
+# (H) (Python's retrieval has the same shape -- a class IS a callable there).
+# (H) A C# method cannot share its enclosing type's name, so admitting Class
+# (H) names never lets a plain invocation collide with a type.
+_CALLABLE_KINDS = frozenset(
+    {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value, cs.NodeLabel.CLASS.value}
+)
 _DOTNET_ENV = {ec.DOTNET_TELEMETRY_ENV: "1", ec.DOTNET_NOLOGO_ENV: "1"}
 
 
