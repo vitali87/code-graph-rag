@@ -200,6 +200,103 @@ def test_arity_pair_across_directories_resolves_project_wide(
     ), inherits
 
 
+def test_same_file_arity_pair_child_first_recovers_variant_sibling(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Issue #764 shape 1: both members of the arity pair in ONE file, child
+    # (H) declared first. The two types collide on natural qn (the second gets a
+    # (H) DUP_QN_MARKER variant), the base resolves to the child itself, and the
+    # (H) unique other same-scope variant IS the written sibling.
+    (csharp_project / "Ttl.cs").write_text(
+        "namespace N;\n"
+        "public interface ITtl : ITtl<object> { }\n"
+        "public interface ITtl<TResult> { int GetTtl(); }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.endswith("N.ITtl") and pa.split("@")[0].endswith("N.ITtl") and pa != ch
+        for ch, pa in inherits
+    ), inherits
+
+
+def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Issue #764 shape 2 (Polly's ExecuteParameters, nested in a class): the
+    # (H) GENERIC member is the child and declares first (bare qn); the
+    # (H) non-generic base registers second as the variant.
+    (csharp_project / "Exec.cs").write_text(
+        "namespace N;\n"
+        "public class Outer {\n"
+        "    public class ExecuteParameters<T> : ExecuteParameters { }\n"
+        "    public class ExecuteParameters { }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.endswith("Outer.ExecuteParameters")
+        and pa.split("@")[0].endswith("Outer.ExecuteParameters")
+        and pa != ch
+        for ch, pa in inherits
+    ), inherits
+
+
+def test_same_file_arity_pair_generic_first_still_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Declaration-order regression pin: with the generic FIRST (bare qn),
+    # (H) the child registers as the variant and the base already resolves to
+    # (H) the bare sibling at parse time; the fix for the child-first order
+    # (H) must not disturb this.
+    (csharp_project / "Rev.cs").write_text(
+        "namespace N;\n"
+        "public interface IRev<TResult> { int GetIt(); }\n"
+        "public interface IRev : IRev<object> { }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.split("@")[0].endswith("N.IRev") and pa.endswith("N.IRev") and pa != ch
+        for ch, pa in inherits
+    ), inherits
+
+
+def test_arity_pair_with_partial_generic_sibling_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Issue #764 shape 3 (Polly's PredicateBuilder): the non-generic child
+    # (H) sits alone in its file; the generic sibling is `partial` across TWO
+    # (H) other files, so the sibling recovery sees two candidate qns. The
+    # (H) partial group says they are one type; the edge must not be dropped.
+    (csharp_project / "Pred.cs").write_text(
+        "namespace N;\npublic sealed class Pred : Pred<object> { }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "Pred.TResult.cs").write_text(
+        "namespace N;\npublic partial class Pred<TResult> { public int A() => 1; }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "Pred.Operators.cs").write_text(
+        "namespace N;\npublic partial class Pred<TResult> { public int B() => 2; }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.endswith("N.Pred") and ("TResult" in pa or "Operators" in pa)
+        for ch, pa in inherits
+    ), inherits
+
+
 def test_enum_underlying_type_is_not_inheritance(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
