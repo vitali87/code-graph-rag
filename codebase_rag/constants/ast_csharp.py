@@ -122,6 +122,9 @@ TS_CSHARP_FIELD_DECLARATION = "field_declaration"
 # (H) + `name` method); `this` is its own node type; args are `argument` nodes.
 TS_CSHARP_INVOCATION_EXPRESSION = "invocation_expression"
 TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+# (H) C# 9 target-typed `new()`: a distinct node with NO `type` field; the
+# (H) constructed type comes from the enclosing declaration (issue #773).
+TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION = "implicit_object_creation_expression"
 TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
 # (H) A conditional call `recv?.Method(...)`: the invocation's `function` field
 # (H) is a conditional_access_expression whose member_binding_expression child
@@ -149,10 +152,23 @@ TS_CSHARP_USING_DIRECTIVE = "using_directive"
 TS_CSHARP_QUALIFIED_NAME = "qualified_name"
 TS_CSHARP_IDENTIFIER = "identifier"
 
+# (H) Expression body `=> expr` on methods, properties, and accessors.
+TS_CSHARP_ARROW_EXPRESSION_CLAUSE = "arrow_expression_clause"
+# (H) `public T this[int i] { ... }`: return-typed via `type` like a property.
+TS_CSHARP_INDEXER_DECLARATION = "indexer_declaration"
+# (H) Some grammar versions wrap a declarator's `= value` initializer in an
+# (H) equals_value_clause node (the pinned grammar hangs the value directly off
+# (H) the declarator); the target-typed-new walk skips it either way, mirroring
+# (H) the initializer search in csharp/type_inference.py.
+TS_CSHARP_EQUALS_VALUE_CLAUSE = "equals_value_clause"
+
 # (H) Field names used with child_by_field_name.
 TS_CSHARP_FIELD_NAME = "name"
 TS_CSHARP_FIELD_OPERATOR = "operator"
 TS_CSHARP_FIELD_TYPE = "type"
+# (H) method_declaration/local_function_statement expose the return type via
+# (H) `returns` (there is no `type` field on them).
+TS_CSHARP_FIELD_RETURNS = "returns"
 
 # (H) Operator/conversion-operator declarations expose no `name` field; a stable
 # (H) synthetic name is built from these prefixes so the node still gets a qn.

@@ -51,3 +51,172 @@ public class App {
     assert any(s.endswith("N.App.Run") and "N.Widget.Widget" in t for s, t in calls), (
         calls
     )
+
+
+def test_target_typed_new_in_local_declaration_emits_instantiates(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) C# 9 target-typed `Widget w = new();` parses as
+    # (H) implicit_object_creation_expression (no `type` field); the constructed
+    # (H) type is the enclosing declaration's declared type (issue #773).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget() {}
+}
+public class App {
+    public void Run() { Widget w = new(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    calls = _pairs(mock_ingestor, "CALLS")
+    assert any(
+        s.endswith("N.App.Run") and t.endswith("N.Widget") for s, t in instantiates
+    ), instantiates
+    assert any(s.endswith("N.App.Run") and "N.Widget.Widget" in t for s, t in calls), (
+        calls
+    )
+
+
+def test_target_typed_new_in_field_initializer_emits_instantiates(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `private readonly Widget _w = new();`: the target type is the field's
+    # (H) declared type (a field_declaration wraps a variable_declaration).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget() {}
+}
+public class App {
+    private readonly Widget _w = new();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    assert any(t.endswith("N.Widget") for _, t in instantiates), instantiates
+
+
+def test_target_typed_new_in_return_position_emits_instantiates(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `return new();` takes the enclosing method's return type; the
+    # (H) expression-bodied form `=> new()` is the same shape one wrapper up.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget() {}
+}
+public class App {
+    public Widget MakeIt() { return new(); }
+    public Widget MakeIt2() => new();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    assert any(
+        s.endswith("N.App.MakeIt") and t.endswith("N.Widget") for s, t in instantiates
+    ), instantiates
+    assert any(
+        s.endswith("N.App.MakeIt2") and t.endswith("N.Widget") for s, t in instantiates
+    ), instantiates
+
+
+def test_target_typed_new_in_indexer_body_emits_instantiates(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An indexer's return position is typed like a property's: both the
+    # (H) expression-bodied form and a `return new();` inside a get accessor.
+    (csharp_project / "Widget.cs").write_text(
+        "namespace N;\npublic class Widget {\n    public Widget() {}\n}\n",
+        encoding="utf-8",
+    )
+    # (H) Two files: an indexer is not a function node, so its creation sites
+    # (H) attribute to the file module and same-file sites would collapse into
+    # (H) one (source, target) pair.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class App {
+    public Widget this[int i] => new();
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App2.cs").write_text(
+        """
+namespace N;
+public class App2 {
+    public Widget this[int i] { get { return new(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    sources = {s for s, t in instantiates if t.endswith("N.Widget")}
+    assert any(s.endswith(".App") for s in sources), instantiates
+    assert any(s.endswith(".App2") for s in sources), instantiates
+
+
+def test_target_typed_new_strips_generic_arguments(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Box<int> b = new();` resolves to the Box class, generic args stripped
+    # (H) like the explicit `new Box<int>()` path.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Box<T> {
+    public Box() {}
+}
+public class App {
+    public void Run() { Box<int> b = new(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    assert any(
+        s.endswith("N.App.Run") and t.endswith("N.Box") for s, t in instantiates
+    ), instantiates
+
+
+def test_target_typed_new_in_argument_position_stays_unresolved(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Take(new())` needs overload resolution to type; the syntactic walk
+    # (H) bails at the argument boundary rather than guess a wrong class.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget() {}
+}
+public class App {
+    public void Take(Widget w) {}
+    public void Run() { Take(new()); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = _pairs(mock_ingestor, "INSTANTIATES")
+    assert not any(t.endswith("N.Widget") for _, t in instantiates), instantiates

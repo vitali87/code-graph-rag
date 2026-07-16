@@ -139,6 +139,9 @@ foreach (var (rel, fileRoot) in files)
             case ObjectCreationExpressionSyntax creation:
                 AddCall(rel, TypeSimpleName(creation.Type));
                 break;
+            case ImplicitObjectCreationExpressionSyntax implicitCreation:
+                AddCall(rel, TargetTypedNewName(implicitCreation));
+                break;
         }
     }
 }
@@ -322,6 +325,58 @@ static string? ExpressionName(ExpressionSyntax expression) => expression switch
     MemberBindingExpressionSyntax binding => binding.Name.Identifier.Text,
     _ => null,
 };
+
+// C# 9 target-typed `new()` (issue #773): the constructed type is named by the
+// enclosing declaration. Mirrors cgr's syntactic walk exactly (local/field
+// initializer, property initializer, return position, expression body) so the
+// eval stays symmetric; any other position (an argument, an operand) needs
+// overload resolution and is left unresolved on both sides.
+static string? TargetTypedNewName(ImplicitObjectCreationExpressionSyntax creation)
+{
+    SyntaxNode? node = creation.Parent;
+    while (node is EqualsValueClauseSyntax
+        or VariableDeclaratorSyntax
+        or ParenthesizedExpressionSyntax)
+    {
+        node = node.Parent;
+    }
+    switch (node)
+    {
+        case VariableDeclarationSyntax decl when !decl.Type.IsVar:
+            return TypeSimpleName(decl.Type);
+        case PropertyDeclarationSyntax prop:
+            return TypeSimpleName(prop.Type);
+        case ReturnStatementSyntax or ArrowExpressionClauseSyntax:
+            return EnclosingReturnTypeName(node);
+        default:
+            return null;
+    }
+}
+
+// A return position is typed by the nearest enclosing callable: methods and
+// local functions name it directly, a property or indexer (or their accessor
+// bodies) via its type. A lambda/anonymous method has no syntactic return
+// type: unresolvable.
+static string? EnclosingReturnTypeName(SyntaxNode node)
+{
+    for (var ancestor = node.Parent; ancestor is not null; ancestor = ancestor.Parent)
+    {
+        switch (ancestor)
+        {
+            case MethodDeclarationSyntax method:
+                return TypeSimpleName(method.ReturnType);
+            case LocalFunctionStatementSyntax local:
+                return TypeSimpleName(local.ReturnType);
+            case PropertyDeclarationSyntax prop:
+                return TypeSimpleName(prop.Type);
+            case IndexerDeclarationSyntax indexer:
+                return TypeSimpleName(indexer.Type);
+            case AnonymousFunctionExpressionSyntax:
+                return null;
+        }
+    }
+    return null;
+}
 
 // The simple name of a (possibly qualified, generic, nullable, array) type: the
 // rightmost identifier with type arguments stripped (N2.IList<T> -> "IList").

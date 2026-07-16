@@ -121,12 +121,11 @@ def test_creation_of_ctorless_type_is_in_the_graded_universe(tmp_path: Path) -> 
 
 
 @needs_dotnet
-def test_target_typed_new_is_consistently_omitted(tmp_path: Path) -> None:
-    # (H) C# 9 target-typed `Plain p = new();` is invisible to BOTH sides: the
-    # (H) oracle records only explicit ObjectCreationExpression nodes, and cgr's
-    # (H) tree-sitter call query does not capture implicit_object_creation_expression
-    # (H) (issue #773 tracks adding graph support). The eval must stay symmetric --
-    # (H) no phantom `extra` edge from cgr and no phantom `missing` from the oracle.
+def test_target_typed_new_is_graded_symmetrically(tmp_path: Path) -> None:
+    # (H) C# 9 target-typed `Plain p = new();` (issue #773): both sides infer
+    # (H) the constructed type from the enclosing declaration with the same
+    # (H) syntactic walk, so the site is graded rather than dropped -- and stays
+    # (H) symmetric (no phantom `extra`/`missing`).
     (tmp_path / "Plain.cs").write_text(
         "namespace N;\npublic sealed class Plain {\n    public int Value;\n}\n",
         encoding="utf-8",
@@ -139,8 +138,8 @@ def test_target_typed_new_is_consistently_omitted(tmp_path: Path) -> None:
     )
     oracle, declared = oracle_csharp_call_edges(tmp_path)
     cgr = cgr_csharp_call_edges(tmp_path, tmp_path.name, declared)
-    assert ("Use.cs", "Plain") not in oracle
-    assert ("Use.cs", "Plain") not in cgr
+    assert ("Use.cs", "Plain") in oracle
+    assert ("Use.cs", "Plain") in cgr
     assert cgr == oracle
 
 

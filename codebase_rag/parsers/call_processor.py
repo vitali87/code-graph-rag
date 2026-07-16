@@ -1557,6 +1557,13 @@ class CallProcessor:
                     return type_node.text.decode(cs.ENCODING_UTF8).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
+            case cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.CSHARP
+            ):
+                # (H) C# 9 target-typed `new()` has no `type` field; the
+                # (H) constructed type is named by the enclosing declaration
+                # (H) (issue #773).
+                return self._csharp_target_typed_new_name(call_node)
             case (
                 cs.TS_CPP_BINARY_EXPRESSION
                 | cs.TS_CPP_UNARY_EXPRESSION
@@ -1601,6 +1608,68 @@ class CallProcessor:
             if name_node.text is not None:
                 return name_node.text.decode(cs.ENCODING_UTF8)
 
+        return None
+
+    def _csharp_target_typed_new_name(self, creation_node: Node) -> str | None:
+        # (H) The target type of a bare `new()` is named by the enclosing
+        # (H) declaration: a local/field `T x = new()` (the initializer hangs
+        # (H) directly off the variable_declarator), a property initializer
+        # (H) `public T P { get; } = new()`, or a return position (`return
+        # (H) new();` / `=> new()`) typed by the enclosing member. Any other
+        # (H) position (an argument, an operand) needs overload resolution
+        # (H) tree-sitter cannot do: bail rather than guess.
+        node = creation_node.parent
+        while node is not None and node.type in (
+            cs.TS_CSHARP_VARIABLE_DECLARATOR,
+            cs.TS_CSHARP_EQUALS_VALUE_CLAUSE,
+            cs.TS_PARENTHESIZED_EXPRESSION,
+        ):
+            node = node.parent
+        if node is None:
+            return None
+        if node.type in (
+            cs.TS_CSHARP_VARIABLE_DECLARATION,
+            cs.TS_CSHARP_PROPERTY_DECLARATION,
+        ):
+            type_node = node.child_by_field_name(cs.FIELD_TYPE)
+        elif node.type in (
+            cs.TS_RETURN_STATEMENT,
+            cs.TS_CSHARP_ARROW_EXPRESSION_CLAUSE,
+        ):
+            type_node = self._csharp_enclosing_return_type(node)
+        else:
+            return None
+        if (
+            type_node is None
+            or type_node.text is None
+            # (H) `var x = new();` is ill-formed C# (no target type); if it
+            # (H) appears anyway, "var" is not a class name.
+            or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE
+        ):
+            return None
+        return type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+
+    def _csharp_enclosing_return_type(self, node: Node) -> Node | None:
+        # (H) A return position is typed by the nearest enclosing callable:
+        # (H) methods and local functions name it in `returns`, a property or
+        # (H) indexer (or their accessor bodies) in `type`. A lambda/anonymous
+        # (H) method carries no syntactic return type, so a `new()` returned
+        # (H) from one is unresolvable.
+        ancestor = node.parent
+        while ancestor is not None:
+            if ancestor.type in (
+                cs.TS_CSHARP_METHOD_DECLARATION,
+                cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+            ):
+                return ancestor.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+            if ancestor.type in (
+                cs.TS_CSHARP_PROPERTY_DECLARATION,
+                cs.TS_CSHARP_INDEXER_DECLARATION,
+            ):
+                return ancestor.child_by_field_name(cs.FIELD_TYPE)
+            if ancestor.type in cs.TS_CSHARP_NESTED_SCOPE_TYPES:
+                return None
+            ancestor = ancestor.parent
         return None
 
     def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
@@ -2153,7 +2222,11 @@ class CallProcessor:
 
             if (
                 language in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
-                and call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
+                and call_node.type
+                in (
+                    cs.TS_OBJECT_CREATION_EXPRESSION,
+                    cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
+                )
                 and callee_type != class_label
             ):
                 # (H) `new X(...)` where X resolves to a non-class -- a Java interface
