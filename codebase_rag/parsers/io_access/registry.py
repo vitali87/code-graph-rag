@@ -214,6 +214,8 @@ _JAVA_SYSTEM_SINKS: tuple[IOSink, ...] = (
 # (H) `java.nio.file.Files.X` key: with `import java.nio.file.Files` the call
 # (H) normalises to the FQN, and a fully-qualified call carries the FQN in its text --
 # (H) so both the imported and the qualified-call cases resolve.
+_JAVA_FILES_PREFIXES: tuple[str, ...] = ("Files", "java.nio.file.Files")
+
 _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
     ("readString", IODirection.READ),
     ("readAllLines", IODirection.READ),
@@ -228,7 +230,7 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
     *(
         IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
         for method, direction in _JAVA_FILES_METHODS
-        for prefix in ("Files", "java.nio.file.Files")
+        for prefix in _JAVA_FILES_PREFIXES
     ),
 )
 
@@ -239,6 +241,11 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
 # (H) `::` path is not shadowable by a local, so no import-gating needed). Rust has no
 # (H) keyword args -> path/key is positional arg 0. File handles (`File::open`,
 # (H) `BufReader`) and the print macros (handled separately) are follow-ups here.
+# (H) C++/Rust `std` namespace prefix; C++ sinks key both the bare (C linkage /
+# (H) `using namespace std`) and qualified spellings.
+_STD_PREFIX = "std::"
+_CPP_SINK_PREFIXES: tuple[str, ...] = ("", _STD_PREFIX)
+
 _RUST_CALL_METHODS: tuple[
     tuple[str, str, ResourceKind, IODirection, int | None], ...
 ] = (
@@ -259,7 +266,7 @@ _RUST_CALL_METHODS: tuple[
 # (H) import map (fs -> std::fs); keying the bare `fs::write` too would overmatch a
 # (H) local `mod fs { fn write() }` that never touches std.
 _RUST_SINKS: tuple[IOSink, ...] = tuple(
-    IOSink(f"std::{module}::{fn}", kind, direction, target_arg=arg)
+    IOSink(f"{_STD_PREFIX}{module}::{fn}", kind, direction, target_arg=arg)
     for module, fn, kind, direction, arg in _RUST_CALL_METHODS
 )
 
@@ -281,7 +288,7 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
 _CPP_SINKS: tuple[IOSink, ...] = tuple(
     IOSink(f"{prefix}{fn}", kind, direction, target_arg=arg)
     for fn, kind, direction, arg in _CPP_CALL_METHODS
-    for prefix in ("", "std::")
+    for prefix in _CPP_SINK_PREFIXES
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
@@ -312,7 +319,7 @@ IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
 _CPP_STREAM_SINKS: dict[str, IOSink] = {
     f"{prefix}{name}": IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
     for name in ("cout", "cerr", "clog", "wcout", "wcerr", "wclog")
-    for prefix in ("", "std::")
+    for prefix in _CPP_SINK_PREFIXES
 }
 
 IO_STREAM_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
@@ -406,5 +413,264 @@ IO_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
         "send": IODirection.WRITE,
         "sendall": IODirection.WRITE,
         "sendto": IODirection.WRITE,
+    },
+}
+
+# (H) Methods that DERIVE a same-resource sub-handle from a handle, keyed by the
+# (H) parent's kind: `cur = conn.cursor()` (Python sqlite3/DB-API) and
+# (H) `Statement st = conn.createStatement()` (java.sql) both yield a handle whose
+# (H) I/O touches the connection's database (issue #714). Method names are
+# (H) distinctive enough to share one kind-keyed table across languages.
+IO_HANDLE_DERIVES: dict[ResourceKind, frozenset[str]] = {
+    ResourceKind.DATABASE: frozenset({"cursor", "createStatement", "prepareStatement"}),
+}
+
+# (H) Lean-walk handle constructors (issue #714): call-shaped calls whose return
+# (H) value is a resource handle, keyed exactly like each language's IO_SINKS
+# (H) (Go: full import path; Java: effective-global head, both simple and FQN;
+# (H) Rust: full std:: path, short paths expand through the import map on `::`).
+_JS_TS_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
+    HandleConstructor("fs.createReadStream", ResourceKind.FILE, target_arg=0),
+    HandleConstructor("fs.createWriteStream", ResourceKind.FILE, target_arg=0),
+)
+
+# (H) os.Open / os.Create are ALSO direct sinks (the construction touches the
+# (H) path); os.OpenFile is a handle only, because its direction depends on flags.
+_GO_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
+    HandleConstructor("os.Open", ResourceKind.FILE, target_arg=0),
+    HandleConstructor("os.Create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor("os.OpenFile", ResourceKind.FILE, target_arg=0),
+    HandleConstructor("database/sql.Open", ResourceKind.DATABASE, target_arg=1),
+    HandleConstructor("net.Dial", ResourceKind.SOCKET, target_arg=1),
+)
+
+_JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
+    HandleConstructor(f"{prefix}.{method}", kind, target_arg=arg)
+    for method, kind, arg, prefixes in (
+        ("newBufferedReader", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newBufferedWriter", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newInputStream", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        ("newOutputStream", ResourceKind.FILE, 0, _JAVA_FILES_PREFIXES),
+        (
+            "getConnection",
+            ResourceKind.DATABASE,
+            0,
+            ("DriverManager", "java.sql.DriverManager"),
+        ),
+    )
+    for prefix in prefixes
+)
+
+_RUST_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
+    HandleConstructor("std::fs::File::open", ResourceKind.FILE, target_arg=0),
+    HandleConstructor("std::fs::File::create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor(
+        "std::net::TcpStream::connect", ResourceKind.SOCKET, target_arg=0
+    ),
+)
+
+IO_LEAN_HANDLE_CONSTRUCTORS: dict[
+    cs.SupportedLanguage, tuple[HandleConstructor, ...]
+] = {
+    cs.SupportedLanguage.JS: _JS_TS_LEAN_HANDLE_CONSTRUCTORS,
+    cs.SupportedLanguage.TS: _JS_TS_LEAN_HANDLE_CONSTRUCTORS,
+    cs.SupportedLanguage.TSX: _JS_TS_LEAN_HANDLE_CONSTRUCTORS,
+    cs.SupportedLanguage.GO: _GO_LEAN_HANDLE_CONSTRUCTORS,
+    cs.SupportedLanguage.JAVA: _JAVA_LEAN_HANDLE_CONSTRUCTORS,
+    cs.SupportedLanguage.RUST: _RUST_LEAN_HANDLE_CONSTRUCTORS,
+}
+
+# (H) `new`-shaped handle constructors keyed by the written type name (Java
+# (H) `new FileWriter("x")`). PrintWriter appears here for its filename overload;
+# (H) its writer-wrapping overload resolves via IO_NEW_HANDLE_WRAPPERS first.
+# (H) Each Java new-type is keyed under BOTH its simple and fully qualified
+# (H) written form (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
+_JAVA_IO_PACKAGE = "java.io"
+
+_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
+    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
+    ("Socket", "java.net", ResourceKind.SOCKET),
+)
+
+IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
+    cs.SupportedLanguage.JAVA: {
+        written: HandleConstructor(written, kind, target_arg=0)
+        for name, package, kind in _JAVA_NEW_HANDLE_TYPES
+        for written in (name, f"{package}.{name}")
+    },
+}
+
+# (H) `new`-shaped WRAPPER types: the resource identity comes from arg0, which is
+# (H) either a nested handle constructor (`new BufferedReader(new FileReader(p))`)
+# (H) or an already-bound handle variable.
+_JAVA_NEW_WRAPPER_TYPES: tuple[tuple[str, str], ...] = (
+    ("BufferedReader", _JAVA_IO_PACKAGE),
+    ("BufferedWriter", _JAVA_IO_PACKAGE),
+    ("BufferedInputStream", _JAVA_IO_PACKAGE),
+    ("BufferedOutputStream", _JAVA_IO_PACKAGE),
+    ("InputStreamReader", _JAVA_IO_PACKAGE),
+    ("OutputStreamWriter", _JAVA_IO_PACKAGE),
+    ("PrintWriter", _JAVA_IO_PACKAGE),
+    ("Scanner", "java.util"),
+)
+
+IO_NEW_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.JAVA: frozenset(
+        written
+        for name, package in _JAVA_NEW_WRAPPER_TYPES
+        for written in (name, f"{package}.{name}")
+    ),
+}
+
+# (H) Call-shaped wrapper constructors (`BufReader::new(f)`, `bufio.NewReader(f)`),
+# (H) keyed like sinks; the value is unused (membership only, dict for the shared
+# (H) shadow-aware resolution).
+IO_CALL_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, dict[str, str]] = {
+    cs.SupportedLanguage.RUST: {
+        name: name for name in ("std::io::BufReader::new", "std::io::BufWriter::new")
+    },
+    cs.SupportedLanguage.GO: {
+        name: name
+        for name in ("bufio.NewReader", "bufio.NewWriter", "bufio.NewScanner")
+    },
+}
+
+# (H) Type-declaration constructors (C++ `std::ifstream in("x")`): a declaration
+# (H) whose written type is one of these binds a FILE handle on its declarator.
+IO_TYPE_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, ResourceKind]] = {
+    cs.SupportedLanguage.CPP: {
+        f"{prefix}{name}": ResourceKind.FILE
+        for name in ("ifstream", "ofstream", "fstream")
+        for prefix in _CPP_SINK_PREFIXES
+    },
+}
+
+# (H) Identity unwrapping for constructor targets: `Path.of("cfg.txt")` /
+# (H) `new File("x")` in a constructor's target position carry the literal.
+IO_IDENTITY_UNWRAP_CALLS: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.JAVA: frozenset(
+        {
+            "Path.of",
+            "Paths.get",
+            "java.nio.file.Path.of",
+            "java.nio.file.Paths.get",
+        }
+    ),
+}
+
+# (H) `new File("x")` is not a handle itself, but it designates the resource: in
+# (H) a constructor's target position it carries the identity literal, and under
+# (H) a wrapper (`new Scanner(new File("x"))`) it resolves to a handle of the
+# (H) mapped kind.
+IO_IDENTITY_UNWRAP_NEW_TYPES: dict[cs.SupportedLanguage, dict[str, ResourceKind]] = {
+    cs.SupportedLanguage.JAVA: {
+        "File": ResourceKind.FILE,
+        "java.io.File": ResourceKind.FILE,
+    },
+}
+
+# (H) JS/TS share one method table across the three dialects.
+_JS_TS_LEAN_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
+    ResourceKind.FILE: {
+        "read": IODirection.READ,
+        "write": IODirection.WRITE,
+        "end": IODirection.WRITE,
+    },
+}
+
+# (H) Per-language, per-kind handle methods for the lean walk and the direction
+# (H) each implies (Python keeps IO_HANDLE_METHODS above). READ_WRITE entries
+# (H) (java.sql execute) are refined by the SQL first-keyword heuristic.
+IO_LEAN_HANDLE_METHODS: dict[
+    cs.SupportedLanguage, dict[ResourceKind, dict[str, IODirection]]
+] = {
+    cs.SupportedLanguage.JS: _JS_TS_LEAN_HANDLE_METHODS,
+    cs.SupportedLanguage.TS: _JS_TS_LEAN_HANDLE_METHODS,
+    cs.SupportedLanguage.TSX: _JS_TS_LEAN_HANDLE_METHODS,
+    cs.SupportedLanguage.GO: {
+        ResourceKind.FILE: {
+            "Read": IODirection.READ,
+            "ReadAt": IODirection.READ,
+            "ReadString": IODirection.READ,
+            "ReadLine": IODirection.READ,
+            "ReadByte": IODirection.READ,
+            "ReadRune": IODirection.READ,
+            "Scan": IODirection.READ,
+            "Write": IODirection.WRITE,
+            "WriteAt": IODirection.WRITE,
+            "WriteString": IODirection.WRITE,
+            "Flush": IODirection.WRITE,
+        },
+        ResourceKind.DATABASE: {
+            "Query": IODirection.READ,
+            "QueryRow": IODirection.READ,
+            "QueryContext": IODirection.READ,
+            "QueryRowContext": IODirection.READ,
+            "Exec": IODirection.WRITE,
+            "ExecContext": IODirection.WRITE,
+        },
+        ResourceKind.SOCKET: {
+            "Read": IODirection.READ,
+            "Write": IODirection.WRITE,
+        },
+    },
+    cs.SupportedLanguage.JAVA: {
+        ResourceKind.FILE: {
+            "read": IODirection.READ,
+            "readLine": IODirection.READ,
+            "readAllBytes": IODirection.READ,
+            "readNBytes": IODirection.READ,
+            "lines": IODirection.READ,
+            "next": IODirection.READ,
+            "nextLine": IODirection.READ,
+            "nextInt": IODirection.READ,
+            "write": IODirection.WRITE,
+            "append": IODirection.WRITE,
+            "newLine": IODirection.WRITE,
+            "print": IODirection.WRITE,
+            "println": IODirection.WRITE,
+            "printf": IODirection.WRITE,
+            "format": IODirection.WRITE,
+        },
+        ResourceKind.DATABASE: {
+            "executeQuery": IODirection.READ,
+            "executeUpdate": IODirection.WRITE,
+            "executeBatch": IODirection.WRITE,
+            "execute": IODirection.READ_WRITE,
+        },
+    },
+    cs.SupportedLanguage.RUST: {
+        ResourceKind.FILE: {
+            "read_to_string": IODirection.READ,
+            "read": IODirection.READ,
+            "read_exact": IODirection.READ,
+            "read_line": IODirection.READ,
+            "lines": IODirection.READ,
+            "write_all": IODirection.WRITE,
+            "write": IODirection.WRITE,
+            "write_fmt": IODirection.WRITE,
+            "flush": IODirection.WRITE,
+        },
+        ResourceKind.SOCKET: {
+            "read_to_string": IODirection.READ,
+            "read": IODirection.READ,
+            "read_exact": IODirection.READ,
+            "write_all": IODirection.WRITE,
+            "write": IODirection.WRITE,
+        },
+    },
+    cs.SupportedLanguage.CPP: {
+        ResourceKind.FILE: {
+            "read": IODirection.READ,
+            "get": IODirection.READ,
+            "getline": IODirection.READ,
+            "write": IODirection.WRITE,
+            "put": IODirection.WRITE,
+        },
     },
 }

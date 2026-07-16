@@ -24,19 +24,20 @@ from ..io_access import (
     IOSink,
     LanguageDescriptor,
     ResourceKind,
+    binding_targets_values,
     call_name,
     definition_header_nodes,
     first_token_arg_string,
     head_is_genuine_module,
     is_require_alias,
     iter_token_tree_calls,
+    lean_binding_targets,
     literal_target,
     match_normalised,
     registry_match,
     scope_seed_nodes,
     string_literal,
 )
-from ..utils import cpp_declarator_name
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -463,29 +464,8 @@ class FlowProcessor:
         # (H) Bind LHS name(s) to their RHS taint across the grammars: JS uses a single
         # (H) `name`/`value` (declarator) or `left`/`right` (assignment); Go uses `left`/
         # (H) `right` expression_lists (`:=`, `=`) or `name`/`value` (`var`/`const`).
-        d = jc.descriptor
-        left = node.child_by_field_name(cs.FIELD_LEFT)
-        if left is not None:
-            targets = self._lean_targets(left, d)
-            values = self._lean_values(node.child_by_field_name(cs.FIELD_RIGHT), d)
-        elif d.declarator_name_field is not None and node.type == d.declarator_type:
-            # (H) The bound name lives under a language-specific field, not `name`/
-            # (H) `left`: Rust `let x = ..` uses `pattern` (a plain identifier), C++
-            # (H) `int x = ..` uses `declarator` (a nested pointer/reference declarator).
-            # (H) Try the plain-identifier path first, then the C++ declarator unwrap.
-            field_node = node.child_by_field_name(d.declarator_name_field)
-            if field_node is None:
-                targets = [None]
-            else:
-                targets = self._lean_targets(field_node, d)
-                if targets == [None]:
-                    targets = [cpp_declarator_name(field_node)]
-            values = self._lean_values(node.child_by_field_name(cs.FIELD_VALUE), d)
-        else:
-            targets = []
-            for name in node.children_by_field_name(cs.TS_FIELD_NAME):
-                targets.extend(self._lean_targets(name, d))
-            values = self._lean_values(node.child_by_field_name(cs.FIELD_VALUE), d)
+        # (H) Shared (LHS names, RHS values) extraction with the I/O handle walk.
+        targets, values = binding_targets_values(node, jc.descriptor)
         # (H) `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
         # (H) all (a tuple return can't be split statically -- over-approximates err).
         spread = len(values) == 1 and len(targets) > 1
@@ -516,7 +496,7 @@ class FlowProcessor:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         if left is None:
             return
-        names = self._lean_targets(left, jc.descriptor)
+        names = lean_binding_targets(left, jc.descriptor)
         for name in names:
             if name is not None:
                 tainted.pop(name, None)
@@ -532,32 +512,6 @@ class FlowProcessor:
         for name in names:
             if name is not None:
                 jc.local_names.add(name)
-
-    @staticmethod
-    def _lean_targets(node: Node, descriptor: LanguageDescriptor) -> list[str | None]:
-        # (H) LHS name(s): a bare identifier, or a Go expression_list of them. A
-        # (H) non-identifier target (JS destructuring, a field/index write) yields None
-        # (H) so its RHS position is still consumed but no taint var is bound.
-        if node.type == descriptor.identifier_type:
-            return [node.text.decode(cs.ENCODING_UTF8) if node.text else None]
-        if node.type == cs.TS_GO_EXPRESSION_LIST:
-            return [
-                c.text.decode(cs.ENCODING_UTF8)
-                if c.type == descriptor.identifier_type and c.text
-                else None
-                for c in node.named_children
-                if c.type != cs.TS_COMMENT
-            ]
-        return [None]
-
-    def _lean_values(
-        self, node: Node | None, descriptor: LanguageDescriptor
-    ) -> list[Node]:
-        if node is None:
-            return []
-        if node.type == cs.TS_GO_EXPRESSION_LIST:
-            return self._named_no_comments(node)
-        return [node]
 
     def _js_expr_taint(
         self, node: Node | None, tainted: _TaintMap, jc: _JsCtx

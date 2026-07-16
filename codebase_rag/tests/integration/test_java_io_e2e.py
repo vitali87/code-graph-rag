@@ -272,3 +272,34 @@ def test_java_varargs_shadows_system(
         "}\n",
     )
     assert (_READS, "resource::ENV::SECRET") not in _io_edges(memgraph_ingestor)
+
+
+def test_java_handle_constructors_and_wrappers(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 handle walk: `new FileWriter` binds a FILE handle; the
+    # (H) BufferedReader wrapper takes its identity from the inner FileReader;
+    # (H) Files.newBufferedReader unwraps Path.of to the literal.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "import java.io.BufferedReader;\n"
+        "import java.io.FileReader;\n"
+        "import java.io.FileWriter;\n"
+        "import java.nio.file.Files;\n"
+        "import java.nio.file.Path;\n"
+        "class App {\n"
+        "  void work(String s) throws Exception {\n"
+        '    FileWriter w = new FileWriter("out.txt");\n'
+        "    w.write(s);\n"
+        '    BufferedReader br = new BufferedReader(new FileReader("in.txt"));\n'
+        "    String line = br.readLine();\n"
+        '    var r = Files.newBufferedReader(Path.of("cfg.txt"));\n'
+        "    r.readLine();\n"
+        "  }\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_WRITES, "resource::FILE::out.txt") in edges
+    assert (_READS, "resource::FILE::in.txt") in edges
+    assert (_READS, "resource::FILE::cfg.txt") in edges

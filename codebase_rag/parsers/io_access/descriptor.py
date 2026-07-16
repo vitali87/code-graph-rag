@@ -91,6 +91,13 @@ class LanguageDescriptor:
     # (H) `declarator`, unwrapped through pointer/reference declarators). None = the
     # (H) language binds via `name`/`left` (JS/Go/Java/Rust). Used by the flow walk.
     declarator_name_field: str | None = None
+    # (H) `new`-expression node (Java object_creation_expression) whose `type` names
+    # (H) a handle constructor (`new FileWriter("x")`); None where handles are only
+    # (H) call-shaped (issue #714 handle walk).
+    new_expression_type: str | None = None
+    # (H) Stream-extraction operator (C++ `>>`): on a bound stream handle it is a
+    # (H) READ of that handle's resource. None where the language has none.
+    stream_extract_operator: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -205,6 +212,7 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.FIELD_OBJECT,
     property_field=cs.JAVA_FIELD_FIELD,
     subscript_index_field=cs.JAVA_FIELD_INDEX,
+    new_expression_type=cs.TS_OBJECT_CREATION_EXPRESSION,
 )
 
 _RUST_DESCRIPTOR = LanguageDescriptor(
@@ -279,9 +287,11 @@ _CPP_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.CPP_FIELD_ARGUMENT,
     property_field=cs.CPP_FIELD_FIELD,
     subscript_index_field=cs.CPP_FIELD_INDICES,
-    # (H) `std::cout << x` / `std::cerr << x` write STDOUT via the `<<` operator.
+    # (H) `std::cout << x` / `std::cerr << x` write STDOUT via the `<<` operator;
+    # (H) `in >> word` on a bound fstream handle reads its file (issue #714).
     stream_sink_type=cs.TS_CPP_BINARY_EXPRESSION,
     stream_sink_operator=cs.CPP_OP_LEFT_SHIFT,
+    stream_extract_operator=cs.CPP_OP_RIGHT_SHIFT,
     # (H) `int x = getenv(...)` binds via the `declarator` field (a nested
     # (H) pointer/reference declarator unwrapped to its identifier), not `name`.
     declarator_name_field=cs.FIELD_DECLARATOR,

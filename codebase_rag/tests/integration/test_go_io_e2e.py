@@ -167,6 +167,29 @@ def test_go_self_referential_init_emits(
     assert (_READS, "resource::ENV::PATH") in _io_edges(memgraph_ingestor)
 
 
+def test_go_handle_methods_attribute_to_constructor_resource(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 handle walk: os.OpenFile binds a FILE handle (no direct sink,
+    # (H) direction depends on flags) and sql.Open a DATABASE one; the method calls
+    # (H) carry the I/O.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "package main\n\n"
+        'import (\n\t"database/sql"\n\t"os"\n)\n\n'
+        "func work(s string) {\n"
+        '\tf, _ := os.OpenFile("data.txt", os.O_WRONLY, 0644)\n'
+        "\tf.WriteString(s)\n"
+        '\tdb, _ := sql.Open("postgres", "dsn")\n'
+        '\tdb.Query("SELECT 1")\n'
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_WRITES, "resource::FILE::data.txt") in edges
+    assert (_READS, "resource::DATABASE::dsn") in edges
+
+
 def test_go_unimported_package_name_no_edge(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import NamedTuple
+
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..import_processor import ImportProcessor
+from ..utils import cpp_declarator_name
 from .constants import (
     DYNAMIC_TARGET,
     KEY_KIND,
@@ -18,6 +22,7 @@ from .constants import (
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
+    binding_targets_values,
     call_name,
     definition_header_nodes,
     first_token_arg_string,
@@ -32,18 +37,67 @@ from .extract import (
 )
 from .models import HandleBinding, HandleConstructor, IOSink
 from .registry import (
+    IO_CALL_HANDLE_WRAPPERS,
     IO_HANDLE_CONSTRUCTORS,
+    IO_HANDLE_DERIVES,
     IO_HANDLE_METHODS,
+    IO_IDENTITY_UNWRAP_CALLS,
+    IO_IDENTITY_UNWRAP_NEW_TYPES,
+    IO_LEAN_HANDLE_CONSTRUCTORS,
+    IO_LEAN_HANDLE_METHODS,
     IO_MACRO_SINKS,
     IO_MEMBER_READS,
+    IO_NEW_HANDLE_CONSTRUCTORS,
+    IO_NEW_HANDLE_WRAPPERS,
     IO_SINKS,
     IO_STREAM_SINKS,
+    IO_TYPE_HANDLE_CONSTRUCTORS,
 )
 
 _DIRECTION_REL = {
     IODirection.READ: cs.RelationshipType.READS_FROM,
     IODirection.WRITE: cs.RelationshipType.WRITES_TO,
 }
+
+# (H) Binding assignment nodes shared across the lean grammars: `x = expr` is an
+# (H) assignment_expression in JS/Java/Rust/C++ and an assignment_statement in Go.
+_LEAN_ASSIGNMENT_TYPES = frozenset(
+    {cs.TS_ASSIGNMENT_EXPRESSION, cs.TS_GO_ASSIGNMENT_STATEMENT}
+)
+
+
+class _LeanHandles(NamedTuple):
+    # (H) Per-caller handle state for the lean non-Python walk (issue #714): the
+    # (H) per-language constructor/wrapper/method tables plus the mutable
+    # (H) variable -> HandleBinding map, threaded as one unit.
+    ctors: dict[str, HandleConstructor]
+    new_ctors: dict[str, HandleConstructor]
+    new_wrappers: frozenset[str]
+    call_wrappers: dict[str, str]
+    type_ctors: dict[str, ResourceKind]
+    methods: dict[ResourceKind, dict[str, IODirection]]
+    identity_calls: frozenset[str]
+    identity_new_types: dict[str, ResourceKind]
+    bindings: dict[str, HandleBinding]
+
+
+def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
+    ctors = {c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(language, ())}
+    new_ctors = IO_NEW_HANDLE_CONSTRUCTORS.get(language, {})
+    type_ctors = IO_TYPE_HANDLE_CONSTRUCTORS.get(language, {})
+    if not ctors and not new_ctors and not type_ctors:
+        return None
+    return _LeanHandles(
+        ctors=ctors,
+        new_ctors=new_ctors,
+        new_wrappers=IO_NEW_HANDLE_WRAPPERS.get(language, frozenset()),
+        call_wrappers=IO_CALL_HANDLE_WRAPPERS.get(language, {}),
+        type_ctors=type_ctors,
+        methods=IO_LEAN_HANDLE_METHODS.get(language, {}),
+        identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(language, frozenset()),
+        identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(language, {}),
+        bindings={},
+    )
 
 
 class IOAccessProcessor:
@@ -101,6 +155,7 @@ class IOAccessProcessor:
                     stream_sinks,
                     IO_MEMBER_READS.get(language, ()),
                     descriptor,
+                    _lean_handles_for(language),
                 )
             return
         ctor_by_name = {c.callee: c for c in constructors}
@@ -138,7 +193,7 @@ class IOAccessProcessor:
             if node.type in PY_SCOPE_BOUNDARIES:
                 stack.extend(reversed(definition_header_nodes(node)))
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
@@ -151,6 +206,7 @@ class IOAccessProcessor:
         node: Node,
         import_map: dict[str, str],
         ctor_by_name: dict[str, HandleConstructor],
+        handles: dict[str, HandleBinding],
     ) -> tuple[str, HandleBinding] | None:
         # (H) Both `f = open(...)` (assignment) and `with open(...) as f:`
         # (H) (as_pattern) bind a handle var to a constructor call.
@@ -177,13 +233,33 @@ class IOAccessProcessor:
             or target.text is None
         ):
             return None
-        ctor = registry_match(ctor_by_name, call_name(call), import_map)
+        raw = call_name(call)
+        target_name = target.text.decode(cs.ENCODING_UTF8)
+        ctor = registry_match(ctor_by_name, raw, import_map)
         if ctor is None:
-            return None
+            # (H) Derive (`cur = conn.cursor()`, issue #714): a method on a bound
+            # (H) handle that yields a same-resource sub-handle binds the target
+            # (H) to the parent's resource.
+            derived = self._derived_python_binding(raw, handles)
+            return None if derived is None else (target_name, derived)
         identity = literal_target(call, ctor.target_arg, ctor.target_kw)
-        return target.text.decode(cs.ENCODING_UTF8), HandleBinding(
-            kind=ctor.kind, identity=identity
-        )
+        return target_name, HandleBinding(kind=ctor.kind, identity=identity)
+
+    @staticmethod
+    def _derived_python_binding(
+        raw: str | None, handles: dict[str, HandleBinding]
+    ) -> HandleBinding | None:
+        if raw is None:
+            return None
+        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return None
+        parent = handles.get(receiver)
+        if parent is None or method not in IO_HANDLE_DERIVES.get(
+            parent.kind, frozenset()
+        ):
+            return None
+        return parent
 
     def _inherited_handles(
         self,
@@ -254,7 +330,7 @@ class IOAccessProcessor:
             node = stack.pop()
             if node.type in PY_SCOPE_BOUNDARIES:
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None:
                 handles.setdefault(bound[0], bound[1])
             stack.extend(node.children)
@@ -274,7 +350,7 @@ class IOAccessProcessor:
             node = stack.pop()
             if node.type == cs.TS_PY_CLASS_DEFINITION:
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name)
+            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
                 handles.setdefault(bound[0], bound[1])
             stack.extend(node.children)
@@ -289,6 +365,7 @@ class IOAccessProcessor:
         stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
     ) -> None:
         # (H) Lean non-Python walk (issue #714): find call sinks in the caller body,
         # (H) crediting I/O to the scope that runs it. No handle/stream tracking yet.
@@ -321,6 +398,7 @@ class IOAccessProcessor:
             stream_sinks,
             member_reads,
             descriptor,
+            lean_handles,
         )
 
     def _walk_scope(
@@ -334,6 +412,7 @@ class IOAccessProcessor:
         stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
     ) -> None:
         # (H) Go wraps a block's statements in a single `statement_list`; unwrap it so
         # (H) the source-order walk iterates the real statements, not one container.
@@ -370,6 +449,7 @@ class IOAccessProcessor:
                     stream_sinks,
                     member_reads,
                     descriptor,
+                    lean_handles,
                 )
             return
         # (H) Declare-at-point languages (Go, Java): a local is in scope only from its
@@ -404,6 +484,7 @@ class IOAccessProcessor:
                     stream_sinks,
                     member_reads,
                     descriptor,
+                    lean_handles,
                 )
             else:
                 # (H) decl_in_own_initializer (Java): the name is in scope in its own
@@ -421,6 +502,7 @@ class IOAccessProcessor:
                     stream_sinks,
                     member_reads,
                     descriptor,
+                    lean_handles,
                 )
             live |= plain
 
@@ -435,6 +517,7 @@ class IOAccessProcessor:
         stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
     ) -> None:
         # (H) Walk a declaration statement's declarators in SOURCE ORDER (Java
         # (H) `local_variable_declaration`): a declarator's name enters scope for its own
@@ -456,6 +539,7 @@ class IOAccessProcessor:
                 stream_sinks,
                 member_reads,
                 descriptor,
+                lean_handles,
             )
 
     def _loop_declarations(
@@ -490,6 +574,7 @@ class IOAccessProcessor:
         stream_sinks: dict[str, IOSink],
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
     ) -> None:
         # (H) Emit the direct sinks / member reads within one statement subtree, under
         # (H) the given in-scope shadow set. A nested { } is a child lexical scope:
@@ -504,8 +589,8 @@ class IOAccessProcessor:
             if node.type in descriptor.nested_scope_types:
                 continue
             if node.type == descriptor.block_scope_type:
-                self._walk_scope(
-                    list(node.named_children),
+                self._walk_nested_block(
+                    node,
                     in_scope | body_extra,
                     caller_spec,
                     import_map,
@@ -514,45 +599,121 @@ class IOAccessProcessor:
                     stream_sinks,
                     member_reads,
                     descriptor,
+                    lean_handles,
                 )
                 continue
-            if node.type == descriptor.call_type:
-                self._emit_direct_call(
-                    node, caller_spec, import_map, sink_by_name, descriptor, in_scope
+            if lean_handles is not None:
+                self._maybe_bind_lean_handle(
+                    node, in_scope, import_map, descriptor, lean_handles
                 )
-            elif (
-                descriptor.macro_type is not None and node.type == descriptor.macro_type
+            if self._emit_node_sinks(
+                node,
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
             ):
-                # (H) A macro sink (`println!`) writes STDOUT AND may inline a real call
-                # (H) sink in its args (`println!("{}", env::var("X"))`); tree-sitter
-                # (H) flattens the macro body to raw tokens (no call_expression node), so
-                # (H) _emit_macro reconstructs scoped calls from the token stream itself.
-                self._emit_macro(
-                    node,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    in_scope,
-                    descriptor,
-                )
-                continue
-            elif (
-                stream_sinks
-                and descriptor.stream_sink_type is not None
-                and node.type == descriptor.stream_sink_type
-            ):
-                # (H) A stream-insertion sink (`std::cout << x`); descend still so a call
-                # (H) sink in an inserted operand (`std::cout << getenv("X")`) is caught.
-                self._emit_stream_sink(node, caller_spec, stream_sinks, descriptor)
-            elif member_reads and node.type in (
-                descriptor.member_expression_type,
-                descriptor.subscript_type,
-            ):
-                self._emit_member_read(
-                    node, caller_spec, member_reads, in_scope, import_map, descriptor
-                )
-            stack.extend(node.named_children)
+                stack.extend(node.named_children)
+
+    def _walk_nested_block(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
+    ) -> None:
+        # (H) A nested block is a child lexical scope for handles too: a
+        # (H) handle declared inside it is out of scope after the block,
+        # (H) so its binding must not leak to later statements (mirrors
+        # (H) the in_scope shadow set, which is passed by value).
+        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
+        self._walk_scope(
+            list(node.named_children),
+            in_scope,
+            caller_spec,
+            import_map,
+            sink_by_name,
+            macro_sinks,
+            stream_sinks,
+            member_reads,
+            descriptor,
+            lean_handles,
+        )
+        if lean_handles is not None and snapshot is not None:
+            lean_handles.bindings.clear()
+            lean_handles.bindings.update(snapshot)
+
+    def _emit_node_sinks(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
+    ) -> bool:
+        # (H) Emit whatever sink `node` itself is; returns whether the walk should
+        # (H) descend into its children (False only for macros, whose token-stream
+        # (H) body _emit_macro consumes whole).
+        if node.type == descriptor.call_type:
+            self._emit_direct_call(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                descriptor,
+                in_scope,
+                lean_handles,
+            )
+        elif descriptor.macro_type is not None and node.type == descriptor.macro_type:
+            # (H) A macro sink (`println!`) writes STDOUT AND may inline a real call
+            # (H) sink in its args (`println!("{}", env::var("X"))`); tree-sitter
+            # (H) flattens the macro body to raw tokens (no call_expression node), so
+            # (H) _emit_macro reconstructs scoped calls from the token stream itself.
+            self._emit_macro(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                in_scope,
+                descriptor,
+            )
+            return False
+        elif (
+            (stream_sinks or lean_handles is not None)
+            and descriptor.stream_sink_type is not None
+            and node.type == descriptor.stream_sink_type
+        ):
+            # (H) A stream-insertion sink (`std::cout << x`) or a stream operator on
+            # (H) a bound handle (`out << x`, `in >> word`); descend still so a call
+            # (H) sink in an inserted operand (`std::cout << getenv("X")`) is caught.
+            self._emit_stream_sink(
+                node, caller_spec, stream_sinks, descriptor, lean_handles
+            )
+        elif member_reads and node.type in (
+            descriptor.member_expression_type,
+            descriptor.subscript_type,
+        ):
+            self._emit_member_read(
+                node, caller_spec, member_reads, in_scope, import_map, descriptor
+            )
+        return True
 
     def _emit_stream_sink(
         self,
@@ -560,41 +721,62 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         stream_sinks: dict[str, IOSink],
         descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles | None,
     ) -> None:
         # (H) A `<<` chain like `std::cout << a << b` nests left-associatively:
         # (H) (((cout << a) << b)). Act only at the TOP of the chain (parent is not
-        # (H) itself a `<<` insertion) and walk the `left` spine to the base operand; if
-        # (H) the base is a stream sink (cout/cerr), emit ONE STDOUT write. A non-stream
-        # (H) base (arithmetic `x << 2`) resolves to a non-sink and emits nothing.
-        if not self._is_stream_insertion(node, descriptor):
+        # (H) itself a stream operation) and walk the `left` spine to the base operand.
+        # (H) A stream-sink base (cout/cerr) emits ONE STDOUT write; a bound handle
+        # (H) base emits a WRITE (`out << x`) or READ (`in >> word`) of its resource
+        # (H) (issue #714). A non-stream base (arithmetic `x << 2`) emits nothing.
+        op = self._stream_operator(node, descriptor)
+        if op is None:
             return
         parent = node.parent
-        if parent is not None and self._is_stream_insertion(parent, descriptor):
+        if parent is not None and self._stream_operator(parent, descriptor) is not None:
             return
         base = node
-        while self._is_stream_insertion(base, descriptor):
+        while self._stream_operator(base, descriptor) is not None:
             left = base.child_by_field_name(cs.FIELD_LEFT)
             if left is None:
                 return
             base = left
         if base.text is None:
             return
-        sink = stream_sinks.get(base.text.decode(cs.ENCODING_UTF8))
-        if sink is not None:
-            self._emit(caller_spec, sink.direction, sink.kind, DYNAMIC_TARGET)
+        base_text = base.text.decode(cs.ENCODING_UTF8)
+        if op == descriptor.stream_sink_operator:
+            sink = stream_sinks.get(base_text)
+            if sink is not None:
+                self._emit(caller_spec, sink.direction, sink.kind, DYNAMIC_TARGET)
+                return
+        if lean_handles is None:
+            return
+        binding = lean_handles.bindings.get(base_text)
+        if binding is None:
+            return
+        direction = (
+            IODirection.WRITE
+            if op == descriptor.stream_sink_operator
+            else IODirection.READ
+        )
+        self._emit(caller_spec, direction, binding.kind, binding.identity)
 
     @staticmethod
-    def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
-        # (H) A binary_expression whose `operator` field is the stream-insertion token.
+    def _stream_operator(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        # (H) The stream operator (`<<` insertion / `>>` extraction) of a
+        # (H) binary_expression, or None when the node is not a stream operation.
         if node.type != descriptor.stream_sink_type:
-            return False
+            return None
         operator = node.child_by_field_name(cs.FIELD_OPERATOR)
-        return (
-            operator is not None
-            and operator.text is not None
-            and operator.text.decode(cs.ENCODING_UTF8)
-            == descriptor.stream_sink_operator
-        )
+        if operator is None or operator.text is None:
+            return None
+        text = operator.text.decode(cs.ENCODING_UTF8)
+        if text == descriptor.stream_sink_operator or (
+            descriptor.stream_extract_operator is not None
+            and text == descriptor.stream_extract_operator
+        ):
+            return text
+        return None
 
     def _emit_macro(
         self,
@@ -829,9 +1011,14 @@ class IOAccessProcessor:
         sink_by_name: dict[str, IOSink],
         descriptor: LanguageDescriptor,
         local_names: frozenset[str],
+        lean_handles: _LeanHandles | None,
     ) -> None:
         raw = call_name(node)
         if raw is None:
+            return
+        if lean_handles is not None and self._emit_lean_handle_method(
+            node, caller_spec, raw, descriptor, lean_handles
+        ):
             return
         sink = self._resolve_sink(
             raw,
@@ -853,15 +1040,380 @@ class IOAccessProcessor:
         )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
+    def _emit_lean_handle_method(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        raw_name: str,
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> bool:
+        # (H) `f.WriteString(s)` / `br.readLine()` / `out.write(..)`: a method call
+        # (H) whose receiver is a bound handle variable is I/O on that handle's
+        # (H) resource. Every lean grammar spells the receiver `recv.method` in the
+        # (H) callee text (Rust field_expression methods included), so one dotted
+        # (H) split covers them all.
+        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return False
+        binding = lean_handles.bindings.get(receiver)
+        if binding is None:
+            return False
+        direction = lean_handles.methods.get(binding.kind, {}).get(method)
+        if direction is None:
+            return False
+        if (
+            direction == IODirection.READ_WRITE
+            and binding.kind == ResourceKind.DATABASE
+        ):
+            # (H) java.sql `execute(sql)`: refine by the SQL first keyword.
+            direction = self._sql_direction(call_node, direction, descriptor)
+        self._emit(caller_spec, direction, binding.kind, binding.identity)
+        return True
+
+    def _maybe_bind_lean_handle(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # (H) Track handle bindings as the source-ordered walk passes each binding
+        # (H) node. Flat like Python's handle walk: last binding wins, no
+        # (H) path-sensitivity (branch-precise handles are an upgrade path).
+        if lean_handles.type_ctors and node.type == cs.TS_CPP_DECLARATION:
+            self._bind_type_decl_handle(node, descriptor, lean_handles)
+            return
+        if (
+            node.type != descriptor.declarator_type
+            and node.type not in _LEAN_ASSIGNMENT_TYPES
+            and node.type not in descriptor.extra_declarator_types
+        ):
+            return
+        targets, values = binding_targets_values(node, descriptor)
+        for name, value in self._paired_binding_values(targets, values):
+            self._apply_lean_binding(
+                name, value, in_scope, import_map, descriptor, lean_handles
+            )
+
     @staticmethod
-    def _resolve_sink(
+    def _paired_binding_values(
+        targets: list[str | None], values: list[Node]
+    ) -> Iterator[tuple[str, Node | None]]:
+        # (H) Pair each named LHS target with its RHS value. One multi-value call
+        # (H) feeding several LHS (Go `f, err := os.Open(..)`): the handle is the
+        # (H) FIRST return value; the later targets (err) are not handles.
+        spread = len(values) == 1 and len(targets) > 1
+        for index, name in enumerate(targets):
+            if name is None:
+                continue
+            if spread:
+                value = values[0] if index == 0 else None
+            else:
+                value = values[index] if index < len(values) else None
+            yield name, value
+
+    def _apply_lean_binding(
+        self,
+        name: str,
+        value: Node | None,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # (H) A C++ init_declarator whose value is an argument_list is the
+        # (H) declaration-constructor form (`std::ifstream in("x")`), owned by
+        # (H) _bind_type_decl_handle -- neither bind nor kill here.
+        if value is not None and value.type == cs.TS_ARGUMENT_LIST:
+            return
+        binding = self._resolve_handle_value(
+            value, in_scope, import_map, descriptor, lean_handles
+        )
+        if binding is not None:
+            lean_handles.bindings[name] = binding
+        else:
+            # (H) Rebinding to a non-handle kills the handle.
+            lean_handles.bindings.pop(name, None)
+
+    def _resolve_handle_value(
+        self,
+        value: Node | None,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> HandleBinding | None:
+        # (H) The HandleBinding an RHS expression yields: a constructor call, a
+        # (H) wrapper around a nested constructor or bound variable, a derive call
+        # (H) on a bound handle, a `new` handle expression, or a handle alias.
+        if value is None:
+            return None
+        node = self._unwrap_result(value)
+        if node.type == descriptor.call_type:
+            return self._handle_from_call(
+                node, in_scope, import_map, descriptor, lean_handles
+            )
+        if (
+            descriptor.new_expression_type is not None
+            and node.type == descriptor.new_expression_type
+        ):
+            return self._handle_from_new(
+                node, in_scope, import_map, descriptor, lean_handles
+            )
+        if node.type == descriptor.identifier_type and node.text is not None:
+            # (H) `g := f` aliases the handle.
+            return lean_handles.bindings.get(node.text.decode(cs.ENCODING_UTF8))
+        return None
+
+    @staticmethod
+    def _unwrap_result(node: Node) -> Node:
+        # (H) Rust Result unwrapping: `File::open(p)?` (try_expression) and
+        # (H) `File::create(p).unwrap()` / `.expect(..)` all yield the inner
+        # (H) handle. The node shapes are Rust-specific, so this is inert
+        # (H) elsewhere.
+        while True:
+            if node.type == cs.TS_RS_TRY_EXPRESSION:
+                inner = next(
+                    (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+                )
+                if inner is None:
+                    return node
+                node = inner
+                continue
+            fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            if fn is not None and fn.type == cs.TS_RS_FIELD_EXPRESSION:
+                field = fn.child_by_field_name(cs.RS_FIELD_FIELD)
+                receiver = fn.child_by_field_name(cs.FIELD_VALUE)
+                if (
+                    field is not None
+                    and field.text is not None
+                    and field.text.decode(cs.ENCODING_UTF8)
+                    in cs.RS_RESULT_UNWRAP_METHODS
+                    and receiver is not None
+                    and receiver.type == cs.TS_RS_CALL_EXPRESSION
+                ):
+                    node = receiver
+                    continue
+            return node
+
+    def _handle_from_call(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> HandleBinding | None:
+        raw = call_name(node)
+        if raw is None:
+            return None
+        # (H) Wrapper first (`BufReader::new(f)`, `bufio.NewReader(f)`): the
+        # (H) resource is arg0's.
+        if (
+            lean_handles.call_wrappers
+            and self._resolve_sink(
+                raw,
+                import_map,
+                lean_handles.call_wrappers,
+                in_scope,
+                descriptor.sinks_require_import,
+                descriptor.scope_separator,
+            )
+            is not None
+        ):
+            return self._resolve_handle_value(
+                self._first_positional_arg(node),
+                in_scope,
+                import_map,
+                descriptor,
+                lean_handles,
+            )
+        # (H) Derive (`conn.createStatement()`): a same-resource sub-handle.
+        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        if sep:
+            parent = lean_handles.bindings.get(receiver)
+            if parent is not None and method in IO_HANDLE_DERIVES.get(
+                parent.kind, frozenset()
+            ):
+                return parent
+        ctor = self._resolve_sink(
+            raw,
+            import_map,
+            lean_handles.ctors,
+            in_scope,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
+        if ctor is None:
+            return None
+        return HandleBinding(
+            kind=ctor.kind,
+            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+        )
+
+    def _handle_from_new(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> HandleBinding | None:
+        # (H) Java `new`-shaped handles. A wrapper type delegates to arg0 (a nested
+        # (H) constructor or a bound variable); PrintWriter falls through to its
+        # (H) filename overload when arg0 is not a handle.
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return None
+        type_name = type_node.text.decode(cs.ENCODING_UTF8)
+        if type_name in lean_handles.new_wrappers:
+            inner = self._resolve_handle_value(
+                self._first_positional_arg(node),
+                in_scope,
+                import_map,
+                descriptor,
+                lean_handles,
+            )
+            if inner is not None:
+                return inner
+        ctor = lean_handles.new_ctors.get(type_name)
+        if ctor is None:
+            # (H) An identity-carrier reached through a wrapper
+            # (H) (`new Scanner(new File("x"))`): `new File` is not a handle, but
+            # (H) it designates the resource, so it resolves to one here.
+            kind = lean_handles.identity_new_types.get(type_name)
+            if kind is None:
+                return None
+            return HandleBinding(
+                kind=kind, identity=self._literal_arg0(node, descriptor)
+            )
+        return HandleBinding(
+            kind=ctor.kind,
+            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+        )
+
+    def _bind_type_decl_handle(
+        self,
+        node: Node,
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # (H) C++ declaration-constructor handles: `std::ifstream in("x.txt")`
+        # (H) (init_declarator with an argument_list value) and the most vexing
+        # (H) parse `std::ifstream dyn(path)` (a function_declarator), which still
+        # (H) binds a FILE handle with a <dynamic> identity. A bare default-
+        # (H) constructed stream (`std::ifstream f;` + later `f.open(..)`) is an
+        # (H) upgrade path.
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return
+        kind = lean_handles.type_ctors.get(type_node.text.decode(cs.ENCODING_UTF8))
+        if kind is None:
+            return
+        for child in node.named_children:
+            if child.type == cs.TS_CPP_INIT_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                value = child.child_by_field_name(cs.FIELD_VALUE)
+                if name is not None:
+                    lean_handles.bindings[name] = HandleBinding(
+                        kind=kind,
+                        identity=self._first_string_arg(value, descriptor),
+                    )
+            elif child.type == cs.TS_CPP_FUNCTION_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                if name is not None:
+                    lean_handles.bindings[name] = HandleBinding(
+                        kind=kind, identity=DYNAMIC_TARGET
+                    )
+
+    @staticmethod
+    def _first_string_arg(args: Node | None, descriptor: LanguageDescriptor) -> str:
+        # (H) The first string-literal argument of a constructor's argument_list
+        # (H) (`std::ifstream in("x.txt", std::ios::binary)` -> x.txt).
+        if args is None:
+            return DYNAMIC_TARGET
+        for child in args.named_children:
+            if child.type == descriptor.string_type:
+                return string_literal(
+                    child, descriptor.string_type, descriptor.string_content_type
+                )
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _first_positional_arg(call_node: Node) -> Node | None:
+        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return None
+        return next((c for c in args.named_children if c.type != cs.TS_COMMENT), None)
+
+    def _ctor_identity(
+        self,
+        call_node: Node,
+        ctor: HandleConstructor,
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> str:
+        identity = literal_target(
+            call_node,
+            ctor.target_arg,
+            ctor.target_kw,
+            string_type=descriptor.string_type,
+            content_type=descriptor.string_content_type,
+            keyword_arg_type=descriptor.keyword_arg_type,
+        )
+        if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
+            return identity
+        # (H) Identity one level down: `Files.newBufferedReader(Path.of("cfg"))`
+        # (H) and `new Scanner(new File("x"))` carry the literal in the factory
+        # (H) call / File constructor at the target position.
+        arg = self._first_positional_arg(call_node)
+        if arg is None:
+            return identity
+        if lean_handles.identity_calls and arg.type == descriptor.call_type:
+            raw = call_name(arg)
+            if raw is not None and raw in lean_handles.identity_calls:
+                return self._literal_arg0(arg, descriptor)
+        if (
+            lean_handles.identity_new_types
+            and descriptor.new_expression_type is not None
+            and arg.type == descriptor.new_expression_type
+        ):
+            inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
+            if (
+                inner_type is not None
+                and inner_type.text is not None
+                and inner_type.text.decode(cs.ENCODING_UTF8)
+                in lean_handles.identity_new_types
+            ):
+                return self._literal_arg0(arg, descriptor)
+        return identity
+
+    @staticmethod
+    def _literal_arg0(node: Node, descriptor: LanguageDescriptor) -> str:
+        return literal_target(
+            node,
+            0,
+            None,
+            string_type=descriptor.string_type,
+            content_type=descriptor.string_content_type,
+            keyword_arg_type=descriptor.keyword_arg_type,
+        )
+
+    @staticmethod
+    def _resolve_sink[T](
         raw: str,
         import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
+        sink_by_name: dict[str, T],
         local_names: frozenset[str],
         sinks_require_import: bool,
         scope_separator: str | None = None,
-    ) -> IOSink | None:
+    ) -> T | None:
         # (H) Rust (scope_separator="::"): sinks are keyed only under the full `std::`
         # (H) form. Expand the head segment through the import map on `::` (`use std::fs;
         # (H) fs::write` -> `std::fs::write`; a fully-qualified `std::fs::write` has an
@@ -952,10 +1504,24 @@ class IOAccessProcessor:
         self._emit(caller_spec, direction, binding.kind, binding.identity)
         return True
 
-    def _sql_direction(self, call_node: Node, fallback: IODirection) -> IODirection:
+    def _sql_direction(
+        self,
+        call_node: Node,
+        fallback: IODirection,
+        descriptor: LanguageDescriptor | None = None,
+    ) -> IODirection:
         # (H) ponytail: first-keyword heuristic only; a full SQL parse is the
         # (H) upgrade path if execute() direction precision ever matters.
-        sql = literal_target(call_node, 0)
+        if descriptor is not None:
+            sql = literal_target(
+                call_node,
+                0,
+                string_type=descriptor.string_type,
+                content_type=descriptor.string_content_type,
+                keyword_arg_type=descriptor.keyword_arg_type,
+            )
+        else:
+            sql = literal_target(call_node, 0)
         if sql == DYNAMIC_TARGET:
             return fallback
         head = sql.strip().split(maxsplit=1)[0].upper() if sql.strip() else ""
