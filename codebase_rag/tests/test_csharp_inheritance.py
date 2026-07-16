@@ -126,6 +126,80 @@ public class C : System.Collections.Generic.List<int> { }
     assert not any("<" in parent for _, parent in inherits), inherits
 
 
+def test_nongeneric_base_pair_resolves_to_generic_sibling(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) C# arity overloading: `class Widget : Widget<object>` names a DIFFERENT
+    # (H) type that shares the simple name (the Polly Foo.cs + Foo.TResult.cs
+    # (H) layout). Name resolution lands on the declaring type itself, and the
+    # (H) self-loop guard must recover the sibling instead of dropping the edge.
+    (csharp_project / "Widget.cs").write_text(
+        "namespace N;\npublic class Widget : Widget<object> { }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "Widget.TResult.cs").write_text(
+        "namespace N;\npublic class Widget<TResult> { }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.endswith("N.Widget") and "TResult" in pa and pa.endswith("N.Widget")
+        for ch, pa in inherits
+    ), inherits
+
+
+def test_nongeneric_interface_base_pair_resolves_to_generic_sibling(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Same arity-pair shape on interfaces (Polly's ITtlStrategy :
+    # (H) ITtlStrategy<object>); an interface's bases are INHERITS.
+    (csharp_project / "ITtl.cs").write_text(
+        "namespace N;\npublic interface ITtl : ITtl<object> { }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "ITtl.TResult.cs").write_text(
+        "namespace N;\npublic interface ITtl<TResult> { }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        ch.endswith("N.ITtl") and "TResult" in pa and pa.endswith("N.ITtl")
+        for ch, pa in inherits
+    ), inherits
+
+
+def test_arity_pair_across_directories_resolves_project_wide(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Polly's BrokenCircuitException shape: the generic child lives in one
+    # (H) project directory, the non-generic base in another, so the
+    # (H) same-package tier finds nothing and the project-wide tier must
+    # (H) recover the single other declaration.
+    core = csharp_project / "Core"
+    legacy = csharp_project / "Legacy"
+    core.mkdir()
+    legacy.mkdir()
+    (core / "Broken.cs").write_text(
+        "namespace N.Core;\npublic class Broken { }\n",
+        encoding="utf-8",
+    )
+    (legacy / "Broken.TResult.cs").write_text(
+        "namespace N.Legacy;\npublic class Broken<TResult> : Broken { }\n",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(mock_ingestor, "INHERITS")
+    assert any(
+        "TResult" in ch and ch.endswith("Broken") and ".Core." in pa
+        for ch, pa in inherits
+    ), inherits
+
+
 def test_enum_underlying_type_is_not_inheritance(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
