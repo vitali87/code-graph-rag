@@ -47,6 +47,7 @@ public class Sample {
 }
 
 public interface IDrawable { void Draw(); }
+public interface IBig : IDrawable { }
 public enum Direction { North, South }
 public struct Vec { public int X; }
 public record Person(string Name);
@@ -161,6 +162,26 @@ def test_oracle_ignores_cgr_ignored_dirs_for_classification(
     rels = {(e.rel_type, e.target_name) for e in oracle.name_edges}
     assert (cs.RelationshipType.INHERITS.value, "Drawable") in rels, rels
     assert (cs.RelationshipType.IMPLEMENTS.value, "Drawable") not in rels, rels
+
+
+def test_oracle_interface_bases_are_inherits(tmp_path: Path) -> None:
+    # (H) An interface extending an interface is INHERITS in cgr's model (the
+    # (H) Java oracle already matches this), so the oracle must classify a base
+    # (H) by the DECLARING type, not by the base's own kind; otherwise every
+    # (H) interface-to-interface edge grades as a false positive (26 on Polly).
+    _require_csharp()
+    project = tmp_path / "csharp_iface_bases"
+    project.mkdir()
+    (project / "I.cs").write_text(
+        "namespace N;\n"
+        "public interface IShape { }\n"
+        "public interface IExtended : IShape { }\n",
+        encoding="utf-8",
+    )
+    oracle = run_csharp_oracle(project)
+    rels = {(e.rel_type, e.target_name) for e in oracle.name_edges}
+    assert (cs.RelationshipType.INHERITS.value, "IShape") in rels, rels
+    assert (cs.RelationshipType.IMPLEMENTS.value, "IShape") not in rels, rels
 
 
 def test_oracle_includes_declarations_in_inactive_if_regions(
