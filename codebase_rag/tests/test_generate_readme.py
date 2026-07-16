@@ -30,7 +30,19 @@ class TestDocsTargets:
             "<!-- SECTION:mcp_tools -->\nstale\n<!-- /SECTION:mcp_tools -->",
             encoding="utf-8",
         )
-        update_file(page, {"mcp_tools": "fresh"})
+        assert update_file(page, {"mcp_tools": "fresh"}) is True
         updated = page.read_text(encoding="utf-8")
         assert "fresh" in updated
         assert "stale" not in updated
+
+    def test_update_file_skips_write_when_unchanged(self, tmp_path: Path) -> None:
+        page = tmp_path / "page.md"
+        page.write_text(
+            "<!-- SECTION:mcp_tools -->\nfresh\n<!-- /SECTION:mcp_tools -->",
+            encoding="utf-8",
+        )
+        page.chmod(0o444)
+        try:
+            assert update_file(page, {"mcp_tools": "fresh"}) is False
+        finally:
+            page.chmod(0o644)
