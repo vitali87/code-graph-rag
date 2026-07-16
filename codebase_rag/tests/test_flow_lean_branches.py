@@ -89,7 +89,7 @@ def test_java_catch_sees_pre_kill_taint(tmp_path: Path) -> None:
         "A.java": (
             "class A {\n"
             "  void work() {\n"
-            "    String s = System.getenv(\"SECRET\");\n"
+            '    String s = System.getenv("SECRET");\n'
             "    try {\n"
             '      s = "safe";\n'
             "      risky();\n"
@@ -110,7 +110,7 @@ def test_java_while_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
         "A.java": (
             "class A {\n"
             "  void work(boolean cond) {\n"
-            "    String s = System.getenv(\"SECRET\");\n"
+            '    String s = System.getenv("SECRET");\n'
             "    while (cond) {\n"
             '      s = "safe";\n'
             "    }\n"
@@ -187,7 +187,7 @@ def test_cpp_for_loop_carried_taint(tmp_path: Path) -> None:
             "#include <cstdio>\n"
             "#include <cstdlib>\n"
             "void work() {\n"
-            "    const char* s = \"\";\n"
+            '    const char* s = "";\n'
             "    for (int i = 0; i < 2; i++) {\n"
             "        printf(s);\n"
             '        s = getenv("SECRET");\n'

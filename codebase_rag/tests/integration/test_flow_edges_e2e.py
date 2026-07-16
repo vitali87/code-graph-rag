@@ -114,25 +114,25 @@ def test_io_and_flow_edges_survive_the_memgraph_round_trip(
 ) -> None:
     _index(memgraph_ingestor, flow_project, io=True)
 
-    # Resource endpoints exist (no dangling FLOWS_TO edge).
+    # (H) Resource endpoints exist (no dangling FLOWS_TO edge).
     resources = _resource_qns(memgraph_ingestor)
     assert ENV_K in resources
     assert STDOUT in resources
 
-    # READS_FROM / WRITES_TO landed alongside FLOWS_TO.
+    # (H) READS_FROM / WRITES_TO landed alongside FLOWS_TO.
     types = _rel_types(memgraph_ingestor)
     assert cs.RelationshipType.READS_FROM.value in types
     assert cs.RelationshipType.WRITES_TO.value in types
     assert cs.RelationshipType.FLOWS_TO.value in types
 
     flows = _flows(memgraph_ingestor)
-    # resource -> resource: the env value reaches stdout.
+    # (H) resource -> resource: the env value reaches stdout.
     assert _has(flows, ENV_K, STDOUT, kind=FlowKind.RESOURCE.value)
-    # arg flow: a tainted local passed into forward().
+    # (H) arg flow: a tainted local passed into forward().
     assert _has(
         flows, "flow.leak", "flow.forward", kind=FlowKind.ARG.value, via="arg:0"
     )
-    # return flow: build() returns a tainted value into leak().
+    # (H) return flow: build() returns a tainted value into leak().
     assert _has(
         flows, "flow.build", "flow.leak", kind=FlowKind.RETURN.value, via="return"
     )
