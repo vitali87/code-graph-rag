@@ -313,5 +313,24 @@ def test_cpp_do_while_condition_sees_body_taint(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
+def test_rust_loop_kill_has_no_skip_path(tmp_path: Path) -> None:
+    # (H) A Rust `loop` always enters its body before it can break, so a kill
+    # (H) on the straight-line body path must not be undone by a skip-path merge.
+    files = {
+        "main.rs": (
+            "fn work() {\n"
+            '    let mut s = std::env::var("SECRET").unwrap();\n'
+            "    loop {\n"
+            "        s = String::new();\n"
+            "        break;\n"
+            "    }\n"
+            '    std::fs::write("out.txt", &s).unwrap();\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
