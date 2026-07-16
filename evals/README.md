@@ -851,8 +851,9 @@ it. cgr's C# `CALLS` **and** `INSTANTIATES` edges, reduced to
 object-creation sites extracted by Roslyn (the same oracle as the C# L1 structure
 eval), over the same first-party name universe. `INSTANTIATES` counts because
 `new T()` on a type with no explicit constructor has no ctor node to `CALL` — the
-oracle records the creation site by type name either way. Roslyn's parser is
-independent of cgr's tree-sitter C# frontend.
+oracle records the creation site by type name either way, and class names join
+the declared universe so a creation of a fully ctorless type is graded too.
+Roslyn's parser is independent of cgr's tree-sitter C# frontend.
 
 ```bash
 uv run python -m evals.csharp_retrieval --target <csharp-sources>
@@ -866,7 +867,7 @@ cgr's C# call graph matches the Roslyn oracle on the fixture.
 
 **This is the eval that measures the #738 hybrid frontend's win.** On Polly
 (~600 files), precision is **1.0** in both modes and the hybrid frontend lifts
-recall **0.766 → 0.891** (F1 **0.868 → 0.943**): the location-keyed Roslyn call
+recall **0.774 → 0.895** (F1 **0.873 → 0.945**): the location-keyed Roslyn call
 facts resolve the overloads, extension methods, and cross-project dispatch the
 tree-sitter heuristics cannot. The residual misses are dominated by BCL
 name collisions the simple-name universe cannot distinguish (`list.Add` graded
