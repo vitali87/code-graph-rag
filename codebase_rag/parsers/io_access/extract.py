@@ -5,7 +5,9 @@ from collections.abc import Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
+from ..utils import cpp_declarator_name
 from .constants import DYNAMIC_TARGET
+from .descriptor import LanguageDescriptor
 
 # (H) Definition nodes whose BODY is a separate scope but whose HEADER (default
 # (H) arg values, annotations, base classes, decorators) executes in the
@@ -209,6 +211,74 @@ def first_token_arg_string(args: Node, string_type: str, content_type: str) -> s
     if len(arg0) == 1 and arg0[0].type == string_type:
         return string_literal(arg0[0], string_type, content_type)
     return DYNAMIC_TARGET
+
+
+def lean_binding_targets(
+    node: Node, descriptor: LanguageDescriptor
+) -> list[str | None]:
+    # (H) LHS name(s) of a lean binding: a bare identifier, or a Go expression_list
+    # (H) of them. A non-identifier target (JS destructuring, a field/index write)
+    # (H) yields None so its RHS position is still consumed but no var is bound.
+    # (H) Shared by the flow taint walk and the I/O handle walk (issue #714).
+    if node.type == descriptor.identifier_type:
+        return [node.text.decode(cs.ENCODING_UTF8) if node.text else None]
+    if node.type == cs.TS_GO_EXPRESSION_LIST:
+        return [
+            c.text.decode(cs.ENCODING_UTF8)
+            if c.type == descriptor.identifier_type and c.text
+            else None
+            for c in node.named_children
+            if c.type != cs.TS_COMMENT
+        ]
+    return [None]
+
+
+def lean_binding_values(
+    node: Node | None, descriptor: LanguageDescriptor
+) -> list[Node]:
+    del descriptor
+    if node is None:
+        return []
+    if node.type == cs.TS_GO_EXPRESSION_LIST:
+        return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+    return [node]
+
+
+def binding_targets_values(
+    node: Node, descriptor: LanguageDescriptor
+) -> tuple[list[str | None], list[Node]]:
+    # (H) The (LHS names, RHS value nodes) of one binding node across the lean
+    # (H) grammars: JS uses `name`/`value` (declarator) or `left`/`right`
+    # (H) (assignment); Go uses `left`/`right` expression_lists (`:=`, `=`) or
+    # (H) `name`/`value` (`var`/`const`); Rust `let` binds via `pattern`, C++
+    # (H) `int x = ..` via a nested `declarator` (unwrapped through pointer/
+    # (H) reference declarators).
+    left = node.child_by_field_name(cs.FIELD_LEFT)
+    if left is not None:
+        return (
+            lean_binding_targets(left, descriptor),
+            lean_binding_values(node.child_by_field_name(cs.FIELD_RIGHT), descriptor),
+        )
+    if (
+        descriptor.declarator_name_field is not None
+        and node.type == descriptor.declarator_type
+    ):
+        field_node = node.child_by_field_name(descriptor.declarator_name_field)
+        if field_node is None:
+            targets: list[str | None] = [None]
+        else:
+            targets = lean_binding_targets(field_node, descriptor)
+            if targets == [None]:
+                targets = [cpp_declarator_name(field_node)]
+        return targets, lean_binding_values(
+            node.child_by_field_name(cs.FIELD_VALUE), descriptor
+        )
+    targets = []
+    for name in node.children_by_field_name(cs.TS_FIELD_NAME):
+        targets.extend(lean_binding_targets(name, descriptor))
+    return targets, lean_binding_values(
+        node.child_by_field_name(cs.FIELD_VALUE), descriptor
+    )
 
 
 def keyword_value(args: Node, keyword: str) -> Node | None:

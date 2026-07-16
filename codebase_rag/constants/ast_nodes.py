@@ -221,6 +221,9 @@ TS_DECLARATION = "declaration"
 TS_STRING_LITERAL = "string_literal"
 TS_SYSTEM_LIB_STRING = "system_lib_string"
 TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
+# (H) Plain call/constructor argument list (C++ `in("x.txt")` init_declarator
+# (H) value, Java `new FileWriter("x")` arguments).
+TS_ARGUMENT_LIST = "argument_list"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
 

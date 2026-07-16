@@ -114,3 +114,26 @@ def test_cpp_nested_lambda_not_credited(
         "}\n",
     )
     assert (_READS, "resource::ENV::LAMBDA_ONLY") not in _io_edges(memgraph_ingestor)
+
+
+def test_cpp_fstream_handles(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 handle walk: ifstream/ofstream declarations bind FILE
+    # (H) handles; `>>` reads, `<<` and .write() write.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "#include <fstream>\n"
+        "#include <string>\n"
+        "void work() {\n"
+        '    std::ifstream in("in.txt");\n'
+        "    std::string word;\n"
+        "    in >> word;\n"
+        '    std::ofstream out("out.txt");\n'
+        "    out << word;\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::FILE::in.txt") in edges
+    assert (_WRITES, "resource::FILE::out.txt") in edges

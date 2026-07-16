@@ -363,3 +363,25 @@ def test_scoped_package_ending_in_builtin_name_no_edge(
         "function save(d) {\n  fs.writeFileSync('a.txt', d);\n}\n",
     )
     assert (_WRITES, "resource::FILE::a.txt") not in _io_edges(memgraph_ingestor)
+
+
+def test_js_stream_handle_methods(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 handle walk: fs.createWriteStream binds a FILE handle; the
+    # (H) write/end methods carry the I/O.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "main.js",
+        "const fs = require('fs');\n"
+        "function save(data) {\n"
+        "  const ws = fs.createWriteStream('out.txt');\n"
+        "  ws.write(data);\n"
+        "  const rs = fs.createReadStream('in.txt');\n"
+        "  rs.read();\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_WRITES, "resource::FILE::out.txt") in edges
+    assert (_READS, "resource::FILE::in.txt") in edges

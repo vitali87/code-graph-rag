@@ -140,3 +140,27 @@ def test_rust_nested_closure_not_credited(
         'fn f() {\n    let g = || { std::fs::write("secret.txt", "x"); };\n}\n',
     )
     assert (_WRITES, "resource::FILE::secret.txt") not in _io_edges(memgraph_ingestor)
+
+
+def test_rust_file_handle_methods(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # (H) issue #714 handle walk: File::open (through `?`) and File::create
+    # (H) (through .unwrap()) bind FILE handles; read/write methods carry the I/O.
+    _build(
+        memgraph_ingestor,
+        tmp_path,
+        "use std::fs::File;\n"
+        "use std::io::{Read, Write};\n"
+        "fn work() -> std::io::Result<()> {\n"
+        '    let mut f = File::open("in.txt")?;\n'
+        "    let mut s = String::new();\n"
+        "    f.read_to_string(&mut s)?;\n"
+        '    let mut out = File::create("out.txt").unwrap();\n'
+        "    out.write_all(s.as_bytes())?;\n"
+        "    Ok(())\n"
+        "}\n",
+    )
+    edges = _io_edges(memgraph_ingestor)
+    assert (_READS, "resource::FILE::in.txt") in edges
+    assert (_WRITES, "resource::FILE::out.txt") in edges

@@ -73,6 +73,9 @@ TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
 TS_RS_TYPE_ARGUMENTS = "type_arguments"
 TS_RS_TRY_EXPRESSION = "try_expression"
 TS_RS_FIELD_EXPRESSION = "field_expression"
+# (H) Result-unwrapping method names: `File::open(p)?` / `.unwrap()` / `.expect(..)`
+# (H) all yield the inner handle, so the I/O handle binder unwraps through them.
+RS_RESULT_UNWRAP_METHODS = frozenset({"unwrap", "expect"})
 TS_RS_FIELD_PATH = "path"
 TS_RS_TOKEN_DOT = "."
 # (H) Nodes that can be a receiver token preceding `.method` in a macro token

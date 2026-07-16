@@ -1,11 +1,8 @@
-"""Handle-aware I/O for the lean non-Python walk (issue #714).
-
-A call binding a resource handle (`os.OpenFile`, `fs.createWriteStream`,
-`new FileWriter`, `File::open`, `std::ifstream f("x")`) attributes later
-method calls on the bound variable to the constructor's resource, exactly
-as Python's handle walk does for `open()` / `sqlite3.connect()`.
-"""
-
+# (H) Handle-aware I/O for the lean non-Python walk (issue #714): a call binding
+# (H) a resource handle (`os.OpenFile`, `fs.createWriteStream`, `new FileWriter`,
+# (H) `File::open`, `std::ifstream f("x")`) attributes later method calls on the
+# (H) bound variable to the constructor's resource, exactly as Python's handle
+# (H) walk does for `open()` / `sqlite3.connect()`.
 from __future__ import annotations
 
 from pathlib import Path
@@ -47,10 +44,15 @@ def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
 
 
 def _has(rels: set[tuple[str, str, str]], caller: str, rel: str, resource: str) -> bool:
-    return any(a.endswith(caller) and r == rel and b == resource for a, r, b in rels)
+    # (H) Java method qns carry a parameter signature suffix (`A.fetch(String)`);
+    # (H) match on the qn with any trailing `(...)` stripped.
+    return any(
+        a.partition("(")[0].endswith(caller) and r == rel and b == resource
+        for a, r, b in rels
+    )
 
 
-# ---------------------------------------------------------------- Go
+# (H) Go tests below.
 
 
 def test_go_openfile_handle_write(tmp_path: Path) -> None:
@@ -130,6 +132,24 @@ def test_go_net_dial_write(tmp_path: Path) -> None:
     assert _has(rels, "main.send", WRITES_TO, "resource::SOCKET::example.com:80")
 
 
+def test_go_handle_alias_tracks_binding(tmp_path: Path) -> None:
+    # (H) `g := f` aliases the handle; I/O through the alias still attributes to
+    # (H) the constructor's resource.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func save(s string) {\n"
+            '\tf, _ := os.OpenFile("data.txt", os.O_WRONLY, 0644)\n'
+            "\tg := f\n"
+            "\tg.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::data.txt")
+
+
 def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
     # (H) Rebinding the variable to a non-handle kills the binding.
     files = {
@@ -150,17 +170,14 @@ def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
 def test_go_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
     files = {
         "main.go": (
-            "package main\n\n"
-            "func f(w Writer, s string) {\n"
-            "\tw.WriteString(s)\n"
-            "}\n"
+            "package main\n\nfunc f(w Writer, s string) {\n\tw.WriteString(s)\n}\n"
         )
     }
     rels = _run_io(tmp_path, files)
     assert not any(r == WRITES_TO for _, r, _ in rels)
 
 
-# ---------------------------------------------------------------- JS/TS
+# (H) JS/TS tests below.
 
 
 def test_js_write_stream_handle(tmp_path: Path) -> None:
@@ -214,7 +231,7 @@ def test_js_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
     assert not any(r == WRITES_TO for _, r, _ in rels)
 
 
-# ---------------------------------------------------------------- Java
+# (H) Java tests below.
 
 
 def test_java_new_filewriter_write(tmp_path: Path) -> None:
@@ -292,7 +309,66 @@ def test_java_connection_statement_query(tmp_path: Path) -> None:
     assert _has(rels, "A.fetch", READS_FROM, "resource::DATABASE::<dynamic>")
 
 
-# ---------------------------------------------------------------- Rust
+def test_java_scanner_new_file_identity(tmp_path: Path) -> None:
+    # (H) `new Scanner(new File("x"))`: Scanner is a wrapper; File is not a handle
+    # (H) itself but carries the identity literal.
+    files = {
+        "A.java": (
+            "import java.io.File;\n"
+            "import java.util.Scanner;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            '    Scanner sc = new Scanner(new File("data.csv"));\n'
+            "    String line = sc.nextLine();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::data.csv")
+
+
+def test_java_printwriter_filename_overload(tmp_path: Path) -> None:
+    # (H) PrintWriter is both a wrapper and a direct filename constructor; the
+    # (H) filename overload must bind when arg0 is not a handle.
+    files = {
+        "A.java": (
+            "import java.io.PrintWriter;\n"
+            "class A {\n"
+            "  void save(String s) throws Exception {\n"
+            '    PrintWriter pw = new PrintWriter("report.txt");\n'
+            "    pw.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.save", WRITES_TO, "resource::FILE::report.txt")
+
+
+def test_java_statement_execute_sql_refinement(tmp_path: Path) -> None:
+    # (H) `execute(sql)` is READ_WRITE by signature; a SELECT literal refines it
+    # (H) to a READ only.
+    files = {
+        "A.java": (
+            "import java.sql.Connection;\n"
+            "import java.sql.DriverManager;\n"
+            "import java.sql.Statement;\n"
+            "class A {\n"
+            "  void fetch(String url) throws Exception {\n"
+            "    Connection c = DriverManager.getConnection(url);\n"
+            "    Statement st = c.createStatement();\n"
+            '    st.execute("SELECT * FROM t");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.fetch", READS_FROM, "resource::DATABASE::<dynamic>")
+    assert not _has(rels, "A.fetch", WRITES_TO, "resource::DATABASE::<dynamic>")
+
+
+# (H) Rust tests below.
 
 
 def test_rust_file_open_read_to_string(tmp_path: Path) -> None:
@@ -365,7 +441,7 @@ def test_rust_bufreader_wrapper(tmp_path: Path) -> None:
     assert _has(rels, "main.load", READS_FROM, "resource::FILE::in.txt")
 
 
-# ---------------------------------------------------------------- C++
+# (H) C++ tests below.
 
 
 def test_cpp_ofstream_insertion_writes(tmp_path: Path) -> None:
@@ -445,7 +521,7 @@ def test_cpp_arithmetic_shift_no_edge(tmp_path: Path) -> None:
     assert not any(a.endswith("main.shift") for a, _, _ in rels)
 
 
-# ---------------------------------------------------------------- Python derive
+# (H) Python derive tests below.
 
 
 def test_python_cursor_derives_connection_handle(tmp_path: Path) -> None:
