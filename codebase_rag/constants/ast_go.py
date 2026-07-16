@@ -53,6 +53,9 @@ TS_GO_LITERAL_VALUE = "literal_value"
 TS_GO_KEYED_ELEMENT = "keyed_element"
 TS_GO_LITERAL_ELEMENT = "literal_element"
 TS_GO_UNARY_EXPRESSION = "unary_expression"
+# (H) `[]byte(s)` / `string(b)`: value-preserving conversion, unwrapped by the
+# (H) lean flow walk so the operand's taint carries through (issue #714).
+TS_GO_TYPE_CONVERSION_EXPRESSION = "type_conversion_expression"
 TS_GO_POINTER_TYPE = "pointer_type"
 # (H) Go composite types a method may return; a chained call lands on the CONTAINER,
 # (H) not its element, so return-type inference must not unwrap these to an element

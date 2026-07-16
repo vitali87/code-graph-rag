@@ -66,6 +66,13 @@ TS_RS_FIELD_DECLARATION = "field_declaration"
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
 TS_RS_MATCH_EXPRESSION = "match_expression"
 TS_RS_MATCH_ARM = "match_arm"
+TS_RS_IF_EXPRESSION = "if_expression"
+# (H) `&s` / `&mut s`: a borrow is value-preserving, unwrapped by the lean flow
+# (H) walk so the referent's taint carries through (issue #714).
+TS_RS_REFERENCE_EXPRESSION = "reference_expression"
+TS_RS_FOR_EXPRESSION = "for_expression"
+TS_RS_WHILE_EXPRESSION = "while_expression"
+TS_RS_LOOP_EXPRESSION = "loop_expression"
 # (H) A Rust call node whose callee is descended for chain flattening: a plain call
 # (H) or a turbofish generic_function (`f::<T>()`).
 RS_CALL_OR_GENERIC_FN = (TS_RS_CALL_EXPRESSION, TS_GENERIC_FUNCTION)

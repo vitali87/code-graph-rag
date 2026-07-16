@@ -126,16 +126,15 @@ def test_java_while_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
 def test_cpp_catch_sees_pre_kill_taint(tmp_path: Path) -> None:
     files = {
         "main.cpp": (
-            "#include <cstdio>\n"
             "#include <cstdlib>\n"
-            "#include <string>\n"
+            "#include <iostream>\n"
             "void work() {\n"
-            '    std::string s = getenv("SECRET");\n'
+            '    const char* s = getenv("SECRET");\n'
             "    try {\n"
             '        s = "safe";\n'
             "        risky();\n"
             "    } catch (...) {\n"
-            "        printf(s.c_str());\n"
+            "        std::cout << s;\n"
             "    }\n"
             "}\n"
         )
