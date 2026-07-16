@@ -583,19 +583,26 @@ class ClassIngestMixin:
         if entry.language != cs.SupportedLanguage.CSHARP:
             return None
         simple = entry.child_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        package_prefix = (
-            entry.module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
-        )
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-        matches = {
+        candidates = {
             qn
             for qn in self.function_registry.find_ending_with(simple)
             if qn != entry.child_qn
-            and qn.startswith(package_prefix)
             and simple in qn.split(cs.SEPARATOR_DOT)
             and self.function_registry.get(qn) in type_decls
         }
-        return matches.pop() if len(matches) == 1 else None
+        package_prefix = (
+            entry.module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+        )
+        in_package = {qn for qn in candidates if qn.startswith(package_prefix)}
+        if len(in_package) == 1:
+            return in_package.pop()
+        if in_package:
+            return None
+        # (H) No same-package sibling: the pair can span projects (Polly's
+        # (H) legacy BrokenCircuitException<TResult> : the Polly.Core
+        # (H) non-generic), so fall back to a project-wide unique declaration.
+        return candidates.pop() if len(candidates) == 1 else None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
         # (H) True when the package __init__ makes `simple` an attribute of the
