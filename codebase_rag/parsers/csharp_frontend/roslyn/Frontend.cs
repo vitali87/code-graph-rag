@@ -35,12 +35,11 @@ public static class Frontend
         const int maxFailureLines = 5;
         using var failedHandler = workspace.RegisterWorkspaceFailedHandler(e =>
         {
+            // The handler fires from parallel project loads, so the counter
+            // must be atomic for the cap and the summary line to be exact.
             var hard = e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure;
-            if (hard)
-            {
-                failures++;
-            }
-            if (debug || (hard && failures <= maxFailureLines))
+            var count = hard ? Interlocked.Increment(ref failures) : 0;
+            if (debug || (hard && count <= maxFailureLines))
             {
                 Console.Error.WriteLine($"[WorkspaceFailed] {e.Diagnostic.Kind}: {e.Diagnostic.Message}");
             }
@@ -419,9 +418,16 @@ public static class Frontend
 
     private static string? FindProjectOrSolution(string rootFull)
     {
+        // Skip candidates under ignored directories (obj/ holds generated
+        // .csproj copies after a restore), matching the Python discovery.
+        var ignored = IgnoredDirs();
         foreach (var pattern in new[] { "*.sln", "*.slnx", "*.csproj" })
         {
             var found = Directory.EnumerateFiles(rootFull, pattern, SearchOption.AllDirectories)
+                .Where(p => !Path.GetRelativePath(rootFull, p)
+                    .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .SkipLast(1)
+                    .Any(ignored.Contains))
                 .OrderBy(p => p.Length).FirstOrDefault();
             if (found is not null)
             {
