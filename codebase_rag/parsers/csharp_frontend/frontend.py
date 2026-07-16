@@ -94,16 +94,19 @@ def _project_candidates(repo_path: Path) -> list[Path]:
     def not_ignored(p: Path) -> bool:
         return not any(part in _IGNORE_DIRS for part in p.relative_to(repo_path).parts)
 
-    slns = sorted(
-        (p for p in repo_path.rglob("*.sln") if not_ignored(p)),
-        key=lambda p: len(str(p)),
-    )
-    if slns:
-        return slns
-    return sorted(
-        (p for p in repo_path.rglob("*.csproj") if not_ignored(p)),
-        key=lambda p: len(str(p)),
-    )
+    def shortest_first(pattern: str) -> list[Path]:
+        return sorted(
+            (p for p in repo_path.rglob(pattern) if not_ignored(p)),
+            key=lambda p: len(str(p)),
+        )
+
+    # (H) Both solution formats count: repos migrated to the XML format ship a
+    # (H) .slnx and no .sln (e.g. Polly), and missing it degrades the whole run
+    # (H) to the facts of one fallback csproj.
+    for pattern in ("*.sln", "*.slnx", "*.csproj"):
+        if candidates := shortest_first(pattern):
+            return candidates
+    return []
 
 
 def find_csharp_project(repo_path: Path) -> Path | None:
@@ -217,7 +220,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
         return _empty_facts()
-    return CSharpSemanticFacts(
+    facts = CSharpSemanticFacts(
         base_kinds={
             (type_fact["file"], int(type_fact["line"])): _base_kinds(
                 type_fact.get("bases", [])
@@ -251,6 +254,12 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             for query in payload.get("queries", [])
         ],
     )
+    if not any(facts) and stderr.strip():
+        # (H) A well-formed but entirely empty payload means the workspace load
+        # (H) went wrong (SDK pin mismatch, unloadable solution) -- surface the
+        # (H) tool's diagnostics instead of looking identical to success.
+        logger.warning(ls.CSHARP_FRONTEND_NO_FACTS.format(stderr=stderr.strip()))
+    return facts
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
@@ -281,6 +290,7 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
         return _empty_facts()
     dll = _build_tool(dotnet)
     if dll is None:
+        logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
         return _empty_facts()
     _restore(dotnet, project)
     try:
@@ -296,6 +306,7 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
                 "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
             },
         )
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError) as error:
+        logger.warning(ls.CSHARP_FRONTEND_RUN_FAILED.format(error=error))
         return _empty_facts()
     return _parse_payload(proc.stdout, proc.stderr)
