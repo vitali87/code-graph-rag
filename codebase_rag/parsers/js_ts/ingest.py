@@ -58,6 +58,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         fallback_label: str | None = None,
         fallback_qn: str | None = None,
+        parent_span: tuple[str, int, int] | None = None,
     ) -> None: ...
 
     @abstractmethod
@@ -78,7 +79,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str]: ...
+    ) -> tuple[str, str, tuple[str, int, int] | None]: ...
 
     def _ingest_prototype_inheritance(
         self,
@@ -191,7 +192,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         # (H) already correct there).
         if lang_config is None:
             return None, None
-        parent_label, parent_qn = self._determine_function_parent(
+        parent_label, parent_qn, _ = self._determine_function_parent(
             func_node, child_qn, module_qn, lang_config, language
         )
         if str(parent_label) == cs.NodeLabel.MODULE.value:

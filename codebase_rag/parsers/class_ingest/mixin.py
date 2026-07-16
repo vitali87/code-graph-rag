@@ -203,6 +203,9 @@ class ClassIngestMixin:
         child_label: str,
         child_qn: str,
         module_qn: str,
+        fallback_label: str | None = None,
+        fallback_qn: str | None = None,
+        parent_span: FunctionSpanKey | None = None,
     ) -> None: ...
 
     @abstractmethod
@@ -213,7 +216,7 @@ class ClassIngestMixin:
         module_qn: str,
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str]: ...
+    ) -> tuple[str, str, FunctionSpanKey | None]: ...
 
     @abstractmethod
     def _resolve_cpp_class_qn(
@@ -488,13 +491,17 @@ class ClassIngestMixin:
         """
         if entry.parent_qn == entry.child_qn:
             # (H) Parse-time resolution can land on the child ITSELF. A
-            # (H) self-edge is never real, so the written base must refer to a
-            # (H) SHADOWED outer name (thrift's `pub enum Error` implementing
-            # (H) the std `Error` trait): when the module-anchored remainder is
-            # (H) a bare single segment it IS the written name and
-            # (H) externalizes. A dotted remainder (a nested child like
-            # (H) SimpleHashMap.Entry) was never written as such; derivation
-            # (H) would be a lie, so no edge.
+            # (H) self-edge is never real. In C# the written base can be an
+            # (H) ARITY sibling (`class Foo : Foo<object>`, a different type
+            # (H) sharing the simple name); recover it before falling back.
+            # (H) Otherwise the written base must refer to a SHADOWED outer
+            # (H) name (thrift's `pub enum Error` implementing the std `Error`
+            # (H) trait): when the module-anchored remainder is a bare single
+            # (H) segment it IS the written name and externalizes. A dotted
+            # (H) remainder (a nested child like SimpleHashMap.Entry) was
+            # (H) never written as such; derivation would be a lie, so no edge.
+            if (sibling := self._csharp_arity_sibling(entry)) is not None:
+                return sibling, False
             self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
             if entry.parent_qn.startswith(self_prefix):
                 raw = entry.parent_qn[len(self_prefix) :]
@@ -568,6 +575,37 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
+        # (H) Only C# overloads type names by generic arity, so only there can a
+        # (H) base that resolves to the declaring type itself legally name a
+        # (H) DIFFERENT type. The sibling conventionally lives beside the child
+        # (H) (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
+        # (H) type declaration under the module's parent package qualifies;
+        # (H) ambiguity keeps the no-edge answer rather than guessing.
+        if entry.language != cs.SupportedLanguage.CSHARP:
+            return None
+        simple = entry.child_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        candidates = {
+            qn
+            for qn in self.function_registry.find_ending_with(simple)
+            if qn != entry.child_qn
+            and simple in qn.split(cs.SEPARATOR_DOT)
+            and self.function_registry.get(qn) in type_decls
+        }
+        package_prefix = (
+            entry.module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+        )
+        in_package = {qn for qn in candidates if qn.startswith(package_prefix)}
+        if len(in_package) == 1:
+            return in_package.pop()
+        if in_package:
+            return None
+        # (H) No same-package sibling: the pair can span projects (Polly's
+        # (H) legacy BrokenCircuitException<TResult> : the Polly.Core
+        # (H) non-generic), so fall back to a project-wide unique declaration.
+        return candidates.pop() if len(candidates) == 1 else None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
         # (H) True when the package __init__ makes `simple` an attribute of the
@@ -742,11 +780,16 @@ class ClassIngestMixin:
                 leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
                 self.simple_name_lookup[leaf].add(class_qn)
 
-        parent_label, parent_qn = self._determine_function_parent(
+        parent_label, parent_qn, parent_span = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
         )
         self._emit_or_defer_defines(
-            parent_label, parent_qn, node_type, class_qn, module_qn
+            parent_label,
+            parent_qn,
+            node_type,
+            class_qn,
+            module_qn,
+            parent_span=parent_span,
         )
         # (H) For a templated class the canonical node is the template_declaration
         # (H) wrapper, which has no `body` field. Its members -- base clause, fields,
