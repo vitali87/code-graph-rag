@@ -98,6 +98,9 @@ TS_RS_TRAIT_BOUNDS = "trait_bounds"
 FIELD_VALUE = "value"
 FIELD_LEFT = "left"
 FIELD_RIGHT = "right"
+# (H) A C-style for's post-iteration clause: Java/C++ hold it in an `update`
+# (H) field on the loop node, Go inside its `for_clause`.
+FIELD_UPDATE = "update"
 FIELD_FIELD = "field"
 FIELD_SCOPE = "scope"
 FIELD_SUPERCLASS = "superclass"

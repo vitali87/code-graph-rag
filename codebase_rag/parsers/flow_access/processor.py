@@ -343,8 +343,22 @@ class FlowProcessor:
         if node.type in jc.descriptor.extra_declarator_types:
             self._apply_js_leaf(node, state, jc)
         body = node.child_by_field_name(cs.FIELD_BODY)
+        # (H) A C-style for's update clause runs only AFTER a completed body
+        # (H) iteration -- never on the zero-iteration path and never before the
+        # (H) first body pass -- so it is excluded from the pre-body header and
+        # (H) walked after each body pass instead. Java/C++ hold it in an
+        # (H) `update` field on the loop node; Go nests it inside the for_clause.
+        update = node.child_by_field_name(cs.FIELD_UPDATE)
         for child in node.named_children:
             if body is not None and child.id == body.id:
+                continue
+            if update is not None and child.id == update.id:
+                continue
+            if child.type == cs.TS_GO_FOR_CLAUSE and update is None:
+                update = child.child_by_field_name(cs.FIELD_UPDATE)
+                for part in child.named_children:
+                    if update is None or part.id != update.id:
+                        state = self._walk_flat_stmt(part, state, jc)
                 continue
             state = self._walk_flat_stmt(child, state, jc)
         if body is None:
@@ -352,9 +366,13 @@ class FlowProcessor:
             return state
         header_shadows = set(jc.local_names)
         once = self._walk_flat_stmt(body, dict(state), jc)
+        if update is not None:
+            once = self._walk_flat_stmt(update, once, jc)
         self._restore_shadows(header_shadows, jc)
         merged = self._merge([state, once])
         twice = self._walk_flat_stmt(body, dict(merged), jc)
+        if update is not None:
+            twice = self._walk_flat_stmt(update, twice, jc)
         self._restore_shadows(pre_loop_shadows, jc)
         return self._merge([state, twice])
 
@@ -365,6 +383,17 @@ class FlowProcessor:
         # (H) may precede the kill. A finally runs on the merged state.
         pre_shadows = set(jc.local_names)
         body = node.child_by_field_name(cs.FIELD_BODY)
+        # (H) try-with-resources: the resource declarations run before the body
+        # (H) on EVERY path (a throwing body still ran them), so the non-body,
+        # (H) non-handler children (the resource_specification) walk into the
+        # (H) pre-body state that also seeds each catch. The catch/finally node
+        # (H) type strings are shared verbatim by the JS, Java, and C++ grammars.
+        for child in node.named_children:
+            if child.type in (cs.TS_JS_CATCH_CLAUSE, cs.TS_JS_FINALLY_CLAUSE):
+                continue
+            if body is not None and child.id == body.id:
+                continue
+            state = self._walk_flat_stmt(child, state, jc)
         body_exit = (
             self._walk_flat_stmt(body, dict(state), jc)
             if body is not None

@@ -36,6 +36,9 @@ TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
 TS_GO_IDENTIFIER = "identifier"
 TS_GO_CONST_SPEC = "const_spec"
 TS_GO_RANGE_CLAUSE = "range_clause"
+# (H) The init;cond;post header of a C-style Go for; its post statement lives in
+# (H) an `update` field.
+TS_GO_FOR_CLAUSE = "for_clause"
 TS_GO_BLOCK = "block"
 # (H) Go wraps a block's statements in a single `statement_list` node (unlike JS/Java,
 # (H) whose block children are the statements directly); the source-order I/O walk

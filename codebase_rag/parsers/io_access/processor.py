@@ -581,7 +581,9 @@ class IOAccessProcessor:
         # (H) recurse via _walk_scope so its declarations shadow only inside it (and,
         # (H) for declare-at-point langs, in its own source order). body_extra seeds a
         # (H) loop var into the body scope (the loop's own block) without exposing it to
-        # (H) the header expressions walked in this flat pass.
+        # (H) the header expressions walked in this flat pass. The LIFO stack pushes
+        # (H) children reversed so siblings pop in SOURCE order: a try-with-resources
+        # (H) binds its resource handles before its body block reads them.
         stack = [stmt]
         while stack:
             node = stack.pop()
@@ -618,7 +620,7 @@ class IOAccessProcessor:
                 descriptor,
                 lean_handles,
             ):
-                stack.extend(node.named_children)
+                stack.extend(reversed(node.named_children))
 
     def _walk_nested_block(
         self,
