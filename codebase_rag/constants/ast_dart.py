@@ -29,6 +29,10 @@ TS_DART_METHOD_SIGNATURE = "method_signature"
 TS_DART_DECLARATION = "declaration"
 TS_DART_FUNCTION_BODY = "function_body"
 
+# (H) `@override`-style metadata: a preceding SIBLING of the (wrapped)
+# (H) signature, not a child, so the highlights walk collects it explicitly.
+TS_DART_ANNOTATION = "annotation"
+
 # (H) Module and import/directive nodes
 TS_DART_PROGRAM = "program"
 TS_DART_IMPORT_OR_EXPORT = "import_or_export"
