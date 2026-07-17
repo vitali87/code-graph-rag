@@ -243,3 +243,23 @@ def test_macro_attributed_definition_name_extracted() -> None:
     # (H) parsing the macro cleanly, this guard flags the test for revisit.
     assert find(defn, "parenthesized_declarator") is not None
     assert cpp_utils.extract_function_name(defn) == "sax_parse"
+
+    # (H) Macro-attributed CONSTRUCTOR with a member-initializer list
+    # (H) (nlohmann's exception hierarchy): recovery buries the REAL ctor
+    # (H) declarator inside the ERROR and leaves the base-initializer
+    # (H) (`: exception(...)`) as the sibling function_declarator. The walk
+    # (H) must take the first declarator in SOURCE order, entering the ERROR,
+    # (H) or every such ctor registers under the base class's name.
+    ctor_src = (
+        "class invalid_iterator : public exception {\n"
+        "  private:\n"
+        "    HEDLEY_NON_NULL(3)\n"
+        "    invalid_iterator(int id_, const char* what_arg)\n"
+        "        : exception(id_, what_arg) {}\n"
+        "};\n"
+    )
+    ctor_tree = parsers["cpp"].parse(ctor_src.encode())
+    ctor_defn = find(ctor_tree.root_node, "function_definition")
+    assert ctor_defn is not None
+    assert find(ctor_defn, "parenthesized_declarator") is not None
+    assert cpp_utils.extract_function_name(ctor_defn) == "invalid_iterator"
