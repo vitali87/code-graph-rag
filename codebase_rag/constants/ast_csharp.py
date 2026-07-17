@@ -14,6 +14,7 @@ TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION = "file_scoped_namespace_declaration
 # (H) one. Used to tell a top-level type (default `internal`) from a nested type
 # (H) or member (default `private`) for export detection.
 TS_CSHARP_DECLARATION_LIST = "declaration_list"
+TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER = "explicit_interface_specifier"
 
 # (H) Type declarations -> Class nodes.
 TS_CSHARP_CLASS_DECLARATION = "class_declaration"

@@ -1894,6 +1894,20 @@ class CallProcessor:
             or language in _JS_TS_LANGUAGES
             or is_cpp
         )
+        # (H) C# gets the argument-REFERENCE half only (a method group passed as
+        # (H) a delegate argument keeps its target reachable -- Polly's
+        # (H) EmptyHandler family, 16 dead-code false flags) without the
+        # (H) interprocedural callable-param flow, which is untuned for C#.
+        is_arg_ref_lang = is_flow_lang or language == cs.SupportedLanguage.CSHARP
+        # (H) A method-group pass is not an invocation: C# records it as
+        # (H) REFERENCES everywhere (CALLS here put 282 phantom edges into the
+        # (H) Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
+        # (H) keep their historical CALLS form for external/builtin callees.
+        arg_ref_rel = (
+            cs.RelationshipType.CALLS
+            if is_flow_lang
+            else cs.RelationshipType.REFERENCES
+        )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
 
@@ -1921,8 +1935,10 @@ class CallProcessor:
                 # (H) or otherwise yields no name still consumes its arguments through
                 # (H) whatever callable it produced; reference first-party functions
                 # (H) passed to it or dead-code flags every django-style view
-                # (H) decorator wrapper.
-                if is_flow_lang:
+                # (H) decorator wrapper. REFERENCES (not arg_ref_rel) is
+                # (H) deliberate and predates the C# split: with no callee name
+                # (H) there is no invocation to assert, for ANY language.
+                if is_arg_ref_lang:
                     self._ingest_argument_function_references(
                         call_node,
                         caller_spec,
@@ -2089,7 +2105,7 @@ class CallProcessor:
                 )
 
             if not callee_info:
-                if is_flow_lang:
+                if is_arg_ref_lang:
                     # (H) The callee is not first-party (a framework/stdlib call such as
                     # (H) grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
                     # (H) runtime dispatcher), so the call chain cannot be followed into
@@ -2105,6 +2121,7 @@ class CallProcessor:
                         resolve_func,
                         ensure_rel,
                         caller_qn,
+                        arg_ref_rel,
                     )
                 continue
 
@@ -2120,7 +2137,7 @@ class CallProcessor:
             # (H) operator rule and emit no edge at all.
             callee_is_builtin = callee_qn.startswith(_BUILTIN_QN_PREFIX)
             if callee_is_builtin:
-                if is_flow_lang:
+                if is_arg_ref_lang:
                     self._ingest_argument_function_references(
                         call_node,
                         caller_spec,
@@ -2130,6 +2147,7 @@ class CallProcessor:
                         resolve_func,
                         ensure_rel,
                         caller_qn,
+                        arg_ref_rel,
                     )
                 continue
 
@@ -2143,6 +2161,7 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                 )
+            if is_arg_ref_lang:
                 # (H) Functions are first-class values: a first-party callee may STORE
                 # (H) a passed callback for later dynamic dispatch (config objects,
                 # (H) codecs, registries), which callable-param flow cannot trace, or
@@ -3519,6 +3538,12 @@ class CallProcessor:
         if args_node is None:
             return positional, keyword
         for child in args_node.named_children:
+            # (H) C# wraps every argument expression in an `argument` node (which
+            # (H) may carry a ref/out modifier or a name: colon); unwrap to the
+            # (H) expression itself -- its LAST named child -- so downstream
+            # (H) reference-type checks see the identifier, not the wrapper.
+            if child.type == cs.TS_CSHARP_ARGUMENT and child.named_children:
+                child = child.named_children[-1]
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 name_node = child.child_by_field_name(cs.FIELD_NAME)
                 value_node = child.child_by_field_name(cs.FIELD_VALUE)
