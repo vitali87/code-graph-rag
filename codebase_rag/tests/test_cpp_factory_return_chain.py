@@ -203,3 +203,42 @@ def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
         c for c in calls if "sax_parse" in c[1]
     )
     assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
+
+
+def test_macro_attributed_method_registers_and_resolves(tmp_path: Path) -> None:
+    # (H) nlohmann shape (JSON_HEDLEY_NON_NULL(3) before bool sax_parse(...)):
+    # (H) tree-sitter merges the attribute macro into the definition as a
+    # (H) parenthesized_declarator wrapping an ERROR plus the REAL
+    # (H) function_declarator. The name walk must descend through it, or the
+    # (H) method never registers and its whole callee cluster reads as dead.
+    # (H) The NAMESPACE_BEGIN macro wrapper matters: it puts the class inside a
+    # (H) top-level ERROR node (nlohmann's real file shape), routing members
+    # (H) through the class-method ingestion path.
+    _make(
+        tmp_path,
+        "NAMESPACE_BEGIN\n"
+        "class Reader {\n"
+        "  public:\n"
+        "    HEDLEY_NON_NULL(2)\n"
+        "    bool sax_parse(int format, void* sax_)\n"
+        "    {\n"
+        "        return helper();\n"
+        "    }\n"
+        "    bool helper() { return true; }\n"
+        "};\n"
+        "void driver(Reader& r, void* s) {\n"
+        "    r.sax_parse(1, s);\n"
+        "}\n"
+        "NAMESPACE_END\n",
+    )
+    ingestor = _capture(tmp_path, "crate")
+    qns = {
+        str(props.get("qualified_name", "")) for props in ingestor.nodes.values()
+    }
+    assert "crate.f.Reader.sax_parse" in qns, sorted(
+        q for q in qns if "Reader" in q
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Reader.sax_parse") in calls, sorted(
+        c for c in calls if "sax_parse" in c[1]
+    )
