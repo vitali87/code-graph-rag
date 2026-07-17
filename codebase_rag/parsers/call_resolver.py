@@ -1606,9 +1606,9 @@ class CallResolver:
         # (H) each `.method()` hop advances the type by that method's return type
         # (H) (Root() -> Command). Language-agnostic; returns the bare type name of the
         # (H) final hop, or None if any hop is untyped/unknown (then the chain stays
-        # (H) unresolved, never mis-resolved).
-        if not self.type_inference.method_return_types:
-            return None
+        # (H) unresolved, never mis-resolved). No early-out on an empty
+        # (H) method_return_types map: a constructor-temporary base
+        # (H) (`Reader<T>(...).m()`) types itself from the class registry alone.
         parts = _split_receiver_chain(object_expr)
         base = parts[0]
         if not base:
@@ -1658,22 +1658,39 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         # (H) `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
-        # (H) Resolve the callee to its function/method qn (a sibling static method
-        # (H) `Owner.parser` or a free `make`, never the same-named class -- the
-        # (H) registry holds only callables) and return its recorded return type. A
-        # (H) `::`-qualified callee is the Rust assoc path's job, handled by the caller.
-        callee = base.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        if not callee or cs.SEPARATOR_DOUBLE_COLON in callee:
+        # (H) Resolve the callee to its function/method qn and return its recorded
+        # (H) return type. When no return type resolves, a C++ callee may instead be a
+        # (H) CONSTRUCTOR TEMPORARY (`Reader<decltype(ia)>(...)`, nlohmann's
+        # (H) from_cbor): the callee names the receiver's class itself. The callee is
+        # (H) cut at `<` or `(`, whichever comes first, since template args can carry
+        # (H) their own parens.
+        cut = len(base)
+        for bracket in (cs.CHAR_ANGLE_OPEN, cs.CHAR_PAREN_OPEN):
+            idx = base.find(bracket)
+            if idx != -1 and idx < cut:
+                cut = idx
+        callee = base[:cut]
+        if not callee:
             return None
+        if cs.SEPARATOR_DOUBLE_COLON in callee:
+            # (H) A `::`-qualified non-C++ callee is the Rust assoc path's job,
+            # (H) handled by the caller; C++ namespace paths normalize to dots.
+            if language != cs.SupportedLanguage.CPP:
+                return None
+            callee = callee.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         resolved = self.resolve_function_call(
             callee, module_qn, local_var_types, class_context, caller_qn, language
         )
-        if resolved is None:
-            return None
-        return_type = self.type_inference.method_return_types.get(resolved[1])
-        if not return_type:
-            return None
-        return self._resolve_type_to_class_qn(return_type, module_qn)
+        if resolved is not None:
+            return_type = self.type_inference.method_return_types.get(resolved[1])
+            if return_type:
+                return self._resolve_type_to_class_qn(return_type, module_qn)
+        if language == cs.SupportedLanguage.CPP:
+            # (H) Constructor temporary: `X(...)` resolved to a ctor (never a
+            # (H) recorded return) or to nothing at all; if X names a registered
+            # (H) class, that class IS the receiver type.
+            return self._resolve_type_to_class_qn(callee, module_qn)
+        return None
 
     def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
         # (H) Resolve a recorded return-type path to a registered CLASS qn. A factory

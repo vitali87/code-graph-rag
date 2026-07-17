@@ -1460,9 +1460,11 @@ class CallProcessor:
                         # (H) A factory-call receiver (`parser(ia, cb).parse(...)`,
                         # (H) nlohmann's basic_json::parse) is a call_expression on a
                         # (H) bare identifier: emit the chain form so the resolver can
-                        # (H) type the factory's return and bind the method on it. Only
-                        # (H) a simple-identifier callee qualifies -- deeper receiver
-                        # (H) chains keep the bare method-name trie fallback.
+                        # (H) type the factory's return and bind the method on it. A
+                        # (H) template/qualified callee (`Reader<T>(...)`,
+                        # (H) `detail::Reader<T>(...)`) is a CONSTRUCTOR TEMPORARY --
+                        # (H) the callee names the receiver's class directly. Deeper
+                        # (H) receiver chains keep the bare method-name trie fallback.
                         if (
                             arg is not None
                             and arg.type == cs.TS_CPP_CALL_EXPRESSION
@@ -1470,7 +1472,12 @@ class CallProcessor:
                                 callee := arg.child_by_field_name(cs.TS_FIELD_FUNCTION)
                             )
                             is not None
-                            and callee.type == cs.TS_IDENTIFIER
+                            and callee.type
+                            in (
+                                cs.TS_IDENTIFIER,
+                                cs.TS_CPP_TEMPLATE_FUNCTION,
+                                cs.TS_CPP_QUALIFIED_IDENTIFIER,
+                            )
                             and arg.text
                         ):
                             receiver = arg.text.decode(cs.ENCODING_UTF8)

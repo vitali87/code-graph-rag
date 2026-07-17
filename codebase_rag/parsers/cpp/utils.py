@@ -156,6 +156,7 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
                 cs.CppNodeType.POINTER_DECLARATOR,
                 cs.CppNodeType.REFERENCE_DECLARATOR,
                 cs.CppNodeType.FUNCTION_DECLARATOR,
+                cs.CppNodeType.PARENTHESIZED_DECLARATOR,
             ):
                 result = find_function_declarator(child)
                 if result:

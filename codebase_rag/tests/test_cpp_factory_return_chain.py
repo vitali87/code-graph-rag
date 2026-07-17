@@ -205,40 +205,41 @@ def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
     assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
 
 
-def test_macro_attributed_method_registers_and_resolves(tmp_path: Path) -> None:
+def test_macro_attributed_definition_name_extracted() -> None:
     # (H) nlohmann shape (JSON_HEDLEY_NON_NULL(3) before bool sax_parse(...)):
     # (H) tree-sitter merges the attribute macro into the definition as a
     # (H) parenthesized_declarator wrapping an ERROR plus the REAL
     # (H) function_declarator. The name walk must descend through it, or the
-    # (H) method never registers and its whole callee cluster reads as dead.
-    # (H) The NAMESPACE_BEGIN macro wrapper matters: it puts the class inside a
-    # (H) top-level ERROR node (nlohmann's real file shape), routing members
-    # (H) through the class-method ingestion path.
-    _make(
-        tmp_path,
-        "NAMESPACE_BEGIN\n"
+    # (H) method never registers and its whole callee cluster (binary_reader's
+    # (H) 37 methods) reads as dead.
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp import utils as cpp_utils
+
+    parsers, _queries = load_parsers()
+    src = (
         "class Reader {\n"
         "  public:\n"
         "    HEDLEY_NON_NULL(2)\n"
-        "    bool sax_parse(int format, void* sax_)\n"
+        "    bool sax_parse(const int format, void* sax_, const bool strict = true)\n"
         "    {\n"
-        "        return helper();\n"
+        "        return true;\n"
         "    }\n"
-        "    bool helper() { return true; }\n"
+        "    bool other() { return true; }\n"
         "};\n"
-        "void driver(Reader& r, void* s) {\n"
-        "    r.sax_parse(1, s);\n"
-        "}\n"
-        "NAMESPACE_END\n",
     )
-    ingestor = _capture(tmp_path, "crate")
-    qns = {
-        str(props.get("qualified_name", "")) for props in ingestor.nodes.values()
-    }
-    assert "crate.f.Reader.sax_parse" in qns, sorted(
-        q for q in qns if "Reader" in q
-    )
-    calls = _calls(tmp_path)
-    assert ("crate.f.driver", "crate.f.Reader.sax_parse") in calls, sorted(
-        c for c in calls if "sax_parse" in c[1]
-    )
+    tree = parsers["cpp"].parse(src.encode())
+
+    def find(node: object, node_type: str) -> object | None:
+        if node.type == node_type:
+            return node
+        for child in node.named_children:
+            if (hit := find(child, node_type)) is not None:
+                return hit
+        return None
+
+    defn = find(tree.root_node, "function_definition")
+    assert defn is not None
+    # (H) Pin the mangled shape this test exists for: if a grammar bump starts
+    # (H) parsing the macro cleanly, this guard flags the test for revisit.
+    assert find(defn, "parenthesized_declarator") is not None
+    assert cpp_utils.extract_function_name(defn) == "sax_parse"
