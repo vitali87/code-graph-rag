@@ -195,3 +195,49 @@ def test_php_multiple_distinct_attributes() -> None:
     lang_queries = queries[cs.SupportedLanguage.PHP]
     _, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
     assert decorators == ["#[Route('/x')]", "#[Deprecated]"]
+
+
+def test_every_language_loads_a_highlights_query() -> None:
+    # (H) A highlights query that fails to compile degrades SILENTLY to None
+    # (H) (a debug log at startup), zeroing modifiers and decorators for the
+    # (H) whole language -- javascript.scm shipped TS-only tokens for months
+    # (H) unnoticed (issue #525). Every parsed language must load one.
+    parsers, queries = load_parsers()
+    missing = [
+        str(lang)
+        for lang, lq in queries.items()
+        if lang in parsers and lq.get(cs.QUERY_HIGHLIGHTS) is None
+    ]
+    assert missing == [], missing
+
+
+def test_js_method_modifiers_and_decorators_captured() -> None:
+    # (H) The JS grammar has no public/private/protected tokens (those are
+    # (H) TS-only); the fallback query must still capture the JS-valid
+    # (H) modifiers and decorators.
+    parsers, queries = load_parsers()
+    code = "class A {\n  @dec\n  static async foo() {}\n}"
+    root = parse_code(code, cs.SupportedLanguage.JS, parsers)
+    method_node = find_first_node_of_type(root, "method_definition")
+    assert method_node is not None
+    lang_queries = queries[cs.SupportedLanguage.JS]
+    modifiers, decorators = extract_modifiers_and_decorators(
+        method_node, lang_queries
+    )
+    assert "static" in modifiers, (modifiers, decorators)
+    assert "async" in modifiers, (modifiers, decorators)
+    assert "@dec" in decorators, (modifiers, decorators)
+
+
+def test_dart_annotations_and_modifiers_captured() -> None:
+    parsers, queries = load_parsers()
+    code = "class A {\n  @override\n  static void foo() {}\n}"
+    root = parse_code(code, cs.SupportedLanguage.DART, parsers)
+    func_node = find_first_node_of_type(root, "function_signature")
+    assert func_node is not None
+    lang_queries = queries[cs.SupportedLanguage.DART]
+    modifiers, decorators = extract_modifiers_and_decorators(
+        func_node, lang_queries
+    )
+    assert "static" in modifiers, (modifiers, decorators)
+    assert "@override" in decorators, (modifiers, decorators)
