@@ -58,6 +58,36 @@ public class C {
     assert flag("N.C.Implicit") is False
 
 
+def test_interface_members_are_implicitly_public(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) C# interface members carry NO visibility modifier and are implicitly
+    # (H) public: they ARE the type's API surface. The modifier scan alone
+    # (H) leaves them is_exported=False, which turned every interface member
+    # (H) into a dead-code candidate (all 190 findings of the first Polly
+    # (H) dead-code dogfood, dominated by IAsyncPolicy.ExecuteAsync overloads
+    # (H) and IPolicyWrap properties).
+    (csharp_project / "I.cs").write_text(
+        """
+namespace N;
+public interface IPolicy {
+    int Execute(int x);
+    int Retries { get; }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    exported = _exported_by_suffix(mock_ingestor)
+
+    def flag(suffix: str) -> bool:
+        return next(v for qn, v in exported.items() if qn.endswith(suffix))
+
+    assert flag("N.IPolicy.Execute(int)") is True
+    assert flag("N.IPolicy.Retries") is True
+
+
 def _class_exported(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
     for call in get_nodes(mock_ingestor, NodeType.CLASS):
