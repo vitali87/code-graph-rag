@@ -173,6 +173,9 @@ def extract_modifiers_and_decorators(
     if node.parent and node.parent.type in (
         cs.TS_PY_DECORATED_DEFINITION,
         cs.TS_EXPORT_STATEMENT,
+        # (H) Dart wraps a class member's function_signature in a
+        # (H) method_signature that owns the `static` token.
+        cs.TS_DART_METHOD_SIGNATURE,
     ):
         target_node = node.parent
 
@@ -183,6 +186,12 @@ def extract_modifiers_and_decorators(
         or (
             target_node.type == cs.TS_METHOD_DEFINITION
             and curr_sibling.type == cs.TS_DECORATOR
+        )
+        # (H) Dart metadata precedes the signature as annotation siblings.
+        or (
+            target_node.type
+            in (cs.TS_DART_METHOD_SIGNATURE, cs.TS_DART_FUNCTION_SIGNATURE)
+            and curr_sibling.type == cs.TS_DART_ANNOTATION
         )
     ):
         query_nodes.insert(0, curr_sibling)

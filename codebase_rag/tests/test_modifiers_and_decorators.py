@@ -80,6 +80,7 @@ def test_fallback_scm_loads_on_import_failure(monkeypatch: pytest.MonkeyPatch) -
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -94,6 +95,7 @@ def test_fallback_scm_missing_and_import_fails(monkeypatch: pytest.MonkeyPatch) 
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -119,6 +121,7 @@ def test_fallback_scm_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -129,10 +132,12 @@ def test_fallback_scm_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
     original_read_text = Path.read_text
 
-    def mock_read_text(self: Path, *args: any, **kwargs: any) -> str:
+    def mock_read_text(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
         if "highlights" in str(self) and "python.scm" in str(self):
             raise OSError("Mocked read failure")
-        return original_read_text(self, *args, **kwargs)
+        return original_read_text(self, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
 
@@ -195,3 +200,62 @@ def test_php_multiple_distinct_attributes() -> None:
     lang_queries = queries[cs.SupportedLanguage.PHP]
     _, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
     assert decorators == ["#[Route('/x')]", "#[Deprecated]"]
+
+
+def test_every_language_loads_a_highlights_query() -> None:
+    # (H) A highlights query that fails to compile degrades SILENTLY to None
+    # (H) (a debug log at startup), zeroing modifiers and decorators for the
+    # (H) whole language -- javascript.scm shipped TS-only tokens for months
+    # (H) unnoticed (issue #525). Every parsed language must load one.
+    parsers, queries = load_parsers()
+    # (H) Iterate parsers, not queries: a language absent from the queries
+    # (H) dict entirely must fail here too, not be skipped.
+    missing = sorted(
+        str(lang)
+        for lang in parsers
+        if (lq := queries.get(lang)) is None or lq.get(cs.QUERY_HIGHLIGHTS) is None
+    )
+    assert missing == [], missing
+
+
+def test_js_method_modifiers_and_decorators_captured() -> None:
+    # (H) The JS grammar has no public/private/protected tokens (those are
+    # (H) TS-only); the fallback query must still capture the JS-valid
+    # (H) modifiers and decorators.
+    parsers, queries = load_parsers()
+    code = "class A {\n  @dec\n  static async foo() {}\n}"
+    root = parse_code(code, cs.SupportedLanguage.JS, parsers)
+    method_node = find_first_node_of_type(root, "method_definition")
+    assert method_node is not None
+    lang_queries = queries[cs.SupportedLanguage.JS]
+    modifiers, decorators = extract_modifiers_and_decorators(method_node, lang_queries)
+    assert "static" in modifiers, (modifiers, decorators)
+    assert "async" in modifiers, (modifiers, decorators)
+    assert "@dec" in decorators, (modifiers, decorators)
+
+
+def test_dart_annotations_and_modifiers_captured() -> None:
+    parsers, queries = load_parsers()
+    code = "class A {\n  @override\n  static void foo() {}\n}"
+    root = parse_code(code, cs.SupportedLanguage.DART, parsers)
+    func_node = find_first_node_of_type(root, "function_signature")
+    assert func_node is not None
+    lang_queries = queries[cs.SupportedLanguage.DART]
+    modifiers, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
+    assert "static" in modifiers, (modifiers, decorators)
+    assert "@override" in decorators, (modifiers, decorators)
+
+
+def test_dart_const_and_final_builtins_captured() -> None:
+    # (H) Dart `const`/`final` are NAMED nodes (const_builtin/final_builtin),
+    # (H) not anonymous keyword tokens: a quoted "const" fails to compile and
+    # (H) a quoted "final" compiles but never matches, so both must be
+    # (H) captured via their named forms.
+    parsers, queries = load_parsers()
+    code = "class A {\n  const A();\n}"
+    root = parse_code(code, cs.SupportedLanguage.DART, parsers)
+    ctor_node = find_first_node_of_type(root, "constant_constructor_signature")
+    assert ctor_node is not None
+    lang_queries = queries[cs.SupportedLanguage.DART]
+    modifiers, _ = extract_modifiers_and_decorators(ctor_node, lang_queries)
+    assert "const" in modifiers, modifiers
