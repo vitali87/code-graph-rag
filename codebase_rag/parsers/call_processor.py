@@ -1899,6 +1899,15 @@ class CallProcessor:
         # (H) EmptyHandler family, 16 dead-code false flags) without the
         # (H) interprocedural callable-param flow, which is untuned for C#.
         is_arg_ref_lang = is_flow_lang or language == cs.SupportedLanguage.CSHARP
+        # (H) A method-group pass is not an invocation: C# records it as
+        # (H) REFERENCES everywhere (CALLS here put 282 phantom edges into the
+        # (H) Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
+        # (H) keep their historical CALLS form for external/builtin callees.
+        arg_ref_rel = (
+            cs.RelationshipType.CALLS
+            if is_flow_lang
+            else cs.RelationshipType.REFERENCES
+        )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
 
@@ -2110,6 +2119,7 @@ class CallProcessor:
                         resolve_func,
                         ensure_rel,
                         caller_qn,
+                        arg_ref_rel,
                     )
                 continue
 
@@ -2135,6 +2145,7 @@ class CallProcessor:
                         resolve_func,
                         ensure_rel,
                         caller_qn,
+                        arg_ref_rel,
                     )
                 continue
 
