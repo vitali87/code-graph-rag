@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from codebase_rag import constants as cs
@@ -80,6 +82,7 @@ def test_fallback_scm_loads_on_import_failure(monkeypatch: pytest.MonkeyPatch) -
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -94,6 +97,7 @@ def test_fallback_scm_missing_and_import_fails(monkeypatch: pytest.MonkeyPatch) 
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -119,6 +123,7 @@ def test_fallback_scm_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     parsers, queries = load_parsers()
 
     real_lang = parsers[cs.SupportedLanguage.PYTHON].language
+    assert real_lang is not None
 
     def mock_import_module(name: str) -> None:
         raise ImportError("Mocked import failure")
@@ -129,7 +134,7 @@ def test_fallback_scm_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
     original_read_text = Path.read_text
 
-    def mock_read_text(self: Path, *args: any, **kwargs: any) -> str:
+    def mock_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
         if "highlights" in str(self) and "python.scm" in str(self):
             raise OSError("Mocked read failure")
         return original_read_text(self, *args, **kwargs)
@@ -221,9 +226,7 @@ def test_js_method_modifiers_and_decorators_captured() -> None:
     method_node = find_first_node_of_type(root, "method_definition")
     assert method_node is not None
     lang_queries = queries[cs.SupportedLanguage.JS]
-    modifiers, decorators = extract_modifiers_and_decorators(
-        method_node, lang_queries
-    )
+    modifiers, decorators = extract_modifiers_and_decorators(method_node, lang_queries)
     assert "static" in modifiers, (modifiers, decorators)
     assert "async" in modifiers, (modifiers, decorators)
     assert "@dec" in decorators, (modifiers, decorators)
@@ -236,8 +239,6 @@ def test_dart_annotations_and_modifiers_captured() -> None:
     func_node = find_first_node_of_type(root, "function_signature")
     assert func_node is not None
     lang_queries = queries[cs.SupportedLanguage.DART]
-    modifiers, decorators = extract_modifiers_and_decorators(
-        func_node, lang_queries
-    )
+    modifiers, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
     assert "static" in modifiers, (modifiers, decorators)
     assert "@override" in decorators, (modifiers, decorators)
