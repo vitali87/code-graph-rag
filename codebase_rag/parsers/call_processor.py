@@ -1476,6 +1476,18 @@ class CallProcessor:
                             receiver = arg.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
+                case cs.TS_CSHARP_GENERIC_NAME if (
+                    language == cs.SupportedLanguage.CSHARP
+                ):
+                    # (H) Bare generic call `Handle<TException>(...)`: the callee
+                    # (H) name is the identifier without its type arguments
+                    # (H) (methods register generic-free). Leaving the `<...>` on
+                    # (H) yielded no call name at all, so the call site vanished
+                    # (H) from the graph (Polly's parameterless HandleInner
+                    # (H) overload delegating to its Func sibling).
+                    if func_child.text is not None:
+                        full = func_child.text.decode(cs.ENCODING_UTF8)
+                        return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                 case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION if (
                     language == cs.SupportedLanguage.CSHARP
                 ):

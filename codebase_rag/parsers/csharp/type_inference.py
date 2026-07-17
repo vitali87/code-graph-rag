@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,6 +65,7 @@ class CSharpTypeInferenceEngine:
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_local_functions",
         "function_locations",
         "_rel_to_module",
     )
@@ -83,6 +85,7 @@ class CSharpTypeInferenceEngine:
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -105,6 +108,9 @@ class CSharpTypeInferenceEngine:
         # (H) this engine is constructed), so `or {}` would lose them.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        self.csharp_local_functions = (
+            csharp_local_functions if csharp_local_functions is not None else {}
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -230,8 +236,15 @@ class CSharpTypeInferenceEngine:
         if semantic := self._semantic_call_target(call_node, module_qn):
             return semantic
         func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # (H) A bare `Foo(...)` is resolved by the generic simple-name path.
+        if func is None:
+            return None
+        if func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            # (H) A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
+            # (H) an in-scope local function first (it shadows same-name method
+            # (H) overloads), then an arity-matched member of the enclosing
+            # (H) type. A miss falls to the generic simple-name path.
+            if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
+                return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
             return None
         method_name = safe_decode_text(func.child_by_field_name(cs.FIELD_NAME))
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
@@ -268,6 +281,101 @@ class CSharpTypeInferenceEngine:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
                 return cs.NodeLabel.METHOD.value, name_hit
         return None
+
+    def _resolve_bare_call(
+        self,
+        func: Node,
+        call_node: Node,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        name = safe_decode_text(func)
+        if not name:
+            return None
+        # (H) `Handle<TException>(...)`: the callee name is the identifier
+        # (H) without its type arguments (matching how methods register).
+        name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        arg_count = self._count_arguments(call_node)
+        if local := self._find_in_scope_local_function(
+            name, arg_count, caller_qn, module_qn
+        ):
+            return cs.NodeLabel.FUNCTION.value, local
+        for class_qn in self._caller_class_candidates(caller_qn, module_qn):
+            if hit := self._find_arity_across_parts(class_qn, name, arg_count):
+                return cs.NodeLabel.METHOD.value, hit
+        return None
+
+    def _find_in_scope_local_function(
+        self, name: str, arg_count: int, caller_qn: str | None, module_qn: str
+    ) -> str | None:
+        # (H) Walk the caller's scope chain probing for a registered local
+        # (H) function. Each level is probed both as-is and with the overload
+        # (H) signature suffix stripped, because local functions register under
+        # (H) the BARE method scope name while the caller_qn carries the host
+        # (H) overload's signatured identity (`Handle(System.Func)` hosts
+        # (H) `Handle.Handle`). A hit must match the call's arity AND be
+        # (H) declared in a host the caller sits inside -- C# scoping, without
+        # (H) which the parameterless sibling overload would capture the local
+        # (H) fn textually nested under its own bare qn.
+        if not caller_qn:
+            return None
+        scope = caller_qn
+        while len(scope) > len(module_qn):
+            stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            for probe_scope in dict.fromkeys((scope, stripped)):
+                candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
+                entry = self.csharp_local_functions.get(candidate)
+                if (
+                    entry is not None
+                    and entry[1] == arg_count
+                    and self._caller_within_host(caller_qn, entry[0])
+                ):
+                    return candidate
+            if cs.SEPARATOR_DOT not in stripped:
+                return None
+            scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None
+
+    def _caller_within_host(self, caller_qn: str, host_key: FunctionSpanKey) -> bool:
+        # (H) True when the caller IS the local function's host scope or a local
+        # (H) function transitively hosted inside it (a sibling or nested local
+        # (H) fn calling across/into its own nest). Spans join lazily against
+        # (H) function_locations because the host's signatured identity was not
+        # (H) registered yet when the local function was pinned.
+        host_loc = self.function_locations.get(host_key)
+        if host_loc is None:
+            return False
+        host_qn = host_loc.qualified_name
+        seen: set[str] = set()
+        current = caller_qn
+        while current not in seen:
+            seen.add(current)
+            if current == host_qn:
+                return True
+            entry = self.csharp_local_functions.get(current)
+            if entry is None:
+                return False
+            next_loc = self.function_locations.get(entry[0])
+            if next_loc is None:
+                return False
+            current = next_loc.qualified_name
+        return False
+
+    def _caller_class_candidates(
+        self, caller_qn: str | None, module_qn: str
+    ) -> Iterator[str]:
+        # (H) Enclosing-type candidates for a bare member call, outermost last:
+        # (H) strip the overload signature (only the leaf carries one, and its
+        # (H) qualified parameter types contain dots that would break a plain
+        # (H) rsplit), then peel scope segments down to the module boundary.
+        if not caller_qn:
+            return
+        scope = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        while cs.SEPARATOR_DOT in scope:
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if len(scope) <= len(module_qn):
+                return
+            yield scope
 
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
