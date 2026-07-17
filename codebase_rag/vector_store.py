@@ -451,8 +451,8 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
         lite_version = version("milvus-lite")
     except PackageNotFoundError:
         return False
-    # Milvus Lite 3.0.0 reports COSINE as distance instead of similarity:
-    # https://github.com/milvus-io/milvus-lite/issues/343
+    # (H) Milvus Lite 3.0.0 reports COSINE as distance instead of similarity:
+    # (H) https://github.com/milvus-io/milvus-lite/issues/343
     return lite_version in {"3.0", "3.0.0"}
 
 
