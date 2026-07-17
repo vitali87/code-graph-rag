@@ -1935,7 +1935,9 @@ class CallProcessor:
                 # (H) or otherwise yields no name still consumes its arguments through
                 # (H) whatever callable it produced; reference first-party functions
                 # (H) passed to it or dead-code flags every django-style view
-                # (H) decorator wrapper.
+                # (H) decorator wrapper. REFERENCES (not arg_ref_rel) is
+                # (H) deliberate and predates the C# split: with no callee name
+                # (H) there is no invocation to assert, for ANY language.
                 if is_arg_ref_lang:
                     self._ingest_argument_function_references(
                         call_node,
