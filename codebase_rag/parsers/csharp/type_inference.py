@@ -324,13 +324,20 @@ class CSharpTypeInferenceEngine:
             stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
             for probe_scope in dict.fromkeys((scope, stripped)):
                 candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
-                entry = self.csharp_local_functions.get(candidate)
-                if (
-                    entry is not None
-                    and entry[1] == arg_count
-                    and self._caller_within_host(caller_qn, entry[0])
-                ):
-                    return candidate
+                # (H) Same-name local fns in SIBLING BLOCKS flatten to one scope
+                # (H) qn; later declarations carry an `@line` duplicate suffix,
+                # (H) so probe every registered variant, not just the natural qn
+                # (H) (else an arity-matched later declaration is missed and the
+                # (H) arity-blind fallback's duplicate fan-out fabricates a
+                # (H) phantom edge onto the uncalled sibling).
+                for variant in self.function_registry.variants(candidate):
+                    entry = self.csharp_local_functions.get(variant)
+                    if (
+                        entry is not None
+                        and entry[1] == arg_count
+                        and self._caller_within_host(caller_qn, entry[0])
+                    ):
+                        return variant
             if cs.SEPARATOR_DOT not in stripped:
                 return None
             scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
