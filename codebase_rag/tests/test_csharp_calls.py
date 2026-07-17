@@ -146,6 +146,44 @@ def test_bare_call_prefers_in_scope_local_function(
     ), pairs
 
 
+def test_sibling_block_local_function_variants_resolve_by_arity(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Two sibling BLOCKS of one method may each declare a same-name local
+    # (H) function; both flatten to the same scope qn, so the second registers
+    # (H) with an `@line` duplicate suffix. The bare-name probe must consult the
+    # (H) registry's duplicate VARIANTS: without that, the arity-2 call misses
+    # (H) the in-scope path, falls to the arity-blind enclosing-scope walk, and
+    # (H) the duplicate fan-out fabricates a phantom CALLS edge onto the
+    # (H) UNCALLED arity-1 declaration.
+    (csharp_project / "Blocks.cs").write_text(
+        """
+namespace N;
+public class Blocks {
+    public void Run() {
+        {
+            string Fmt(int a) => a.ToString();
+        }
+        {
+            string Fmt(int a, int b) => (a + b).ToString();
+            System.Console.WriteLine(Fmt(1, 2));
+        }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Blocks.Run") and "N.Blocks.Run.Fmt@" in t for s, t in pairs
+    ), pairs
+    assert not any(
+        s.endswith("N.Blocks.Run") and t.endswith("N.Blocks.Run.Fmt") for s, t in pairs
+    ), pairs
+
+
 def test_nested_local_function_calls_keep_resolving(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
