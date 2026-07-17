@@ -1,5 +1,3 @@
-from typing import Any
-
 import pytest
 
 from codebase_rag import constants as cs
@@ -134,10 +132,12 @@ def test_fallback_scm_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
     original_read_text = Path.read_text
 
-    def mock_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+    def mock_read_text(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
         if "highlights" in str(self) and "python.scm" in str(self):
             raise OSError("Mocked read failure")
-        return original_read_text(self, *args, **kwargs)
+        return original_read_text(self, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
 
@@ -208,11 +208,13 @@ def test_every_language_loads_a_highlights_query() -> None:
     # (H) whole language -- javascript.scm shipped TS-only tokens for months
     # (H) unnoticed (issue #525). Every parsed language must load one.
     parsers, queries = load_parsers()
-    missing = [
+    # (H) Iterate parsers, not queries: a language absent from the queries
+    # (H) dict entirely must fail here too, not be skipped.
+    missing = sorted(
         str(lang)
-        for lang, lq in queries.items()
-        if lang in parsers and lq.get(cs.QUERY_HIGHLIGHTS) is None
-    ]
+        for lang in parsers
+        if (lq := queries.get(lang)) is None or lq.get(cs.QUERY_HIGHLIGHTS) is None
+    )
     assert missing == [], missing
 
 
