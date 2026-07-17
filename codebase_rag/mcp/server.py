@@ -144,9 +144,9 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
     """Manage shared service lifetimes for the MCP server.
 
-    Opens the Memgraph ingestor connection and guarantees the embedded Qdrant
-    client lock is released on shutdown, so a CLI indexing run can reuse the
-    storage folder once the server stops.
+    Opens the Memgraph ingestor connection and releases the vector store client
+    on shutdown, so a CLI indexing run can reuse local resources once the server
+    stops.
     """
     try:
         with ingestor:

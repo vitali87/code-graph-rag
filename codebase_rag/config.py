@@ -276,6 +276,16 @@ class AppConfig(BaseSettings):
     QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
     QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
+    VECTOR_STORE_BACKEND: cs.VectorStoreBackend = Field(
+        cs.VectorStoreBackend.QDRANT, validation_alias="CGR_VECTOR_STORE_BACKEND"
+    )
+    MILVUS_URI: str = "./.milvus_code_embeddings.db"
+    MILVUS_TOKEN: str | None = None
+    MILVUS_DB_NAME: str | None = None
+    MILVUS_COLLECTION_NAME: str = "code_embeddings"
+    MILVUS_VECTOR_DIM: int = 768
+    MILVUS_TOP_K: int = 5
+    MILVUS_CONSISTENCY_LEVEL: str = "Strong"
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
     SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")

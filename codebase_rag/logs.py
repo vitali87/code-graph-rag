@@ -112,13 +112,26 @@ NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
-EMBEDDING_STORE_RETRY = "Qdrant upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
-EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in Qdrant"
+EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
+EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in vector store"
 EMBEDDING_BATCH_FAILED = "Failed to store embedding batch: {error}"
 EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
-EMBEDDING_RECONCILE_OK = "Qdrant reconciliation: all {count} expected embeddings found"
-EMBEDDING_RECONCILE_MISSING = "Qdrant reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
-EMBEDDING_RECONCILE_FAILED = "Qdrant reconciliation check failed: {error}"
+EMBEDDING_RECONCILE_OK = (
+    "Vector store reconciliation: all {count} expected embeddings found"
+)
+EMBEDDING_RECONCILE_MISSING = "Vector store reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
+EMBEDDING_RECONCILE_FAILED = "Vector store reconciliation check failed: {error}"
+VECTOR_STORE_BACKEND_UNAVAILABLE = (
+    "Vector store backend '{backend}' dependencies are not available"
+)
+VECTOR_STORE_BACKEND_UNKNOWN = "Unknown vector store backend '{backend}'"
+VECTOR_STORE_DELETE_PROJECT = (
+    "Deleting {count} {backend} vectors for project '{project}'"
+)
+VECTOR_STORE_DELETE_PROJECT_DONE = "Deleted {backend} vectors for project '{project}'"
+VECTOR_STORE_DELETE_PROJECT_FAILED = (
+    "Failed to delete {backend} vectors for project '{project}': {error}"
+)
 QDRANT_DELETE_PROJECT = "Deleting {count} Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_FAILED = (

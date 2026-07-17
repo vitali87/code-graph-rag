@@ -188,6 +188,19 @@ Useful subcommands:
 Indexed data persists across `cgr daemon down` thanks to named memgraph + qdrant
 volumes (`memgraph_data`, `memgraph_log`, `qdrant_storage`).
 
+Semantic search uses Qdrant by default. To store semantic vectors in Milvus
+Lite instead, install the same `semantic` extra and set the vector store backend
+before indexing:
+
+```bash
+export CGR_VECTOR_STORE_BACKEND=milvus
+export MILVUS_URI="./.milvus_code_embeddings.db"
+cgr start
+```
+
+For a self-hosted open-source Milvus endpoint, set `MILVUS_URI` to the endpoint,
+for example `http://localhost:19530`.
+
 ### Local development install
 
 ```bash

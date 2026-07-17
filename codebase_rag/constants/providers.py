@@ -60,6 +60,11 @@ class EmbeddingDevice(StrEnum):
     CPU = "cpu"
 
 
+class VectorStoreBackend(StrEnum):
+    QDRANT = "qdrant"
+    MILVUS = "milvus"
+
+
 # (H) Batches between torch.mps.empty_cache() calls: dropping the Metal
 # (H) allocator cache every batch costs ~21% throughput (measured on an M-series
 # (H) UniXcoder run), so release it periodically just to bound growth.
@@ -100,8 +105,14 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
+MODULE_PYMILVUS = "pymilvus"
 
-SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
+SEMANTIC_DEPENDENCIES = (
+    MODULE_PYMILVUS,
+    MODULE_QDRANT_CLIENT,
+    MODULE_TORCH,
+    MODULE_TRANSFORMERS,
+)
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 
 
