@@ -63,6 +63,109 @@ def _reference_targets(mock_ingestor: MagicMock) -> set[str]:
     return {c.args[2][2] for c in get_relationships(mock_ingestor, "REFERENCES")}
 
 
+def _call_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
+    return {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+
+
+LOCAL_FN_SHADOW_SRC = """
+namespace N;
+public class Builder {
+    public Builder Handle<TException>() where TException : System.Exception
+        => Handle<TException>(static _ => true);
+
+    public Builder Handle<TException>(System.Func<TException, bool> predicate)
+        where TException : System.Exception {
+        return Add(outcome => Handle(outcome, predicate));
+
+        static bool Handle(System.Exception? outcome,
+                           System.Func<TException, bool> predicate) {
+            if (outcome != null) {
+                return Nested(predicate, outcome);
+            }
+            return Nested(predicate, outcome);
+
+            static bool Nested(System.Func<TException, bool> predicate,
+                               System.Exception? current) {
+                if (current == null) { return false; }
+                return Nested(predicate, null);
+            }
+        }
+    }
+
+    private Builder Add(System.Func<System.Exception?, bool> p) => this;
+}
+"""
+
+
+def test_generic_bare_call_binds_arity_matched_overload(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Handle<TException>(static _ => true)` in the parameterless overload is
+    # (H) a bare generic_name callee: without stripping the type arguments the
+    # (H) call name never resolves (no edge at all), and a naive bare-name
+    # (H) lookup would bind it to the 2-param LOCAL FUNCTION `Handle` textually
+    # (H) nested under this overload's own qn. Overload dispatch must pick the
+    # (H) arity-1 METHOD (Polly's PredicateBuilder.HandleInner shape).
+    (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Builder.Handle") and t.endswith("N.Builder.Handle(System.Func)")
+        for s, t in pairs
+    ), pairs
+    assert not any(
+        s.endswith("N.Builder.Handle") and t.endswith("N.Builder.Handle.Handle")
+        for s, t in pairs
+    ), pairs
+
+
+def test_bare_call_prefers_in_scope_local_function(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The 2-arg `Handle(outcome, predicate)` inside the Func overload's
+    # (H) lambda must bind to the local function declared in the SAME body, not
+    # (H) to the parameterless method overload the trie falls back to (the
+    # (H) enclosing-scope walk cannot see through the caller's `(System.Func)`
+    # (H) signature suffix). That mis-bind left Polly's HandleInner/HandleNested
+    # (H) local functions with zero incoming edges -- flagged dead.
+    (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Builder.Handle(System.Func)")
+        and t.endswith("N.Builder.Handle.Handle")
+        for s, t in pairs
+    ), pairs
+    assert not any(
+        s.endswith("N.Builder.Handle(System.Func)") and t.endswith("N.Builder.Handle")
+        for s, t in pairs
+    ), pairs
+
+
+def test_nested_local_function_calls_keep_resolving(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Guard: a local function calling its own nested local function (and
+    # (H) that one recursing) already resolves via the enclosing-scope walk;
+    # (H) the C# bare-name path must not regress it.
+    (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Builder.Handle.Handle") and t.endswith("N.Builder.Handle.Nested")
+        for s, t in pairs
+    ), pairs
+    assert any(
+        s.endswith("N.Builder.Handle.Nested") and t.endswith("N.Builder.Handle.Nested")
+        for s, t in pairs
+    ), pairs
+
+
 def test_method_group_argument_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
