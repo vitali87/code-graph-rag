@@ -149,3 +149,57 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
     fn = find_fn(tree.root_node)
     assert fn is not None
     assert extract_return_type_name(fn) == "Outer.Inner"
+
+
+def test_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
+    # (H) nlohmann from_cbor shape: `Reader<decltype(ia)>(std::move(ia), fmt)
+    # (H) .sax_parse(...)` chains a method on a CONSTRUCTOR TEMPORARY -- the
+    # (H) callee is the class itself, so the receiver type IS that class. Aaa
+    # (H) is the alphabetical trie decoy.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "template<typename T>\n"
+        "struct Reader {\n"
+        "    Reader(T&& t, int f) {}\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "template<typename T>\n"
+        "bool driver(T&& ia) {\n"
+        "    return Reader<T>(static_cast<T&&>(ia), 1).sax_parse(1);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Reader.sax_parse") in calls, sorted(
+        c for c in calls if "sax_parse" in c[1]
+    )
+    assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
+
+
+def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
+    # (H) The namespace-qualified form `detail::Reader<...>(...).sax_parse(...)`
+    # (H) (nlohmann json.hpp:4159) must resolve through the qualified path too.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "namespace detail {\n"
+        "template<typename T>\n"
+        "struct Reader {\n"
+        "    Reader(T&& t, int f) {}\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "}\n"
+        "template<typename T>\n"
+        "bool driver(T&& ia) {\n"
+        "    return detail::Reader<T>(static_cast<T&&>(ia), 1).sax_parse(1);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.detail.Reader.sax_parse") in calls, sorted(
+        c for c in calls if "sax_parse" in c[1]
+    )
+    assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
