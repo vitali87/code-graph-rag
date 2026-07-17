@@ -88,6 +88,39 @@ public interface IPolicy {
     assert flag("N.IPolicy.Retries") is True
 
 
+def test_explicit_interface_implementations_are_exported(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An explicit interface implementation (`IThing IThing.WithKey(...)`)
+    # (H) carries no modifier and lives in a class, but it is invocable from
+    # (H) outside through the interface -- API surface, not a private member
+    # (H) (Polly's AsyncPolicy `IAsyncPolicy.WithPolicyKey` and the
+    # (H) Context.Dictionary `IDictionary.Keys` family, all flagged dead).
+    (csharp_project / "E.cs").write_text(
+        """
+namespace N;
+public interface IThing {
+    IThing WithKey(string k);
+}
+public class C : IThing {
+    IThing IThing.WithKey(string k) => this;
+    void Plain() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    exported = _exported_by_suffix(mock_ingestor)
+
+    def flag(suffix: str) -> bool:
+        return next(v for qn, v in exported.items() if qn.endswith(suffix))
+
+    assert flag("N.C.WithKey(string)") is True
+    # (H) A plain modifier-less class member stays private.
+    assert flag("N.C.Plain") is False
+
+
 def _class_exported(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
     for call in get_nodes(mock_ingestor, NodeType.CLASS):
