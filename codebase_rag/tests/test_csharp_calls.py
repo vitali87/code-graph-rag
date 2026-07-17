@@ -85,3 +85,29 @@ public class Grp {
 
     referenced = _reference_targets(mock_ingestor) | _call_targets(mock_ingestor)
     assert any(t.endswith("N.Grp.EmptyHandler") for t in referenced), referenced
+
+
+def test_method_group_to_external_callee_is_reference_not_call(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A method group handed to an EXTERNAL callee (Array.ForEach) keeps its
+    # (H) target reachable, but the pass is NOT an invocation: emitting CALLS
+    # (H) here polluted the C# call graph with 282 phantom Polly call edges
+    # (H) (retrieval precision 1.0 -> 0.92). C# records the pass as REFERENCES
+    # (H) at every site; only flow languages keep their historical CALLS form.
+    (csharp_project / "Ext.cs").write_text(
+        """
+namespace N;
+public class Ext {
+    public void Wire(int[] xs) { System.Array.ForEach(xs, Sink); }
+    private static void Sink(int x) { }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _call_targets(mock_ingestor)
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Ext.Sink(int)") for t in refs), refs
+    assert not any(t.endswith("N.Ext.Sink(int)") for t in calls), calls
