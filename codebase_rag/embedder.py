@@ -144,7 +144,6 @@ if has_torch() and has_transformers():
             model = model.to(device)
         return model
 
-
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
         try:
             cache = get_embedding_cache()
@@ -166,7 +165,7 @@ if has_torch() and has_transformers():
             cache.put(code, result)
             return result
         except Exception:
-            logger.exception("Failed to generate embedding for code snippet of length %d", len(code),)
+            logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
             raise
 
     def embed_code_batch(

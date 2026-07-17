@@ -103,6 +103,9 @@ NO_FUNCTIONS_FOR_EMBEDDING = "No functions or methods found for embedding genera
 GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
 EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"
 EMBEDDING_FAILED = "Failed to embed {name}: {error}"
+EMBEDDING_SNIPPET_FAILED = (
+    "Failed to generate embedding for code snippet of length {length}"
+)
 EMBEDDING_BATCH_COMPUTE_FAILED = "Failed to embed batch of {count}: {error}"
 CONTEXT_TOKEN_COUNT_FAILED = "Context token count failed: {error}"
 NO_SOURCE_FOR = "No source code found for {name}"
