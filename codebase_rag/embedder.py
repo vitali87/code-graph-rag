@@ -145,24 +145,28 @@ if has_torch() and has_transformers():
         return model
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
-        cache = get_embedding_cache()
-        if (cached := cache.get(code)) is not None:
-            return cached
+        try:
+            cache = get_embedding_cache()
+            if (cached := cache.get(code)) is not None:
+                return cached
 
-        if max_length is None:
-            max_length = settings.EMBEDDING_MAX_LENGTH
-        model = get_model()
-        device = next(model.parameters()).device
-        tokens = model.tokenize([code], max_length=max_length)
-        tokens_tensor = torch.tensor(tokens).to(device)
-        with torch.no_grad():
-            _, sentence_embeddings = model(tokens_tensor)
-            embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
-        _sync_after_batch(device)
-        result: list[float] = embedding[0].tolist()
+            if max_length is None:
+                max_length = settings.EMBEDDING_MAX_LENGTH
+            model = get_model()
+            device = next(model.parameters()).device
+            tokens = model.tokenize([code], max_length=max_length)
+            tokens_tensor = torch.tensor(tokens).to(device)
+            with torch.no_grad():
+                _, sentence_embeddings = model(tokens_tensor)
+                embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+            _sync_after_batch(device)
+            result: list[float] = embedding[0].tolist()
 
-        cache.put(code, result)
-        return result
+            cache.put(code, result)
+            return result
+        except Exception:
+            logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
+            raise
 
     def embed_code_batch(
         snippets: list[str],
