@@ -242,3 +242,18 @@ def test_dart_annotations_and_modifiers_captured() -> None:
     modifiers, decorators = extract_modifiers_and_decorators(func_node, lang_queries)
     assert "static" in modifiers, (modifiers, decorators)
     assert "@override" in decorators, (modifiers, decorators)
+
+
+def test_dart_const_and_final_builtins_captured() -> None:
+    # (H) Dart `const`/`final` are NAMED nodes (const_builtin/final_builtin),
+    # (H) not anonymous keyword tokens: a quoted "const" fails to compile and
+    # (H) a quoted "final" compiles but never matches, so both must be
+    # (H) captured via their named forms.
+    parsers, queries = load_parsers()
+    code = "class A {\n  const A();\n}"
+    root = parse_code(code, cs.SupportedLanguage.DART, parsers)
+    ctor_node = find_first_node_of_type(root, "constant_constructor_signature")
+    assert ctor_node is not None
+    lang_queries = queries[cs.SupportedLanguage.DART]
+    modifiers, _ = extract_modifiers_and_decorators(ctor_node, lang_queries)
+    assert "const" in modifiers, modifiers
