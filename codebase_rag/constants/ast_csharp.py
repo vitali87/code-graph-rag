@@ -99,6 +99,8 @@ TS_CSHARP_GENERIC_NAME = "generic_name"
 TS_CSHARP_CAST_EXPRESSION = "cast_expression"
 TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
 TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
+TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
+TS_CSHARP_BLOCK = "block"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 

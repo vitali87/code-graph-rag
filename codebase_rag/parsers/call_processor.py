@@ -786,7 +786,11 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes:
+            if not all_call_nodes and language != cs.SupportedLanguage.CSHARP:
+                # (H) A file with no call expressions has nothing further to
+                # (H) process -- except in C#, where a class can still READ
+                # (H) properties (`return Size;`); the member-read pass runs
+                # (H) per caller inside class processing, so C# proceeds.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -4144,38 +4148,45 @@ class CallProcessor:
             return safe_decode_text(receiver)
         return None
 
-    def _csharp_declared_names(
+    def _csharp_shadow_spans(
         self,
         caller_node: Node,
         function_types: tuple[str, ...],
         class_types: tuple[str, ...],
-    ) -> set[str]:
-        # (H) Every name declared in the scopes the READ WALK descends into
-        # (H) (locals incl. untyped `var x = 3`, parameters, lambda params): a
-        # (H) declaration shadows a same-name property for the read pass. The
-        # (H) two walks must skip the SAME nested scopes: a local declared in a
-        # (H) nested local function must not suppress the outer body's reads
-        # (H) (that scope has its own pass), and a lambda body -- which the
-        # (H) read walk does descend into -- must contribute its params,
-        # (H) including a simple lambda's bare-identifier parameter, or an
-        # (H) in-lambda shadowed read fabricates a property reference.
-        names: set[str] = set()
+    ) -> dict[str, list[tuple[int, int]]]:
+        # (H) {declared name: [byte span of each declaring SCOPE]} for every
+        # (H) declaration in the scopes the READ WALK descends into (locals
+        # (H) incl. untyped `var x = 3`, parameters, and a simple lambda's
+        # (H) bare implicit_parameter). A declaration shadows a same-name
+        # (H) property only for reads INSIDE its declaring scope -- a lambda
+        # (H) param or a sibling block's local must not suppress an outer
+        # (H) read, while an in-lambda shadowed read must not fabricate a
+        # (H) property reference. The two walks skip the SAME nested
+        # (H) function/class scopes (each of those has its own pass).
+        def scope_span(decl: Node) -> tuple[int, int]:
+            anc = decl.parent
+            while anc is not None and anc != caller_node:
+                if anc.type in (cs.TS_CSHARP_BLOCK, cs.TS_CSHARP_LAMBDA_EXPRESSION):
+                    return (anc.start_byte, anc.end_byte)
+                anc = anc.parent
+            return (caller_node.start_byte, caller_node.end_byte)
+
+        spans: dict[str, list[tuple[int, int]]] = {}
         stack = list(caller_node.children)
         while stack:
             node = stack.pop()
             node_type = node.type
             if node_type in function_types or node_type in class_types:
                 continue
+            name = None
             if node_type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
-                if name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)):
-                    names.add(name)
+                name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
             elif node_type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
-                # (H) A simple lambda's parameter (`Size => ...`) is an
-                # (H) implicit_parameter whose text IS the name.
-                if name := safe_decode_text(node):
-                    names.add(name)
+                name = safe_decode_text(node)
+            if name:
+                spans.setdefault(name, []).append(scope_span(node))
             stack.extend(node.children)
-        return names
+        return spans
 
     def _ingest_csharp_property_reads(
         self,
@@ -4197,18 +4208,20 @@ class CallProcessor:
         method_label = cs.NodeLabel.METHOD
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
-        shadowed: set[str] | None = None
+        shadowed: dict[str, list[tuple[int, int]]] | None = None
         seen: set[str] = set()
 
-        def try_emit(name: str | None, this_read: bool) -> None:
+        def try_emit(name: str | None, read_node: Node, this_read: bool) -> None:
             nonlocal shadowed
             if not name or name not in prop_names or name in seen:
                 return
             if shadowed is None:
-                shadowed = self._csharp_declared_names(
+                shadowed = self._csharp_shadow_spans(
                     caller_node, function_types, class_types
                 )
-            if (this_read or name not in shadowed) and (
+            pos = read_node.start_byte
+            is_shadowed = any(lo <= pos < hi for lo, hi in shadowed.get(name, ()))
+            if (this_read or not is_shadowed) and (
                 prop_qn := engine.resolve_property_read(name, caller_qn)
             ):
                 seen.add(name)
@@ -4231,6 +4244,7 @@ class CallProcessor:
                     safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
                     if this_read
                     else self._csharp_read_identifier(receiver),
+                    node,
                     this_read,
                 )
             elif node_type == cs.TS_CSHARP_IDENTIFIER:
@@ -4249,7 +4263,7 @@ class CallProcessor:
                     and parent.child_by_field_name(cs.FIELD_NAME) != node
                     and parent.child_by_field_name(cs.FIELD_TYPE) != node
                 ):
-                    try_emit(safe_decode_text(node), False)
+                    try_emit(safe_decode_text(node), node, False)
             stack.extend(node.children)
 
     def _build_nested_qualified_name(
