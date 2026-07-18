@@ -1141,6 +1141,25 @@ class CSharpTypeInferenceEngine:
         for base_qn in self.class_inheritance.get(class_qn, []):
             self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
 
+    def csharp_same_arity_family(self, method_qn: str) -> list[str]:
+        # (H) Signature-suffixed siblings of a resolved bare call that differ
+        # (H) only in parameter TYPES: a switch-arm dispatch
+        # (H) (`FormatExact(i, o)` / `FormatExact(s, o)`) is untypeable by
+        # (H) arity alone, so the whole same-arity family stays reachable.
+        if cs.CHAR_PAREN_OPEN not in method_qn:
+            return []
+        base = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if cs.SEPARATOR_DOT not in base:
+            return []
+        class_qn, name = base.rsplit(cs.SEPARATOR_DOT, 1)
+        return [
+            qn
+            for qn in self._find_arity_matches_across_parts(
+                class_qn, name, _arity(method_qn)
+            )
+            if qn != method_qn
+        ]
+
     def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
         # (H) Every same-name METHOD of the caller's enclosing type (across
         # (H) partial parts and base classes): a bare method-group pass binds
