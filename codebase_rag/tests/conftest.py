@@ -99,6 +99,18 @@ def _disable_stack_autostart() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
+def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # (H) The shipped default is AUTO (hybrid wherever dotnet exists), which
+    # (H) would run a real MSBuild workspace load inside any unit test whose
+    # (H) fixture carries a .csproj. Tests pin pure tree-sitter and opt into
+    # (H) the Roslyn frontend explicitly (the _hybrid helper, wiring tests).
+    from codebase_rag import constants as cs
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cgr_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[Path, None, None]:

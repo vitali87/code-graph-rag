@@ -660,7 +660,13 @@ class GraphUpdater:
             # (H) and building the net tool for a non-C# repo would be wasteful.
             return
         if not csharp_frontend_available():
-            logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
+            # (H) AUTO promises hybrid only where the toolchain exists, so a
+            # (H) missing dotnet is the expected fallback (info); an EXPLICIT
+            # (H) hybrid/roslyn request that cannot run stays a warning.
+            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
+                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
+            else:
+                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
         logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
         facts = run_csharp_frontend(self.repo_path)

@@ -94,6 +94,19 @@ def csharp_frontend_available() -> bool:
     return shutil.which(_DOTNET) is not None
 
 
+def resolve_csharp_frontend() -> cs.CSharpFrontend:
+    # (H) The single source of truth for what AUTO means: HYBRID wherever a
+    # (H) dotnet toolchain is present, TREESITTER otherwise. Both the graph
+    # (H) build and the parser fingerprint resolve through here so a graph's
+    # (H) recorded identity always matches the frontend that actually ran.
+    mode = settings.CSHARP_FRONTEND
+    if mode != cs.CSharpFrontend.AUTO:
+        return mode
+    if csharp_frontend_available():
+        return cs.CSharpFrontend.HYBRID
+    return cs.CSharpFrontend.TREESITTER
+
+
 def _project_candidates(repo_path: Path) -> list[Path]:
     def not_ignored(p: Path) -> bool:
         return not any(part in _IGNORE_DIRS for part in p.relative_to(repo_path).parts)

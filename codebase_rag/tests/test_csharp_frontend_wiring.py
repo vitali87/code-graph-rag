@@ -209,7 +209,7 @@ def test_frontend_off_clears_stale_base_kinds(
     assert updater.factory.definition_processor.csharp_base_kinds == {}
 
 
-def test_default_treesitter_keeps_iprefix_heuristic(temp_repo: Path) -> None:
+def test_treesitter_mode_keeps_iprefix_heuristic(temp_repo: Path) -> None:
     root = temp_repo / "defaultproj"
     _write_project(root)
 
@@ -217,8 +217,9 @@ def test_default_treesitter_keeps_iprefix_heuristic(temp_repo: Path) -> None:
     run_updater(root, ingestor, skip_if_missing=SKIP)
 
     inherits = _pairs(ingestor, "INHERITS")
-    # (H) With the default flag the frontend never runs: the heuristic reads the
-    # (H) I-prefixed base class IWidget as an interface, so it is NOT an INHERITS.
+    # (H) In tree-sitter mode (the suite-wide test pin) the frontend never
+    # (H) runs: the heuristic reads the I-prefixed base class IWidget as an
+    # (H) interface, so it is NOT an INHERITS.
     assert not _has(inherits, "N.Button", "N.IWidget"), inherits
 
 
@@ -271,9 +272,9 @@ def test_default_csharp_frontend_is_auto() -> None:
     # (H) The shipped default: hybrid wherever a dotnet toolchain exists,
     # (H) pure tree-sitter otherwise. Read from the FIELD default because the
     # (H) test suite pins the live settings instance to tree-sitter.
-    from codebase_rag.config import Settings
+    from codebase_rag.config import AppConfig
 
-    assert Settings.model_fields["CSHARP_FRONTEND"].default == cs.CSharpFrontend.AUTO
+    assert AppConfig.model_fields["CSHARP_FRONTEND"].default == cs.CSharpFrontend.AUTO
 
 
 def test_auto_mode_runs_frontend_when_dotnet_available(

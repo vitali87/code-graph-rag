@@ -31,6 +31,9 @@ CSHARP_FRONTEND_RUNNING = "--- C# Roslyn frontend: {path} ---"
 CSHARP_FRONTEND_UNAVAILABLE = (
     "C# Roslyn frontend enabled but dotnet is unavailable; using tree-sitter"
 )
+CSHARP_FRONTEND_AUTO_FALLBACK = (
+    "C# frontend AUTO: dotnet not found; using tree-sitter only"
+)
 CSHARP_FRONTEND_NO_PROJECT = (
     "C# Roslyn frontend enabled but no .csproj/.sln found; using tree-sitter"
 )
