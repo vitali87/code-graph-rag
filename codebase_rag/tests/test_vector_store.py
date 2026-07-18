@@ -9,10 +9,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.utils.dependencies import has_qdrant_client
+from codebase_rag.constants import VectorStoreBackend
+from codebase_rag.utils.dependencies import has_pymilvus, has_qdrant_client
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
+
+
+@pytest.fixture(autouse=True)
+def use_qdrant_backend() -> Generator[None, None, None]:
+    import codebase_rag.vector_store as vs
+
+    with patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT):
+        yield
 
 
 @pytest.fixture
@@ -26,21 +35,11 @@ def mock_qdrant_client() -> MagicMock:
 def reset_global_client() -> Generator[None, None, None]:
     import codebase_rag.vector_store as vs
 
-    if has_qdrant_client() and vs._CLIENT is not None:
-        try:
-            vs._CLIENT.close()
-        except Exception:
-            pass
-        vs._CLIENT = None
+    vs.close_vector_store_client()
 
     yield
 
-    if has_qdrant_client() and vs._CLIENT is not None:
-        try:
-            vs._CLIENT.close()
-        except Exception:
-            pass
-        vs._CLIENT = None
+    vs.close_vector_store_client()
 
 
 @pytest.fixture
@@ -67,18 +66,14 @@ def integration_client(
         collection_name="code_embeddings",
         vectors_config=VectorParams(size=768, distance=Distance.COSINE),
     )
-    vs._CLIENT = client  # ty: ignore[invalid-assignment]
+    vs._CLIENT = client
+    vs._CLIENT_BACKEND = VectorStoreBackend.QDRANT
 
     yield client
 
-    vs._CLIENT = None  # ty: ignore[invalid-assignment]
-    try:
-        client.close()
-    except Exception:
-        pass
+    vs.close_vector_store_client()
 
 
-@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
     import codebase_rag.vector_store as vs
 
@@ -92,7 +87,6 @@ def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
     mock_client_cls.assert_called_once_with(url="http://localhost:6333")
 
 
-@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_get_qdrant_client_uses_path_when_url_unset(
     reset_global_client: None,
 ) -> None:
@@ -109,7 +103,6 @@ def test_get_qdrant_client_uses_path_when_url_unset(
     mock_client_cls.assert_called_once_with(path="/tmp/qd")
 
 
-@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_get_qdrant_client_logs_and_reraises_on_lock_error(
     reset_global_client: None,
 ) -> None:
@@ -312,3 +305,109 @@ def test_empty_search_returns_empty_list(integration_client: QdrantClient) -> No
 
     results = search_embeddings([0.5] * 768, top_k=5)
     assert results == []
+
+
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = {
+        "fields": [
+            {"name": "node_id"},
+            {"name": "qualified_name"},
+            {"name": "embedding", "params": {"dim": 768}},
+        ]
+    }
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "http://localhost:19530"),
+        patch.object(vs.settings, "MILVUS_TOKEN", "root:Milvus"),
+        patch.object(vs.settings, "MILVUS_DB_NAME", "default"),
+        patch(
+            "codebase_rag.vector_store.MilvusClient", return_value=mock_client
+        ) as mock_client_cls,
+    ):
+        client = vs.get_milvus_client()
+
+    assert client is mock_client
+    mock_client_cls.assert_called_once_with(
+        uri="http://localhost:19530",
+        token="root:Milvus",
+        db_name="default",
+    )
+
+
+def test_milvus_empty_search_response_returns_empty_list() -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.search.return_value = []
+
+    with (
+        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vector_store.logger") as mock_logger,
+    ):
+        results = vs.MilvusVectorStore().search_embeddings([0.2] * 768, top_k=5)
+
+    assert results == []
+    mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("lite_version", "expected"),
+    [("3.0", True), ("3.0.1", True), ("3.0.0.post1", True), ("3.1.0", False)],
+)
+def test_milvus_lite_30_cosine_workaround_versions(
+    lite_version: str, expected: bool
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "./milvus.db"),
+        patch("codebase_rag.vector_store.version", return_value=lite_version),
+    ):
+        assert vs._uses_milvus_lite_30_cosine_distance() is expected
+
+
+def _has_milvus_lite() -> bool:
+    # (H) A LOCAL Milvus uri needs the embedded milvus-lite server, which ships
+    # (H) no Windows wheels: pymilvus alone installs there and the connect
+    # (H) raises ConnectionConfigException (Windows CI).
+    import importlib.util
+
+    return importlib.util.find_spec("milvus_lite") is not None
+
+
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+@pytest.mark.skipif(not _has_milvus_lite(), reason="milvus-lite not installed")
+def test_milvus_store_search_verify_delete_roundtrip(
+    tmp_path: Path, reset_global_client: None
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    collection_name = "code_embeddings_test"
+    with (
+        patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.MILVUS),
+        patch.object(vs.settings, "MILVUS_URI", str(tmp_path / "milvus.db")),
+        patch.object(vs.settings, "MILVUS_COLLECTION_NAME", collection_name),
+        patch.object(vs.settings, "MILVUS_VECTOR_DIM", 4),
+    ):
+        stored = vs.store_embedding_batch(
+            [
+                (101, [1.0, 0.0, 0.0, 0.0], "pkg.auth.login"),
+                (102, [0.0, 1.0, 0.0, 0.0], "pkg.billing.charge"),
+                (103, [0.9, 0.1, 0.0, 0.0], "pkg.auth.refresh"),
+            ]
+        )
+        vs.close_vector_store_client()
+        results = vs.search_embeddings([0.95, 0.05, 0.0, 0.0], top_k=2)
+        found_ids = vs.verify_stored_ids({101, 102, 999})
+        vs.delete_project_embeddings("pkg", [101, 102])
+        remaining_ids = vs.verify_stored_ids({101, 102, 103})
+
+    assert stored == 3
+    assert [node_id for node_id, _score in results] == [101, 103]
+    assert found_ids == {101, 102}
+    assert remaining_ids == {103}

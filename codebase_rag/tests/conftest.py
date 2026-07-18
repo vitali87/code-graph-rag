@@ -280,16 +280,8 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
     yield
 
     try:
-        from codebase_rag.utils.dependencies import has_qdrant_client
+        import codebase_rag.vector_store as vs
 
-        if has_qdrant_client():
-            import codebase_rag.vector_store as vs
-
-            if vs._CLIENT is not None:
-                try:
-                    vs._CLIENT.close()
-                except Exception:
-                    pass
-                vs._CLIENT = None
+        vs.close_vector_store_client()
     except Exception:
         pass

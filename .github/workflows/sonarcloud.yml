@@ -34,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra treesitter-full --extra test --extra semantic --group dev
+        run: uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
       - name: Run tests with coverage
         run: uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml

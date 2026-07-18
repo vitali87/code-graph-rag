@@ -20,6 +20,11 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
+Qdrant is the default vector store for semantic search. To use Milvus Lite,
+install `code-graph-rag[semantic,milvus]`, then set
+`CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI=./.milvus_code_embeddings.db`
+before indexing.
+
 ### Prerequisites
 
 - Python 3.12+

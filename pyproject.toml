@@ -121,6 +121,10 @@ semantic = [
     "transformers>=4.0.0",
 ]
 
+milvus = [
+    "pymilvus[milvus-lite]>=3.0.0",
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"

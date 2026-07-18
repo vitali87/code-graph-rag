@@ -68,7 +68,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra semantic --extra test --group dev
+          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
       - name: Run type checking
         run: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
       # (H) --no-sync is required: a bare `uv run` re-syncs to .python-version
       # (H) (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
@@ -170,7 +170,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
       - name: Run integration tests
         env:
