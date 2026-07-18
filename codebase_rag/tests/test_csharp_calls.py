@@ -374,3 +374,29 @@ public partial class Pipe {
         "PipeCore" in s and s.endswith("N.Pipe.Run(int)") and "PipeCore" in t
         for s, t in pairs
     ), pairs
+
+
+def test_generic_member_call_on_class_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Policy.Handle<InvalidOperationException>()`: the member-access NAME
+    # (H) field is a generic_name; without stripping its type arguments the
+    # (H) method name never matches the generic-free registered qn, so Polly's
+    # (H) entire fluent entry point (56 Handle sites) emits no edge.
+    (csharp_project / "GM.cs").write_text(
+        """
+namespace N;
+public class Policy {
+    public static Policy Handle<TException>() => new Policy();
+    public static Policy Wrap(int n) => new Policy();
+}
+public class App {
+    public void Run() { Policy.Handle<System.InvalidOperationException>(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.Policy.Handle") for t in targets), targets
