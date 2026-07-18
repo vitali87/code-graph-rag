@@ -37,7 +37,7 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
     updater = GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     )
-    updater.ast_cache.max_entries = 1  # force eviction of all but the last file
+    updater.ast_cache.max_entries = 1  # (H) force eviction of all but the last file
     updater.run()
 
     calls = _calls(mock)

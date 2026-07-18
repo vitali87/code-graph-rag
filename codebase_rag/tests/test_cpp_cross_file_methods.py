@@ -1,11 +1,10 @@
-"""Tests for C++ cross-file out-of-class method resolution (issue #496).
-
-When a class is declared in a header (.h) and methods are implemented
-out-of-class in a source file (.cpp) using ``ClassName::method`` syntax,
-the Method nodes must link back to the correct Class node via
-DEFINES_METHOD edges -- not to a phantom class constructed from the
-.cpp module's qualified name.
-"""
+# (H) Tests for C++ cross-file out-of-class method resolution (issue #496).
+# (H)
+# (H) When a class is declared in a header (.h) and methods are implemented
+# (H) out-of-class in a source file (.cpp) using ``ClassName::method`` syntax,
+# (H) the Method nodes must link back to the correct Class node via
+# (H) DEFINES_METHOD edges -- not to a phantom class constructed from the
+# (H) .cpp module's qualified name.
 
 from __future__ import annotations
 
@@ -20,10 +19,6 @@ from codebase_rag.tests.conftest import (
     get_relationships,
     run_updater,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_method_qns(mock_ingestor: MagicMock) -> set[str]:
@@ -58,21 +53,11 @@ def _method_names_for_class(mock_ingestor: MagicMock, class_name: str) -> set[st
     return names
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def cpp_cross_file_project(temp_repo: Path) -> Path:
     project = temp_repo / "cpp_cross_file"
     project.mkdir()
     return project
-
-
-# ---------------------------------------------------------------------------
-# Test: basic header + source cross-file methods
-# ---------------------------------------------------------------------------
 
 
 def test_header_source_method_resolution(
@@ -121,15 +106,12 @@ double Calculator::divide(int a, int b) {
 
     run_updater(cpp_cross_file_project, mock_ingestor)
 
-    # The class should exist in the header module.
     class_qns = _get_class_qns(mock_ingestor)
     header_class = [qn for qn in class_qns if "include" in qn and "Calculator" in qn]
     assert header_class, (
         f"Expected a Calculator class in include/, got classes: {class_qns}"
     )
 
-    # All three out-of-class methods should have DEFINES_METHOD edges
-    # pointing to the *header* class, not to a phantom class in src/.
     edges = _get_defines_method_edges(mock_ingestor)
     header_class_qn = header_class[0]
     methods_linked_to_header = {
@@ -146,8 +128,6 @@ double Calculator::divide(int a, int b) {
         f"'divide' not linked to header class. Edges: {edges}"
     )
 
-    # There should be NO orphan Method nodes (methods whose container_qn
-    # uses the .cpp module instead of the .h module).
     method_qns = _get_method_qns(mock_ingestor)
     orphan_methods = {
         qn
@@ -157,11 +137,6 @@ double Calculator::divide(int a, int b) {
     assert not orphan_methods, (
         f"Found orphan methods with .cpp module QN: {orphan_methods}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Test: multiple source files implementing one header class
-# ---------------------------------------------------------------------------
 
 
 def test_multiple_source_files_one_class(
@@ -226,11 +201,6 @@ void Engine::brake() { /* ... */ }
             f"'{method_name}' not linked to header Engine class. "
             f"Linked methods: {methods_linked}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Test: constructor and destructor out-of-class across files
-# ---------------------------------------------------------------------------
 
 
 def test_cross_file_constructor_destructor(
@@ -305,11 +275,6 @@ void Resource::reset() {
     )
 
 
-# ---------------------------------------------------------------------------
-# Test: nested namespace cross-file methods
-# ---------------------------------------------------------------------------
-
-
 def test_nested_namespace_cross_file(
     cpp_cross_file_project: Path,
     mock_ingestor: MagicMock,
@@ -375,11 +340,6 @@ void Logger::error(const char* msg) { /* ... */ }
     )
 
 
-# ---------------------------------------------------------------------------
-# Test: no orphan methods remain (aggregate check)
-# ---------------------------------------------------------------------------
-
-
 def test_no_orphan_methods_across_files(
     cpp_cross_file_project: Path,
     mock_ingestor: MagicMock,
@@ -422,18 +382,11 @@ void Widget::hide() { /* ... */ }
     methods_with_edges = {mq for _, mq in edges}
 
     orphans = method_qns - methods_with_edges
-    # Filter to only methods belonging to Widget (other methods from inline
-    # definitions always have edges).
     widget_orphans = {qn for qn in orphans if "Widget" in qn}
     assert not widget_orphans, (
         f"Found orphan Widget Method nodes with no DEFINES_METHOD edge: "
         f"{widget_orphans}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Test: same-file out-of-class still works (regression)
-# ---------------------------------------------------------------------------
 
 
 def test_same_file_out_of_class_still_works(

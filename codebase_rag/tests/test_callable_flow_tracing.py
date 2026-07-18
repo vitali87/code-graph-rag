@@ -171,8 +171,8 @@ def test_first_party_callee_keeps_precise_attribution(tmp_path: Path) -> None:
         "    return apply(_cb)\n"
     )
     calls = _run_calls(tmp_path, {"m.py": src})
-    assert _has(calls, "m.apply", "m._cb")  # precise: callee -> callback
-    assert not _has(calls, "m.caller", "m._cb")  # not the enclosing scope
+    assert _has(calls, "m.apply", "m._cb")  # (H) precise: callee -> callback
+    assert not _has(calls, "m.caller", "m._cb")  # (H) not the enclosing scope
 
 
 def test_self_method_callback_in_closure_is_traced(tmp_path: Path) -> None:
