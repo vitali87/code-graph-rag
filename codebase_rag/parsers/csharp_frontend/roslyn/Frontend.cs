@@ -268,6 +268,20 @@ public static class Frontend
                     return loc;
                 }
             }
+            // A source-generated partial ([LoggerMessage]) implements the
+            // method in a generated tree with no first-party path, but its
+            // DEFINITION part is the declaration cgr ingested (Polly's Log.cs):
+            // probe it before concluding the method lives outside the repo.
+            if (method.PartialDefinitionPart is { } definition)
+            {
+                foreach (var reference in definition.DeclaringSyntaxReferences)
+                {
+                    if (FirstPartyDecl(reference) is { } loc)
+                    {
+                        return loc;
+                    }
+                }
+            }
             return null;
         }
 
