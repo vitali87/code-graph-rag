@@ -12,7 +12,17 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# (H) rich draws the options table with box-drawing borders whose glyphs land
+# (H) BETWEEN the words of a wrapped cell (legacy Windows consoles render one
+# (H) column narrower, wrapping cells that fit elsewhere), so phrase asserts
+# (H) must strip them along with the ANSI codes before whitespace-joining.
+_BOX_DRAWING_RE = re.compile(r"[─-╿]")
 _RUNNER = CliRunner()
+
+
+def _normalized_help(stdout: str) -> str:
+    plain = _BOX_DRAWING_RE.sub(" ", _ANSI_RE.sub("", stdout))
+    return " ".join(plain.split())
 
 
 def test_help_command_works() -> None:
@@ -72,16 +82,20 @@ def test_version_flag() -> None:
 def test_help_command_shows_task_grouped_index() -> None:
     result = _RUNNER.invoke(app, ["help"], prog_name="cgr")
 
+    # (H) rich colorizes help when it detects an ANSI-capable log sink (GitHub
+    # (H) Actions among them), so the raw stdout carries escape codes there and
+    # (H) plain-substring asserts must run on the normalized text.
+    plain_stdout = _normalized_help(result.stdout)
     assert result.exit_code == 0
-    assert "Usage: cgr [OPTIONS] COMMAND" in result.stdout
-    assert ch.PANEL_USE in result.stdout
-    assert ch.PANEL_GRAPH in result.stdout
-    assert ch.PANEL_MANAGE in result.stdout
+    assert "Usage: cgr [OPTIONS] COMMAND" in plain_stdout
+    assert ch.PANEL_USE in plain_stdout
+    assert ch.PANEL_GRAPH in plain_stdout
+    assert ch.PANEL_MANAGE in plain_stdout
 
 
 def test_help_command_shows_detailed_command_page() -> None:
     result = _RUNNER.invoke(app, ["help", "start"], prog_name="cgr")
-    normalized_output = " ".join(result.stdout.split())
+    normalized_output = _normalized_help(result.stdout)
 
     assert result.exit_code == 0
     assert "Usage: cgr start [OPTIONS]" in normalized_output
