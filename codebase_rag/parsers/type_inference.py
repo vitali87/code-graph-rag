@@ -43,6 +43,8 @@ class TypeInferenceEngine:
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_local_functions",
+        "csharp_generic_methods",
         "function_locations",
         "_java_type_inference",
         "_csharp_type_inference",
@@ -71,6 +73,8 @@ class TypeInferenceEngine:
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
+        csharp_generic_methods: set[str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -118,6 +122,17 @@ class TypeInferenceEngine:
         # (H) after construction and read by the C# resolver's semantic path.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): C# local-function
+        # (H) host/arity index, populated during ingestion and read by the C#
+        # (H) resolver's bare-name path.
+        self.csharp_local_functions = (
+            csharp_local_functions if csharp_local_functions is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): generic-method qn
+        # (H) set, populated during ingestion, read by C# bare-call dispatch.
+        self.csharp_generic_methods = (
+            csharp_generic_methods if csharp_generic_methods is not None else set()
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -183,6 +198,8 @@ class TypeInferenceEngine:
                 csharp_partial_groups=self.csharp_partial_groups,
                 csharp_extension_methods=self.csharp_extension_methods,
                 csharp_call_sites=self.csharp_call_sites,
+                csharp_local_functions=self.csharp_local_functions,
+                csharp_generic_methods=self.csharp_generic_methods,
                 function_locations=self.function_locations,
             )
         return self._csharp_type_inference

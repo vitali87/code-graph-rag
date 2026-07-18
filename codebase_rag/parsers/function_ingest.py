@@ -200,6 +200,8 @@ class FunctionIngestMixin:
     csharp_methods: set[str]
     csharp_override_methods: set[str]
     csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
+    csharp_generic_methods: set[str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -897,6 +899,24 @@ class FunctionIngestMixin:
             is_named=not resolution.is_anonymous,
         )
         self.function_locations[function_span_key(module_qn, func_node)] = location
+        # (H) Pin a C# local function to its HOST scope (method/ctor/enclosing
+        # (H) local fn) by span, plus its declared parameter count, so bare-name
+        # (H) call resolution can honor C# scoping and arity (the host's
+        # (H) signatured identity is not registered yet at this point).
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
+        ):
+            host = func_node.parent
+            while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
+                host = host.parent
+            if host is not None:
+                from .csharp import utils as csharp_utils
+
+                self.csharp_local_functions[resolution.qualified_name] = (
+                    function_span_key(module_qn, host),
+                    len(csharp_utils.extract_parameter_type_names(func_node)),
+                )
         record_cpp_definition_span(
             self.cpp_definition_spans,
             language,
@@ -1306,6 +1326,11 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
+        if (
+            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+            is not None
+        ):
+            self.csharp_generic_methods.add(ingested_qn)
         record_cpp_definition_span(
             self.cpp_definition_spans,
             cs.SupportedLanguage.CSHARP,

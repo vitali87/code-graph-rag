@@ -150,6 +150,7 @@ class ClassIngestMixin:
     csharp_methods: set[str]
     csharp_override_methods: set[str]
     csharp_partial_groups: dict[str, list[str]]
+    csharp_generic_methods: set[str]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
@@ -1115,6 +1116,13 @@ class ClassIngestMixin:
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,
             )
+            if (
+                ingested_qn is not None
+                and language == cs.SupportedLanguage.CSHARP
+                and method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+                is not None
+            ):
+                self.csharp_generic_methods.add(ingested_qn)
             if ingested_qn is not None:
                 record_cpp_definition_span(
                     self.cpp_definition_spans,

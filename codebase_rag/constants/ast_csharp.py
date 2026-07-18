@@ -14,6 +14,7 @@ TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION = "file_scoped_namespace_declaration
 # (H) one. Used to tell a top-level type (default `internal`) from a nested type
 # (H) or member (default `private`) for export detection.
 TS_CSHARP_DECLARATION_LIST = "declaration_list"
+TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER = "explicit_interface_specifier"
 
 # (H) Type declarations -> Class nodes.
 TS_CSHARP_CLASS_DECLARATION = "class_declaration"
@@ -41,6 +42,19 @@ TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
 TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
+
+# (H) The scopes a local function can be declared in (and therefore be
+# (H) call-visible from): a method/constructor body or an enclosing local
+# (H) function. Used to pin each local function to its HOST so bare-name
+# (H) resolution honors C# scoping (a local fn in one overload's body is not
+# (H) in scope in a sibling overload).
+CSHARP_LOCAL_FN_HOST_TYPES = frozenset(
+    {
+        TS_CSHARP_METHOD_DECLARATION,
+        TS_CSHARP_CONSTRUCTOR_DECLARATION,
+        TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+    }
+)
 
 # (H) Members whose registered leaf name is synthesized (no usable `name` field,
 # (H) or one that collides), routed through csharp.utils.synthesize_method_name.
@@ -82,6 +96,12 @@ TS_CSHARP_BASE_LIST = "base_list"
 # (H) a record positional base `primary_constructor_base_type` (`Animal(Name)`),
 # (H) or a `predefined_type` (an enum's underlying integral type -> not a base).
 TS_CSHARP_GENERIC_NAME = "generic_name"
+TS_CSHARP_CAST_EXPRESSION = "cast_expression"
+TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
+TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
+TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"
+TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
+TS_CSHARP_BLOCK = "block"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 

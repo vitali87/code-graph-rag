@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,6 +65,8 @@ class CSharpTypeInferenceEngine:
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_local_functions",
+        "csharp_generic_methods",
         "function_locations",
         "_rel_to_module",
     )
@@ -83,6 +86,8 @@ class CSharpTypeInferenceEngine:
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
+        csharp_generic_methods: set[str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -105,6 +110,12 @@ class CSharpTypeInferenceEngine:
         # (H) this engine is constructed), so `or {}` would lose them.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        self.csharp_local_functions = (
+            csharp_local_functions if csharp_local_functions is not None else {}
+        )
+        self.csharp_generic_methods = (
+            csharp_generic_methods if csharp_generic_methods is not None else set()
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -230,8 +241,15 @@ class CSharpTypeInferenceEngine:
         if semantic := self._semantic_call_target(call_node, module_qn):
             return semantic
         func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # (H) A bare `Foo(...)` is resolved by the generic simple-name path.
+        if func is None:
+            return None
+        if func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            # (H) A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
+            # (H) an in-scope local function first (it shadows same-name method
+            # (H) overloads), then an arity-matched member of the enclosing
+            # (H) type. A miss falls to the generic simple-name path.
+            if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
+                return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
             return None
         method_name = safe_decode_text(func.child_by_field_name(cs.FIELD_NAME))
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
@@ -267,6 +285,150 @@ class CSharpTypeInferenceEngine:
         if receiver_class_qn is not None:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
                 return cs.NodeLabel.METHOD.value, name_hit
+        return None
+
+    def _resolve_bare_call(
+        self,
+        func: Node,
+        call_node: Node,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        name = safe_decode_text(func)
+        if not name:
+            return None
+        # (H) `Handle<TException>(...)`: the callee name is the identifier
+        # (H) without its type arguments (matching how methods register).
+        name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        arg_count = self._count_arguments(call_node)
+        if local := self._find_in_scope_local_function(
+            name, arg_count, caller_qn, module_qn
+        ):
+            return cs.NodeLabel.FUNCTION.value, local
+        # (H) Same-arity twins (`M(X) => M<Void>(x)` beside `M<T>(X)` on another
+        # (H) partial part, Polly's ResiliencePipeline Get*/Initialize*Context):
+        # (H) parameter arity cannot tell them apart, so prefer the overload
+        # (H) whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
+        # (H) generic_name, `M(...)` a plain identifier).
+        generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
+        for class_qn in self._caller_class_candidates(caller_qn, module_qn):
+            matches = self._find_arity_matches_across_parts(class_qn, name, arg_count)
+            if matches:
+                preferred = [
+                    m
+                    for m in matches
+                    if (m in self.csharp_generic_methods) == generic_call
+                ]
+                return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
+        return None
+
+    def _find_in_scope_local_function(
+        self, name: str, arg_count: int, caller_qn: str | None, module_qn: str
+    ) -> str | None:
+        # (H) Walk the caller's scope chain probing for a registered local
+        # (H) function. Each level is probed both as-is and with the overload
+        # (H) signature suffix stripped, because local functions register under
+        # (H) the BARE method scope name while the caller_qn carries the host
+        # (H) overload's signatured identity (`Handle(System.Func)` hosts
+        # (H) `Handle.Handle`). A hit must match the call's arity AND be
+        # (H) declared in a host the caller sits inside -- C# scoping, without
+        # (H) which the parameterless sibling overload would capture the local
+        # (H) fn textually nested under its own bare qn.
+        if not caller_qn:
+            return None
+        scope = caller_qn
+        while len(scope) > len(module_qn):
+            stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            for probe_scope in dict.fromkeys((scope, stripped)):
+                candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
+                # (H) Same-name local fns in SIBLING BLOCKS flatten to one scope
+                # (H) qn; later declarations carry an `@line` duplicate suffix,
+                # (H) so probe every registered variant, not just the natural qn
+                # (H) (else an arity-matched later declaration is missed and the
+                # (H) arity-blind fallback's duplicate fan-out fabricates a
+                # (H) phantom edge onto the uncalled sibling).
+                for variant in self.function_registry.variants(candidate):
+                    entry = self.csharp_local_functions.get(variant)
+                    if (
+                        entry is not None
+                        and entry[1] == arg_count
+                        and self._caller_within_host(caller_qn, entry[0])
+                    ):
+                        return variant
+            if cs.SEPARATOR_DOT not in stripped:
+                return None
+            scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None
+
+    def _caller_within_host(self, caller_qn: str, host_key: FunctionSpanKey) -> bool:
+        # (H) True when the caller IS the local function's host scope or a local
+        # (H) function transitively hosted inside it (a sibling or nested local
+        # (H) fn calling across/into its own nest). Spans join lazily against
+        # (H) function_locations because the host's signatured identity was not
+        # (H) registered yet when the local function was pinned.
+        host_loc = self.function_locations.get(host_key)
+        if host_loc is None:
+            return False
+        host_qn = host_loc.qualified_name
+        seen: set[str] = set()
+        current = caller_qn
+        while current not in seen:
+            seen.add(current)
+            if current == host_qn:
+                return True
+            entry = self.csharp_local_functions.get(current)
+            if entry is None:
+                return False
+            next_loc = self.function_locations.get(entry[0])
+            if next_loc is None:
+                return False
+            current = next_loc.qualified_name
+        return False
+
+    def _caller_class_candidates(
+        self, caller_qn: str | None, module_qn: str
+    ) -> Iterator[str]:
+        # (H) Enclosing-type candidates for a bare member call, outermost last:
+        # (H) strip the overload signature (only the leaf carries one, and its
+        # (H) qualified parameter types contain dots that would break a plain
+        # (H) rsplit), then peel scope segments down to the module boundary.
+        if not caller_qn:
+            return
+        scope = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        while cs.SEPARATOR_DOT in scope:
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if len(scope) <= len(module_qn):
+                return
+            yield scope
+
+    def resolve_property_read(self, name: str, caller_qn: str | None) -> str | None:
+        # (H) A bare-identifier read (`WrappedDictionary.Keys`) targets a
+        # (H) property of the caller's enclosing type (implicit this); resolve
+        # (H) across partial parts and base classes and accept ONLY a
+        # (H) registered property, so same-name methods stay out of the read
+        # (H) pass.
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
+    def resolve_member_property_read(
+        self, receiver_type: str, name: str, module_qn: str
+    ) -> str | None:
+        # (H) `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
+        # (H) receiver's type (a class name for a static read, an inferred
+        # (H) local/parameter type for an instance read). Accepts ONLY a
+        # (H) registered property; an unresolvable receiver yields nothing, so
+        # (H) unrelated `x.Value` chains never fabricate an edge.
+        class_qn = self._type_name_to_qn(receiver_type, module_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
         return None
 
     def _semantic_call_target(
@@ -378,6 +540,14 @@ class CSharpTypeInferenceEngine:
         # (H) (`string`, `int`) that are never registered as classes, so the raw
         # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
         # (H) branches but stops at the name.
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
+        # (H) extension-only method still binds on a cast receiver.
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            return self._cast_type_name(receiver)
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
@@ -385,6 +555,23 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
         return None
+
+    def _unwrap_receiver(self, receiver: Node) -> Node | None:
+        # (H) Peel interleaved parens and null-forgiving postfix wrappers
+        # (H) (`((Component)s)!` puts the `!` OUTSIDE the parens) to a fixpoint.
+        while receiver.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION,
+        ):
+            inner = receiver.named_children[0] if receiver.named_children else None
+            if inner is None:
+                return None
+            receiver = inner
+        return receiver
+
+    def _cast_type_name(self, cast_node: Node) -> str | None:
+        cast_type = safe_decode_text(cast_node.child_by_field_name(cs.FIELD_TYPE))
+        return _normalize_type_name(cast_type) if cast_type else None
 
     def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
         qn = self._containing_class_qn(caller_qn)
@@ -500,6 +687,18 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
+        # (H) A cast receiver `((Component)s!).Reload()` (Polly's
+        # (H) CancellationToken.Register callback): the cast TYPE is the
+        # (H) receiver's type by construction (mirrors the Java cast-receiver
+        # (H) handling).
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            if cast_type := self._cast_type_name(receiver):
+                return self._type_name_to_qn(cast_type, module_qn)
+            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
         # (H) An explicit `this.field` receiver: the field's (possibly inherited)
@@ -600,6 +799,64 @@ class CSharpTypeInferenceEngine:
             ):
                 return resolved
         return None
+
+    def _find_arity_matches_across_parts(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> list[str]:
+        # (H) ALL exact-arity same-name overloads across partial parts and
+        # (H) bases (the single-hit variant returns the first, which is
+        # (H) arbitrary when same-arity twins exist).
+        seen: set[str] = set()
+        out: list[str] = []
+        for root in self._partial_roots(class_qn):
+            self._collect_arity_matches(root, method_name, arg_count, seen, out)
+        return out
+
+    def _collect_arity_matches(
+        self,
+        class_qn: str,
+        method_name: str,
+        arg_count: int,
+        seen: set[str],
+        out: list[str],
+    ) -> None:
+        if class_qn in seen:
+            return
+        seen.add(class_qn)
+        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+        out.extend(
+            qn
+            for qn in self._direct_same_name_methods(class_qn, method_name)
+            if _arity(qn[len(prefix) :]) == arg_count
+        )
+        for base_qn in self.class_inheritance.get(class_qn, []):
+            self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
+
+    def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
+        # (H) Every same-name METHOD of the caller's enclosing type (across
+        # (H) partial parts and base classes): a bare method-group pass binds
+        # (H) the enclosing type's method group, and which overload the
+        # (H) delegate selects is invisible to syntax, so the whole family is
+        # (H) referenced. Properties are excluded (a method group never names
+        # (H) a property).
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        queue = deque(self._partial_roots(class_qn))
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            out.extend(
+                qn
+                for qn in self._direct_same_name_methods(current, name)
+                if not self.function_registry.is_property(qn)
+            )
+            queue.extend(self.class_inheritance.get(current, []))
+        return sorted(set(out))
 
     def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
         seen: set[str] = set()

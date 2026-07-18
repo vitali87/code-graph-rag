@@ -234,6 +234,23 @@ def _csharp_exported(node: Node) -> bool:
         if child.type == cs.TS_CSHARP_MODIFIER and child.text is not None:
             if child.text.decode(cs.ENCODING_UTF8) in _CSHARP_PUBLIC_MODIFIERS:
                 return True
+    # (H) An explicit interface implementation (`IThing IThing.WithKey(...)`)
+    # (H) carries no modifier but is invocable from outside via the interface --
+    # (H) API surface (Polly's `IAsyncPolicy.WithPolicyKey`, `IDictionary.Keys`).
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER:
+            return True
+    # (H) An interface member carries no visibility modifier and is implicitly
+    # (H) PUBLIC -- it IS the interface's API surface (Polly's
+    # (H) IAsyncPolicy.ExecuteAsync overloads, flagged dead without this).
+    parent = node.parent
+    if (
+        parent is not None
+        and parent.type == cs.TS_CSHARP_DECLARATION_LIST
+        and parent.parent is not None
+        and parent.parent.type == cs.TS_CSHARP_INTERFACE_DECLARATION
+    ):
+        return True
     # (H) With no explicit visibility a TOP-LEVEL type defaults to `internal`
     # (H) (API surface -> exported); a nested type or any member defaults to
     # (H) `private` -> not exported.

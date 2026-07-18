@@ -798,7 +798,12 @@ def ingest_method(
     # (H) the registry's property-name set for unchanged files (it re-marks from this
     # (H) flag rather than re-parsing decorators); property-dispatch call resolution
     # (H) depends on it, so without persistence those edges drop (issue #532 parity).
-    is_property = _is_property_decorator(decorators)
+    # (H) A C# property_declaration IS a property by grammar (no decorator to
+    # (H) inspect); marking it lets the C# member-read pass find it, exactly as
+    # (H) Python's @property marking feeds its attribute-access pass.
+    is_property = _is_property_decorator(decorators) or (
+        method_node.type == cs.TS_CSHARP_PROPERTY_DECLARATION
+    )
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
 
