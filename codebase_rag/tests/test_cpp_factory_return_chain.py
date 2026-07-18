@@ -267,3 +267,36 @@ def test_macro_attributed_definition_name_extracted() -> None:
     assert ctor_defn is not None
     assert find(ctor_defn, "parenthesized_declarator") is not None
     assert cpp_utils.extract_function_name(ctor_defn) == "invalid_iterator"
+
+
+def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
+    # (H) nlohmann's exception factories: `static invalid_iterator create(...)
+    # (H) { return {id_, w.c_str()}; }` constructs via a braced initializer
+    # (H) list -- no call node exists, so the private ctor gets no CALLS edge
+    # (H) and reports dead even though its only factory is alive. The declared
+    # (H) return type names the constructed class.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    Aaa(int a, const char* b) {}\n"
+        "};\n"
+        "struct Widget {\n"
+        "    Widget(int a, const char* b) {}\n"
+        "    static Widget create(int a) {\n"
+        "        return {a, \"x\"};\n"
+        "    }\n"
+        "};\n",
+    )
+    ingestor = _capture(tmp_path, "crate")
+    calls = {
+        (str(f), str(r), str(t))
+        for _fl, f, r, _tl, t in ingestor.rels
+        if str(r) in ("CALLS", "INSTANTIATES")
+    }
+    assert ("crate.f.Widget.create", "INSTANTIATES", "crate.f.Widget") in calls, sorted(
+        c for c in calls if "create" in c[0]
+    )
+    assert ("crate.f.Widget.create", "CALLS", "crate.f.Widget.Widget") in calls, sorted(
+        c for c in calls if "create" in c[0]
+    )
+    assert not any("Aaa" in t for _f, _r, t in calls if _f.endswith("create"))
