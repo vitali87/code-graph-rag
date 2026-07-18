@@ -1977,7 +1977,7 @@ class CallProcessor:
         )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
-        cpp_local_aliases: dict[str, tuple[str, int]] | None = None
+        cpp_local_aliases: dict[str, tuple[str, int, int]] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -2161,9 +2161,13 @@ class CallProcessor:
                     )
                 lookup_name = call_name
                 local_entry = cpp_local_aliases.get(call_name)
-                # (H) Declaration-ordered lookup: a call BEFORE the body-local
-                # (H) alias's declaration can never mean it.
-                if local_entry is not None and call_node.start_byte >= local_entry[1]:
+                # (H) Declaration-ordered AND lexically-scoped lookup: a call
+                # (H) BEFORE the body-local alias's declaration or AFTER its
+                # (H) enclosing block/lambda closes can never mean it.
+                if (
+                    local_entry is not None
+                    and local_entry[1] <= call_node.start_byte < local_entry[2]
+                ):
                     lookup_name = local_entry[0]
                 if (
                     lookup_name != call_name or call_name in resolver.type_aliases

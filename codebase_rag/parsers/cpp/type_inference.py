@@ -71,26 +71,30 @@ class CppTypeInferenceEngine:
 
     def collect_local_type_aliases(
         self, caller_node: Node
-    ) -> dict[str, tuple[str, int]]:
+    ) -> dict[str, tuple[str, int, int]]:
         # (H) Aliases declared INSIDE a caller's body (`void f() { using w =
         # (H) basic_writer; w(1); }`) are exactly what collect_type_aliases
         # (H) skips, so construction-site resolution collects them per caller.
-        # (H) Each entry carries the declaration's end byte: C++ name lookup is
-        # (H) declaration-ordered, so a call BEFORE the alias must not bind to
-        # (H) it. Conflicting redefinitions (a nested lambda re-aliasing the
-        # (H) name) drop, mirroring the cross-file map's conflict rule.
-        aliases: dict[str, tuple[str, int]] = {}
+        # (H) Each entry carries the declaration's end byte and the enclosing
+        # (H) block's end byte: C++ name lookup is declaration-ordered AND
+        # (H) lexically scoped, so a call before the alias or after its
+        # (H) block/lambda closes must not bind to it. Conflicting
+        # (H) redefinitions (a nested lambda re-aliasing the name) drop,
+        # (H) mirroring the cross-file map's conflict rule.
+        aliases: dict[str, tuple[str, int, int]] = {}
         conflicts: set[str] = set()
-        stack = list(caller_node.children)
+        stack = [(child, caller_node.end_byte) for child in caller_node.children]
         while stack:
-            node = stack.pop()
+            node, scope_end = stack.pop()
             match node.type:
                 case cs.CppNodeType.TYPE_DEFINITION:
                     pair = self._typedef_pair(node)
                 case cs.CppNodeType.ALIAS_DECLARATION:
                     pair = self._using_pair(node)
                 case _:
-                    stack.extend(node.children)
+                    if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+                        scope_end = node.end_byte
+                    stack.extend((child, scope_end) for child in node.children)
                     continue
             if pair is None:
                 continue
@@ -101,7 +105,7 @@ class CppTypeInferenceEngine:
                 conflicts.add(alias_name)
                 del aliases[alias_name]
                 continue
-            aliases[alias_name] = (underlying, node.end_byte)
+            aliases[alias_name] = (underlying, node.end_byte, scope_end)
         return aliases
 
     def _record_alias(
