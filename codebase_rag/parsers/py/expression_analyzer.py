@@ -146,11 +146,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return safe_decode_text(attr_node) if attr_node.text else None
 
     @recursion_guard(
-        key_func=lambda self,
-        method_call,
-        module_qn,
-        *_,
-        **__: f"{module_qn}:{method_call}",
+        key_func=lambda self, method_call, module_qn, *_, **__: (
+            f"{module_qn}:{method_call}"
+        ),
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
     def _infer_method_call_return_type(

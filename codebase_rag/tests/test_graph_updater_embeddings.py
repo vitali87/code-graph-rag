@@ -23,7 +23,7 @@ _PATCH_EMBED_BATCH = patch(
     "codebase_rag.embedder.embed_code_batch", side_effect=_fake_embed_batch
 )
 _PATCH_STORE_BATCH = patch(
-    "codebase_rag.vector_store.store_embedding_batch", side_effect=lambda pts: len(pts)
+    "codebase_rag.vector_store.store_embedding_batch", side_effect=len
 )
 _PATCH_RECONCILE = patch(
     "codebase_rag.vector_store.verify_stored_ids", side_effect=lambda ids: ids

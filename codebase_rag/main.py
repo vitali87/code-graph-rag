@@ -347,7 +347,7 @@ async def _confirm_with_toggle(question: str) -> bool:
                 prompt_text,
                 key_bindings=bindings,
                 style=ORANGE_STYLE,
-                bottom_toolbar=lambda: _status_bar_label(),
+                bottom_toolbar=_status_bar_label,
                 refresh_interval=0.5,
             )
         except (KeyboardInterrupt, EOFError):
@@ -372,7 +372,7 @@ async def _prompt_with_toggle(question: str) -> str:
             prompt_text,
             key_bindings=bindings,
             style=ORANGE_STYLE,
-            bottom_toolbar=lambda: _status_bar_label(),
+            bottom_toolbar=_status_bar_label,
             refresh_interval=0.5,
         )
     except (KeyboardInterrupt, EOFError):
@@ -1087,7 +1087,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         key_bindings=bindings,
         wrap_lines=True,
         style=ORANGE_STYLE,
-        bottom_toolbar=lambda: _status_bar_label(),
+        bottom_toolbar=_status_bar_label,
         refresh_interval=0.5,
     )
     if result is None:

@@ -145,7 +145,7 @@ class JavaTypeResolverMixin:
             return f"{resolved_base}{cs.JAVA_ARRAY_SUFFIX}"
 
         if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
-            base_type = type_name.split(cs.CHAR_ANGLE_OPEN)[0]
+            base_type = type_name.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
             return self._resolve_java_type_name(base_type, module_qn)
 
         if module_qn in self.import_processor.import_mapping:

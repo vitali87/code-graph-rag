@@ -148,8 +148,8 @@ def test_cpp_singleton_pattern_cross_file_calls(
         found_calls.add((caller_short, callee_short))
 
     # (H) Calls are attributed to the enclosing method/function, not the file:
-    # the singleton calls live inside SceneController's methods and
-    # Application.start(), so those are the callers (not the module nodes).
+    # (H) the singleton calls live inside SceneController's methods and
+    # (H) Application.start(), so those are the callers (not the module nodes).
     sc = "controllers.SceneController.SceneController"
     expected_calls = [
         (f"{sc}.loadMenuScene", "storage.Storage.Storage.getInstance"),

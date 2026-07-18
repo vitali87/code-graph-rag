@@ -1,9 +1,7 @@
-"""
-Tests for the realtime_updater debouncing functionality.
-
-These tests verify the hybrid debounce strategy that prevents redundant
-graph updates during rapid file saves.
-"""
+# (H) Tests for the realtime_updater debouncing functionality.
+# (H)
+# (H) These tests verify the hybrid debounce strategy that prevents redundant
+# (H) graph updates during rapid file saves.
 
 from __future__ import annotations
 
@@ -35,7 +33,7 @@ class MockQueryIngestor:
         pass
 
 
-# Register MockQueryIngestor as implementing QueryProtocol for isinstance checks
+# (H) Register MockQueryIngestor as implementing QueryProtocol for isinstance checks
 QueryProtocol.register(MockQueryIngestor)
 
 
@@ -117,12 +115,10 @@ class TestCodeChangeEventHandlerDebounce:
 
         handler = CodeChangeEventHandler(mock_updater)
 
-        # Should be ignored (directories in ignore patterns)
         assert handler._is_relevant(str(tmp_path / ".git" / "config")) is False
         assert handler._is_relevant(str(tmp_path / "node_modules" / "pkg.js")) is False
         assert handler._is_relevant(str(tmp_path / "__pycache__" / "mod.pyc")) is False
 
-        # Should be relevant
         assert handler._is_relevant(str(tmp_path / "main.py")) is True
         assert handler._is_relevant(str(tmp_path / "src" / "lib.rs")) is True
         assert handler._is_relevant(str(tmp_path / "app.js")) is True
@@ -136,15 +132,13 @@ class TestCodeChangeEventHandlerDebounce:
             mock_updater, debounce_seconds=0.1, max_wait_seconds=1
         )
 
-        # Create event that is marked as directory
         event = FileModifiedEvent(str(tmp_path / "some_dir"))
-        # The is_directory property is set by watchdog based on the event type
-        # For FileModifiedEvent, we need to check is_directory attribute
+        # (H) The is_directory property is set by watchdog based on the event type
+        # (H) For FileModifiedEvent, we need to check is_directory attribute
         object.__setattr__(event, "is_directory", True)
 
         handler.dispatch(event)
 
-        # No timer should be created for directory events
         assert len(handler.timers) == 0
         mock_ingestor.execute_write.assert_not_called()
 
@@ -160,19 +154,15 @@ class TestCodeChangeEventHandlerDebounce:
             mock_updater, debounce_seconds=0.2, max_wait_seconds=5
         )
 
-        # Simulate 5 rapid saves
         for _ in range(5):
             event = FileModifiedEvent(str(sample_file))
             handler.dispatch(event)
-            time.sleep(0.05)  # 50ms between saves
+            time.sleep(0.05)
 
-        # Should have one pending event
         assert len(handler.pending_events) == 1
 
-        # Wait for debounce to complete
         time.sleep(0.4)
 
-        # After debounce, ingestor should have been called only once
         mock_ingestor.flush_all.assert_called_once()
 
     def test_no_debounce_processes_immediately(
@@ -190,7 +180,6 @@ class TestCodeChangeEventHandlerDebounce:
         event = FileModifiedEvent(str(sample_file))
         handler.dispatch(event)
 
-        # Should process immediately (no pending events)
         assert len(handler.pending_events) == 0
         assert len(handler.timers) == 0
         mock_ingestor.flush_all.assert_called_once()
@@ -207,21 +196,16 @@ class TestCodeChangeEventHandlerDebounce:
             mock_updater, debounce_seconds=0.5, max_wait_seconds=0.3
         )
 
-        # First event
         event = FileModifiedEvent(str(sample_file))
         handler.dispatch(event)
 
-        # Wait until max_wait is exceeded
         time.sleep(0.4)
 
-        # Second event should trigger immediate processing due to max_wait
         event2 = FileModifiedEvent(str(sample_file))
         handler.dispatch(event2)
 
-        # Give time for processing
         time.sleep(0.15)
 
-        # Should have processed at least once due to max_wait
         assert mock_ingestor.flush_all.call_count >= 1
 
     def test_different_files_tracked_separately(
@@ -238,14 +222,12 @@ class TestCodeChangeEventHandlerDebounce:
             mock_updater, debounce_seconds=0.2, max_wait_seconds=5
         )
 
-        # Events for different files
         event1 = FileModifiedEvent(str(file1))
         event2 = FileModifiedEvent(str(file2))
 
         handler.dispatch(event1)
         handler.dispatch(event2)
 
-        # Should have two pending events
         assert len(handler.pending_events) == 2
         assert len(handler.timers) == 2
 
@@ -264,14 +246,11 @@ class TestCodeChangeEventHandlerDebounce:
         event = FileModifiedEvent(str(sample_file))
         handler.dispatch(event)
 
-        # Should have pending state
         assert len(handler.pending_events) == 1
         assert len(handler.first_event_time) == 1
 
-        # Wait for processing
         time.sleep(0.25)
 
-        # State should be cleaned up
         assert len(handler.pending_events) == 0
         assert len(handler.first_event_time) == 0
         assert len(handler.timers) == 0
@@ -326,14 +305,12 @@ class TestCodeChangeEventHandlerDebounce:
                 handler.dispatch(event)
                 time.sleep(0.02)
 
-        # Send events from multiple threads
         threads = [threading.Thread(target=send_events, args=(f,)) for f in files[:5]]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        # Should have 5 pending events (one per file)
         assert len(handler.pending_events) == 5
 
 
@@ -409,17 +386,14 @@ class TestDebounceIntegration:
             mock_updater, debounce_seconds=0.5, max_wait_seconds=2
         )
 
-        # Simulate 10 saves over 3 seconds
         for i in range(10):
             event = FileModifiedEvent(str(test_file))
             handler.dispatch(event)
             time.sleep(0.3)
 
-        # Wait for final debounce
         time.sleep(0.7)
 
-        # Should have batched into fewer updates due to max_wait and debounce
-        # With max_wait=2s and 3s total time, expect ~2-4 updates
+        # (H) With max_wait=2s and 3s total time, expect ~2-4 updates
         call_count = mock_ingestor.flush_all.call_count
         assert 1 <= call_count <= 4, f"Expected 1-4 updates, got {call_count}"
 
@@ -438,8 +412,6 @@ class TestDebounceIntegration:
         event = FileModifiedEvent(str(test_file))
         handler.dispatch(event)
 
-        # Wait for debounce
         time.sleep(0.25)
 
-        # Should have exactly one update
         mock_ingestor.flush_all.assert_called_once()

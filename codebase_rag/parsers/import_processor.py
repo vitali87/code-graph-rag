@@ -335,7 +335,7 @@ class ImportProcessor:
 
         @lru_cache(maxsize=4096)
         def _is_local_java_import_cached(import_path: str) -> bool:
-            top_level = import_path.split(cs.SEPARATOR_DOT)[0]
+            top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
             return (repo_path / top_level).is_dir()
 
         self._is_local_module_cached = _is_local_module_cached
@@ -861,7 +861,7 @@ class ImportProcessor:
         # (H) The old `startswith(project_name)` as-is shortcut is subsumed by
         # (H) _resolve_import_full_name's first branch, which additionally
         # (H) handles the project-named-package collision.
-        top_level = module_name.split(cs.SEPARATOR_DOT)[0]
+        top_level = module_name.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
         return self._resolve_import_full_name(module_name, top_level)
 
     def _register_python_from_imports(
