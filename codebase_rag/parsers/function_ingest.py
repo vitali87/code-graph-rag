@@ -851,12 +851,12 @@ class FunctionIngestMixin:
         self.cpp_out_of_class_methods[
             (entry.module_qn, entry.func_node.start_point[0] + 1)
         ] = (method_qn, class_qn)
-        self.function_locations[
-            function_span_key(entry.module_qn, entry.func_node)
-        ] = FunctionLocation(
-            label=cs.NodeLabel.METHOD.value,
-            qualified_name=method_qn,
-            container_qn=class_qn,
+        self.function_locations[function_span_key(entry.module_qn, entry.func_node)] = (
+            FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=method_qn,
+                container_qn=class_qn,
+            )
         )
         record_cpp_definition_span(
             self.cpp_definition_spans,

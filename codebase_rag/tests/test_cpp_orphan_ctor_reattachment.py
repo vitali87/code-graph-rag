@@ -90,9 +90,9 @@ def test_named_param_orphan_ctor_registers_as_class_method(
     # (H) registration ran before the class pass and stole it, leaving the
     # (H) CLASS node with a `@line` dedup suffix.
     classes = _nodes(mock_ingestor, cs.NodeLabel.CLASS)
-    assert any(
-        qn.endswith(".file") and cs.DUP_QN_MARKER not in qn for qn in classes
-    ), classes
+    assert any(qn.endswith(".file") and cs.DUP_QN_MARKER not in qn for qn in classes), (
+        classes
+    )
     functions = _nodes(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert not any(qn.endswith(".os.file") for qn in functions), functions
 
@@ -142,8 +142,7 @@ def test_construction_call_reaches_reattached_orphan_ctor(
 
     calls = _calls(mock_ingestor)
     assert any(
-        src.endswith(".use_file") and dst.endswith(".file.file")
-        for src, dst in calls
+        src.endswith(".use_file") and dst.endswith(".file.file") for src, dst in calls
     ), calls
 
 
