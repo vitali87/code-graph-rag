@@ -210,3 +210,56 @@ public class Component {
 
     calls = {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(t.endswith("N.Component.Reload") for t in calls), calls
+
+
+def test_bare_identifier_property_reads_are_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A property read need not be a member access: `return Size;`,
+    # (H) `Use(Size)`, and `var n = Size;` are bare identifier expressions
+    # (H) that read the getter just the same.
+    (csharp_project / "B.cs").write_text(
+        """
+namespace N;
+public class Bare {
+    private int SizeR { get; }
+    private int SizeA { get; }
+    private int SizeI { get; }
+    public int Ret() { return SizeR; }
+    public void Arg() { Use(SizeA); }
+    public int Init() { var n = SizeI; return n; }
+    private void Use(int x) {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    for prop in ("N.Bare.SizeR", "N.Bare.SizeA", "N.Bare.SizeI"):
+        assert any(t.endswith(prop) for t in refs), (prop, refs)
+
+
+def test_named_argument_label_and_type_position_do_not_reference(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Guards for the bare-identifier read: a named-argument LABEL
+    # (H) (`Use(Size: 3)`) and a TYPE position (`new Size()`) are not reads of
+    # (H) a same-name property.
+    (csharp_project / "NG.cs").write_text(
+        """
+namespace N;
+public class Size { }
+public class Guards {
+    private int Size { get; }
+    public void Lab() { Use(Size: 3); }
+    public object Mk() { return new Size(); }
+    private void Use(int Size) {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert not any(t.endswith("N.Guards.Size") for t in refs), refs
