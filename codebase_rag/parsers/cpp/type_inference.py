@@ -69,6 +69,26 @@ class CppTypeInferenceEngine:
                     # (H) (and extern "C" blocks), so recurse to reach nested ones.
                     self.collect_type_aliases(child, aliases, conflicts)
 
+    def collect_local_type_aliases(self, caller_node: Node) -> dict[str, str]:
+        # (H) Aliases declared INSIDE a caller's body (`void f() { using w =
+        # (H) basic_writer; w(1); }`) are exactly what collect_type_aliases
+        # (H) skips, so construction-site resolution collects them per caller.
+        # (H) Conflicting redefinitions (a nested lambda re-aliasing the name)
+        # (H) drop, mirroring the cross-file map's conflict rule.
+        aliases: dict[str, str] = {}
+        conflicts: set[str] = set()
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            match node.type:
+                case cs.CppNodeType.TYPE_DEFINITION:
+                    self._record_alias(self._typedef_pair(node), aliases, conflicts)
+                case cs.CppNodeType.ALIAS_DECLARATION:
+                    self._record_alias(self._using_pair(node), aliases, conflicts)
+                case _:
+                    stack.extend(node.children)
+        return aliases
+
     def _record_alias(
         self,
         pair: tuple[str, str] | None,

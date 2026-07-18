@@ -119,3 +119,40 @@ def test_alias_to_non_class_emits_nothing(
     assert not any("count_t" in dst or "int" in dst for _, dst in calls | inst), (
         calls | inst
     )
+
+
+LOCAL_ALIAS_CC = """
+struct basic_writer {
+  basic_writer(int b) {}
+};
+
+void write_it() {
+  using writer = basic_writer;
+  auto w = writer(1);
+}
+
+void type_it() {
+  typedef basic_writer writer_t;
+  auto w = writer_t(2);
+}
+"""
+
+
+def test_function_local_alias_construction_emits_ctor_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "l.cc").write_text(LOCAL_ALIAS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    # (H) The cross-file alias collector deliberately skips function bodies, so
+    # (H) a body-local `using writer = basic_writer;` needs the caller-scoped
+    # (H) map (PR #797 review).
+    assert any(
+        src.endswith(".write_it") and dst.endswith(".basic_writer.basic_writer")
+        for src, dst in calls
+    ), calls
+    assert any(
+        src.endswith(".type_it") and dst.endswith(".basic_writer.basic_writer")
+        for src, dst in calls
+    ), calls

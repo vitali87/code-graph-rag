@@ -25,6 +25,7 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
 from .flow_access import FlowProcessor
 from .go import utils as go_utils
@@ -1976,6 +1977,7 @@ class CallProcessor:
         )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
+        cpp_local_aliases: dict[str, str] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -2140,22 +2142,30 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
-            if (
-                not callee_info
-                and language == cs.SupportedLanguage.CPP
-                and call_name in resolver.type_aliases
-                and (aliased_qn := resolver._resolve_class_name(call_name, module_qn))
-            ):
+            if not callee_info and language == cs.SupportedLanguage.CPP:
                 # (H) `using appender = basic_appender<char>; appender(out)`:
                 # (H) the alias is no registered node, so the bare call resolves
                 # (H) to nothing and the constructed class's ctor stays
-                # (H) edge-free. The collected typedef/using map names the
-                # (H) class (_resolve_class_name follows alias chains); binding
-                # (H) the callee to it drops into the class branch below, which
-                # (H) emits INSTANTIATES + ctor CALLS like any construction.
-                # (H) Gated on alias-map membership so genuinely unknown names
-                # (H) keep their unresolved handling.
-                callee_info = (cs.NodeLabel.CLASS, aliased_qn)
+                # (H) edge-free. The cross-file typedef/using map covers
+                # (H) file/namespace-scope aliases; a BODY-local alias is
+                # (H) exactly what that collector skips, so it comes from the
+                # (H) caller-scoped map (_resolve_class_name then follows any
+                # (H) further alias chain). Binding the callee to the class
+                # (H) drops into the class branch below, which emits
+                # (H) INSTANTIATES + ctor CALLS like any construction. Gated on
+                # (H) alias-map membership so genuinely unknown names keep
+                # (H) their unresolved handling.
+                if cpp_local_aliases is None:
+                    cpp_local_aliases = (
+                        CppTypeInferenceEngine().collect_local_type_aliases(caller_node)
+                    )
+                lookup_name = cpp_local_aliases.get(call_name, call_name)
+                if (
+                    lookup_name != call_name or call_name in resolver.type_aliases
+                ) and (
+                    aliased_qn := resolver._resolve_class_name(lookup_name, module_qn)
+                ):
+                    callee_info = (cs.NodeLabel.CLASS, aliased_qn)
             if not callee_info and cs.SEPARATOR_DOT not in call_name:
                 if is_python:
                     # (H) A bare name that resolves to nothing may be a local alias of a
