@@ -199,7 +199,7 @@ class FunctionIngestMixin:
     rehydrated_definition_paths: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
     csharp_generic_methods: set[str]
     csharp_method_return_types: dict[str, tuple[str, int]]

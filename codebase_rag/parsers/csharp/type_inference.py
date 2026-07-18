@@ -87,7 +87,8 @@ class CSharpTypeInferenceEngine:
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
         csharp_partial_groups: dict[str, list[str]] | None = None,
-        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
+        | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
@@ -547,7 +548,12 @@ class CSharpTypeInferenceEngine:
         )
         if not type_name:
             return None
-        return self._find_extension_method(type_name, method_name, arg_count)
+        return self._find_extension_method(
+            type_name,
+            method_name,
+            arg_count,
+            self._receiver_type_arity(receiver, caller_qn),
+        )
 
     def _receiver_type_name(
         self,
@@ -649,8 +655,42 @@ class CSharpTypeInferenceEngine:
         # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
 
+    def _receiver_type_arity(self, receiver: Node, caller_qn: str | None) -> int | None:
+        # (H) The receiver's WRITTEN generic arity where it is knowable
+        # (H) (object-creation/cast text, a chained call's recorded return, or
+        # (H) `this` inside a generic type); None when unknowable (an untyped
+        # (H) identifier), which skips the arity gate rather than guessing.
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            return generic_arity_of_type_text(raw) if raw else None
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            return generic_arity_of_type_text(raw) if raw else None
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            inner = self.resolve_csharp_method_call(receiver, None, "", caller_qn)
+            if inner is not None and (
+                entry := self.csharp_method_return_types.get(inner[1])
+            ):
+                return entry[1]
+            return None
+        if receiver.type == cs.TS_CSHARP_THIS:
+            class_qn = self._containing_class_qn(caller_qn)
+            if class_qn is not None:
+                return self.csharp_class_generic_arity.get(class_qn, 0)
+        return None
+
     def _find_extension_method(
-        self, receiver_type_name: str, method_name: str, arg_count: int
+        self,
+        receiver_type_name: str,
+        method_name: str,
+        arg_count: int,
+        receiver_arity: int | None = None,
     ) -> str | None:
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
@@ -682,7 +722,12 @@ class CSharpTypeInferenceEngine:
             and len(distinct_arities) != len(same_name_decls)
         )
         matches: list[str] = []
-        for qn, recv_type, ext_namespace in candidates:
+        for qn, recv_type, ext_namespace, cand_recv_arity in candidates:
+            # (H) A receiver of KNOWN written arity never binds an extension
+            # (H) declared for the other generic twin (`new Builder<int>()`
+            # (H) cannot take a `this Builder` extension).
+            if receiver_arity is not None and cand_recv_arity != receiver_arity:
+                continue
             # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
             # (H) leaf-split on `.` would land inside a qualified param type.
             if _arity(qn) != arg_count + 1:

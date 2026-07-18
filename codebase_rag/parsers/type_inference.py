@@ -73,7 +73,8 @@ class TypeInferenceEngine:
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
-        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
+        | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,

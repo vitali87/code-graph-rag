@@ -101,7 +101,7 @@ class DefinitionProcessor(
         # (H) the call's receiver -- a lookup the instance-hierarchy walk can't
         # (H) make (the method lives on an unrelated static class). Populated at
         # (H) method ingestion, read by the type-inference engine as a fallback.
-        self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
+        self.csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]] = {}
         # (H) C# local functions: {local_fn_qn: (host span key, parameter count)}.
         # (H) The host (method/ctor/enclosing local fn) is pinned by SPAN because
         # (H) at Function-pass time the host method's signatured identity may not

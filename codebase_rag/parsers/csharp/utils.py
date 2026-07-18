@@ -124,7 +124,7 @@ def extension_receiver_type(method_node: Node) -> str | None:
 
 
 def index_extension_method(
-    store: dict[str, list[tuple[str, str, str]]],
+    store: dict[str, list[tuple[str, str, str, int]]],
     ingested_qn: str,
     method_node: Node,
     class_qn: str,
@@ -138,6 +138,20 @@ def index_extension_method(
     receiver_type = extension_receiver_type(method_node)
     if not receiver_type:
         return
+    # (H) The receiver's WRITTEN generic arity (`this Builder<TResult>` -> 1),
+    # (H) so a call receiver of known arity never binds an extension declared
+    # (H) for the other twin.
+    receiver_arity = 0
+    param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if param_list is not None:
+        first = next(
+            (c for c in param_list.children if c.type == cs.TS_CSHARP_PARAMETER), None
+        )
+        if first is not None:
+            type_node = first.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node is not None else None
+            if raw:
+                receiver_arity = generic_arity_of_type_text(raw)
     # (H) Strip the parameter signature BEFORE taking the leaf: a qualified param
     # (H) type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
     # (H) on `Widget)` instead of the method name `Poke` and never match.
@@ -157,7 +171,9 @@ def index_extension_method(
         if cs.SEPARATOR_DOT in ns_qualified_class
         else ""
     )
-    store.setdefault(leaf, []).append((ingested_qn, receiver_type, ext_namespace))
+    store.setdefault(leaf, []).append(
+        (ingested_qn, receiver_type, ext_namespace, receiver_arity)
+    )
 
 
 def build_field_type_map(class_node: Node) -> dict[str, str]:

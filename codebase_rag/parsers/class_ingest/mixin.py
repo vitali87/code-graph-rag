@@ -154,7 +154,7 @@ class ClassIngestMixin:
     csharp_class_generic_arity: dict[str, int]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
     csharp_type_locations: dict[tuple[str, int], str]
     class_field_guard_inner: dict[str, dict[str, str]]
