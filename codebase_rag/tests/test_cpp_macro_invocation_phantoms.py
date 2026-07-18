@@ -222,11 +222,12 @@ def test_incremental_reparse_keeps_orphan_ctor_from_unchanged_header(
         ).run(force=force)
 
     def ctor_nodes(store: _StatefulIngestor) -> set[str]:
+        # (H) The kept orphan ctor registers as a METHOD reattached under the
+        # (H) rehydrated class (`...pipe.pipe`), no longer a module Function.
         return {
             str(qn)
             for (label, qn) in store.nodes
-            if label == cs.NodeLabel.FUNCTION.value
-            and (str(qn).endswith(".pipe") or ".pipe@" in str(qn))
+            if label == cs.NodeLabel.METHOD.value and str(qn).endswith(".pipe.pipe")
         }
 
     store = _StatefulIngestor()

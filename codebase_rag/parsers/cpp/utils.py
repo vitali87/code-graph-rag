@@ -321,17 +321,16 @@ def _has_named_parameter(declarator: Node) -> bool:
     return False
 
 
-def is_macro_invocation_artifact(func_node: Node) -> bool:
+def is_recovery_artifact_shape(func_node: Node) -> bool:
     # (H) `FMT_CATCH(...) {}` -- a macro invocation followed by a block -- parses
     # (H) as a TYPE-LESS function_definition (or declaration, when member-init
     # (H) recovery sweeps it into a class body) named after the macro. Valid C++
     # (H) only omits the return type on a constructor, whose plain-identifier
-    # (H) declarator repeats the enclosing class name; any other type-less
-    # (H) plain-identifier definition with no named parameter is a parse
-    # (H) artifact, not a definition. A recovery-ORPHANED ctor (its class
-    # (H) ancestor destroyed by the same recovery) is distinguished by its named
-    # (H) parameters, or -- for the zero/unnamed-param shape -- by the caller
-    # (H) checking the class registry before dropping the node.
+    # (H) declarator repeats the enclosing class name; every OTHER type-less
+    # (H) plain-identifier definition shares one shape with two meanings: a
+    # (H) macro invocation, or a real definition the recovery orphaned from its
+    # (H) class / stripped of its type. The registered-class tiebreak and the
+    # (H) named-parameter evidence (see is_macro_invocation_artifact) decide.
     if func_node.type not in (
         cs.CppNodeType.FUNCTION_DEFINITION,
         cs.CppNodeType.DECLARATION,
@@ -345,9 +344,20 @@ def is_macro_invocation_artifact(func_node: Node) -> bool:
     inner = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
     if inner is None or inner.type != cs.CppNodeType.IDENTIFIER or not inner.text:
         return False
-    if safe_decode_text(inner) == _enclosing_class_name(func_node):
-        return False
-    return not _has_named_parameter(declarator)
+    return safe_decode_text(inner) != _enclosing_class_name(func_node)
+
+
+def has_named_parameter(func_node: Node) -> bool:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    return declarator is not None and _has_named_parameter(declarator)
+
+
+def is_macro_invocation_artifact(func_node: Node) -> bool:
+    # (H) A macro invocation's "parameters" are expressions, so the artifact
+    # (H) shape WITH a named parameter is proof of a genuine (recovery-mangled)
+    # (H) definition; without one, only a registered class bearing the name
+    # (H) (an orphaned zero-param ctor) saves the node from being dropped.
+    return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
 
 
 def extract_function_name(func_node: Node) -> str | None:
