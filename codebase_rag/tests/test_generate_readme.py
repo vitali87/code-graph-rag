@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from codebase_rag import cli_help as ch
+from codebase_rag.readme_sections import format_cli_commands_table
 from scripts.generate_readme import TARGET_FILES, replace_sections, update_file
 
 
@@ -46,3 +48,10 @@ class TestDocsTargets:
             assert update_file(page, {"mcp_tools": "fresh"}) is False
         finally:
             page.chmod(0o644)
+
+
+def test_cli_command_table_has_one_markdown_row_per_command() -> None:
+    lines = format_cli_commands_table().splitlines()
+
+    assert len(lines) == len(ch.CLI_COMMANDS) + 2
+    assert all(line.startswith("|") and line.endswith("|") for line in lines)
