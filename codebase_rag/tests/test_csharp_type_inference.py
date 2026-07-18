@@ -418,3 +418,33 @@ public class App {
 
     targets = _call_targets(mock_ingestor)
     assert any(t.endswith("Core.N.Builder.Build") for t in targets), targets
+
+
+def test_cast_to_generic_twin_binds_the_generic_member(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `((Opt<int>)o).M()` writes arity 1: with twins `Opt` and `Opt<T>`
+    # (H) registered, the cast receiver must resolve the GENERIC twin and bind
+    # (H) its member (the instance-path cast branch dropped the arity that
+    # (H) object-creation and extension paths already carry).
+    (csharp_project / "CastTwinA.cs").write_text(
+        "namespace N;\npublic class Opt {\n    public void M() { }\n}\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "CastTwinB.cs").write_text(
+        "namespace N;\npublic class Opt<T> {\n    public void M() { }\n}\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "CastTwinApp.cs").write_text(
+        """
+namespace N;
+public class App {
+    public void Run(object o) { ((Opt<int>)o).M(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any("CastTwinB" in t and t.endswith("N.Opt.M") for t in targets), targets
