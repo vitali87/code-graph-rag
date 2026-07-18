@@ -354,6 +354,22 @@ def test_milvus_empty_search_response_returns_empty_list() -> None:
     mock_logger.warning.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("lite_version", "expected"),
+    [("3.0", True), ("3.0.1", True), ("3.0.0.post1", True), ("3.1.0", False)],
+)
+def test_milvus_lite_30_cosine_workaround_versions(
+    lite_version: str, expected: bool
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "./milvus.db"),
+        patch("codebase_rag.vector_store.version", return_value=lite_version),
+    ):
+        assert vs._uses_milvus_lite_30_cosine_distance() is expected
+
+
 @pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
 def test_milvus_store_search_verify_delete_roundtrip(
     tmp_path: Path, reset_global_client: None

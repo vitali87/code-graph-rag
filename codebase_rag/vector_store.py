@@ -455,7 +455,7 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
         return False
     # (H) Milvus Lite 3.0.0 reports COSINE as distance instead of similarity:
     # (H) https://github.com/milvus-io/milvus-lite/issues/343
-    return lite_version in {"3.0", "3.0.0"}
+    return lite_version.startswith("3.0")
 
 
 def store_embedding(node_id: int, embedding: list[float], qualified_name: str) -> None:
