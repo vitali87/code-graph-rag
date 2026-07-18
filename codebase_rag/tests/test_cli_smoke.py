@@ -13,7 +13,11 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-_RUNNER = CliRunner()
+# (H) Pin the render width: rich reads COLUMNS at console creation, and the
+# (H) Windows CI runners report one narrow enough to reflow the Options panel
+# (H) until asserted phrases split ("Delete every project from" failed there
+# (H) while macOS/Ubuntu passed).
+_RUNNER = CliRunner(env={"COLUMNS": "120"})
 
 
 def _plain_stdout(result: Result) -> str:
