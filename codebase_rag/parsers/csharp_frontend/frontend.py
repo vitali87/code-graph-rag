@@ -63,12 +63,16 @@ class CSharpSemanticFacts(NamedTuple):
     call_sites: dict[CallSiteKey, CSharpCallSite]
     partial_groups: list[list[tuple[str, int]]]
     query_calls: list[CSharpQueryCall]
+    # (H) Sites Roslyn resolved to a METADATA method (no first-party
+    # (H) declaration): the compiler proof that the call leaves the repo, so
+    # (H) the name-trie fallback must not fabricate a first-party edge there.
+    external_sites: set[CallSiteKey]
 
 
 def _empty_facts() -> CSharpSemanticFacts:
     # (H) A fresh instance per failure path: the maps are handed to mutable
     # (H) processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [])
+    return CSharpSemanticFacts({}, {}, [], [], set())
 
 
 _DOTNET = "dotnet"
@@ -253,6 +257,10 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             )
             for query in payload.get("queries", [])
         ],
+        external_sites={
+            (site["file"], int(site["line"]), int(site["col"]), site["name"])
+            for site in payload.get("externals", [])
+        },
     )
     if not any(facts) and stderr.strip():
         # (H) A well-formed but entirely empty payload means the workspace load

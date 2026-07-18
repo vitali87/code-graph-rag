@@ -84,10 +84,12 @@ public static class Frontend
         private readonly HashSet<string> _ignoredDirs;
         private readonly List<TypeFact> _types = new();
         private readonly List<CallFact> _calls = new();
+        private readonly List<ExternalFact> _externals = new();
         private readonly List<QueryFact> _queries = new();
         private readonly Dictionary<string, List<DeclLoc>> _partials = new(StringComparer.Ordinal);
         private readonly HashSet<(string, int)> _seenTypes = new();
         private readonly HashSet<(string, int, int, string)> _seenCalls = new();
+        private readonly HashSet<(string, int, int, string)> _seenExternals = new();
         private readonly HashSet<(string, int, int, string, int, string)> _seenQueries = new();
 
         public FactCollector(string rootFull, HashSet<string> ignoredDirs)
@@ -139,7 +141,7 @@ public static class Frontend
             }
         }
 
-        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries);
+        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals);
 
         private string Rel(string path) =>
             Path.GetRelativePath(_rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
@@ -205,14 +207,25 @@ public static class Frontend
             {
                 return;
             }
-            if (FirstPartyDecl(DeclaredMethod(symbol)) is not { } target)
-            {
-                return;
-            }
             var location = nameToken.GetLocation();
             var pos = location.GetLineSpan().StartLinePosition;
             var col = ByteCol(location, pos);
             var name = nameToken.ValueText;
+            if (FirstPartyDecl(DeclaredMethod(symbol)) is not { } target)
+            {
+                // A successfully resolved symbol with no first-party declaration
+                // lives in metadata: the call provably leaves the repo, and the
+                // Python side must suppress its heuristic fallback there. Only
+                // resolved symbols count; an error site keeps the heuristics.
+                // A site that is first-party under another target framework's
+                // compilation still wins: the Python lookup consults the
+                // positive call facts before the external set.
+                if (_seenExternals.Add((rel, pos.Line + 1, col, name)))
+                {
+                    _externals.Add(new ExternalFact(rel, pos.Line + 1, col, name));
+                }
+                return;
+            }
             if (!_seenCalls.Add((rel, pos.Line + 1, col, name)))
             {
                 return;
@@ -486,9 +499,16 @@ public static class Frontend
         [property: JsonPropertyName("tline")] int TargetLine,
         [property: JsonPropertyName("tcol")] int TargetCol);
 
+    private record ExternalFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name);
+
     private record Payload(
         [property: JsonPropertyName("types")] List<TypeFact> Types,
         [property: JsonPropertyName("calls")] List<CallFact> Calls,
         [property: JsonPropertyName("partials")] List<List<DeclLoc>> Partials,
-        [property: JsonPropertyName("queries")] List<QueryFact> Queries);
+        [property: JsonPropertyName("queries")] List<QueryFact> Queries,
+        [property: JsonPropertyName("externals")] List<ExternalFact> Externals);
 }

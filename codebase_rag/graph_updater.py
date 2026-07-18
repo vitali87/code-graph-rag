@@ -649,6 +649,7 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = {}
         dp.csharp_call_sites.clear()
+        dp.csharp_external_sites.clear()
         self._csharp_partial_decls = []
         self._csharp_query_calls = []
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
@@ -665,6 +666,7 @@ class GraphUpdater:
         facts = run_csharp_frontend(self.repo_path)
         dp.csharp_base_kinds = facts.base_kinds
         dp.csharp_call_sites.update(facts.call_sites)
+        dp.csharp_external_sites.update(facts.external_sites)
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
@@ -673,6 +675,7 @@ class GraphUpdater:
                 calls=len(facts.call_sites),
                 partials=len(facts.partial_groups),
                 queries=len(facts.query_calls),
+                externals=len(facts.external_sites),
             )
         )
 

@@ -134,6 +134,11 @@ class DefinitionProcessor(
         # (H) consults this before any heuristic; MUTATED IN PLACE across runs
         # (H) because the type-inference engine holds a reference.
         self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        # (H) Sites Roslyn resolved to METADATA (external) methods: the resolver
+        # (H) returns the external sentinel there instead of letting the
+        # (H) name-trie fabricate a first-party edge. Same in-place mutation
+        # (H) discipline as csharp_call_sites.
+        self.csharp_external_sites: set[CallSiteKey] = set()
         # (H) (rel_file, type_start_line) -> class qn for every ingested C# type,
         # (H) the reverse of the Roslyn fact keys, so partial declaration groups
         # (H) join back to the Pass-2 Class nodes.

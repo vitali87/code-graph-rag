@@ -163,6 +163,7 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -201,6 +202,7 @@ def test_call_fact_resolves_conditional_access_invocation(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -251,6 +253,7 @@ def test_call_fact_suppresses_same_arity_family_fanout(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -373,6 +376,7 @@ def test_partial_fact_merges_parts_across_directories(
         call_sites={},
         partial_groups=[[("dirA/Part1.cs", line_a), ("dirB/Part2.cs", line_b)]],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -438,6 +442,7 @@ def test_query_fact_emits_calls_edge_for_linq_operator(
                 "Q.cs", caller_line, caller_col, "Ops.cs", target_line, target_col
             )
         ],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -469,6 +474,7 @@ public class App
     {
         Make().Handle("x");
         Make().Twice();
+        System.Console.WriteLine("done");
     }
 }
 """
@@ -557,6 +563,15 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
         and q.target_line == select_line
         for q in facts.query_calls
     ), facts.query_calls
+
+    # (H) `System.Console.WriteLine` resolves to metadata: the tool must report
+    # (H) it as an external site (and never as a positive call fact).
+    writeline_line, _ = _loc(_E2E_CODE, 'System.Console.WriteLine("done");')
+    assert any(
+        k[0] == "E2E.cs" and k[1] == writeline_line and k[3] == "WriteLine"
+        for k in facts.external_sites
+    ), facts.external_sites
+    assert not any(k[3] == "WriteLine" for k in facts.call_sites), facts.call_sites
 
 
 def test_hybrid_end_to_end_produces_semantic_edges(

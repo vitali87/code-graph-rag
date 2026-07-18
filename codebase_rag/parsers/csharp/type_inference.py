@@ -76,6 +76,7 @@ class CSharpTypeInferenceEngine:
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_class_generic_arity",
@@ -101,6 +102,7 @@ class CSharpTypeInferenceEngine:
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
@@ -128,6 +130,9 @@ class CSharpTypeInferenceEngine:
         # (H) this engine is constructed), so `or {}` would lose them.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        self.csharp_external_sites = (
+            csharp_external_sites if csharp_external_sites is not None else set()
         )
         self.csharp_local_functions = (
             csharp_local_functions if csharp_local_functions is not None else {}
@@ -621,8 +626,25 @@ class CSharpTypeInferenceEngine:
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
-        if not self.csharp_call_sites:
+        if not (self.csharp_call_sites or self.csharp_external_sites):
             return None
+        key = self._call_site_key(call_node, module_qn)
+        if key is None:
+            return None
+        fact = self.csharp_call_sites.get(key)
+        if fact is not None:
+            return self._declared_location(
+                fact.target_file, fact.target_line, fact.target_col
+            )
+        if key in self.csharp_external_sites:
+            # (H) Roslyn resolved this site to a METADATA method: the call
+            # (H) provably leaves the repo, so return the external sentinel and
+            # (H) keep the name trie from fabricating a first-party edge (the
+            # (H) untypeable-receiver fp class the pure frontend cannot see).
+            return CSHARP_EXTERNAL_TARGET
+        return None
+
+    def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
         name_node = self._callee_name_node(call_node)
         if name_node is None:
             return None
@@ -636,17 +658,11 @@ class CSharpTypeInferenceEngine:
         # (H) Keyed on the callee NAME token (nested invocations share an
         # (H) expression start, never a name token), with generic arguments
         # (H) stripped to match Roslyn's symbol name.
-        key: CallSiteKey = (
+        return (
             rel,
             name_node.start_point[0] + 1,
             name_node.start_point[1],
             name.split(cs.CHAR_ANGLE_OPEN, 1)[0],
-        )
-        fact = self.csharp_call_sites.get(key)
-        if fact is None:
-            return None
-        return self._declared_location(
-            fact.target_file, fact.target_line, fact.target_col
         )
 
     def _callee_name_node(self, call_node: Node) -> Node | None:
