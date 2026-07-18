@@ -359,3 +359,25 @@ public class App {
 
     refs = _reference_targets(mock_ingestor)
     assert any(t.endswith("N.Widget.Inner") for t in refs), refs
+
+
+def test_namespace_qualified_static_property_read_is_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `N.Cfg.Value`: the outer receiver is itself a member access naming a
+    # (H) TYPE through its namespace; the dotted qualifier (all PascalCase
+    # (H) segments) resolves to the class and the name field is the read.
+    (csharp_project / "NQ.cs").write_text(
+        """
+namespace N;
+public class Cfg {
+    private static int Value { get; }
+    public static int Get() { return N.Cfg.Value; }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Cfg.Value") for t in refs), refs
