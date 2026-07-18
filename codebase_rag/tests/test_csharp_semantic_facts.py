@@ -605,8 +605,11 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
 
     # (H) A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
     # (H) but its DEFINITION is first-party (Polly's Log.cs): the call must be
-    # (H) a positive fact targeting the definition, never an external site.
-    hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "public static partial void Hi(")
+    # (H) a positive fact targeting the definition, never an external site. The
+    # (H) target anchors at the ATTRIBUTE line: both Roslyn's declaration span
+    # (H) and tree-sitter's method_declaration include the attribute list, so
+    # (H) that line is what the location join matches.
+    hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "[LoggerMessage(EventId = 1")
     hi = [f for k, f in facts.call_sites.items() if k[3] == "Hi"]
     assert any(f.target_file == "Gen.cs" and f.target_line == hi_line for f in hi), (
         facts.call_sites,
