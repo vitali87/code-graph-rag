@@ -414,21 +414,11 @@ class CSharpTypeInferenceEngine:
         if not all(seg[:1].isupper() for seg in segments):
             return False
         if class_qn := self._containing_class_qn(caller_qn):
-            if member_type := self._field_type(class_qn, head):
-                # (H) Same rule for a field/property receiver: an
-                # (H) external-typed member (`Wrapper` of BCL RateLimiter)
-                # (H) makes the call external (the trie self-looped
-                # (H) `Wrapper.DisposeAsync()` onto the enclosing class).
-                return not self._registered_type_declares(member_type, method_name)
-            if prop_qn := self.resolve_property_read(head, caller_qn):
-                if entry := self.csharp_method_return_types.get(prop_qn):
-                    return not self._registered_type_declares(entry[0], method_name)
-            # (H) A PascalCase receiver is very often a PROPERTY or member of
-            # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
-            # (H) enclosing type declares by that name is first-party, not an
-            # (H) external type.
-            if self._find_name_across_parts(class_qn, head) is not None:
-                return False
+            verdict = self._enclosing_member_external(
+                class_qn, head, method_name, caller_qn
+            )
+            if verdict is not None:
+                return verdict
         # (H) Any registered type with this simple name means the receiver may
         # (H) be first-party (even when twin ambiguity kept it untyped).
         if any(
@@ -437,6 +427,33 @@ class CSharpTypeInferenceEngine:
         ):
             return False
         return True
+
+    def _enclosing_member_external(
+        self,
+        class_qn: str,
+        head: str,
+        method_name: str,
+        caller_qn: str | None,
+    ) -> bool | None:
+        # (H) Tri-state: True/False decide externality from what the enclosing
+        # (H) type knows about the receiver head; None leaves it to the
+        # (H) registered-simple-name sweep.
+        if member_type := self._field_type(class_qn, head):
+            # (H) A field/property receiver whose declared type is external
+            # (H) (`Wrapper` of BCL RateLimiter) makes the call external (the
+            # (H) trie self-looped `Wrapper.DisposeAsync()` onto the enclosing
+            # (H) class).
+            return not self._registered_type_declares(member_type, method_name)
+        if prop_qn := self.resolve_property_read(head, caller_qn):
+            if entry := self.csharp_method_return_types.get(prop_qn):
+                return not self._registered_type_declares(entry[0], method_name)
+        # (H) A PascalCase receiver is very often a PROPERTY or member of
+        # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
+        # (H) enclosing type declares by that name is first-party, not an
+        # (H) external type.
+        if self._find_name_across_parts(class_qn, head) is not None:
+            return False
+        return None
 
     def _resolve_bare_call(
         self,
@@ -714,35 +731,49 @@ class CSharpTypeInferenceEngine:
             return None
         receiver = unwrapped
         # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
-        # (H) extension-only method still binds on a cast receiver.
-        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
-            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
-            raw = safe_decode_text(type_node) if type_node else None
-            return annotate_type_ref(raw) if raw else None
+        # (H) extension-only method still binds on a cast receiver; same for a
+        # (H) `new Widget(...)` receiver.
+        if receiver.type in (
+            cs.TS_CSHARP_CAST_EXPRESSION,
+            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+        ):
+            return self._annotated_type_field(receiver)
         # (H) Same chained-receiver typing as the instance path, stopping at
         # (H) the (arity-annotated) type name -- extensions often target
         # (H) unregistered BCL types like `string`, and both sides of the
         # (H) matcher carry the annotation consistently.
-        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
-            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
-            type_text = safe_decode_text(type_node) if type_node else None
-            return annotate_type_ref(type_text) if type_text else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            inner = self.resolve_csharp_method_call(
+            return self._invocation_return_type_name(
                 receiver, local_var_types, module_qn, caller_qn
             )
-            if inner is None:
-                return None
-            if entry := self.csharp_method_return_types.get(inner[1]):
-                rname, rarity = entry
-                return f"{rname}`{rarity}" if rarity else rname
-            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             return self._this_field_receiver_type(receiver, caller_qn)
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
+        return None
+
+    def _annotated_type_field(self, receiver: Node) -> str | None:
+        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        raw = safe_decode_text(type_node) if type_node else None
+        return annotate_type_ref(raw) if raw else None
+
+    def _invocation_return_type_name(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        inner = self.resolve_csharp_method_call(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if inner is None:
+            return None
+        if entry := self.csharp_method_return_types.get(inner[1]):
+            rname, rarity = entry
+            return f"{rname}`{rarity}" if rarity else rname
         return None
 
     def _unwrap_receiver(self, receiver: Node) -> Node | None:
@@ -1048,6 +1079,14 @@ class CSharpTypeInferenceEngine:
             for qn in self.simple_name_lookup.get(simple, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
+        return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def _disambiguate_type_candidates(
+        self,
+        candidates: list[str],
+        generic_arity: int | None,
+        module_qn: str,
+    ) -> str | None:
         # (H) `Builder` vs `Builder<TResult>` share a simple name; when the
         # (H) reference's WRITTEN generic arity is known, keep only the
         # (H) declarations with that type-parameter count (Polly's dual
