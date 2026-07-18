@@ -166,3 +166,44 @@ def test_if_truncated_class_body_orphan_members_are_methods(
         caller_label, _, caller_qn = c.args[0]
         assert caller_label == cs.NodeLabel.METHOD.value, c.args[0]
         assert ".Reader.BlockCopyChars" in caller_qn, caller_qn
+
+
+def test_directive_wrapped_default_interface_bodies_parse_clean(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) An interface member with an `#if`-wrapped default body
+    # (H) (`void M() #if X => Impl() #endif ;`, Serilog's ILogger) shatters the
+    # (H) whole interface into an ERROR node: every member registers as a
+    # (H) module-level Function and the directive CONDITION itself becomes a
+    # (H) phantom node. Blanking conditional-directive lines on a broken parse
+    # (H) recovers the real structure.
+    project = temp_repo / "cs_default_iface"
+    project.mkdir()
+    members = []
+    for i in range(6):
+        members.append(
+            f'    [Obsolete("m{i}")]\n'
+            f"    void Verbose{i}(string messageTemplate, params object?[]? args)\n"
+            "#if FEATURE_DEFAULT_INTERFACE\n"
+            f"        => Write((System.Exception?)null, messageTemplate)\n"
+            "#endif\n"
+            "    ;\n"
+        )
+    (project / "ILogger.cs").write_text(
+        "using System;\n"
+        "namespace N;\n"
+        "public interface ILogger {\n"
+        "    ILogger ForContext(string name);\n"
+        + "".join(members)
+        + "    void Write(Exception? ex, string messageTemplate);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    method_names = _leaf_names(mock_ingestor, "Method")
+    function_names = _leaf_names(mock_ingestor, "Function")
+    assert "Verbose" in method_names, (method_names, function_names)
+    assert "FEATURE_DEFAULT_INTERFACE" not in function_names, function_names
+    assert "FEATURE_DEFAULT_INTERFACE" not in method_names, method_names
+    assert "if" not in function_names, function_names
