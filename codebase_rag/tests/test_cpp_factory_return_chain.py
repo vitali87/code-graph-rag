@@ -7,7 +7,6 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
-
 from evals.cgr_graph import _capture
 
 
@@ -138,7 +137,9 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
     from codebase_rag.parsers.cpp.utils import extract_return_type_name
 
     parsers, _ = load_parsers()
-    tree = parsers[cs.SupportedLanguage.CPP].parse(b"Outer<T>::Inner make() { return {}; }\n")
+    tree = parsers[cs.SupportedLanguage.CPP].parse(
+        b"Outer<T>::Inner make() { return {}; }\n"
+    )
 
     def find_fn(node):
         if node.type == "function_definition":
@@ -283,7 +284,7 @@ def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
         "struct Widget {\n"
         "    Widget(int a, const char* b) {}\n"
         "    static Widget create(int a) {\n"
-        "        return {a, \"x\"};\n"
+        '        return {a, "x"};\n'
         "    }\n"
         "};\n"
         "int helper() { return 1; }\n"
