@@ -375,6 +375,19 @@ class CSharpTypeInferenceEngine:
         if class_qn := self._containing_class_qn(caller_qn):
             if self._field_type(class_qn, head):
                 return False
+            # (H) A PascalCase receiver is very often a PROPERTY or member of
+            # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
+            # (H) enclosing type declares by that name is first-party, not an
+            # (H) external type.
+            if self._find_name_across_parts(class_qn, head) is not None:
+                return False
+        # (H) Any registered type with this simple name means the receiver may
+        # (H) be first-party (even when twin ambiguity kept it untyped).
+        if any(
+            self.function_registry.get(qn) in _TYPE_DECLS
+            for qn in self.simple_name_lookup.get(head, set())
+        ):
+            return False
         return True
 
     def _resolve_bare_call(

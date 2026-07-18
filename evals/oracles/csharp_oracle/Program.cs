@@ -81,6 +81,24 @@ foreach (var path in EnumerateCsFiles(rootFull, ignoredDirs))
     files.Add((rel, tree.GetRoot(), tree));
 }
 
+// Names of in-source EXTENSION methods (first parameter has a `this`
+// modifier): an extension targets a receiver whose type is typically
+// metadata (string, Exception), so the receiver-type fallback below must not
+// exclude calls to these names when overload resolution failed.
+var declaredExtensionNames = new HashSet<string>(StringComparer.Ordinal);
+foreach (var (_, fileRoot, _) in files)
+{
+    foreach (var node in fileRoot.DescendantNodes())
+    {
+        if (node is MethodDeclarationSyntax m
+            && m.ParameterList.Parameters.Count > 0
+            && m.ParameterList.Parameters[0].Modifiers.Any(SyntaxKind.ThisKeyword))
+        {
+            declaredExtensionNames.Add(m.Identifier.Text);
+        }
+    }
+}
+
 // A compilation over every first-party tree plus the host runtime's reference
 // set, so a call site's target can be RESOLVED rather than name-matched: a
 // syntactic reduction counts `cts.Cancel()` (BCL) as a first-party call
@@ -116,6 +134,36 @@ bool ResolvesOutsideSource(SemanticModel model, SyntaxNode node)
         // argument type, say): count the call unless EVERY candidate is
         // metadata, in which case the target family is certainly external.
         return info.CandidateSymbols.All(c => !c.Locations.Any(l => l.IsInSource));
+    }
+    // The member symbol is unresolved (third-party refs missing in test/bench
+    // files), but the RECEIVER's type may still resolve: a provably metadata
+    // receiver (Console, Task, a BCL field type) makes the call external even
+    // without overload resolution. An unresolved or in-source receiver keeps
+    // the historical name-based counting.
+    if (node is InvocationExpressionSyntax unresolvedInv
+        && unresolvedInv.Expression is MemberAccessExpressionSyntax ma)
+    {
+        // An in-source extension's receiver type is usually metadata
+        // (string, Exception); its calls must stay counted.
+        if (declaredExtensionNames.Contains(ma.Name.Identifier.Text))
+        {
+            return false;
+        }
+        var recvType = model.GetTypeInfo(ma.Expression).Type;
+        if (recvType is not null
+            && recvType.TypeKind != Microsoft.CodeAnalysis.TypeKind.Error
+            && !recvType.Locations.Any(l => l.IsInSource))
+        {
+            return true;
+        }
+        // A static call on a type name (`Console.WriteLine`): the receiver is
+        // not an expression with a type but a symbol; resolve it directly.
+        var recvSymbol = model.GetSymbolInfo(ma.Expression).Symbol;
+        if (recvSymbol is INamedTypeSymbol named
+            && !named.Locations.Any(l => l.IsInSource))
+        {
+            return true;
+        }
     }
     return false;
 }
