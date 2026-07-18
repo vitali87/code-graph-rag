@@ -515,13 +515,16 @@ class CallResolver:
         # (H) java_constructor_targets: a nested class's dtor has an extra qn
         # (H) segment and is excluded).
         simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        dtor_leaf = f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
-        targets: set[tuple[str, str]] = set()
-        for qn, node_type in self.function_registry.find_with_prefix(class_qn):
-            parent, dot, mname = qn.rpartition(cs.SEPARATOR_DOT)
-            if dot and parent == class_qn and mname == dtor_leaf:
-                targets.add((node_type, qn))
-        return targets
+        # (H) A destructor cannot be overloaded, so its qualified name is fully
+        # (H) determined by the class: one direct registry lookup replaces a
+        # (H) prefix scan over every member (Gemini review, PR #799).
+        dtor_qn = (
+            f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
+        )
+        dtor_type = self.function_registry.get(dtor_qn)
+        if dtor_type is None:
+            return set()
+        return {(dtor_type, dtor_qn)}
 
     def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
         # (H) The class constructed by a `return {...};` inside caller_qn: the
