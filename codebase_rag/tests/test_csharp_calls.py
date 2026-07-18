@@ -400,3 +400,322 @@ public class App {
 
     targets = _call_targets(mock_ingestor)
     assert any(t.endswith("N.Policy.Handle") for t in targets), targets
+
+
+def test_base_receiver_binds_base_chain_never_own_override(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `base.X()` inside an override must bind the BASE chain: a first-party
+    # (H) base's member when one exists, and NOTHING when the base is external
+    # (H) (object.Equals) -- the trie fallback was binding the call to the
+    # (H) caller's OWN override (a self-loop false positive on every
+    # (H) hide-object-members region, Polly's PolicyBuilder).
+    (csharp_project / "BaseRecv.cs").write_text(
+        """
+namespace N;
+public class Root {
+    public virtual string Report() => "r";
+}
+public class Mid : Root {
+    public override string Report() => base.Report();
+    public override string ToString() => base.ToString();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Mid.Report") and t.endswith("N.Root.Report") for s, t in pairs
+    ), pairs
+    assert not any(t.endswith("N.Mid.ToString") for s, t in pairs), pairs
+    assert not any(
+        s.endswith("N.Mid.Report") and t.endswith("N.Mid.Report") for s, t in pairs
+    ), pairs
+
+
+def test_unresolvable_type_receiver_does_not_fall_to_name_trie(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Console.WriteLine(x)`: the receiver is a PascalCase identifier that
+    # (H) is no local, field, or registered type -- an external static type.
+    # (H) The name-only trie must not bind the call to an unrelated
+    # (H) first-party `WriteLine`.
+    (csharp_project / "ConsoleLike.cs").write_text(
+        """
+namespace N;
+public class Logger {
+    public void WriteLine(string s) { }
+}
+public class App {
+    public void Run() { System.Console.WriteLine("x"); }
+    public void Run2() { Console.WriteLine("y"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith("N.Logger.WriteLine(string)") for s, t in pairs), pairs
+
+
+def test_object_virtual_names_never_bind_by_name_only(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `x.GetType()` / `y.ToString()` on untyped receivers resolve to
+    # (H) object's virtuals; binding them BY NAME to whatever first-party
+    # (H) override exists fabricates edges (19 exposed by the semantic
+    # (H) oracle). A typed receiver still binds via the arity path.
+    (csharp_project / "ObjVirt.cs").write_text(
+        """
+namespace N;
+public class Weird {
+    public new System.Type GetType() => base.GetType();
+    public override string ToString() => "w";
+}
+public class App {
+    public string Run(object x) { return x.GetType().ToString(); }
+    public string Typed(Weird w) { return w.ToString(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        s.endswith("N.App.Run(object)") and t.endswith("N.Weird.GetType")
+        for s, t in pairs
+    ), pairs
+    # (H) The TYPED receiver keeps its correct override binding.
+    assert any(
+        s.endswith("N.App.Typed(Weird)") and t.endswith("N.Weird.ToString")
+        for s, t in pairs
+    ), pairs
+
+
+def test_typed_receiver_object_virtual_miss_is_external(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `severity.ToString()` on a first-party enum binds Enum.ToString
+    # (H) (metadata); when the receiver's own hierarchy declares no override
+    # (H) the call must NOT fall to the trie and land on an unrelated
+    # (H) hide-object-members override (Polly's PolicyBuilder attractor).
+    (csharp_project / "OV.cs").write_text(
+        """
+namespace N;
+public enum Severity { Low, High }
+public class Hider {
+    public override string ToString() => "h";
+    public new System.Type GetType() => base.GetType();
+}
+public class App {
+    public string Fmt(Severity s) => s.ToString();
+    public string Key() => GetType().Name;
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith("N.Hider.ToString") for s, t in pairs), pairs
+    assert not any(t.endswith("N.Hider.GetType") for s, t in pairs), pairs
+
+
+def test_untyped_member_receiver_never_falls_to_name_trie(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Wrapper.DisposeAsync()` where Wrapper is a property of an
+    # (H) UNREGISTERED (BCL) type: a member call whose receiver cannot be
+    # (H) typed must not be attributed by bare name -- the trie self-looped it
+    # (H) onto the enclosing class's own DisposeAsync (Polly's
+    # (H) RateLimiterResilienceStrategy).
+    (csharp_project / "UM.cs").write_text(
+        """
+namespace N;
+public class Strategy {
+    private System.Threading.RateLimiting.RateLimiter Wrapper { get; }
+    public System.Threading.Tasks.ValueTask DisposeAsync() {
+        return Wrapper.DisposeAsync();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        s.endswith("N.Strategy.DisposeAsync") and t.endswith("N.Strategy.DisposeAsync")
+        for s, t in pairs
+    ), pairs
+
+
+def test_bare_delegate_member_invoke_is_external(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Callback();` where Callback is a delegate-typed PROPERTY of the
+    # (H) enclosing type is Action.Invoke, not a method call; the bare-name
+    # (H) trie must not bind it to an unrelated first-party member named
+    # (H) Callback. The property read stays covered by the read pass.
+    (csharp_project / "DI.cs").write_text(
+        """
+namespace N;
+public class OtherArgs {
+    public System.Action Callback { get; }
+}
+public class Timer {
+    public System.Action Callback { get; }
+    public void Fire() { Callback(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith("Callback") and "OtherArgs" in t for s, t in pairs), pairs
+
+
+def test_delegate_property_on_typed_receiver_not_bound_as_method(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `options.ShouldHandle(args)`: ShouldHandle is a delegate PROPERTY;
+    # (H) the typed-receiver name fallback must not emit a CALLS edge binding
+    # (H) the property as a method (Polly's CircuitBreakerStrategyOptions).
+    (csharp_project / "DP.cs").write_text(
+        """
+namespace N;
+public class Options {
+    public System.Func<int, bool> ShouldHandle { get; set; }
+}
+public class App {
+    public bool Run(Options options) { return options.ShouldHandle(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith("N.Options.ShouldHandle") for s, t in pairs), pairs
+
+
+def test_bcl_typed_member_receiver_with_name_colliding_decoy_is_external(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Wrapper.DisposeAsync()` where Wrapper is typed to BCL RateLimiter:
+    # (H) an unrelated first-party class that merely SHARES the simple name
+    # (H) (Polly's Snippets.Docs.RateLimiter demo) must not defeat the
+    # (H) external gate; the candidate type must actually DECLARE the member.
+    (csharp_project / "Decoy.cs").write_text(
+        "namespace N.Docs;\npublic static class RateLimiter {\n"
+        "    public static void Snippet() { }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "Strat.cs").write_text(
+        """
+namespace N;
+public class Strategy {
+    private System.Threading.RateLimiting.RateLimiter Wrapper { get; }
+    public System.Threading.Tasks.ValueTask DisposeAsync() {
+        return Wrapper.DisposeAsync();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        s.endswith("N.Strategy.DisposeAsync") and t.endswith("DisposeAsync")
+        for s, t in pairs
+    ), pairs
+
+
+def test_var_from_plain_twin_ctor_respects_property_guard(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `var options = new Options();` where Options : Options<object> are
+    # (H) simple-name twins: the local's WRITTEN type has generic arity 0, so
+    # (H) receiver typing must pick the non-generic twin, reach the delegate
+    # (H) property guard, and emit no CALLS edge for
+    # (H) `options.ShouldHandle(...)` (Polly's CircuitBreakerStrategyOptions).
+    (csharp_project / "TwinOpt.cs").write_text(
+        """
+namespace N;
+public class Options<TResult> {
+    public System.Func<TResult, bool> ShouldHandle { get; set; }
+}
+public class Options : Options<object> { }
+public class App {
+    public bool Run() {
+        var options = new Options();
+        return options.ShouldHandle(3);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith(".ShouldHandle") for s, t in pairs), pairs
+
+
+def test_base_call_binds_first_party_base_by_name_when_arity_differs(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `base.Report(1, 2)` with a first-party base declaring only an
+    # (H) optional-parameter overload: the arity pass misses, and the
+    # (H) name-only base-chain pass must still bind the base member rather
+    # (H) than suppress a genuine first-party call.
+    (csharp_project / "BaseName.cs").write_text(
+        """
+namespace N;
+public class Root2 {
+    public virtual string Report(int a, int b = 0, int c = 0) => "r";
+}
+public class Mid2 : Root2 {
+    public override string Report(int a, int b, int c) => base.Report(1, 2);
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("Mid2.Report(int, int, int)") and "Root2.Report" in t
+        for s, t in pairs
+    ), pairs
+
+
+def test_bcl_member_receiver_with_declaring_first_party_candidate_keeps_fallback(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The declares-member refinement must NOT suppress when a first-party
+    # (H) type sharing the receiver type's simple name actually DECLARES the
+    # (H) called member: the trie may then legitimately attribute the call.
+    (csharp_project / "DK.cs").write_text(
+        """
+namespace N;
+public class Keeper {
+    public void Flush() { }
+}
+public class Holder {
+    private Keeper Inner2 { get; }
+    public void Go() { Inner2.Flush(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(t.endswith("N.Keeper.Flush") for s, t in pairs), pairs

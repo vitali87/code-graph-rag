@@ -25,6 +25,7 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .csharp import type_inference as csharp_ti
 from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -2068,7 +2069,14 @@ class CallProcessor:
                 callee_info = resolver.resolve_csharp_method_call(
                     call_node, module_qn, call_var_types, caller_qn
                 )
-                if callee_info is None:
+                if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
+                    # (H) Provably external (base.X() with an external base, a
+                    # (H) static call on an unregistered type, an object
+                    # (H) virtual on an untyped receiver): no edge, and no
+                    # (H) name-trie fallback that would fabricate one onto an
+                    # (H) unrelated same-name first-party member.
+                    callee_info = None
+                elif callee_info is None:
                     # (H) A C# member call whose receiver could not be typed (or a
                     # (H) bare call) falls back to the generic simple-name resolver,
                     # (H) which keeps Phase 1 intra-file resolution working.

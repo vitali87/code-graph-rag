@@ -101,6 +101,25 @@ TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
 TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
 TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"
 TS_CSHARP_TYPE_PARAMETER_LIST = "type_parameter_list"
+# (H) The `base` receiver keyword parses as a bare "base" node in this
+# (H) grammar version (not "base_expression").
+TS_CSHARP_BASE_EXPRESSION = "base"
+
+# (H) object's virtual/universal members: a call to one of these on an UNTYPED
+# (H) receiver resolves to System.Object (or a BCL override), so binding it by
+# (H) bare name to whatever first-party override happens to exist fabricates
+# (H) an edge (exposed by the semantic calls oracle on Polly's
+# (H) hide-object-members regions).
+CSHARP_OBJECT_VIRTUALS = frozenset(
+    {
+        "Equals",
+        "GetHashCode",
+        "GetType",
+        "ToString",
+        "ReferenceEquals",
+        "MemberwiseClone",
+    }
+)
 TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CSHARP_BLOCK = "block"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
@@ -127,6 +146,7 @@ TS_CSHARP_MODIFIER_PROTECTED = "protected"
 # (H) of the parameter_list (grammar quirk), captured directly.
 TS_CSHARP_PARAMETER = "parameter"
 TS_CSHARP_ARRAY_TYPE = "array_type"
+TS_CSHARP_PARAMETER_LIST = "parameter_list"
 
 # (H) Local/field declarations for type inference. A local is a
 # (H) variable_declaration (type field + variable_declarator[s]); `var` makes the

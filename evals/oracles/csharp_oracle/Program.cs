@@ -70,7 +70,7 @@ if (!string.IsNullOrEmpty(ignoreEnv))
 var root = args.Length > 0 ? args[0] : ".";
 var rootFull = Path.GetFullPath(root);
 
-var files = new List<(string Rel, SyntaxNode Root)>();
+var files = new List<(string Rel, SyntaxNode Root, SyntaxTree Tree)>();
 foreach (var path in EnumerateCsFiles(rootFull, ignoredDirs))
 {
     string text;
@@ -78,14 +78,126 @@ foreach (var path in EnumerateCsFiles(rootFull, ignoredDirs))
     catch { continue; }
     var tree = CSharpSyntaxTree.ParseText(NeutralizeConditionalDirectives(text), path: path);
     var rel = Path.GetRelativePath(rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
-    files.Add((rel, tree.GetRoot()));
+    files.Add((rel, tree.GetRoot(), tree));
+}
+
+// Names of in-source EXTENSION methods (first parameter has a `this`
+// modifier): an extension targets a receiver whose type is typically
+// metadata (string, Exception), so the receiver-type fallback below must not
+// exclude calls to these names when overload resolution failed.
+var declaredExtensionNames = new HashSet<string>(StringComparer.Ordinal);
+foreach (var (_, fileRoot, _) in files)
+{
+    foreach (var node in fileRoot.DescendantNodes())
+    {
+        if (node is MethodDeclarationSyntax m
+            && m.ParameterList.Parameters.Count > 0
+            && m.ParameterList.Parameters[0].Modifiers.Any(SyntaxKind.ThisKeyword))
+        {
+            declaredExtensionNames.Add(m.Identifier.Text);
+        }
+    }
+}
+
+// A compilation over every first-party tree plus the host runtime's reference
+// set, so a call site's target can be RESOLVED rather than name-matched: a
+// syntactic reduction counts `cts.Cancel()` (BCL) as a first-party call
+// whenever any unrelated first-party `Cancel` exists. Resolution to a metadata
+// (non-source) symbol excludes the call; an UNRESOLVED site (third-party
+// packages such as test frameworks are not referenced here) falls back to the
+// historical name-based counting so real first-party calls in those files are
+// not lost.
+var tpa = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
+var references = new List<MetadataReference>();
+foreach (var asmPath in tpa.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+{
+    try { references.Add(MetadataReference.CreateFromFile(asmPath)); }
+    catch { }
+}
+// SDK ImplicitUsings live in generated obj/GlobalUsings.g.cs, which the file
+// walk rightly skips; synthesize a global using for every in-source namespace
+// (plus the SDK defaults) so cross-project receivers resolve exactly as the
+// real build sees them (a bench file referencing Polly.Registry without a
+// using dropped its GetPipeline calls from the truth set).
+var namespaceNames = new HashSet<string>(StringComparer.Ordinal)
+{
+    "System", "System.Collections.Generic", "System.IO", "System.Linq",
+    "System.Net.Http", "System.Threading", "System.Threading.Tasks",
+};
+foreach (var (_, fileRoot, _) in files)
+{
+    foreach (var node in fileRoot.DescendantNodes())
+    {
+        if (node is BaseNamespaceDeclarationSyntax ns)
+        {
+            namespaceNames.Add(ns.Name.ToString());
+        }
+    }
+}
+var globalUsings = string.Concat(
+    namespaceNames.OrderBy(n => n, StringComparer.Ordinal)
+        .Select(n => $"global using {n};\n"));
+var usingsTree = CSharpSyntaxTree.ParseText(globalUsings, path: "cgr-global-usings.g.cs");
+
+var compilation = CSharpCompilation.Create(
+    "cgr-oracle",
+    files.Select(f => f.Tree).Append(usingsTree),
+    references,
+    new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+bool ResolvesOutsideSource(SemanticModel model, SyntaxNode node)
+{
+    var info = model.GetSymbolInfo(node);
+    var symbol = info.Symbol;
+    if (symbol is not null)
+    {
+        return !symbol.Locations.Any(l => l.IsInSource);
+    }
+    if (!info.CandidateSymbols.IsDefaultOrEmpty)
+    {
+        // Overload candidates exist but none won (missing refs for an
+        // argument type, say): count the call unless EVERY candidate is
+        // metadata, in which case the target family is certainly external.
+        return info.CandidateSymbols.All(c => !c.Locations.Any(l => l.IsInSource));
+    }
+    // The member symbol is unresolved (third-party refs missing in test/bench
+    // files), but the RECEIVER's type may still resolve: a provably metadata
+    // receiver (Console, Task, a BCL field type) makes the call external even
+    // without overload resolution. An unresolved or in-source receiver keeps
+    // the historical name-based counting.
+    if (node is InvocationExpressionSyntax unresolvedInv
+        && unresolvedInv.Expression is MemberAccessExpressionSyntax ma)
+    {
+        // An in-source extension's receiver type is usually metadata
+        // (string, Exception); its calls must stay counted.
+        if (declaredExtensionNames.Contains(ma.Name.Identifier.Text))
+        {
+            return false;
+        }
+        var recvType = model.GetTypeInfo(ma.Expression).Type;
+        if (recvType is not null
+            && recvType.TypeKind != Microsoft.CodeAnalysis.TypeKind.Error
+            && !recvType.Locations.Any(l => l.IsInSource))
+        {
+            return true;
+        }
+        // A static call on a type name (`Console.WriteLine`): the receiver is
+        // not an expression with a type but a symbol; resolve it directly.
+        var recvSymbol = model.GetSymbolInfo(ma.Expression).Symbol;
+        if (recvSymbol is INamedTypeSymbol named
+            && !named.Locations.Any(l => l.IsInSource))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // First pass: the declared type-name universe, so a base type can be classed as
 // a base class (INHERITS) or interface (IMPLEMENTS) by what it is declared as.
 var declaredInterfaces = new HashSet<string>(StringComparer.Ordinal);
 var declaredClasses = new HashSet<string>(StringComparer.Ordinal);
-foreach (var (_, fileRoot) in files)
+foreach (var (_, fileRoot, _) in files)
 {
     foreach (var node in fileRoot.DescendantNodes())
     {
@@ -112,9 +224,10 @@ var edges = new List<Edge>();
 var nameEdges = new List<NameEdge>();
 var calls = new List<Call>();
 
-foreach (var (rel, fileRoot) in files)
+foreach (var (rel, fileRoot, fileTree) in files)
 {
     var module = new NodeRef(KindModule, rel, ModuleLine);
+    var semanticModel = compilation.GetSemanticModel(fileTree);
     foreach (var node in fileRoot.DescendantNodes())
     {
         switch (node)
@@ -134,13 +247,22 @@ foreach (var (rel, fileRoot) in files)
                 EmitLocalFunction(rel, local);
                 break;
             case InvocationExpressionSyntax invocation:
-                AddCall(rel, InvocationName(invocation));
+                if (!ResolvesOutsideSource(semanticModel, invocation))
+                {
+                    AddCall(rel, InvocationName(invocation));
+                }
                 break;
             case ObjectCreationExpressionSyntax creation:
-                AddCall(rel, TypeSimpleName(creation.Type));
+                if (!ResolvesOutsideSource(semanticModel, creation))
+                {
+                    AddCall(rel, TypeSimpleName(creation.Type));
+                }
                 break;
             case ImplicitObjectCreationExpressionSyntax implicitCreation:
-                AddCall(rel, TargetTypedNewName(implicitCreation));
+                if (!ResolvesOutsideSource(semanticModel, implicitCreation))
+                {
+                    AddCall(rel, TargetTypedNewName(implicitCreation));
+                }
                 break;
         }
     }
