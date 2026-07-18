@@ -303,8 +303,6 @@ class FunctionIngestMixin:
                 # (H) (drop). Same-file classes register after this pass, so
                 # (H) the decision is deferred, not made here.
                 if cpp_utils.is_macro_invocation_artifact(func_node):
-                    if not hasattr(self, "_deferred_cpp_artifacts"):
-                        self._deferred_cpp_artifacts = []
                     self._deferred_cpp_artifacts.append(
                         _DeferredCppArtifact(
                             func_node, module_qn, lang_config, lang_queries
@@ -766,7 +764,7 @@ class FunctionIngestMixin:
         recovery-orphaned constructor); drops the rest as macro invocations.
         Returns the number registered.
         """
-        deferred = getattr(self, "_deferred_cpp_artifacts", None)
+        deferred = self._deferred_cpp_artifacts
         if not deferred:
             return 0
 
