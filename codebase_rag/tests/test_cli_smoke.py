@@ -72,16 +72,20 @@ def test_version_flag() -> None:
 def test_help_command_shows_task_grouped_index() -> None:
     result = _RUNNER.invoke(app, ["help"], prog_name="cgr")
 
+    # (H) rich colorizes help when it detects an ANSI-capable log sink (GitHub
+    # (H) Actions among them), so the raw stdout carries escape codes there and
+    # (H) plain-substring asserts must run on the stripped text.
+    plain_stdout = _ANSI_RE.sub("", result.stdout)
     assert result.exit_code == 0
-    assert "Usage: cgr [OPTIONS] COMMAND" in result.stdout
-    assert ch.PANEL_USE in result.stdout
-    assert ch.PANEL_GRAPH in result.stdout
-    assert ch.PANEL_MANAGE in result.stdout
+    assert "Usage: cgr [OPTIONS] COMMAND" in plain_stdout
+    assert ch.PANEL_USE in plain_stdout
+    assert ch.PANEL_GRAPH in plain_stdout
+    assert ch.PANEL_MANAGE in plain_stdout
 
 
 def test_help_command_shows_detailed_command_page() -> None:
     result = _RUNNER.invoke(app, ["help", "start"], prog_name="cgr")
-    normalized_output = " ".join(result.stdout.split())
+    normalized_output = " ".join(_ANSI_RE.sub("", result.stdout).split())
 
     assert result.exit_code == 0
     assert "Usage: cgr start [OPTIONS]" in normalized_output
