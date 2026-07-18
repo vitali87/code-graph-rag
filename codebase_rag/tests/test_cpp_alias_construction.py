@@ -156,3 +156,29 @@ def test_function_local_alias_construction_emits_ctor_call(
         src.endswith(".type_it") and dst.endswith(".basic_writer.basic_writer")
         for src, dst in calls
     ), calls
+
+
+LATE_ALIAS_CC = """
+struct real_thing {
+  real_thing(int x) {}
+};
+
+void confused() {
+  later_alias(1);
+  using later_alias = real_thing;
+}
+"""
+
+
+def test_alias_declared_after_call_site_does_not_bind(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "late.cc").write_text(LATE_ALIAS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    # (H) C++ name lookup is declaration-ordered: `later_alias(1)` precedes the
+    # (H) using-declaration and can never mean real_thing (PR #797 review).
+    assert not any(
+        src.endswith(".confused") and "real_thing" in dst for src, dst in calls
+    ), calls

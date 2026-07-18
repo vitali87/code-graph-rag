@@ -69,24 +69,39 @@ class CppTypeInferenceEngine:
                     # (H) (and extern "C" blocks), so recurse to reach nested ones.
                     self.collect_type_aliases(child, aliases, conflicts)
 
-    def collect_local_type_aliases(self, caller_node: Node) -> dict[str, str]:
+    def collect_local_type_aliases(
+        self, caller_node: Node
+    ) -> dict[str, tuple[str, int]]:
         # (H) Aliases declared INSIDE a caller's body (`void f() { using w =
         # (H) basic_writer; w(1); }`) are exactly what collect_type_aliases
         # (H) skips, so construction-site resolution collects them per caller.
-        # (H) Conflicting redefinitions (a nested lambda re-aliasing the name)
-        # (H) drop, mirroring the cross-file map's conflict rule.
-        aliases: dict[str, str] = {}
+        # (H) Each entry carries the declaration's end byte: C++ name lookup is
+        # (H) declaration-ordered, so a call BEFORE the alias must not bind to
+        # (H) it. Conflicting redefinitions (a nested lambda re-aliasing the
+        # (H) name) drop, mirroring the cross-file map's conflict rule.
+        aliases: dict[str, tuple[str, int]] = {}
         conflicts: set[str] = set()
         stack = list(caller_node.children)
         while stack:
             node = stack.pop()
             match node.type:
                 case cs.CppNodeType.TYPE_DEFINITION:
-                    self._record_alias(self._typedef_pair(node), aliases, conflicts)
+                    pair = self._typedef_pair(node)
                 case cs.CppNodeType.ALIAS_DECLARATION:
-                    self._record_alias(self._using_pair(node), aliases, conflicts)
+                    pair = self._using_pair(node)
                 case _:
                     stack.extend(node.children)
+                    continue
+            if pair is None:
+                continue
+            alias_name, underlying = pair
+            if alias_name in conflicts:
+                continue
+            if alias_name in aliases and aliases[alias_name][0] != underlying:
+                conflicts.add(alias_name)
+                del aliases[alias_name]
+                continue
+            aliases[alias_name] = (underlying, node.end_byte)
         return aliases
 
     def _record_alias(
