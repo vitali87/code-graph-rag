@@ -76,8 +76,7 @@ def test_using_alias_construction_emits_instantiates_and_ctor_call(
         for src, dst in calls
     ), calls
     assert any(
-        src.endswith(".use_it") and dst.endswith(".basic_appender")
-        for src, dst in inst
+        src.endswith(".use_it") and dst.endswith(".basic_appender") for src, dst in inst
     ), inst
 
 

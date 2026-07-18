@@ -2140,6 +2140,22 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
+            if (
+                not callee_info
+                and language == cs.SupportedLanguage.CPP
+                and call_name in resolver.type_aliases
+                and (aliased_qn := resolver._resolve_class_name(call_name, module_qn))
+            ):
+                # (H) `using appender = basic_appender<char>; appender(out)`:
+                # (H) the alias is no registered node, so the bare call resolves
+                # (H) to nothing and the constructed class's ctor stays
+                # (H) edge-free. The collected typedef/using map names the
+                # (H) class (_resolve_class_name follows alias chains); binding
+                # (H) the callee to it drops into the class branch below, which
+                # (H) emits INSTANTIATES + ctor CALLS like any construction.
+                # (H) Gated on alias-map membership so genuinely unknown names
+                # (H) keep their unresolved handling.
+                callee_info = (cs.NodeLabel.CLASS, aliased_qn)
             if not callee_info and cs.SEPARATOR_DOT not in call_name:
                 if is_python:
                     # (H) A bare name that resolves to nothing may be a local alias of a
