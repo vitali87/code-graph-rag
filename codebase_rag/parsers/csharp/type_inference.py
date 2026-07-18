@@ -758,10 +758,6 @@ class CSharpTypeInferenceEngine:
             receiver = inner
         return receiver
 
-    def _cast_type_name(self, cast_node: Node) -> str | None:
-        cast_type = safe_decode_text(cast_node.child_by_field_name(cs.FIELD_TYPE))
-        return _normalize_type_name(cast_type) if cast_type else None
-
     def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
         qn = self._containing_class_qn(caller_qn)
         if qn is None:
@@ -956,8 +952,16 @@ class CSharpTypeInferenceEngine:
             return None
         receiver = unwrapped
         if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
-            if cast_type := self._cast_type_name(receiver):
-                return self._type_name_to_qn(cast_type, module_qn)
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            if raw:
+                # (H) The cast's WRITTEN arity picks between simple-name twins
+                # (H) (`(Opt<int>)o` names the generic Opt<T>, never plain Opt).
+                return self._type_name_to_qn(
+                    _normalize_type_name(raw),
+                    module_qn,
+                    generic_arity_of_type_text(raw),
+                )
             return None
         # (H) `new Builder().Add()`: an object-creation receiver IS its type.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
