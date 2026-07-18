@@ -900,12 +900,6 @@ class GraphUpdater:
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
 
-        orphan_ctors = (
-            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
-        )
-        if orphan_ctors:
-            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
-
         contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
         if contained:
             logger.info("Resolved {} deferred C++ nested containments", contained)
@@ -938,6 +932,16 @@ class GraphUpdater:
                 "Registered {} forward-declared C/C++ types with no definition",
                 kept_forwards,
             )
+
+        # (H) After rehydration (an incremental run's class may live in an
+        # (H) unchanged header) and after forward declarations (a kept
+        # (H) forward-declared TYPE also proves the name is a class, not a
+        # (H) macro).
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
 
         # (H) After forward declarations so a base whose only representation is
         # (H) a kept forward declaration still resolves to a real node.

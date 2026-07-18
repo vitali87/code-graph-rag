@@ -160,3 +160,56 @@ def test_orphaned_zero_param_ctor_kept_via_class_registry(
     # (H) `pipe() {}` shares the macro-invocation shape; the registered class
     # (H) `pipe` is what keeps it alive.
     assert any(qn.endswith(".pipe") or ".pipe@" in qn for qn in qns), qns
+
+
+PIPE_HDR = """
+#pragma once
+struct pipe {
+  int fd_;
+};
+"""
+
+PIPE_CC = """
+#include "pipe.h"
+
+pipe() {}
+"""
+
+
+def test_incremental_reparse_keeps_orphan_ctor_from_unchanged_header(
+    temp_repo: Path,
+) -> None:
+    # (H) Incremental runs rehydrate the registry from the graph AFTER the
+    # (H) per-file passes; the artifact tiebreak must wait for rehydration or a
+    # (H) re-parsed file's orphaned ctor whose class lives in an UNCHANGED
+    # (H) header is dropped as a macro artifact (PR #788 review finding).
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+    from evals.cgr_graph import _StatefulIngestor
+
+    (temp_repo / "pipe.h").write_text(PIPE_HDR)
+    (temp_repo / "pipe.cc").write_text(PIPE_CC)
+
+    def index(store: _StatefulIngestor, force: bool) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+        ).run(force=force)
+
+    def ctor_nodes(store: _StatefulIngestor) -> set[str]:
+        return {
+            str(qn)
+            for (label, qn) in store.nodes
+            if label == cs.NodeLabel.FUNCTION.value
+            and (str(qn).endswith(".pipe") or ".pipe@" in str(qn))
+        }
+
+    store = _StatefulIngestor()
+    index(store, force=True)
+    assert ctor_nodes(store), sorted(store.nodes)
+
+    # (H) A trailing comment changes the hash but not the AST, so only
+    # (H) pipe.cc re-parses; the class comes from rehydration alone.
+    (temp_repo / "pipe.cc").write_text(PIPE_CC + "// touched\n")
+    index(store, force=False)
+    assert ctor_nodes(store), sorted(store.nodes)
