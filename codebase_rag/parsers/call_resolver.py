@@ -518,9 +518,7 @@ class CallResolver:
         # (H) A destructor cannot be overloaded, so its qualified name is fully
         # (H) determined by the class: one direct registry lookup replaces a
         # (H) prefix scan over every member (Gemini review, PR #799).
-        dtor_qn = (
-            f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
-        )
+        dtor_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         dtor_type = self.function_registry.get(dtor_qn)
         if dtor_type is None:
             return set()
