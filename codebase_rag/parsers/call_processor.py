@@ -1983,6 +1983,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         cs.RelationshipType.REFERENCES,
+                        language,
                     )
                 continue
 
@@ -2156,6 +2157,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         arg_ref_rel,
+                        language,
                     )
                 continue
 
@@ -2182,6 +2184,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         arg_ref_rel,
+                        language,
                     )
                 continue
 
@@ -2212,6 +2215,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     cs.RelationshipType.REFERENCES,
+                    language,
                 )
 
             if is_python and (
@@ -3602,6 +3606,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent
         # (H) for reference resolution, and `fn.bind(ctx)` / `.call` / `.apply` in
@@ -3621,6 +3626,26 @@ class CallProcessor:
             return
         if not (arg_text := safe_decode_text(arg_node)):
             return
+        if language == cs.SupportedLanguage.CSHARP:
+            # (H) `Callback<int>` passes the method group with explicit type
+            # (H) arguments; methods register generic-free, so strip them.
+            arg_text = arg_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+            # (H) A bare method-group name binds the ENCLOSING type's method
+            # (H) group; reference the whole overload family (the delegate
+            # (H) type that selects one overload is invisible to syntax, and
+            # (H) the trie's lexicographic pick can even land on a sibling
+            # (H) class -- Polly's EmptyAction). Falls through when the
+            # (H) enclosing type has no such member.
+            if cs.SEPARATOR_DOT not in arg_text:
+                engine = self._resolver.type_inference.csharp_type_inference
+                if family := engine.csharp_method_group_family(arg_text, caller_qn):
+                    for target_qn in family:
+                        ensure_rel(
+                            source_spec,
+                            rel_type,
+                            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                        )
+                    return
         if not (
             resolved := resolve_func(
                 arg_text, module_qn, local_var_types, class_context, caller_qn
@@ -3904,6 +3929,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # (H) A function/method passed as an argument is a first-class value the
         # (H) callee may invoke (external framework) or store for later dynamic
@@ -3930,6 +3956,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     rel_type,
+                    language,
                 )
 
     def _build_local_alias_map(

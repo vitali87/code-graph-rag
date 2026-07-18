@@ -201,6 +201,7 @@ class FunctionIngestMixin:
     csharp_override_methods: set[str]
     csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
+    csharp_generic_methods: set[str]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -1325,6 +1326,11 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
+        if (
+            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+            is not None
+        ):
+            self.csharp_generic_methods.add(ingested_qn)
         record_cpp_definition_span(
             self.cpp_definition_spans,
             cs.SupportedLanguage.CSHARP,

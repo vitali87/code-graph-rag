@@ -110,6 +110,11 @@ class DefinitionProcessor(
         # (H) fn is callable only from inside its host, and shadows same-name
         # (H) method overloads there (Polly's PredicateBuilder.HandleInner).
         self.csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] = {}
+        # (H) qns of C# methods declared WITH type parameters (`M<T>(X)`), so
+        # (H) bare-call resolution can prefer the overload whose genericness
+        # (H) matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
+        # (H) parameter arity alone cannot tell same-name twins apart.
+        self.csharp_generic_methods: set[str] = set()
         # (H) C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
         # (H) {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
         # (H) frontend ran, split_csharp_bases reads a base's kind here (exact,
