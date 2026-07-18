@@ -93,9 +93,6 @@ def _blank(lines: list[bytes], ranges: list[tuple[int, int]]) -> bytes:
     return _CHAR_NEWLINE.join(out)
 
 
-_CSHARP_DIRECTIVE_PREFIXES = (b"#if", b"#elif", b"#else", b"#endif")
-
-
 def _count_error_nodes(root: Node) -> int:
     count = 0
     stack = [root]
@@ -133,7 +130,7 @@ def _blank_csharp_directives(source_bytes: bytes) -> bytes:
                 skip_stack.pop()
             lines[i] = b""
             continue
-        if any(skip_stack) and skip_stack[-1]:
+        if skip_stack and skip_stack[-1]:
             lines[i] = b""
     return _CHAR_NEWLINE.join(lines)
 
@@ -149,8 +146,9 @@ def parse_with_preproc_recovery(
         # (H) members register as module-level Functions and the directive
         # (H) CONDITION becomes a phantom node. On any parse error, retry with
         # (H) the conditional-directive LINES blanked (line-count preserving,
-        # (H) both branches kept -- the duplicate-qn machinery absorbs twin
-        # (H) branch definitions) and keep the tree with the smaller error.
+        # (H) only the FIRST branch kept -- an orphaned alternative body would
+        # (H) misparse into a phantom bare-name declaration) and keep the tree
+        # (H) with the smaller error.
         # (H) has_error, not the line-span metric: the shatter often yields
         # (H) SINGLE-LINE inner ERROR nodes inside a plausibly-shaped wrong
         # (H) declaration (a property named after the directive condition),
