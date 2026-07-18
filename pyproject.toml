@@ -116,10 +116,13 @@ treesitter-full = [
 ]
 
 semantic = [
-    "pymilvus[milvus-lite]>=3.0.0",
     "qdrant-client>=1.9.0",
     "torch>=2.6.0",
     "transformers>=4.0.0",
+]
+
+milvus = [
+    "pymilvus[milvus-lite]>=3.0.0",
 ]
 
 [tool.ruff]

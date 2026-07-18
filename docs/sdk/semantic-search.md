@@ -14,9 +14,11 @@ Semantic search requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store. To use Milvus Lite for semantic vectors, set:
+Qdrant is the default vector store. To use Milvus Lite for semantic vectors,
+install the `milvus` extra and set:
 
 ```bash
+pip install 'code-graph-rag[semantic,milvus]'
 export CGR_VECTOR_STORE_BACKEND=milvus
 export MILVUS_URI="./.milvus_code_embeddings.db"
 ```

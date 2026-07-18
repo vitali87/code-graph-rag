@@ -62,8 +62,9 @@ pip install 'code-graph-rag[semantic]'
 ```
 
 Qdrant remains the default vector store. To use Milvus Lite for semantic
-vectors, set `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI` to a local
-`.db` file before indexing.
+vectors, install the `milvus` extra (`code-graph-rag[semantic,milvus]`), then
+set `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI` to a local `.db` file
+before indexing.
 
 ## Agentic Tools
 
