@@ -68,6 +68,27 @@ def generic_arity_of_type_text(text: str) -> int:
     return count
 
 
+GENERIC_ARITY_MARKER = "`"
+
+
+def annotate_type_ref(text: str) -> str:
+    # (H) Normalized type reference carrying its WRITTEN generic arity in CLR
+    # (H) style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
+    # (H) name always means arity 0, so simple-name twins stay distinguishable
+    # (H) through every stored type map without touching method signatures.
+    base = _normalize_type_name(text)
+    arity = generic_arity_of_type_text(text)
+    return f"{base}{GENERIC_ARITY_MARKER}{arity}" if arity else base
+
+
+def split_type_ref(name: str) -> tuple[str, int]:
+    if GENERIC_ARITY_MARKER in name:
+        base, _, tail = name.rpartition(GENERIC_ARITY_MARKER)
+        if tail.isdigit():
+            return base, int(tail)
+    return name, 0
+
+
 def normalize_csharp_type_name(type_node: Node) -> str | None:
     # (H) A type node's normalized name (generic-free, nullable-stripped) or
     # (H) None for unnameable types (`void` callers never chain off it, but a
@@ -120,7 +141,7 @@ def extension_receiver_type(method_node: Node) -> str | None:
         return None
     type_node = first.child_by_field_name(cs.FIELD_TYPE)
     name = safe_decode_text(type_node) if type_node and type_node.text else None
-    return _normalize_type_name(name) if name else None
+    return annotate_type_ref(name) if name else None
 
 
 def index_extension_method(
@@ -190,7 +211,7 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
             name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
             type_text = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
             if name and type_text:
-                fields[name] = _normalize_type_name(type_text)
+                fields[name] = annotate_type_ref(type_text)
         elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
             var_decl = next(
                 (
@@ -210,7 +231,7 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
                     continue
                 name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
                 if name:
-                    fields[name] = _normalize_type_name(type_text)
+                    fields[name] = annotate_type_ref(type_text)
     return fields
 
 

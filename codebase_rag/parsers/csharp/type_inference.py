@@ -20,7 +20,12 @@ from ...utils.path_utils import cached_relative_path
 from ..csharp_frontend import CallSiteKey, CSharpCallSite
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
-from .utils import _normalize_type_name, generic_arity_of_type_text
+from .utils import (
+    _normalize_type_name,
+    annotate_type_ref,
+    generic_arity_of_type_text,
+    split_type_ref,
+)
 
 if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
@@ -172,7 +177,7 @@ class CSharpTypeInferenceEngine:
                 continue
             if child.type == cs.TS_CSHARP_IDENTIFIER and prev_loose_type:
                 if name := safe_decode_text(child):
-                    types[name] = _normalize_type_name(prev_loose_type)
+                    types[name] = annotate_type_ref(prev_loose_type)
                 prev_loose_type = None
                 continue
             if child.type != cs.TS_CSHARP_PARAMETER:
@@ -180,7 +185,7 @@ class CSharpTypeInferenceEngine:
             name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
             type_text = safe_decode_text(child.child_by_field_name(cs.FIELD_TYPE))
             if name and type_text:
-                types[name] = _normalize_type_name(type_text)
+                types[name] = annotate_type_ref(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
         # (H) One type map per method (as every language engine here builds), so
@@ -202,7 +207,7 @@ class CSharpTypeInferenceEngine:
         if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
             return None
         if type_text := safe_decode_text(type_node):
-            return _normalize_type_name(type_text)
+            return annotate_type_ref(type_text)
         return None
 
     def _record_local(
@@ -237,7 +242,7 @@ class CSharpTypeInferenceEngine:
             declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
         ):
             if type_text := safe_decode_text(node.child_by_field_name(cs.FIELD_TYPE)):
-                return _normalize_type_name(type_text)
+                return annotate_type_ref(type_text)
         return None
 
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
@@ -330,6 +335,12 @@ class CSharpTypeInferenceEngine:
             if arity_hit := self._find_arity_across_parts(
                 receiver_class_qn, method_name, arg_count
             ):
+                # (H) A delegate-typed PROPERTY registers as a METHOD node with
+                # (H) a bare (arity-0) qn, so a 0-arg invoke slips through the
+                # (H) ARITY path too: `entry.Callback()` is Delegate.Invoke,
+                # (H) not a call to the property node.
+                if self.function_registry.is_property(arity_hit):
+                    return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, arity_hit
         # (H) An extension method (`static M(this T x, ...)` on an unrelated static
         # (H) class) whose `this` receiver type matches the call's receiver -- the
@@ -397,7 +408,9 @@ class CSharpTypeInferenceEngine:
             # (H) no registered type (`string[]`, reflection FieldInfo) is
             # (H) external; its members cannot be attributed by name
             # (H) (`names.Contains(x)` bound Context.Contains).
-            return not self._type_simple_name_registered(local_var_types[head])
+            return not self._registered_type_declares(
+                local_var_types[head], method_name
+            )
         if not all(seg[:1].isupper() for seg in segments):
             return False
         if class_qn := self._containing_class_qn(caller_qn):
@@ -406,10 +419,10 @@ class CSharpTypeInferenceEngine:
                 # (H) external-typed member (`Wrapper` of BCL RateLimiter)
                 # (H) makes the call external (the trie self-looped
                 # (H) `Wrapper.DisposeAsync()` onto the enclosing class).
-                return not self._type_simple_name_registered(member_type)
+                return not self._registered_type_declares(member_type, method_name)
             if prop_qn := self.resolve_property_read(head, caller_qn):
                 if entry := self.csharp_method_return_types.get(prop_qn):
-                    return not self._type_simple_name_registered(entry[0])
+                    return not self._registered_type_declares(entry[0], method_name)
             # (H) A PascalCase receiver is very often a PROPERTY or member of
             # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
             # (H) enclosing type declares by that name is first-party, not an
@@ -703,14 +716,17 @@ class CSharpTypeInferenceEngine:
         # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
         # (H) extension-only method still binds on a cast receiver.
         if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
-            return self._cast_type_name(receiver)
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            return annotate_type_ref(raw) if raw else None
         # (H) Same chained-receiver typing as the instance path, stopping at
-        # (H) the raw type name (extensions often target unregistered BCL
-        # (H) types like `string`).
+        # (H) the (arity-annotated) type name -- extensions often target
+        # (H) unregistered BCL types like `string`, and both sides of the
+        # (H) matcher carry the annotation consistently.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             type_text = safe_decode_text(type_node) if type_node else None
-            return _normalize_type_name(type_text) if type_text else None
+            return annotate_type_ref(type_text) if type_text else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             inner = self.resolve_csharp_method_call(
                 receiver, local_var_types, module_qn, caller_qn
@@ -718,7 +734,8 @@ class CSharpTypeInferenceEngine:
             if inner is None:
                 return None
             if entry := self.csharp_method_return_types.get(inner[1]):
-                return entry[0]
+                rname, rarity = entry
+                return f"{rname}`{rarity}" if rarity else rname
             return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
@@ -825,11 +842,24 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _type_simple_name_registered(self, type_name: str) -> bool:
-        simple = type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        simple = split_type_ref(type_name)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return any(
             self.function_registry.get(qn) in _TYPE_DECLS
             for qn in self.simple_name_lookup.get(simple, set())
         )
+
+    def _registered_type_declares(self, type_name: str, method_name: str) -> bool:
+        # (H) A registered type merely SHARING the receiver type's simple name
+        # (H) (Polly's Snippets.Docs.RateLimiter demo class vs BCL RateLimiter)
+        # (H) must not defeat the external gate: the candidate counts only if
+        # (H) it actually DECLARES the called member somewhere in its
+        # (H) parts/bases.
+        simple = split_type_ref(type_name)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        for qn in self.simple_name_lookup.get(simple, set()):
+            if self.function_registry.get(qn) in _TYPE_DECLS:
+                if self._find_name_across_parts(qn, method_name) is not None:
+                    return True
+        return False
 
     def _find_extension_method(
         self,
@@ -1002,6 +1032,11 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         generic_arity: int | None = None,
     ) -> str | None:
+        # (H) Stored type refs carry their written generic arity CLR-style
+        # (H) (`Options`0` is implicit: plain means arity 0); parse it so twin
+        # (H) filtering works for every map-sourced reference.
+        if generic_arity is None:
+            type_name, generic_arity = split_type_ref(type_name)
         # (H) An already-qualified name that IS a registered type resolves directly,
         # (H) skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:

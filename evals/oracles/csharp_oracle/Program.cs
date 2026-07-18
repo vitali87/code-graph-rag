@@ -114,9 +114,34 @@ foreach (var asmPath in tpa.Split(Path.PathSeparator, StringSplitOptions.RemoveE
     try { references.Add(MetadataReference.CreateFromFile(asmPath)); }
     catch { }
 }
+// SDK ImplicitUsings live in generated obj/GlobalUsings.g.cs, which the file
+// walk rightly skips; synthesize a global using for every in-source namespace
+// (plus the SDK defaults) so cross-project receivers resolve exactly as the
+// real build sees them (a bench file referencing Polly.Registry without a
+// using dropped its GetPipeline calls from the truth set).
+var namespaceNames = new HashSet<string>(StringComparer.Ordinal)
+{
+    "System", "System.Collections.Generic", "System.IO", "System.Linq",
+    "System.Net.Http", "System.Threading", "System.Threading.Tasks",
+};
+foreach (var (_, fileRoot, _) in files)
+{
+    foreach (var node in fileRoot.DescendantNodes())
+    {
+        if (node is BaseNamespaceDeclarationSyntax ns)
+        {
+            namespaceNames.Add(ns.Name.ToString());
+        }
+    }
+}
+var globalUsings = string.Concat(
+    namespaceNames.OrderBy(n => n, StringComparer.Ordinal)
+        .Select(n => $"global using {n};\n"));
+var usingsTree = CSharpSyntaxTree.ParseText(globalUsings, path: "cgr-global-usings.g.cs");
+
 var compilation = CSharpCompilation.Create(
     "cgr-oracle",
-    files.Select(f => f.Tree),
+    files.Select(f => f.Tree).Append(usingsTree),
     references,
     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
