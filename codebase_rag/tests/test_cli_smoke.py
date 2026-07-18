@@ -5,10 +5,14 @@ from importlib.metadata import version as get_version
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
+from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_RUNNER = CliRunner()
 
 
 def test_help_command_works() -> None:
@@ -63,3 +67,67 @@ def test_version_flag() -> None:
             f"{flag} output did not match expected format: {repr(result.stdout)}"
         )
         assert result.stderr == "", f"Unexpected stderr for {flag}: {result.stderr}"
+
+
+def test_help_command_shows_task_grouped_index() -> None:
+    result = _RUNNER.invoke(app, ["help"], prog_name="cgr")
+
+    assert result.exit_code == 0
+    assert "Usage: cgr [OPTIONS] COMMAND" in result.stdout
+    assert ch.PANEL_USE in result.stdout
+    assert ch.PANEL_GRAPH in result.stdout
+    assert ch.PANEL_MANAGE in result.stdout
+
+
+def test_help_command_shows_detailed_command_page() -> None:
+    result = _RUNNER.invoke(app, ["help", "start"], prog_name="cgr")
+    normalized_output = " ".join(result.stdout.split())
+
+    assert result.exit_code == 0
+    assert "Usage: cgr start [OPTIONS]" in normalized_output
+    assert "EXAMPLES" in normalized_output
+    assert "Delete every project from" in normalized_output
+    assert "Requires" in normalized_output
+    assert "--update-graph" in normalized_output
+
+
+@pytest.mark.parametrize(
+    ("args", "usage"),
+    [
+        (["daemon", "logs", "--help"], "Usage: cgr daemon logs [OPTIONS]"),
+        (
+            ["language", "add-grammar", "--help"],
+            "Usage: cgr language add-grammar",
+        ),
+        (
+            ["workspace", "create", "--help"],
+            "Usage: cgr workspace create [OPTIONS] NAME",
+        ),
+        (["help", "daemon", "logs"], "Usage: cgr daemon logs [OPTIONS]"),
+    ],
+)
+def test_nested_help_preserves_full_command_path(args: list[str], usage: str) -> None:
+    result = _RUNNER.invoke(app, args, prog_name="cgr")
+
+    assert result.exit_code == 0
+    assert usage in result.stdout
+
+
+@pytest.mark.parametrize("group", ["daemon", "language", "workspace"])
+def test_group_help_lists_subcommands(group: str) -> None:
+    result = _RUNNER.invoke(app, [group, "--help"], prog_name="cgr")
+
+    assert result.exit_code == 0
+    assert f"Usage: cgr {group} [OPTIONS] COMMAND" in result.stdout
+    assert "Commands:" in result.stdout
+
+
+def test_help_command_rejects_unknown_command() -> None:
+    result = _RUNNER.invoke(app, ["help", "not-a-command"], prog_name="cgr")
+
+    assert result.exit_code == 2
+    assert "not a cgr command" in result.stderr
+
+
+def test_command_summaries_are_single_line() -> None:
+    assert all("\n" not in summary for summary in ch.CLI_COMMANDS.values())

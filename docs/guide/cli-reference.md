@@ -6,6 +6,18 @@ description: "Complete CLI reference for Code-Graph-RAG commands and Makefile ta
 
 The `cgr` command is the main entry point for Code-Graph-RAG.
 
+## Built-in Help
+
+List commands by workflow or show the detailed page for a command:
+
+```bash
+cgr help
+cgr help start
+cgr help daemon logs
+```
+
+`cgr COMMAND --help` displays the same command-specific information.
+
 ## Core Commands
 
 ### `cgr start`
@@ -20,11 +32,11 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
 | `--update-graph` | Parse and ingest the repository into the knowledge graph |
-| `--clean` | Clear existing data before ingesting |
+| `--clean` | Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. |
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `google:gemini-2.5-pro`, `ollama:llama3.2`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `google:gemini-2.5-flash`, `ollama:codellama`) |
-| `-o` | Export graph to JSON file during update |
+| `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
 
 ### `cgr export`
 
@@ -74,7 +86,7 @@ cgr dead-code [OPTIONS]
 
 ### `cgr mcp-server`
 
-Start the MCP server for Claude Code integration.
+Serve cgr tools to MCP clients over stdio or HTTP.
 
 ```bash
 cgr mcp-server
