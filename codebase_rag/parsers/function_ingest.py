@@ -1331,6 +1331,11 @@ class FunctionIngestMixin:
             is not None
         ):
             self.csharp_generic_methods.add(ingested_qn)
+        if (
+            rt_node := func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+        ) is not None:
+            if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+                self.method_return_types[ingested_qn] = rt_text
         record_cpp_definition_span(
             self.cpp_definition_spans,
             cs.SupportedLanguage.CSHARP,

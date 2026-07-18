@@ -1191,6 +1191,21 @@ class ClassIngestMixin:
                         container_qn=class_qn,
                     )
                 )
+            if (
+                language == cs.SupportedLanguage.CSHARP
+                and ingested_qn is not None
+                and (
+                    rt_node := method_node.child_by_field_name(
+                        cs.TS_CSHARP_FIELD_RETURNS
+                    )
+                )
+                is not None
+            ):
+                # (H) Record a C# method's return type so a chained call
+                # (H) (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
+                # (H) fluent surface) can type the receiver for the next hop.
+                if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+                    self.method_return_types[ingested_qn] = rt_text
             if language == cs.SupportedLanguage.CPP:
                 # (H) Record a C++ method's return type so a chained call off a
                 # (H) static factory method (`parser(...).parse(...)`, nlohmann's

@@ -67,6 +67,7 @@ class CSharpTypeInferenceEngine:
         "csharp_call_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
+        "method_return_types",
         "function_locations",
         "_rel_to_module",
     )
@@ -88,6 +89,7 @@ class CSharpTypeInferenceEngine:
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
+        method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -116,6 +118,11 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_generic_methods = (
             csharp_generic_methods if csharp_generic_methods is not None else set()
+        )
+        # (H) Shared reference (as above): {method qn: normalized return type},
+        # (H) populated during ingestion, read by chained-receiver typing.
+        self.method_return_types = (
+            method_return_types if method_return_types is not None else {}
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -552,6 +559,20 @@ class CSharpTypeInferenceEngine:
         # (H) extension-only method still binds on a cast receiver.
         if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
             return self._cast_type_name(receiver)
+        # (H) Same chained-receiver typing as the instance path, stopping at
+        # (H) the raw type name (extensions often target unregistered BCL
+        # (H) types like `string`).
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            type_text = safe_decode_text(type_node) if type_node else None
+            return _normalize_type_name(type_text) if type_text else None
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            inner = self.resolve_csharp_method_call(
+                receiver, local_var_types, module_qn, caller_qn
+            )
+            if inner is None:
+                return None
+            return self.method_return_types.get(inner[1])
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
@@ -702,6 +723,24 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
             if cast_type := self._cast_type_name(receiver):
                 return self._type_name_to_qn(cast_type, module_qn)
+            return None
+        # (H) `new Builder().Add()`: an object-creation receiver IS its type.
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            if type_text := safe_decode_text(type_node) if type_node else None:
+                return self._type_name_to_qn(_normalize_type_name(type_text), module_qn)
+            return None
+        # (H) `Policy.Handle<T>().Wrap(...)`: an invocation receiver types the
+        # (H) next hop via the resolved inner call's recorded return type
+        # (H) (Polly's whole fluent surface). Depth is bounded by chain length.
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            inner = self.resolve_csharp_method_call(
+                receiver, local_var_types, module_qn, caller_qn
+            )
+            if inner is None:
+                return None
+            if rtype := self.method_return_types.get(inner[1]):
+                return self._type_name_to_qn(rtype, module_qn)
             return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)

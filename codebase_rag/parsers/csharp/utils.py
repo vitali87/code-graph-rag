@@ -45,6 +45,14 @@ def _normalize_type_name(text: str) -> str:
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
+def normalize_csharp_type_name(type_node: Node) -> str | None:
+    # (H) A type node's normalized name (generic-free, nullable-stripped) or
+    # (H) None for unnameable types (`void` callers never chain off it, but a
+    # (H) void return is recorded harmlessly and simply never resolves).
+    text = safe_decode_text(type_node)
+    return _normalize_type_name(text) if text else None
+
+
 def extract_parameter_type_names(method_node: Node) -> list[str]:
     # (H) The declared type of each parameter, in order, for the method-qn
     # (H) signature that keeps C# overloads distinct. A `params object[]` tail is

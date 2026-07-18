@@ -200,6 +200,7 @@ class TypeInferenceEngine:
                 csharp_call_sites=self.csharp_call_sites,
                 csharp_local_functions=self.csharp_local_functions,
                 csharp_generic_methods=self.csharp_generic_methods,
+                method_return_types=self.method_return_types,
                 function_locations=self.function_locations,
             )
         return self._csharp_type_inference
