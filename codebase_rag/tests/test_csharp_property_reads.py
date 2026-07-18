@@ -116,3 +116,97 @@ public class Guard {
 
     refs = _reference_targets(mock_ingestor)
     assert not any(t.endswith("N.Guard.Size") for t in refs), refs
+
+
+def test_explicit_this_property_read_is_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `this.Size` is always the member (locals can never shadow a
+    # (H) this-qualified read), so the read pass must record the NAME field
+    # (H) when the receiver is `this`.
+    (csharp_project / "T.cs").write_text(
+        """
+namespace N;
+public class Ctx {
+    private int Size { get; }
+    public string Show() => this.Size.ToString();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Ctx.Size") for t in refs), refs
+
+
+def test_nested_local_function_shadow_does_not_suppress_outer_read(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A local declared inside a NESTED local function must not shadow the
+    # (H) outer body's property read: the read walk skips nested function
+    # (H) scopes, so the shadow walk must skip them symmetrically.
+    (csharp_project / "S.cs").write_text(
+        """
+namespace N;
+public class Outer {
+    private int Size { get; }
+    public string Show() {
+        string Local() {
+            var Size = 3;
+            return Size.ToString();
+        }
+        return Local() + Size.ToString();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Outer.Size") for t in refs), refs
+
+
+def test_simple_lambda_parameter_shadows_property(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A simple (untyped) lambda parameter is a bare identifier, not a
+    # (H) `parameter` node; it still shadows a same-name property for reads
+    # (H) inside the lambda body, which the read walk descends into.
+    (csharp_project / "L.cs").write_text(
+        """
+namespace N;
+public class Lam {
+    private int Size { get; }
+    public System.Func<int, string> Make() => Size => Size.ToString();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert not any(t.endswith("N.Lam.Size") for t in refs), refs
+
+
+def test_postfix_wrapped_cast_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The null-forgiving postfix can sit OUTSIDE the parenthesized cast
+    # (H) (`((Component)s)!.Reload()`); the receiver unwrap must peel
+    # (H) interleaved postfix/paren wrappers to a fixpoint before the cast.
+    (csharp_project / "P.cs").write_text(
+        """
+namespace N;
+public class Component {
+    public void Reload() {}
+    public void Wire(object s) { ((Component)s)!.Reload(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    assert any(t.endswith("N.Component.Reload") for t in calls), calls
