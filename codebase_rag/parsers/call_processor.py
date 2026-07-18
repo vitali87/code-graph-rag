@@ -2080,14 +2080,19 @@ class CallProcessor:
                     # (H) A bare call resolved by ARITY may have same-arity
                     # (H) siblings differing only in parameter types (Serilog's
                     # (H) FormatExactNumericValue switch dispatch); keep the
-                    # (H) whole family reachable.
+                    # (H) whole family reachable. NOT when a Roslyn fact pinned
+                    # (H) the site: that is the compiler's exact overload
+                    # (H) choice, and widening it would revive dead siblings.
                     engine = resolver.type_inference.csharp_type_inference
-                    for sibling_qn in engine.csharp_same_arity_family(callee_info[1]):
-                        ensure_rel(
-                            caller_spec,
-                            calls_rel,
-                            (cs.NodeLabel.METHOD, qn_key, sibling_qn),
-                        )
+                    if not engine.semantic_fact_resolved(call_node, module_qn):
+                        for sibling_qn in engine.csharp_same_arity_family(
+                            callee_info[1]
+                        ):
+                            ensure_rel(
+                                caller_spec,
+                                calls_rel,
+                                (cs.NodeLabel.METHOD, qn_key, sibling_qn),
+                            )
                 if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
                     # (H) Provably external (base.X() with an external base, a
                     # (H) static call on an unregistered type, an object

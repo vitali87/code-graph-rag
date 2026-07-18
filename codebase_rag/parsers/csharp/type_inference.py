@@ -612,6 +612,12 @@ class CSharpTypeInferenceEngine:
             return qn
         return None
 
+    def semantic_fact_resolved(self, call_node: Node, module_qn: str) -> bool:
+        # (H) True when a Roslyn call fact pinned this exact site: the target is
+        # (H) the compiler's own overload choice, so arity-based widening (the
+        # (H) same-arity family fan-out) must stay off for it.
+        return self._semantic_call_target(call_node, module_qn) is not None
+
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
