@@ -479,6 +479,35 @@ public class App
 }
 """
 
+_LOGGING_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+  </ItemGroup>
+</Project>
+"""
+
+_E2E_LOGGER_MESSAGE = """using Microsoft.Extensions.Logging;
+
+namespace N;
+
+public static partial class TestLog
+{
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "hi")]
+    public static partial void Hi(this ILogger logger);
+}
+
+public class LogUser
+{
+    public void Emit(ILogger logger)
+    {
+        logger.Hi();
+    }
+}
+"""
+
 _E2E_LINQ = """using System;
 
 namespace N;
@@ -522,9 +551,10 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     (root / "dirB").mkdir()
     (root / "E2E.cs").write_text(_E2E_CODE, encoding="utf-8")
     (root / "Linq.cs").write_text(_E2E_LINQ, encoding="utf-8")
+    (root / "Gen.cs").write_text(_E2E_LOGGER_MESSAGE, encoding="utf-8")
     (root / "dirA" / "PartA.cs").write_text(_PART_A, encoding="utf-8")
     (root / "dirB" / "PartB.cs").write_text(_PART_B, encoding="utf-8")
-    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_LOGGING_CSPROJ, encoding="utf-8")
 
     facts = run_csharp_frontend(root)
     if not (
@@ -572,6 +602,17 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
         for k in facts.external_sites
     ), facts.external_sites
     assert not any(k[3] == "WriteLine" for k in facts.call_sites), facts.call_sites
+
+    # (H) A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
+    # (H) but its DEFINITION is first-party (Polly's Log.cs): the call must be
+    # (H) a positive fact targeting the definition, never an external site.
+    hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "public static partial void Hi(")
+    hi = [f for k, f in facts.call_sites.items() if k[3] == "Hi"]
+    assert any(f.target_file == "Gen.cs" and f.target_line == hi_line for f in hi), (
+        facts.call_sites,
+        facts.external_sites,
+    )
+    assert not any(k[3] == "Hi" for k in facts.external_sites), facts.external_sites
 
 
 def test_hybrid_end_to_end_produces_semantic_edges(
