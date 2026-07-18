@@ -507,6 +507,23 @@ class CallResolver:
                 targets.add((node_type, qn))
         return targets
 
+    def cpp_destructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
+        # (H) Constructing a C++ object guarantees `~X` runs at end of
+        # (H) lifetime, but no call node ever names it, so construction sites
+        # (H) redirect a CALLS edge to the class's destructor exactly as they
+        # (H) do to its constructors (same direct-member gate as
+        # (H) java_constructor_targets: a nested class's dtor has an extra qn
+        # (H) segment and is excluded).
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        # (H) A destructor cannot be overloaded, so its qualified name is fully
+        # (H) determined by the class: one direct registry lookup replaces a
+        # (H) prefix scan over every member (Gemini review, PR #799).
+        dtor_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
+        dtor_type = self.function_registry.get(dtor_qn)
+        if dtor_type is None:
+            return set()
+        return {(dtor_type, dtor_qn)}
+
     def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
         # (H) The class constructed by a `return {...};` inside caller_qn: the
         # (H) caller's recorded return type, resolved to a registered class

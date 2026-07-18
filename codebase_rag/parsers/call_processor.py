@@ -2429,8 +2429,14 @@ class CallProcessor:
                     # (H) constructor (overload selection is unneeded for
                     # (H) reachability). C# and C++ constructors use the same
                     # (H) class-simple-name convention, so java_constructor_targets
-                    # (H) selects them too. sorted(): the target label is a
-                    # (H) hash-randomized StrEnum, so sort for deterministic output.
+                    # (H) selects them too. C++ additionally redirects to the
+                    # (H) destructor: the constructed object's `~X` runs at end
+                    # (H) of lifetime with no call node of its own. sorted():
+                    # (H) the target label is a hash-randomized StrEnum, so
+                    # (H) sort for deterministic output.
+                    if language == cs.SupportedLanguage.CPP:
+                        self._emit_cpp_ctor_calls(caller_spec, callee_qn)
+                        continue
                     for ctor_type, ctor_qn in sorted(
                         resolver.java_constructor_targets(callee_qn)
                     ):
@@ -3171,15 +3177,7 @@ class CallProcessor:
                 cs.RelationshipType.INSTANTIATES,
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
             )
-        for ctor_type, ctor_qn in sorted(
-            self._resolver.java_constructor_targets(class_qn)
-        ):
-            for variant in registry.variants(ctor_qn):
-                ensure_rel(
-                    caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+        self._emit_cpp_ctor_calls(caller_spec, class_qn)
 
     def _ingest_cpp_member_init_ctor_calls(
         self,
@@ -3216,17 +3214,20 @@ class CallProcessor:
     def _emit_cpp_ctor_calls(
         self, caller_spec: tuple[str, str, str], class_qn: str
     ) -> None:
-        # (H) sorted(): the target label is a hash-randomized StrEnum, so sort
-        # (H) for deterministic output.
+        # (H) Construction runs a ctor now and the dtor at end of lifetime;
+        # (H) neither has a call node, so both get the redirect. sorted(): the
+        # (H) target label is a hash-randomized StrEnum, so sort for
+        # (H) deterministic output.
         registry = self._resolver.function_registry
-        for ctor_type, ctor_qn in sorted(
-            self._resolver.java_constructor_targets(class_qn)
-        ):
-            for variant in registry.variants(ctor_qn):
+        targets = self._resolver.java_constructor_targets(
+            class_qn
+        ) | self._resolver.cpp_destructor_targets(class_qn)
+        for target_type, target_qn in sorted(targets):
+            for variant in registry.variants(target_qn):
                 self.ingestor.ensure_relationship_batch(
                     caller_spec,
                     cs.RelationshipType.CALLS,
-                    (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
                 )
 
     @staticmethod
