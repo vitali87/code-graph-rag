@@ -711,6 +711,7 @@ def ingest_method(
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
     external_override_names: frozenset[str] = frozenset(),
+    skip_cpp_artifact_check: bool = False,
 ) -> str | None:
     # (H) Returns the registered method qn (post register_unique_qn, so with any
     # (H) @line dedup suffix) so a caller can wire further edges to the exact node --
@@ -722,7 +723,12 @@ def ingest_method(
         # (H) Inside an intact class body a macro invocation parsed as a
         # (H) type-less member (`FMT_CATCH(...) {}`) can never be a ctor of
         # (H) another class, so the shape check alone is decisive here.
-        if cpp_utils.is_macro_invocation_artifact(method_node):
+        # (H) skip_cpp_artifact_check: the orphan-ctor flush has already run
+        # (H) the class-registry tiebreak (a zero-param orphan ctor SHARES the
+        # (H) artifact shape and must not be re-dropped here).
+        if not skip_cpp_artifact_check and cpp_utils.is_macro_invocation_artifact(
+            method_node
+        ):
             return None
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:

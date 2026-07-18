@@ -2350,14 +2350,16 @@ class CallProcessor:
                 if language in (
                     cs.SupportedLanguage.JAVA,
                     cs.SupportedLanguage.CSHARP,
+                    cs.SupportedLanguage.CPP,
                 ):
-                    # (H) A Java/C# constructor is a method named like its class
-                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` runs one, so
-                    # (H) redirect a CALLS edge to every declared constructor (overload
-                    # (H) selection is unneeded for reachability). C# constructors use
-                    # (H) the same class-simple-name convention, so java_constructor_targets
-                    # (H) selects them too. sorted(): the target label is a hash-randomized
-                    # (H) StrEnum, so sort for deterministic output.
+                    # (H) A Java/C#/C++ constructor is a method named like its class
+                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
+                    # (H) runs one, so redirect a CALLS edge to every declared
+                    # (H) constructor (overload selection is unneeded for
+                    # (H) reachability). C# and C++ constructors use the same
+                    # (H) class-simple-name convention, so java_constructor_targets
+                    # (H) selects them too. sorted(): the target label is a
+                    # (H) hash-randomized StrEnum, so sort for deterministic output.
                     for ctor_type, ctor_qn in sorted(
                         resolver.java_constructor_targets(callee_qn)
                     ):
