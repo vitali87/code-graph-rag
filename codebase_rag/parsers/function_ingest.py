@@ -771,56 +771,56 @@ class FunctionIngestMixin:
         invocation. Returns the number registered.
         """
         deferred = self._deferred_cpp_artifacts
-        if not deferred:
-            return 0
-
-        registered = 0
-        for entry in deferred:
-            name = cpp_utils.extract_function_name(entry.func_node)
-            if not name:
-                continue
-            # (H) Scope-first, mirroring resolve_deferred_cpp_methods: the
-            # (H) namespace-qualified candidate disambiguates same-leaf classes.
-            candidates = [name]
-            if namespace_path := cs.SEPARATOR_DOT.join(
-                cpp_utils.extract_namespace_path(entry.func_node)
-            ):
-                candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
-            class_qn = ""
-            resolved = False
-            for candidate in candidates:
-                class_qn, resolved = self._resolve_cpp_class_qn(
-                    candidate, entry.module_qn
-                )
-                if resolved:
-                    break
-            file_path = self.module_qn_to_file_path.get(entry.module_qn)
-            if resolved:
-                if self._reattach_orphan_cpp_ctor(entry, class_qn, file_path):
-                    registered += 1
-                continue
-            if not cpp_utils.has_named_parameter(entry.func_node):
-                continue
-            resolution = self._resolve_function_identity(
-                entry.func_node,
-                entry.module_qn,
-                cs.SupportedLanguage.CPP,
-                entry.lang_config,
-                file_path,
-            )
-            if not resolution:
-                continue
-            self._register_function(
-                entry.func_node,
-                resolution,
-                entry.module_qn,
-                cs.SupportedLanguage.CPP,
-                entry.lang_config,
-                entry.lang_queries,
-            )
-            registered += 1
+        registered = sum(
+            1 for entry in deferred if self._resolve_one_cpp_artifact(entry)
+        )
         deferred.clear()
         return registered
+
+    def _resolve_one_cpp_artifact(self, entry: _DeferredCppArtifact) -> bool:
+        name = cpp_utils.extract_function_name(entry.func_node)
+        if not name:
+            return False
+        class_qn = self._lookup_cpp_artifact_class(entry, name)
+        file_path = self.module_qn_to_file_path.get(entry.module_qn)
+        if class_qn is not None:
+            return self._reattach_orphan_cpp_ctor(entry, class_qn, file_path)
+        if not cpp_utils.has_named_parameter(entry.func_node):
+            return False
+        resolution = self._resolve_function_identity(
+            entry.func_node,
+            entry.module_qn,
+            cs.SupportedLanguage.CPP,
+            entry.lang_config,
+            file_path,
+        )
+        if not resolution:
+            return False
+        self._register_function(
+            entry.func_node,
+            resolution,
+            entry.module_qn,
+            cs.SupportedLanguage.CPP,
+            entry.lang_config,
+            entry.lang_queries,
+        )
+        return True
+
+    def _lookup_cpp_artifact_class(
+        self, entry: _DeferredCppArtifact, name: str
+    ) -> str | None:
+        # (H) Scope-first, mirroring resolve_deferred_cpp_methods: the
+        # (H) namespace-qualified candidate disambiguates same-leaf classes.
+        candidates = [name]
+        if namespace_path := cs.SEPARATOR_DOT.join(
+            cpp_utils.extract_namespace_path(entry.func_node)
+        ):
+            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
+        for candidate in candidates:
+            class_qn, resolved = self._resolve_cpp_class_qn(candidate, entry.module_qn)
+            if resolved:
+                return class_qn
+        return None
 
     def _reattach_orphan_cpp_ctor(
         self,
