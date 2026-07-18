@@ -804,7 +804,7 @@ class FunctionIngestMixin:
                 entry.lang_queries,
             )
             registered += 1
-        self._deferred_cpp_artifacts = []
+        deferred.clear()
         return registered
 
     def _resolve_go_container_qn(self, module_qn: str, receiver_type: str) -> str:
