@@ -96,9 +96,11 @@ def test_macro_swallowed_namespace_recovers_qualified_names(
     # (H) the namespace from every member's qualified name
     root = temp_repo / "mshealthy"
     root.mkdir()
+    # (H) the opening marker carries a trailing line comment: matching must
+    # (H) strip `//` prose first, like the brace counter does
     (root / "scope.hpp").write_text(
         """\
-SOME_NAMESPACE_BEGIN
+SOME_NAMESPACE_BEGIN  // opens the library scope
 
 namespace detail
 {
@@ -152,3 +154,19 @@ def test_marker_retry_guard_shapes() -> None:
     kept3, kept3_src = _retry_without_macro_markers(cpp, tree3, mixed)
     assert kept3 is tree3
     assert kept3_src is mixed
+
+    # (H) smallest subset wins: a marker-shaped line inside a raw string must
+    # (H) survive when blanking the single real offender already explains the
+    # (H) error (all-at-once would corrupt the string as collateral)
+    raw = (
+        b"SOME_MARKER_MACRO\n"
+        b"struct swallowed : base {\n"
+        b"  int x;\n"
+        b"};\n"
+        b'const char* payload = R"(\n'
+        b"INSIDE_A_RAW_STRING\n"
+        b')";\n'
+    )
+    tree4 = cpp.parse(raw)
+    kept4, kept4_src = _retry_without_macro_markers(cpp, tree4, raw)
+    assert b"INSIDE_A_RAW_STRING" in kept4_src
