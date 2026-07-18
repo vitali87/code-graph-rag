@@ -92,6 +92,7 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
                     "tcol": 4,
                 }
             ],
+            "externals": [{"file": "A.cs", "line": 11, "col": 8, "name": "WriteLine"}],
         }
     )
     facts = _parse_payload(payload)
@@ -101,6 +102,7 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
     )
     assert facts.partial_groups == [[("A.cs", 1), ("C.cs", 2)]]
     assert facts.query_calls == [CSharpQueryCall("A.cs", 9, 4, "B.cs", 7, 4)]
+    assert facts.external_sites == {("A.cs", 11, 8, "WriteLine")}
 
 
 def test_parse_payload_without_new_sections_yields_empty_facts() -> None:
@@ -161,6 +163,7 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -199,6 +202,7 @@ def test_call_fact_resolves_conditional_access_invocation(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -249,6 +253,7 @@ def test_call_fact_suppresses_same_arity_family_fanout(
         },
         partial_groups=[],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -258,6 +263,60 @@ def test_call_fact_suppresses_same_arity_family_fanout(
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.C.Go", "N.C.Format(int)"), calls
     assert not _has(calls, "N.C.Go", "N.C.Format(string)"), calls
+
+
+_EXTERNAL_SITE_SRC = """namespace N;
+
+public class Helper
+{
+    public void Dispose() { }
+}
+
+public class App
+{
+    public void Ping() { }
+
+    public void Run(object value)
+    {
+        Ping();
+        if (value is System.IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}
+"""
+
+
+def test_external_site_fact_suppresses_name_trie_fallback(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `disposable.Dispose()` on a pattern variable: the local-type collector
+    # (H) never tracks it, so the name trie fabricates a CALLS edge onto the
+    # (H) unrelated first-party Helper.Dispose. Roslyn KNOWS the site resolves
+    # (H) to metadata; its external-site fact must suppress the fallback (the
+    # (H) measured Polly residual: 55 fps, all of this class).
+    root = temp_repo / "extsiteproj"
+    root.mkdir()
+    (root / "Code.cs").write_text(_EXTERNAL_SITE_SRC, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    call_line, call_col = _loc(_EXTERNAL_SITE_SRC, "Dispose();")
+    facts = CSharpSemanticFacts(
+        base_kinds={},
+        call_sites={},
+        partial_groups=[],
+        query_calls=[],
+        external_sites={("Code.cs", call_line, call_col, "Dispose")},
+    )
+    _hybrid(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert not _has(calls, "N.App.Run(object)", "N.Helper.Dispose"), calls
+    assert _has(calls, "N.App.Run(object)", "N.App.Ping"), calls
 
 
 _PART_A = """namespace N;
@@ -317,6 +376,7 @@ def test_partial_fact_merges_parts_across_directories(
         call_sites={},
         partial_groups=[[("dirA/Part1.cs", line_a), ("dirB/Part2.cs", line_b)]],
         query_calls=[],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -382,6 +442,7 @@ def test_query_fact_emits_calls_edge_for_linq_operator(
                 "Q.cs", caller_line, caller_col, "Ops.cs", target_line, target_col
             )
         ],
+        external_sites=set(),
     )
     _hybrid(monkeypatch, facts)
 
@@ -413,6 +474,36 @@ public class App
     {
         Make().Handle("x");
         Make().Twice();
+        System.Console.WriteLine("done");
+    }
+}
+"""
+
+_LOGGING_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+  </ItemGroup>
+</Project>
+"""
+
+_E2E_LOGGER_MESSAGE = """using Microsoft.Extensions.Logging;
+
+namespace N;
+
+public static partial class TestLog
+{
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "hi")]
+    public static partial void Hi(this ILogger logger);
+}
+
+public class LogUser
+{
+    public void Emit(ILogger logger)
+    {
+        logger.Hi();
     }
 }
 """
@@ -460,9 +551,10 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     (root / "dirB").mkdir()
     (root / "E2E.cs").write_text(_E2E_CODE, encoding="utf-8")
     (root / "Linq.cs").write_text(_E2E_LINQ, encoding="utf-8")
+    (root / "Gen.cs").write_text(_E2E_LOGGER_MESSAGE, encoding="utf-8")
     (root / "dirA" / "PartA.cs").write_text(_PART_A, encoding="utf-8")
     (root / "dirB" / "PartB.cs").write_text(_PART_B, encoding="utf-8")
-    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_LOGGING_CSPROJ, encoding="utf-8")
 
     facts = run_csharp_frontend(root)
     if not (
@@ -501,6 +593,29 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
         and q.target_line == select_line
         for q in facts.query_calls
     ), facts.query_calls
+
+    # (H) `System.Console.WriteLine` resolves to metadata: the tool must report
+    # (H) it as an external site (and never as a positive call fact).
+    writeline_line, _ = _loc(_E2E_CODE, 'System.Console.WriteLine("done");')
+    assert any(
+        k[0] == "E2E.cs" and k[1] == writeline_line and k[3] == "WriteLine"
+        for k in facts.external_sites
+    ), facts.external_sites
+    assert not any(k[3] == "WriteLine" for k in facts.call_sites), facts.call_sites
+
+    # (H) A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
+    # (H) but its DEFINITION is first-party (Polly's Log.cs): the call must be
+    # (H) a positive fact targeting the definition, never an external site. The
+    # (H) target anchors at the ATTRIBUTE line: both Roslyn's declaration span
+    # (H) and tree-sitter's method_declaration include the attribute list, so
+    # (H) that line is what the location join matches.
+    hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "[LoggerMessage(EventId = 1")
+    hi = [f for k, f in facts.call_sites.items() if k[3] == "Hi"]
+    assert any(f.target_file == "Gen.cs" and f.target_line == hi_line for f in hi), (
+        facts.call_sites,
+        facts.external_sites,
+    )
+    assert not any(k[3] == "Hi" for k in facts.external_sites), facts.external_sites
 
 
 def test_hybrid_end_to_end_produces_semantic_edges(

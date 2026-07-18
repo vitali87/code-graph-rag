@@ -3767,6 +3767,19 @@ class CallProcessor:
         keyword: dict[str, Node] = {}
         args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if args_node is None:
+            # (H) C# target-typed `new(...)` exposes NO fields at all; its
+            # (H) argument_list is an unfielded named child (Serilog hands its
+            # (H) CreateLogger local functions to `return new(...)`, which the
+            # (H) fielded lookup silently dropped).
+            args_node = next(
+                (
+                    child
+                    for child in call_node.named_children
+                    if child.type == cs.TS_CSHARP_ARGUMENT_LIST
+                ),
+                None,
+            )
+        if args_node is None:
             return positional, keyword
         for child in args_node.named_children:
             # (H) C# wraps every argument expression in an `argument` node (which
@@ -3831,6 +3844,24 @@ class CallProcessor:
             # (H) enclosing type has no such member.
             if cs.SEPARATOR_DOT not in arg_text:
                 engine = self._resolver.type_inference.csharp_type_inference
+                # (H) An in-scope LOCAL FUNCTION shadows any same-name member
+                # (H) (C# scoping) and the trie cannot see it at all: reference
+                # (H) the local group first (Serilog's CreateLogger passes its
+                # (H) Dispose/DisposeAsync locals to the Logger ctor).
+                if locals_group := engine.csharp_local_function_group(
+                    arg_text, caller_qn, module_qn
+                ):
+                    for target_qn in locals_group:
+                        ensure_rel(
+                            source_spec,
+                            rel_type,
+                            (
+                                cs.NodeLabel.FUNCTION,
+                                cs.KEY_QUALIFIED_NAME,
+                                target_qn,
+                            ),
+                        )
+                    return
                 if family := engine.csharp_method_group_family(arg_text, caller_qn):
                     for target_qn in family:
                         ensure_rel(
