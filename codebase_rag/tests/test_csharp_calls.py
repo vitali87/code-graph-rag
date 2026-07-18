@@ -750,3 +750,39 @@ public class Fmt {
     pairs = _call_pairs(mock_ingestor)
     assert any(t.endswith("N.Fmt.FormatExact(int, int)") for s, t in pairs), pairs
     assert any(t.endswith("N.Fmt.FormatExact(string, int)") for s, t in pairs), pairs
+
+
+def test_local_function_method_group_argument_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A LOCAL FUNCTION passed as a method-group argument to a target-typed
+    # (H) `new(...)` is stored for later delegate dispatch (Serilog's
+    # (H) CreateLogger hands Dispose/DisposeAsync to the Logger ctor): the
+    # (H) passing scope must reference the in-scope local, never an unrelated
+    # (H) same-name member picked from the trie.
+    (csharp_project / "Factory.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    public Widget(System.Action a) { }
+}
+public class Decoy {
+    public void Cleanup() { }
+}
+public class Factory {
+    public Widget Make() {
+        void Cleanup()
+        {
+        }
+
+        return new(Cleanup);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Factory.Make.Cleanup") for t in refs), refs
+    assert not any(t.endswith("N.Decoy.Cleanup") for t in refs), refs
