@@ -163,6 +163,10 @@ class DefinitionProcessor(
         # (H) Unnamed JS/TS function expressions held back until the named
         # (H) JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list = []
+        # (H) Macro-invocation-shaped C++ nodes held until every class (incl.
+        # (H) rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
+        # (H) orphaned-ctor vs macro.
+        self._deferred_cpp_artifacts: list = []
         # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
         # (H) out-of-class C++ method the definition pass bound; Pass-3 call
         # (H) attribution reuses these decisions instead of re-resolving.

@@ -869,6 +869,16 @@ class CallProcessor:
                 continue
 
             if language in _C_FAMILY_LANGUAGES:
+                # (H) A macro-invocation artifact the ingest pass declined to
+                # (H) register (no class bears its name) must not become a call
+                # (H) attribution target either; mirror ingest's decision via
+                # (H) the recorded locations so the two passes never diverge.
+                if (
+                    language == cs.SupportedLanguage.CPP
+                    and cpp_utils.is_macro_invocation_artifact(func_node)
+                    and self._recorded_caller(func_node, module_qn) is None
+                ):
+                    continue
                 func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)

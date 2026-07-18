@@ -101,6 +101,23 @@ class FunctionResolution(NamedTuple):
     is_anonymous: bool = False
 
 
+class _DeferredCppArtifact(NamedTuple):
+    """Macro-invocation-shaped C++ node held until every class is registered.
+
+    A type-less plain-identifier definition with no named parameter is either
+    a macro invocation (`FMT_CATCH(...) {}`) or a recovery-orphaned zero-param
+    constructor (`file() {}` whose class ancestor the parse recovery
+    destroyed). The tiebreak is whether a registered class bears the name, and
+    the class pass for the SAME file runs after the function pass, so the
+    decision must wait for resolve_deferred_cpp_artifacts.
+    """
+
+    func_node: Node
+    module_qn: str
+    lang_config: LanguageSpec
+    lang_queries: LanguageQueries
+
+
 class _DeferredJsAnonymous(NamedTuple):
     """Unnamed JS/TS function expression held back until named passes claim.
 
@@ -194,6 +211,7 @@ class FunctionIngestMixin:
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredJsAnonymous]
+    _deferred_cpp_artifacts: list[_DeferredCppArtifact]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -277,6 +295,20 @@ class FunctionIngestMixin:
                     and func_node.parent is not None
                     and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
                 ):
+                    continue
+                # (H) A macro invocation parsed as a type-less definition
+                # (H) (`FMT_CATCH(...) {}`) must not mint a phantom Function.
+                # (H) A recovery-orphaned zero-param ctor shares the shape, so
+                # (H) the class registry is the tiebreak: a registered class
+                # (H) bearing the name means ctor (keep), no class means macro
+                # (H) (drop). Same-file classes register after this pass, so
+                # (H) the decision is deferred, not made here.
+                if cpp_utils.is_macro_invocation_artifact(func_node):
+                    self._deferred_cpp_artifacts.append(
+                        _DeferredCppArtifact(
+                            func_node, module_qn, lang_config, lang_queries
+                        )
+                    )
                     continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
@@ -725,6 +757,56 @@ class FunctionIngestMixin:
             )
         )
         return True
+
+    def resolve_deferred_cpp_artifacts(self) -> int:
+        """Decide held-back macro-invocation-shaped nodes now classes are known.
+
+        Registers each deferred node whose name a registered class bears (a
+        recovery-orphaned constructor); drops the rest as macro invocations.
+        Returns the number registered.
+        """
+        deferred = self._deferred_cpp_artifacts
+        if not deferred:
+            return 0
+
+        registered = 0
+        for entry in deferred:
+            name = cpp_utils.extract_function_name(entry.func_node)
+            if not name:
+                continue
+            # (H) Scope-first, mirroring resolve_deferred_cpp_methods: the
+            # (H) namespace-qualified candidate disambiguates same-leaf classes.
+            candidates = [name]
+            if namespace_path := cs.SEPARATOR_DOT.join(
+                cpp_utils.extract_namespace_path(entry.func_node)
+            ):
+                candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
+            if not any(
+                self._resolve_cpp_class_qn(candidate, entry.module_qn)[1]
+                for candidate in candidates
+            ):
+                continue
+            file_path = self.module_qn_to_file_path.get(entry.module_qn)
+            resolution = self._resolve_function_identity(
+                entry.func_node,
+                entry.module_qn,
+                cs.SupportedLanguage.CPP,
+                entry.lang_config,
+                file_path,
+            )
+            if not resolution:
+                continue
+            self._register_function(
+                entry.func_node,
+                resolution,
+                entry.module_qn,
+                cs.SupportedLanguage.CPP,
+                entry.lang_config,
+                entry.lang_queries,
+            )
+            registered += 1
+        deferred.clear()
+        return registered
 
     def _resolve_go_container_qn(self, module_qn: str, receiver_type: str) -> str:
         # (H) A method binds to its receiver type. Prefer the same-file type, but
