@@ -199,9 +199,10 @@ class FunctionIngestMixin:
     rehydrated_definition_paths: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
     csharp_generic_methods: set[str]
+    csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -1331,6 +1332,15 @@ class FunctionIngestMixin:
             is not None
         ):
             self.csharp_generic_methods.add(ingested_qn)
+        if (
+            rt_node := func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+        ) is not None:
+            if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+                raw = safe_decode_text(rt_node) or rt_text
+                self.csharp_method_return_types[ingested_qn] = (
+                    rt_text,
+                    csharp_utils.generic_arity_of_type_text(raw),
+                )
         record_cpp_definition_span(
             self.cpp_definition_spans,
             cs.SupportedLanguage.CSHARP,

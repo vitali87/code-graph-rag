@@ -319,3 +319,102 @@ public class Component {
     assert any(
         t.endswith("N.Component.Reload") for t in _call_targets(mock_ingestor)
     ), _call_targets(mock_ingestor)
+
+
+def test_object_creation_receiver_resolves_member_call(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `new Builder().Add()`: the receiver is an object_creation whose TYPE
+    # (H) is the receiver's class by construction.
+    (csharp_project / "OC.cs").write_text(
+        """
+namespace N;
+public class Builder {
+    public Builder Add() => this;
+}
+public class App {
+    public void Run() { new Builder().Add(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert any(t.endswith("N.Builder.Add") for t in _call_targets(mock_ingestor)), (
+        _call_targets(mock_ingestor)
+    )
+
+
+def test_chained_return_receiver_resolves_member_call(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Policy.Handle<T>().Wrap(1)`: the receiver of Wrap is an INVOCATION;
+    # (H) its return type (recorded at ingestion) types the next hop. This is
+    # (H) Polly's whole fluent surface (Build/CircuitBreaker/Or chains, the
+    # (H) dominant recall gap).
+    (csharp_project / "CH.cs").write_text(
+        """
+namespace N;
+public class Policy {
+    public static Policy Handle<TException>() => new Policy();
+    public Policy Wrap(int n) => this;
+}
+public class App {
+    public void Run() { Policy.Handle<System.InvalidOperationException>().Wrap(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.Policy.Wrap(int)") for t in targets), targets
+
+
+def test_chained_call_disambiguates_generic_and_plain_builder(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Polly's dual builders: `Builder` and `Builder<TResult>` share a
+    # (H) simple name, so the receiver-type sweep is ambiguous and returns
+    # (H) None, killing the second hop of every fluent chain (`.Build()`, 44
+    # (H) missing edges). The class's declared GENERIC ARITY disambiguates:
+    # (H) a return type written `Builder` names the arity-0 class.
+    (csharp_project / "Core.cs").write_text(
+        """
+namespace N;
+public class Pipeline { }
+public class Builder {
+    public Pipeline Build() => new Pipeline();
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "CoreT.cs").write_text(
+        """
+namespace N;
+public class PipelineT<T> { }
+public class Builder<TResult> {
+    public PipelineT<TResult> Build() => new PipelineT<TResult>();
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "Ext.cs").write_text(
+        """
+namespace N;
+public static class BuilderExtensions {
+    public static Builder AddRetry(this Builder builder, int options) => builder;
+}
+public class App {
+    public object Run() {
+        var builder = new Builder();
+        return builder.AddRetry(1).Build();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("Core.N.Builder.Build") for t in targets), targets

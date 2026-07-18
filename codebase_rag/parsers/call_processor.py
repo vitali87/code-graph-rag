@@ -1513,6 +1513,10 @@ class CallProcessor:
                     )
                     if name_node and name_node.text:
                         method = name_node.text.decode(cs.ENCODING_UTF8)
+                        # (H) A generic member (`recv.Handle<T>`) registers
+                        # (H) generic-free; strip the type arguments so the
+                        # (H) name-keyed fallbacks can match.
+                        method = method.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                         if expr_node and expr_node.text:
                             receiver = expr_node.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
