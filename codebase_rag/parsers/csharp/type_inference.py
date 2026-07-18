@@ -398,6 +398,22 @@ class CSharpTypeInferenceEngine:
             return qn
         return None
 
+    def resolve_member_property_read(
+        self, receiver_type: str, name: str, module_qn: str
+    ) -> str | None:
+        # (H) `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
+        # (H) receiver's type (a class name for a static read, an inferred
+        # (H) local/parameter type for an instance read). Accepts ONLY a
+        # (H) registered property; an unresolvable receiver yields nothing, so
+        # (H) unrelated `x.Value` chains never fabricate an edge.
+        class_qn = self._type_name_to_qn(receiver_type, module_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:

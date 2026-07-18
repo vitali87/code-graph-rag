@@ -1790,6 +1790,7 @@ class CallProcessor:
                 caller_node,
                 caller_spec,
                 caller_qn,
+                module_qn,
                 local_var_types,
                 queries[language][cs.QUERY_CONFIG],
                 csharp_prop_names,
@@ -4193,6 +4194,7 @@ class CallProcessor:
         caller_node: Node,
         caller_spec: tuple[str, str, str],
         caller_qn: str,
+        module_qn: str,
         local_var_types: dict[str, str] | None,
         lang_config: LanguageSpec,
         prop_names: set[str],
@@ -4240,13 +4242,35 @@ class CallProcessor:
                 # (H) shadow a this-qualified read), so the read is the NAME
                 # (H) field and the shadow check does not apply.
                 this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
-                try_emit(
-                    safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
-                    if this_read
-                    else self._csharp_read_identifier(receiver),
-                    node,
-                    this_read,
-                )
+                if this_read:
+                    try_emit(
+                        safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
+                        node,
+                        True,
+                    )
+                else:
+                    recv_name = self._csharp_read_identifier(receiver)
+                    try_emit(recv_name, node, False)
+                    # (H) The NAME field can be a property of the RECEIVER's
+                    # (H) type: `Cfg.Value` (static, class-name receiver) or
+                    # (H) `w.Inner` (instance, local of inferred type). An
+                    # (H) unresolvable receiver yields nothing, so unrelated
+                    # (H) chains never fabricate an edge.
+                    member = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                    if recv_name and member and member in prop_names:
+                        recv_type = (local_var_types or {}).get(recv_name, recv_name)
+                        prop_qn = engine.resolve_member_property_read(
+                            recv_type, member, module_qn
+                        )
+                        if (
+                            prop_qn is not None
+                            and prop_qn != caller_qn
+                            and prop_qn not in seen
+                        ):
+                            seen.add(prop_qn)
+                            ensure_rel(
+                                caller_spec, refs_rel, (method_label, qn_key, prop_qn)
+                            )
             elif node_type == cs.TS_CSHARP_IDENTIFIER:
                 # (H) A bare identifier expression (`return Size;`, `Use(Size)`,
                 # (H) `var n = Size;`) reads the getter just the same. NOT a
