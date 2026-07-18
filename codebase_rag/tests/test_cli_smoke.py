@@ -5,6 +5,7 @@ from importlib.metadata import version as get_version
 from pathlib import Path
 
 import pytest
+from click.testing import Result
 from typer.testing import CliRunner
 
 from codebase_rag import cli_help as ch
@@ -13,6 +14,15 @@ from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUNNER = CliRunner()
+
+
+def _plain_stdout(result: Result) -> str:
+    # (H) rich force-enables terminal styling under GITHUB_ACTIONS even though
+    # (H) CliRunner's stream is no terminal, so on CI (and only there) escape
+    # (H) codes split the asserted substrings ("Usage: \x1b[0m\x1b[1mcgr ...").
+    # (H) NO_COLOR is not enough -- it strips color but keeps bold. Strip all
+    # (H) SGR codes, as test_help_command_works already does.
+    return _ANSI_RE.sub("", result.stdout)
 
 
 def test_help_command_works() -> None:
@@ -71,17 +81,18 @@ def test_version_flag() -> None:
 
 def test_help_command_shows_task_grouped_index() -> None:
     result = _RUNNER.invoke(app, ["help"], prog_name="cgr")
+    plain = _plain_stdout(result)
 
     assert result.exit_code == 0
-    assert "Usage: cgr [OPTIONS] COMMAND" in result.stdout
-    assert ch.PANEL_USE in result.stdout
-    assert ch.PANEL_GRAPH in result.stdout
-    assert ch.PANEL_MANAGE in result.stdout
+    assert "Usage: cgr [OPTIONS] COMMAND" in plain
+    assert ch.PANEL_USE in plain
+    assert ch.PANEL_GRAPH in plain
+    assert ch.PANEL_MANAGE in plain
 
 
 def test_help_command_shows_detailed_command_page() -> None:
     result = _RUNNER.invoke(app, ["help", "start"], prog_name="cgr")
-    normalized_output = " ".join(result.stdout.split())
+    normalized_output = " ".join(_plain_stdout(result).split())
 
     assert result.exit_code == 0
     assert "Usage: cgr start [OPTIONS]" in normalized_output
@@ -110,16 +121,17 @@ def test_nested_help_preserves_full_command_path(args: list[str], usage: str) ->
     result = _RUNNER.invoke(app, args, prog_name="cgr")
 
     assert result.exit_code == 0
-    assert usage in result.stdout
+    assert usage in _plain_stdout(result)
 
 
 @pytest.mark.parametrize("group", ["daemon", "language", "workspace"])
 def test_group_help_lists_subcommands(group: str) -> None:
     result = _RUNNER.invoke(app, [group, "--help"], prog_name="cgr")
+    plain = _plain_stdout(result)
 
     assert result.exit_code == 0
-    assert f"Usage: cgr {group} [OPTIONS] COMMAND" in result.stdout
-    assert "Commands:" in result.stdout
+    assert f"Usage: cgr {group} [OPTIONS] COMMAND" in plain
+    assert "Commands:" in plain
 
 
 def test_help_command_rejects_unknown_command() -> None:
