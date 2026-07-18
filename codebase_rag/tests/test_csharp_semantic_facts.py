@@ -209,6 +209,57 @@ def test_call_fact_resolves_conditional_access_invocation(
     assert _has(calls, "N.App.GoSafe(C)", "N.C.Handle(string)"), calls
 
 
+_BARE_FANOUT_SRC = """namespace N;
+
+public class C
+{
+    public void Go()
+    {
+        Format(1);
+    }
+
+    public void Format(int i) { }
+
+    public void Format(string s) { }
+}
+"""
+
+
+def test_call_fact_suppresses_same_arity_family_fanout(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) A bare `Format(1)` with a Roslyn call fact is the COMPILER's overload
+    # (H) choice: the same-arity family fan-out (which keeps type-dispatched
+    # (H) switch families reachable when only arity is known) must NOT fire, or
+    # (H) it would revive the provably-uncalled `Format(string)` sibling in
+    # (H) dead-code output.
+    root = temp_repo / "barefanproj"
+    root.mkdir()
+    (root / "Code.cs").write_text(_BARE_FANOUT_SRC, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    call_line, call_col = _loc(_BARE_FANOUT_SRC, "Format(1)")
+    target_line, target_col = _loc(_BARE_FANOUT_SRC, "public void Format(int i)")
+    facts = CSharpSemanticFacts(
+        base_kinds={},
+        call_sites={
+            ("Code.cs", call_line, call_col, "Format"): CSharpCallSite(
+                "Format", "Code.cs", target_line, target_col
+            )
+        },
+        partial_groups=[],
+        query_calls=[],
+    )
+    _hybrid(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert _has(calls, "N.C.Go", "N.C.Format(int)"), calls
+    assert not _has(calls, "N.C.Go", "N.C.Format(string)"), calls
+
+
 _PART_A = """namespace N;
 
 public partial class W

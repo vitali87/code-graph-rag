@@ -719,3 +719,34 @@ public class Holder {
 
     pairs = _call_pairs(mock_ingestor)
     assert any(t.endswith("N.Keeper.Flush") for s, t in pairs), pairs
+
+
+def test_same_arity_overload_family_all_receive_calls(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Nine switch arms dispatch `FormatExact(value, output)` to nine
+    # (H) same-ARITY overloads differing only by parameter TYPE (Serilog's
+    # (H) JsonValueFormatter): syntax cannot pick the arm's overload, so the
+    # (H) whole same-arity family must receive the CALLS edge or every
+    # (H) sibling but one reports dead.
+    (csharp_project / "FamArity.cs").write_text(
+        """
+namespace N;
+public class Fmt {
+    public void Write(object v) {
+        switch (v) {
+            case int i: FormatExact(i, 1); break;
+            case string s: FormatExact(s, 1); break;
+        }
+    }
+    static void FormatExact(int value, int o) { }
+    static void FormatExact(string value, int o) { }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(t.endswith("N.Fmt.FormatExact(int, int)") for s, t in pairs), pairs
+    assert any(t.endswith("N.Fmt.FormatExact(string, int)") for s, t in pairs), pairs
