@@ -552,7 +552,7 @@ class CSharpTypeInferenceEngine:
             type_name,
             method_name,
             arg_count,
-            self._receiver_type_arity(receiver, caller_qn),
+            self._receiver_type_arity(receiver, local_var_types, module_qn, caller_qn),
         )
 
     def _receiver_type_name(
@@ -655,7 +655,13 @@ class CSharpTypeInferenceEngine:
         # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
 
-    def _receiver_type_arity(self, receiver: Node, caller_qn: str | None) -> int | None:
+    def _receiver_type_arity(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> int | None:
         # (H) The receiver's WRITTEN generic arity where it is knowable
         # (H) (object-creation/cast text, a chained call's recorded return, or
         # (H) `this` inside a generic type); None when unknowable (an untyped
@@ -673,7 +679,11 @@ class CSharpTypeInferenceEngine:
             raw = safe_decode_text(type_node) if type_node else None
             return generic_arity_of_type_text(raw) if raw else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            inner = self.resolve_csharp_method_call(receiver, None, "", caller_qn)
+            # (H) Full caller context: locals and imports participate in the
+            # (H) inner resolution exactly as they did for the instance path.
+            inner = self.resolve_csharp_method_call(
+                receiver, local_var_types, module_qn, caller_qn
+            )
             if inner is not None and (
                 entry := self.csharp_method_return_types.get(inner[1])
             ):
