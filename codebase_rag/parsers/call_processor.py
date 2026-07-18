@@ -2069,6 +2069,30 @@ class CallProcessor:
                 callee_info = resolver.resolve_csharp_method_call(
                     call_node, module_qn, call_var_types, caller_qn
                 )
+                if (
+                    callee_info is not None
+                    and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET
+                    and (fn_node := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+                    is not None
+                    and fn_node.type
+                    in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME)
+                ):
+                    # (H) A bare call resolved by ARITY may have same-arity
+                    # (H) siblings differing only in parameter types (Serilog's
+                    # (H) FormatExactNumericValue switch dispatch); keep the
+                    # (H) whole family reachable. NOT when a Roslyn fact pinned
+                    # (H) the site: that is the compiler's exact overload
+                    # (H) choice, and widening it would revive dead siblings.
+                    engine = resolver.type_inference.csharp_type_inference
+                    if not engine.semantic_fact_resolved(call_node, module_qn):
+                        for sibling_qn in engine.csharp_same_arity_family(
+                            callee_info[1]
+                        ):
+                            ensure_rel(
+                                caller_spec,
+                                calls_rel,
+                                (cs.NodeLabel.METHOD, qn_key, sibling_qn),
+                            )
                 if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
                     # (H) Provably external (base.X() with an external base, a
                     # (H) static call on an unregistered type, an object
