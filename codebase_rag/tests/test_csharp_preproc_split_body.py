@@ -203,7 +203,7 @@ def test_directive_wrapped_default_interface_bodies_parse_clean(
 
     method_names = _leaf_names(mock_ingestor, "Method")
     function_names = _leaf_names(mock_ingestor, "Function")
-    assert "Verbose" in method_names, (method_names, function_names)
+    assert "Verbose0" in method_names, (method_names, function_names)
     assert "FEATURE_DEFAULT_INTERFACE" not in function_names, function_names
     assert "FEATURE_DEFAULT_INTERFACE" not in method_names, method_names
     assert "if" not in function_names, function_names

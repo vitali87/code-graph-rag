@@ -93,10 +93,52 @@ def _blank(lines: list[bytes], ranges: list[tuple[int, int]]) -> bytes:
     return _CHAR_NEWLINE.join(out)
 
 
+_CSHARP_DIRECTIVE_PREFIXES = (b"#if", b"#elif", b"#else", b"#endif")
+
+
+def _count_error_nodes(root: Node) -> int:
+    count = 0
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_ERROR:
+            count += 1
+        if node.has_error:
+            stack.extend(node.children)
+    return count
+
+
+def _blank_csharp_directives(source_bytes: bytes) -> bytes:
+    lines = source_bytes.split(_CHAR_NEWLINE)
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(_CSHARP_DIRECTIVE_PREFIXES):
+            lines[i] = b""
+    return _CHAR_NEWLINE.join(lines)
+
+
 def parse_with_preproc_recovery(
     parser: Parser, source_bytes: bytes, language: cs.SupportedLanguage
 ) -> Tree:
     tree = parser.parse(source_bytes)
+    if language == cs.SupportedLanguage.CSHARP:
+        # (H) A C# conditional directive interleaved with declaration syntax
+        # (H) (`void M() #if X => Impl() #endif ;`, Serilog's ILogger default
+        # (H) interface bodies) can shatter a whole type into an ERROR node:
+        # (H) members register as module-level Functions and the directive
+        # (H) CONDITION becomes a phantom node. On any parse error, retry with
+        # (H) the conditional-directive LINES blanked (line-count preserving,
+        # (H) both branches kept -- the duplicate-qn machinery absorbs twin
+        # (H) branch definitions) and keep the tree with the smaller error.
+        # (H) has_error, not the line-span metric: the shatter often yields
+        # (H) SINGLE-LINE inner ERROR nodes inside a plausibly-shaped wrong
+        # (H) declaration (a property named after the directive condition),
+        # (H) which a span measure scores as zero.
+        if not tree.root_node.has_error or b"#if" not in source_bytes:
+            return tree
+        retry = parser.parse(_blank_csharp_directives(source_bytes))
+        if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
+            return retry
+        return tree
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
     worst = _max_error_span(tree.root_node)
