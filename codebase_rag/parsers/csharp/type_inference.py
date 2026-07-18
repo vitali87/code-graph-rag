@@ -841,13 +841,6 @@ class CSharpTypeInferenceEngine:
                 return self.csharp_class_generic_arity.get(class_qn, 0)
         return None
 
-    def _type_simple_name_registered(self, type_name: str) -> bool:
-        simple = split_type_ref(type_name)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        return any(
-            self.function_registry.get(qn) in _TYPE_DECLS
-            for qn in self.simple_name_lookup.get(simple, set())
-        )
-
     def _registered_type_declares(self, type_name: str, method_name: str) -> bool:
         # (H) A registered type merely SHARING the receiver type's simple name
         # (H) (Polly's Snippets.Docs.RateLimiter demo class vs BCL RateLimiter)

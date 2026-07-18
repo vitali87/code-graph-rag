@@ -410,3 +410,30 @@ public class App {
     assert not any(
         t.endswith("N.BuilderExtensions.AddRetry(Builder, int)") for t in targets
     ), targets
+
+
+def test_cast_receiver_binds_generic_extension_by_arity(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `((Widget<int>)o).Poke()` carries written arity 1; with BOTH a plain
+    # (H) and a generic extension registered, the cast receiver must bind the
+    # (H) generic one (the annotation flows through the extension matcher).
+    (csharp_project / "GC.cs").write_text(
+        """
+namespace N;
+public class Widget { }
+public class Widget<T> { }
+public static class WidgetExt {
+    public static void Poke(this Widget w) { }
+    public static void Poke<T>(this Widget<T> w) { }
+}
+public class App {
+    public void Run(object o) { ((Widget<int>)o).Poke(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any("WidgetExt.Poke" in t for t in targets), targets

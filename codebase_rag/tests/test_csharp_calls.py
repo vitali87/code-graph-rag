@@ -666,3 +666,56 @@ public class App {
 
     pairs = _call_pairs(mock_ingestor)
     assert not any(t.endswith(".ShouldHandle") for s, t in pairs), pairs
+
+
+def test_base_call_binds_first_party_base_by_name_when_arity_differs(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `base.Report(1, 2)` with a first-party base declaring only an
+    # (H) optional-parameter overload: the arity pass misses, and the
+    # (H) name-only base-chain pass must still bind the base member rather
+    # (H) than suppress a genuine first-party call.
+    (csharp_project / "BaseName.cs").write_text(
+        """
+namespace N;
+public class Root2 {
+    public virtual string Report(int a, int b = 0, int c = 0) => "r";
+}
+public class Mid2 : Root2 {
+    public override string Report(int a, int b, int c) => base.Report(1, 2);
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("Mid2.Report(int, int, int)") and "Root2.Report" in t
+        for s, t in pairs
+    ), pairs
+
+
+def test_bcl_member_receiver_with_declaring_first_party_candidate_keeps_fallback(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The declares-member refinement must NOT suppress when a first-party
+    # (H) type sharing the receiver type's simple name actually DECLARES the
+    # (H) called member: the trie may then legitimately attribute the call.
+    (csharp_project / "DK.cs").write_text(
+        """
+namespace N;
+public class Keeper {
+    public void Flush() { }
+}
+public class Holder {
+    private Keeper Inner2 { get; }
+    public void Go() { Inner2.Flush(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(t.endswith("N.Keeper.Flush") for s, t in pairs), pairs

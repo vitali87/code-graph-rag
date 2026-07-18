@@ -906,7 +906,7 @@ class ClassIngestMixin:
                         ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
                         if pname and ptype:
                             field_types.setdefault(
-                                pname, csharp_utils._normalize_type_name(ptype)
+                                pname, csharp_utils.annotate_type_ref(ptype)
                             )
             if field_types:
                 self.class_field_types[class_qn] = field_types
