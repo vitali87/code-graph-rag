@@ -319,3 +319,53 @@ public class Component {
     assert any(
         t.endswith("N.Component.Reload") for t in _call_targets(mock_ingestor)
     ), _call_targets(mock_ingestor)
+
+
+def test_object_creation_receiver_resolves_member_call(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `new Builder().Add()`: the receiver is an object_creation whose TYPE
+    # (H) is the receiver's class by construction.
+    (csharp_project / "OC.cs").write_text(
+        """
+namespace N;
+public class Builder {
+    public Builder Add() => this;
+}
+public class App {
+    public void Run() { new Builder().Add(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert any(t.endswith("N.Builder.Add") for t in _call_targets(mock_ingestor)), (
+        _call_targets(mock_ingestor)
+    )
+
+
+def test_chained_return_receiver_resolves_member_call(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Policy.Handle<T>().Wrap(1)`: the receiver of Wrap is an INVOCATION;
+    # (H) its return type (recorded at ingestion) types the next hop. This is
+    # (H) Polly's whole fluent surface (Build/CircuitBreaker/Or chains, the
+    # (H) dominant recall gap).
+    (csharp_project / "CH.cs").write_text(
+        """
+namespace N;
+public class Policy {
+    public static Policy Handle<TException>() => new Policy();
+    public Policy Wrap(int n) => this;
+}
+public class App {
+    public void Run() { Policy.Handle<System.InvalidOperationException>().Wrap(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.Policy.Wrap(int)") for t in targets), targets
