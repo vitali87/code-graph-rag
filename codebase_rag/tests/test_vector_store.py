@@ -338,6 +338,22 @@ def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> N
     )
 
 
+def test_milvus_empty_search_response_returns_empty_list() -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.search.return_value = []
+
+    with (
+        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vector_store.logger") as mock_logger,
+    ):
+        results = vs.MilvusVectorStore().search_embeddings([0.2] * 768, top_k=5)
+
+    assert results == []
+    mock_logger.warning.assert_not_called()
+
+
 @pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
 def test_milvus_store_search_verify_delete_roundtrip(
     tmp_path: Path, reset_global_client: None

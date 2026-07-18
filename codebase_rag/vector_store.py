@@ -416,6 +416,8 @@ class MilvusVectorStore:
                 limit=effective_top_k,
                 output_fields=[PAYLOAD_NODE_ID],
             )
+            if not result:
+                return []
             return [
                 (node_id, _normalize_milvus_score(float(hit.get("distance", 0.0))))
                 for hit in result[0]
