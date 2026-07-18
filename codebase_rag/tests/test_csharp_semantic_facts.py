@@ -92,6 +92,7 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
                     "tcol": 4,
                 }
             ],
+            "externals": [{"file": "A.cs", "line": 11, "col": 8, "name": "WriteLine"}],
         }
     )
     facts = _parse_payload(payload)
@@ -101,6 +102,7 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
     )
     assert facts.partial_groups == [[("A.cs", 1), ("C.cs", 2)]]
     assert facts.query_calls == [CSharpQueryCall("A.cs", 9, 4, "B.cs", 7, 4)]
+    assert facts.external_sites == {("A.cs", 11, 8, "WriteLine")}
 
 
 def test_parse_payload_without_new_sections_yields_empty_facts() -> None:
@@ -258,6 +260,60 @@ def test_call_fact_suppresses_same_arity_family_fanout(
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.C.Go", "N.C.Format(int)"), calls
     assert not _has(calls, "N.C.Go", "N.C.Format(string)"), calls
+
+
+_EXTERNAL_SITE_SRC = """namespace N;
+
+public class Helper
+{
+    public void Dispose() { }
+}
+
+public class App
+{
+    public void Ping() { }
+
+    public void Run(object value)
+    {
+        Ping();
+        if (value is System.IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}
+"""
+
+
+def test_external_site_fact_suppresses_name_trie_fallback(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (H) `disposable.Dispose()` on a pattern variable: the local-type collector
+    # (H) never tracks it, so the name trie fabricates a CALLS edge onto the
+    # (H) unrelated first-party Helper.Dispose. Roslyn KNOWS the site resolves
+    # (H) to metadata; its external-site fact must suppress the fallback (the
+    # (H) measured Polly residual: 55 fps, all of this class).
+    root = temp_repo / "extsiteproj"
+    root.mkdir()
+    (root / "Code.cs").write_text(_EXTERNAL_SITE_SRC, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    call_line, call_col = _loc(_EXTERNAL_SITE_SRC, "Dispose();")
+    facts = CSharpSemanticFacts(
+        base_kinds={},
+        call_sites={},
+        partial_groups=[],
+        query_calls=[],
+        external_sites={("Code.cs", call_line, call_col, "Dispose")},
+    )
+    _hybrid(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert not _has(calls, "N.App.Run(object)", "N.Helper.Dispose"), calls
+    assert _has(calls, "N.App.Run(object)", "N.App.Ping"), calls
 
 
 _PART_A = """namespace N;
