@@ -349,3 +349,91 @@ public class App {
     # (H) path this test guards.
     targets = _call_targets(mock_ingestor)
     assert not any(t.endswith("N.WidgetExt.Poke(Widget)") for t in targets), targets
+
+
+def test_cast_receiver_binds_extension_method(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `((Widget)o).Poke()` types its receiver by the CAST target; the
+    # (H) extension path's receiver-type lookup must unwrap the cast like the
+    # (H) instance path does, or an extension-only method loses its CALLS edge.
+    (csharp_project / "E.cs").write_text(
+        """
+namespace N;
+public class Widget { }
+public static class WidgetExt {
+    public static void Poke(this Widget w) { }
+}
+public class App {
+    public void Run(object o) { ((Widget)o).Poke(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.WidgetExt.Poke(Widget)") for t in targets), targets
+
+
+def test_generic_twin_receiver_does_not_bind_plain_receiver_extension(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) With twins `Builder` / `Builder<TResult>` in separate files, a
+    # (H) receiver of KNOWN generic arity (`new Builder<int>()`) must not bind
+    # (H) an extension declared `this Builder`: C# rejects that receiver, so
+    # (H) the edge would be a phantom. The extension index records the
+    # (H) receiver's written arity for exactly this comparison.
+    (csharp_project / "PlainB.cs").write_text(
+        "namespace N;\npublic class Builder { }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "GenB.cs").write_text(
+        "namespace N;\npublic class Builder<TResult> { }\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "TwinExt.cs").write_text(
+        """
+namespace N;
+public static class BuilderExtensions {
+    public static Builder AddRetry(this Builder builder, int options) => builder;
+}
+public class App {
+    public void Run() { new Builder<int>().AddRetry(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any(
+        t.endswith("N.BuilderExtensions.AddRetry(Builder, int)") for t in targets
+    ), targets
+
+
+def test_cast_receiver_binds_generic_extension_by_arity(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `((Widget<int>)o).Poke()` carries written arity 1; with BOTH a plain
+    # (H) and a generic extension registered, the cast receiver must bind the
+    # (H) generic one (the annotation flows through the extension matcher).
+    (csharp_project / "GC.cs").write_text(
+        """
+namespace N;
+public class Widget { }
+public class Widget<T> { }
+public static class WidgetExt {
+    public static void Poke(this Widget w) { }
+    public static void Poke<T>(this Widget<T> w) { }
+}
+public class App {
+    public void Run(object o) { ((Widget<int>)o).Poke(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any("WidgetExt.Poke" in t for t in targets), targets

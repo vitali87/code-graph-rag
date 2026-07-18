@@ -45,6 +45,58 @@ def _normalize_type_name(text: str) -> str:
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
+def generic_arity_of_type_text(text: str) -> int:
+    # (H) Number of top-level type arguments in a type reference:
+    # (H) `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
+    # (H) disambiguate same-simple-name generic/non-generic type declarations.
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN)
+    if open_idx < 0:
+        return 0
+    depth = 0
+    count = 1
+    for ch in text[open_idx + 1 :]:
+        if ch in "<([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == cs.SEPARATOR_COMMA and depth == 0:
+            count += 1
+    return count
+
+
+GENERIC_ARITY_MARKER = "`"
+
+
+def annotate_type_ref(text: str) -> str:
+    # (H) Normalized type reference carrying its WRITTEN generic arity in CLR
+    # (H) style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
+    # (H) name always means arity 0, so simple-name twins stay distinguishable
+    # (H) through every stored type map without touching method signatures.
+    base = _normalize_type_name(text)
+    arity = generic_arity_of_type_text(text)
+    return f"{base}{GENERIC_ARITY_MARKER}{arity}" if arity else base
+
+
+def split_type_ref(name: str) -> tuple[str, int]:
+    if GENERIC_ARITY_MARKER in name:
+        base, _, tail = name.rpartition(GENERIC_ARITY_MARKER)
+        if tail.isdigit():
+            return base, int(tail)
+    return name, 0
+
+
+def normalize_csharp_type_name(type_node: Node) -> str | None:
+    # (H) A type node's normalized name (generic-free, nullable-stripped) or
+    # (H) None for unnameable types (`void` callers never chain off it, but a
+    # (H) void return is recorded harmlessly and simply never resolves).
+    text = safe_decode_text(type_node)
+    return _normalize_type_name(text) if text else None
+
+
 def extract_parameter_type_names(method_node: Node) -> list[str]:
     # (H) The declared type of each parameter, in order, for the method-qn
     # (H) signature that keeps C# overloads distinct. A `params object[]` tail is
@@ -89,11 +141,11 @@ def extension_receiver_type(method_node: Node) -> str | None:
         return None
     type_node = first.child_by_field_name(cs.FIELD_TYPE)
     name = safe_decode_text(type_node) if type_node and type_node.text else None
-    return _normalize_type_name(name) if name else None
+    return annotate_type_ref(name) if name else None
 
 
 def index_extension_method(
-    store: dict[str, list[tuple[str, str, str]]],
+    store: dict[str, list[tuple[str, str, str, int]]],
     ingested_qn: str,
     method_node: Node,
     class_qn: str,
@@ -107,6 +159,20 @@ def index_extension_method(
     receiver_type = extension_receiver_type(method_node)
     if not receiver_type:
         return
+    # (H) The receiver's WRITTEN generic arity (`this Builder<TResult>` -> 1),
+    # (H) so a call receiver of known arity never binds an extension declared
+    # (H) for the other twin.
+    receiver_arity = 0
+    param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if param_list is not None:
+        first = next(
+            (c for c in param_list.children if c.type == cs.TS_CSHARP_PARAMETER), None
+        )
+        if first is not None:
+            type_node = first.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node is not None else None
+            if raw:
+                receiver_arity = generic_arity_of_type_text(raw)
     # (H) Strip the parameter signature BEFORE taking the leaf: a qualified param
     # (H) type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
     # (H) on `Widget)` instead of the method name `Poke` and never match.
@@ -126,7 +192,9 @@ def index_extension_method(
         if cs.SEPARATOR_DOT in ns_qualified_class
         else ""
     )
-    store.setdefault(leaf, []).append((ingested_qn, receiver_type, ext_namespace))
+    store.setdefault(leaf, []).append(
+        (ingested_qn, receiver_type, ext_namespace, receiver_arity)
+    )
 
 
 def build_field_type_map(class_node: Node) -> dict[str, str]:
@@ -143,7 +211,7 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
             name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
             type_text = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
             if name and type_text:
-                fields[name] = _normalize_type_name(type_text)
+                fields[name] = annotate_type_ref(type_text)
         elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
             var_decl = next(
                 (
@@ -163,7 +231,7 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
                     continue
                 name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
                 if name:
-                    fields[name] = _normalize_type_name(type_text)
+                    fields[name] = annotate_type_ref(type_text)
     return fields
 
 

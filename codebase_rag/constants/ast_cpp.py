@@ -20,8 +20,15 @@ class CppNodeType(StrEnum):
     FUNCTION_DECLARATOR = "function_declarator"
     POINTER_DECLARATOR = "pointer_declarator"
     REFERENCE_DECLARATOR = "reference_declarator"
+    # (H) An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
+    # (H) bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
+    # (H) an ERROR plus the real function_declarator; the name walk descends it.
+    PARENTHESIZED_DECLARATOR = "parenthesized_declarator"
     FIELD_DECLARATION = "field_declaration"
     FIELD_IDENTIFIER = "field_identifier"
+    FIELD_INITIALIZER_LIST = "field_initializer_list"
+    FIELD_INITIALIZER = "field_initializer"
+    TEMPLATE_METHOD = "template_method"
     QUALIFIED_IDENTIFIER = "qualified_identifier"
     OPERATOR_NAME = "operator_name"
     DESTRUCTOR_NAME = "destructor_name"
@@ -175,6 +182,10 @@ TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
 TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
+# (H) `Reader<T>(...)` as a call target: the callee wraps name + template args.
+TS_CPP_TEMPLATE_FUNCTION = "template_function"
+# (H) `return {args};` -- a braced construction of the declared return type.
+TS_CPP_INITIALIZER_LIST = "initializer_list"
 # (H) Stream-insertion operator; a `binary_expression` using it whose left-spine base
 # (H) is std::cout / std::cerr writes STDOUT.
 CPP_OP_LEFT_SHIFT = "<<"

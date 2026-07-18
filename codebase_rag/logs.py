@@ -31,6 +31,9 @@ CSHARP_FRONTEND_RUNNING = "--- C# Roslyn frontend: {path} ---"
 CSHARP_FRONTEND_UNAVAILABLE = (
     "C# Roslyn frontend enabled but dotnet is unavailable; using tree-sitter"
 )
+CSHARP_FRONTEND_AUTO_FALLBACK = (
+    "C# frontend AUTO: dotnet not found; using tree-sitter only"
+)
 CSHARP_FRONTEND_NO_PROJECT = (
     "C# Roslyn frontend enabled but no .csproj/.sln found; using tree-sitter"
 )
@@ -40,7 +43,7 @@ CSHARP_FRONTEND_BUILD_FAILED = (
 CSHARP_FRONTEND_TYPES = "C# Roslyn frontend classified {count} type base list(s)"
 CSHARP_FRONTEND_FACTS = (
     "C# Roslyn frontend facts: {calls} call site(s), {partials} partial group(s), "
-    "{queries} query call(s)"
+    "{queries} query call(s), {externals} external site(s)"
 )
 CSHARP_FRONTEND_PARTIALS_JOINED = (
     "C# Roslyn frontend merged {count} partial-type group(s)"

@@ -101,6 +101,25 @@ class FunctionResolution(NamedTuple):
     is_anonymous: bool = False
 
 
+class _DeferredCppArtifact(NamedTuple):
+    """Artifact-shaped C++ node held until every class is registered.
+
+    A type-less plain-identifier definition is either a macro invocation
+    (`FMT_CATCH(...) {}`) or a recovery-mangled real definition (`file(int fd)
+    {}` whose class ancestor the parse recovery destroyed). A registered class
+    bearing the name reattaches the node as that class's ctor METHOD; failing
+    that, a named parameter keeps it as a module Function; failing both it is
+    dropped as a macro. The class pass for the SAME file runs after the
+    function pass, so every branch of the decision must wait for
+    resolve_deferred_cpp_artifacts.
+    """
+
+    func_node: Node
+    module_qn: str
+    lang_config: LanguageSpec
+    lang_queries: LanguageQueries
+
+
 class _DeferredJsAnonymous(NamedTuple):
     """Unnamed JS/TS function expression held back until named passes claim.
 
@@ -194,13 +213,16 @@ class FunctionIngestMixin:
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredJsAnonymous]
+    _deferred_cpp_artifacts: list[_DeferredCppArtifact]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
+    csharp_generic_methods: set[str]
+    csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -275,6 +297,21 @@ class FunctionIngestMixin:
                     and func_node.parent is not None
                     and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
                 ):
+                    continue
+                # (H) A macro invocation parsed as a type-less definition
+                # (H) (`FMT_CATCH(...) {}`) must not mint a phantom Function,
+                # (H) and a recovery-orphaned ctor sharing the shape must
+                # (H) register as a METHOD of its class, not a module Function
+                # (H) that steals the class's qualified name. Same-file classes
+                # (H) register after this pass, so EVERY artifact-shaped node
+                # (H) (named-param or not) is deferred; the flush applies the
+                # (H) class-registry tiebreak and the named-param evidence.
+                if cpp_utils.is_recovery_artifact_shape(func_node):
+                    self._deferred_cpp_artifacts.append(
+                        _DeferredCppArtifact(
+                            func_node, module_qn, lang_config, lang_queries
+                        )
+                    )
                     continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
@@ -721,6 +758,114 @@ class FunctionIngestMixin:
                 receiver_type=receiver_type,
                 file_path=self.module_qn_to_file_path.get(module_qn),
             )
+        )
+        return True
+
+    def resolve_deferred_cpp_artifacts(self) -> int:
+        """Decide held-back artifact-shaped nodes now every class is known.
+
+        A registered class bearing the node's name reattaches it as that
+        class's ctor METHOD (a recovery-orphaned constructor); otherwise a
+        named parameter keeps it as a module Function (a real definition whose
+        type recovery destroyed); otherwise it is dropped as a macro
+        invocation. Returns the number registered.
+        """
+        deferred = self._deferred_cpp_artifacts
+        registered = sum(
+            1 for entry in deferred if self._resolve_one_cpp_artifact(entry)
+        )
+        deferred.clear()
+        return registered
+
+    def _resolve_one_cpp_artifact(self, entry: _DeferredCppArtifact) -> bool:
+        name = cpp_utils.extract_function_name(entry.func_node)
+        if not name:
+            return False
+        class_qn = self._lookup_cpp_artifact_class(entry, name)
+        file_path = self.module_qn_to_file_path.get(entry.module_qn)
+        if class_qn is not None:
+            return self._reattach_orphan_cpp_ctor(entry, class_qn, file_path)
+        if not cpp_utils.has_named_parameter(entry.func_node):
+            return False
+        resolution = self._resolve_function_identity(
+            entry.func_node,
+            entry.module_qn,
+            cs.SupportedLanguage.CPP,
+            entry.lang_config,
+            file_path,
+        )
+        if not resolution:
+            return False
+        self._register_function(
+            entry.func_node,
+            resolution,
+            entry.module_qn,
+            cs.SupportedLanguage.CPP,
+            entry.lang_config,
+            entry.lang_queries,
+        )
+        return True
+
+    def _lookup_cpp_artifact_class(
+        self, entry: _DeferredCppArtifact, name: str
+    ) -> str | None:
+        # (H) Scope-first, mirroring resolve_deferred_cpp_methods: the
+        # (H) namespace-qualified candidate disambiguates same-leaf classes.
+        candidates = [name]
+        if namespace_path := cs.SEPARATOR_DOT.join(
+            cpp_utils.extract_namespace_path(entry.func_node)
+        ):
+            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
+        for candidate in candidates:
+            class_qn, resolved = self._resolve_cpp_class_qn(candidate, entry.module_qn)
+            if resolved:
+                return class_qn
+        return None
+
+    def _reattach_orphan_cpp_ctor(
+        self,
+        entry: _DeferredCppArtifact,
+        class_qn: str,
+        file_path: Path | None,
+    ) -> bool:
+        # (H) Mirror of the resolved branch of _handle_cpp_out_of_class_method:
+        # (H) the recorded location and span let Pass-3 attribute the ctor
+        # (H) body's calls to the METHOD qn instead of re-deciding (and
+        # (H) diverging into the artifact-skip).
+        method_qn = ingest_method(
+            method_node=entry.func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            lang_queries=entry.lang_queries,
+            file_path=file_path,
+            repo_path=self.repo_path,
+            skip_cpp_artifact_check=True,
+        )
+        if method_qn is None:
+            return False
+        self.cpp_out_of_class_methods[
+            (entry.module_qn, entry.func_node.start_point[0] + 1)
+        ] = (method_qn, class_qn)
+        self.function_locations[function_span_key(entry.module_qn, entry.func_node)] = (
+            FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=method_qn,
+                container_qn=class_qn,
+            )
+        )
+        record_cpp_definition_span(
+            self.cpp_definition_spans,
+            cs.SupportedLanguage.CPP,
+            file_path,
+            self.repo_path,
+            entry.func_node,
+            cs.NodeLabel.METHOD.value,
+            method_qn,
         )
         return True
 
@@ -1325,6 +1470,20 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
+        if (
+            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+            is not None
+        ):
+            self.csharp_generic_methods.add(ingested_qn)
+        if (
+            rt_node := func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+        ) is not None:
+            if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+                raw = safe_decode_text(rt_node) or rt_text
+                self.csharp_method_return_types[ingested_qn] = (
+                    rt_text,
+                    csharp_utils.generic_arity_of_type_text(raw),
+                )
         record_cpp_definition_span(
             self.cpp_definition_spans,
             cs.SupportedLanguage.CSHARP,

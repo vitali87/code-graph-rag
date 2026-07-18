@@ -25,6 +25,8 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .cpp.type_inference import CppTypeInferenceEngine
+from .csharp import type_inference as csharp_ti
 from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -786,7 +788,16 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes:
+            if not all_call_nodes and language not in (
+                cs.SupportedLanguage.CSHARP,
+                cs.SupportedLanguage.CPP,
+            ):
+                # (H) A file with no call expressions has nothing further to
+                # (H) process -- except in C#, where a class can still READ
+                # (H) properties (`return Size;`), and C++, where a ctor's
+                # (H) member initializer list (`: buffer(g, 0)`) runs base
+                # (H) ctors without any call_expression node; both passes run
+                # (H) per caller inside class processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -865,6 +876,16 @@ class CallProcessor:
                 continue
 
             if language in _C_FAMILY_LANGUAGES:
+                # (H) A macro-invocation artifact the ingest pass declined to
+                # (H) register (no class bears its name) must not become a call
+                # (H) attribution target either; mirror ingest's decision via
+                # (H) the recorded locations so the two passes never diverge.
+                if (
+                    language == cs.SupportedLanguage.CPP
+                    and cpp_utils.is_macro_invocation_artifact(func_node)
+                    and self._recorded_caller(func_node, module_qn) is None
+                ):
+                    continue
                 func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)
@@ -1460,9 +1481,11 @@ class CallProcessor:
                         # (H) A factory-call receiver (`parser(ia, cb).parse(...)`,
                         # (H) nlohmann's basic_json::parse) is a call_expression on a
                         # (H) bare identifier: emit the chain form so the resolver can
-                        # (H) type the factory's return and bind the method on it. Only
-                        # (H) a simple-identifier callee qualifies -- deeper receiver
-                        # (H) chains keep the bare method-name trie fallback.
+                        # (H) type the factory's return and bind the method on it. A
+                        # (H) template/qualified callee (`Reader<T>(...)`,
+                        # (H) `detail::Reader<T>(...)`) is a CONSTRUCTOR TEMPORARY --
+                        # (H) the callee names the receiver's class directly. Deeper
+                        # (H) receiver chains keep the bare method-name trie fallback.
                         if (
                             arg is not None
                             and arg.type == cs.TS_CPP_CALL_EXPRESSION
@@ -1470,7 +1493,12 @@ class CallProcessor:
                                 callee := arg.child_by_field_name(cs.TS_FIELD_FUNCTION)
                             )
                             is not None
-                            and callee.type == cs.TS_IDENTIFIER
+                            and callee.type
+                            in (
+                                cs.TS_IDENTIFIER,
+                                cs.TS_CPP_TEMPLATE_FUNCTION,
+                                cs.TS_CPP_QUALIFIED_IDENTIFIER,
+                            )
                             and arg.text
                         ):
                             receiver = arg.text.decode(cs.ENCODING_UTF8)
@@ -1502,6 +1530,10 @@ class CallProcessor:
                     )
                     if name_node and name_node.text:
                         method = name_node.text.decode(cs.ENCODING_UTF8)
+                        # (H) A generic member (`recv.Handle<T>`) registers
+                        # (H) generic-free; strip the type arguments so the
+                        # (H) name-keyed fallbacks can match.
+                        method = method.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                         if expr_node and expr_node.text:
                             receiver = expr_node.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
@@ -1774,6 +1806,24 @@ class CallProcessor:
                 prop_names,
             )
 
+        # (H) Same need as the Python pass above, C# shape: a property getter
+        # (H) access is a member_access_expression (usually in RECEIVER
+        # (H) position), never an invocation, so callers that only READ a
+        # (H) property emit no edge to it and dead-code flags it (Polly's
+        # (H) Context.WrappedDictionary, ResiliencePipeline<T>.Pipeline).
+        if language == cs.SupportedLanguage.CSHARP and (
+            csharp_prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_csharp_property_reads(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                queries[language][cs.QUERY_CONFIG],
+                csharp_prop_names,
+            )
+
         # (H) Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
         # (H) methods; emit those edges when the operand is a first-party type.
         if language == cs.SupportedLanguage.PYTHON:
@@ -1859,6 +1909,11 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
+        if language == cs.SupportedLanguage.CPP:
+            self._ingest_cpp_braced_return_instantiations(
+                caller_node, caller_spec, caller_qn, module_qn
+            )
+            self._ingest_cpp_member_init_ctor_calls(caller_node, caller_spec, module_qn)
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -1922,6 +1977,7 @@ class CallProcessor:
         )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
+        cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -1961,6 +2017,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         cs.RelationshipType.REFERENCES,
+                        language,
                     )
                 continue
 
@@ -2020,7 +2077,38 @@ class CallProcessor:
                 callee_info = resolver.resolve_csharp_method_call(
                     call_node, module_qn, call_var_types, caller_qn
                 )
-                if callee_info is None:
+                if (
+                    callee_info is not None
+                    and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET
+                    and (fn_node := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+                    is not None
+                    and fn_node.type
+                    in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME)
+                ):
+                    # (H) A bare call resolved by ARITY may have same-arity
+                    # (H) siblings differing only in parameter types (Serilog's
+                    # (H) FormatExactNumericValue switch dispatch); keep the
+                    # (H) whole family reachable. NOT when a Roslyn fact pinned
+                    # (H) the site: that is the compiler's exact overload
+                    # (H) choice, and widening it would revive dead siblings.
+                    engine = resolver.type_inference.csharp_type_inference
+                    if not engine.semantic_fact_resolved(call_node, module_qn):
+                        for sibling_qn in engine.csharp_same_arity_family(
+                            callee_info[1]
+                        ):
+                            ensure_rel(
+                                caller_spec,
+                                calls_rel,
+                                (cs.NodeLabel.METHOD, qn_key, sibling_qn),
+                            )
+                if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
+                    # (H) Provably external (base.X() with an external base, a
+                    # (H) static call on an unregistered type, an object
+                    # (H) virtual on an untyped receiver): no edge, and no
+                    # (H) name-trie fallback that would fabricate one onto an
+                    # (H) unrelated same-name first-party member.
+                    callee_info = None
+                elif callee_info is None:
                     # (H) A C# member call whose receiver could not be typed (or a
                     # (H) bare call) falls back to the generic simple-name resolver,
                     # (H) which keeps Phase 1 intra-file resolution working.
@@ -2054,6 +2142,45 @@ class CallProcessor:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
+            if not callee_info and language == cs.SupportedLanguage.CPP:
+                # (H) `using appender = basic_appender<char>; appender(out)`:
+                # (H) the alias is no registered node, so the bare call resolves
+                # (H) to nothing and the constructed class's ctor stays
+                # (H) edge-free. The cross-file typedef/using map covers
+                # (H) file/namespace-scope aliases; a BODY-local alias is
+                # (H) exactly what that collector skips, so it comes from the
+                # (H) caller-scoped map (_resolve_class_name then follows any
+                # (H) further alias chain). Binding the callee to the class
+                # (H) drops into the class branch below, which emits
+                # (H) INSTANTIATES + ctor CALLS like any construction. Gated on
+                # (H) alias-map membership so genuinely unknown names keep
+                # (H) their unresolved handling.
+                if cpp_local_aliases is None:
+                    cpp_local_aliases = (
+                        CppTypeInferenceEngine().collect_local_type_aliases(caller_node)
+                    )
+                lookup_name = call_name
+                # (H) Declaration-ordered AND lexically-scoped lookup: a call
+                # (H) BEFORE the body-local alias's declaration or AFTER its
+                # (H) enclosing block/lambda closes can never mean it; among
+                # (H) windows that do contain the call, the latest declaration
+                # (H) wins (C++ shadowing).
+                best_decl_end = -1
+                for underlying, decl_end, scope_end in cpp_local_aliases.get(
+                    call_name, ()
+                ):
+                    if (
+                        decl_end <= call_node.start_byte < scope_end
+                        and decl_end > best_decl_end
+                    ):
+                        lookup_name = underlying
+                        best_decl_end = decl_end
+                if (
+                    lookup_name != call_name or call_name in resolver.type_aliases
+                ) and (
+                    aliased_qn := resolver._resolve_class_name(lookup_name, module_qn)
+                ):
+                    callee_info = (cs.NodeLabel.CLASS, aliased_qn)
             if not callee_info and cs.SEPARATOR_DOT not in call_name:
                 if is_python:
                     # (H) A bare name that resolves to nothing may be a local alias of a
@@ -2134,6 +2261,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         arg_ref_rel,
+                        language,
                     )
                 continue
 
@@ -2160,6 +2288,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         arg_ref_rel,
+                        language,
                     )
                 continue
 
@@ -2190,6 +2319,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     cs.RelationshipType.REFERENCES,
+                    language,
                 )
 
             if is_python and (
@@ -2291,14 +2421,22 @@ class CallProcessor:
                 if language in (
                     cs.SupportedLanguage.JAVA,
                     cs.SupportedLanguage.CSHARP,
+                    cs.SupportedLanguage.CPP,
                 ):
-                    # (H) A Java/C# constructor is a method named like its class
-                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` runs one, so
-                    # (H) redirect a CALLS edge to every declared constructor (overload
-                    # (H) selection is unneeded for reachability). C# constructors use
-                    # (H) the same class-simple-name convention, so java_constructor_targets
-                    # (H) selects them too. sorted(): the target label is a hash-randomized
-                    # (H) StrEnum, so sort for deterministic output.
+                    # (H) A Java/C#/C++ constructor is a method named like its class
+                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
+                    # (H) runs one, so redirect a CALLS edge to every declared
+                    # (H) constructor (overload selection is unneeded for
+                    # (H) reachability). C# and C++ constructors use the same
+                    # (H) class-simple-name convention, so java_constructor_targets
+                    # (H) selects them too. C++ additionally redirects to the
+                    # (H) destructor: the constructed object's `~X` runs at end
+                    # (H) of lifetime with no call node of its own. sorted():
+                    # (H) the target label is a hash-randomized StrEnum, so
+                    # (H) sort for deterministic output.
+                    if language == cs.SupportedLanguage.CPP:
+                        self._emit_cpp_ctor_calls(caller_spec, callee_qn)
+                        continue
                     for ctor_type, ctor_qn in sorted(
                         resolver.java_constructor_targets(callee_qn)
                     ):
@@ -2995,6 +3133,129 @@ class CallProcessor:
                         )
             stack.extend(node.children)
 
+    def _ingest_cpp_braced_return_instantiations(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+    ) -> None:
+        # (H) `return {args};` (nlohmann's exception factories) constructs the
+        # (H) caller's DECLARED return type through a bare initializer_list --
+        # (H) no call node exists, so the constructed class's ctor gets no edge
+        # (H) and reports dead even when its only factory is alive. Emit
+        # (H) INSTANTIATES to the class and CALLS to its ctors, exactly like an
+        # (H) explicit construction. A lambda body is skipped: its returns are
+        # (H) not the caller's. Revive-only: nothing is emitted unless the
+        # (H) return type resolves to a registered first-party class.
+        has_braced_return = False
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_CPP_LAMBDA_EXPRESSION:
+                continue
+            if node.type == cs.TS_RETURN_STATEMENT and any(
+                child.type == cs.TS_CPP_INITIALIZER_LIST
+                for child in node.named_children
+            ):
+                has_braced_return = True
+                break
+            stack.extend(node.children)
+        if not has_braced_return:
+            return
+        class_qn = self._resolver.cpp_braced_return_class(caller_qn, module_qn)
+        if class_qn is None:
+            return
+        registry = self._resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            ensure_rel(
+                caller_spec,
+                cs.RelationshipType.INSTANTIATES,
+                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
+            )
+        self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _ingest_cpp_member_init_ctor_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+    ) -> None:
+        # (H) A ctor's member initializer list runs base-class ctors
+        # (H) (`: buffer(g, 0)`) and delegated ctors (`: widget(0)`) with no
+        # (H) call_expression node, so a base ctor only ever reached through
+        # (H) derived member-init had zero incoming CALLS and reported dead
+        # (H) (fmt buffer.buffer). Each initializer whose head name resolves to
+        # (H) a registered class emits CALLS to that class's ctors; a member
+        # (H) FIELD initializer resolves to no class and emits nothing (a field
+        # (H) named exactly like a registered class still emits, which is the
+        # (H) common field-shadows-its-own-type case where the ctor does run).
+        # (H) The list is a DIRECT child of function_definition, so a nested
+        # (H) lambda's or local class's initializers never leak in here.
+        for init_list in caller_node.children:
+            if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
+                continue
+            for initializer in init_list.named_children:
+                if initializer.type != cs.CppNodeType.FIELD_INITIALIZER:
+                    continue
+                name = self._cpp_member_init_head_name(initializer)
+                class_qn = (
+                    self._resolver._resolve_type_to_class_qn(name, module_qn)
+                    if name
+                    else None
+                )
+                if class_qn is not None:
+                    self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _emit_cpp_ctor_calls(
+        self, caller_spec: tuple[str, str, str], class_qn: str
+    ) -> None:
+        # (H) Construction runs a ctor now and the dtor at end of lifetime;
+        # (H) neither has a call node, so both get the redirect. sorted(): the
+        # (H) target label is a hash-randomized StrEnum, so sort for
+        # (H) deterministic output.
+        registry = self._resolver.function_registry
+        targets = self._resolver.java_constructor_targets(
+            class_qn
+        ) | self._resolver.cpp_destructor_targets(class_qn)
+        for target_type, target_qn in sorted(targets):
+            for variant in registry.variants(target_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                )
+
+    @staticmethod
+    def _cpp_member_init_head_name(initializer: Node) -> str | None:
+        # (H) The head is the initializer's first named child: a plain
+        # (H) field_identifier (`buffer`), a template_method (`base<T>`), or a
+        # (H) qualified_identifier (`ns::other`, `ns::base<int>` -- the
+        # (H) qualified node CONTAINS the template one, so branching on the
+        # (H) outer type cannot strip the specialization args). The raw text
+        # (H) carries the written spelling in every shape; registered class qns
+        # (H) are unspecialized and dot-separated, so cut at the first `<` and
+        # (H) normalize `::` (PR #792 review: `ns::base<int>(g)` resolved
+        # (H) nothing because the args leaked into the lookup).
+        head = next(iter(initializer.named_children), None)
+        if (
+            head is None
+            or head.type
+            not in (
+                cs.CppNodeType.FIELD_IDENTIFIER,
+                cs.CppNodeType.TEMPLATE_METHOD,
+                cs.CppNodeType.QUALIFIED_IDENTIFIER,
+            )
+            or head.text is None
+        ):
+            return None
+        name = head.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT) or None
+
     def _ingest_go_composite_function_references(
         self,
         caller_node: Node,
@@ -3548,6 +3809,19 @@ class CallProcessor:
         keyword: dict[str, Node] = {}
         args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if args_node is None:
+            # (H) C# target-typed `new(...)` exposes NO fields at all; its
+            # (H) argument_list is an unfielded named child (Serilog hands its
+            # (H) CreateLogger local functions to `return new(...)`, which the
+            # (H) fielded lookup silently dropped).
+            args_node = next(
+                (
+                    child
+                    for child in call_node.named_children
+                    if child.type == cs.TS_CSHARP_ARGUMENT_LIST
+                ),
+                None,
+            )
+        if args_node is None:
             return positional, keyword
         for child in args_node.named_children:
             # (H) C# wraps every argument expression in an `argument` node (which
@@ -3580,6 +3854,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # (H) A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent
         # (H) for reference resolution, and `fn.bind(ctx)` / `.call` / `.apply` in
@@ -3599,6 +3874,44 @@ class CallProcessor:
             return
         if not (arg_text := safe_decode_text(arg_node)):
             return
+        if language == cs.SupportedLanguage.CSHARP:
+            # (H) `Callback<int>` passes the method group with explicit type
+            # (H) arguments; methods register generic-free, so strip them.
+            arg_text = arg_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+            # (H) A bare method-group name binds the ENCLOSING type's method
+            # (H) group; reference the whole overload family (the delegate
+            # (H) type that selects one overload is invisible to syntax, and
+            # (H) the trie's lexicographic pick can even land on a sibling
+            # (H) class -- Polly's EmptyAction). Falls through when the
+            # (H) enclosing type has no such member.
+            if cs.SEPARATOR_DOT not in arg_text:
+                engine = self._resolver.type_inference.csharp_type_inference
+                # (H) An in-scope LOCAL FUNCTION shadows any same-name member
+                # (H) (C# scoping) and the trie cannot see it at all: reference
+                # (H) the local group first (Serilog's CreateLogger passes its
+                # (H) Dispose/DisposeAsync locals to the Logger ctor).
+                if locals_group := engine.csharp_local_function_group(
+                    arg_text, caller_qn, module_qn
+                ):
+                    for target_qn in locals_group:
+                        ensure_rel(
+                            source_spec,
+                            rel_type,
+                            (
+                                cs.NodeLabel.FUNCTION,
+                                cs.KEY_QUALIFIED_NAME,
+                                target_qn,
+                            ),
+                        )
+                    return
+                if family := engine.csharp_method_group_family(arg_text, caller_qn):
+                    for target_qn in family:
+                        ensure_rel(
+                            source_spec,
+                            rel_type,
+                            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                        )
+                    return
         if not (
             resolved := resolve_func(
                 arg_text, module_qn, local_var_types, class_context, caller_qn
@@ -3882,6 +4195,7 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # (H) A function/method passed as an argument is a first-class value the
         # (H) callee may invoke (external framework) or store for later dynamic
@@ -3908,6 +4222,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     rel_type,
+                    language,
                 )
 
     def _build_local_alias_map(
@@ -4102,6 +4417,184 @@ class CallProcessor:
                                     calls_rel,
                                     (method_label, qn_key, target_qn),
                                 )
+            stack.extend(node.children)
+
+    def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
+        # (H) The identifier actually being READ in receiver position: unwrap
+        # (H) parens, a cast's VALUE (`((IDictionary<...>)WrappedDictionary)`),
+        # (H) and a null-forgiving postfix (`s!`) down to a bare identifier.
+        while receiver is not None:
+            if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+                receiver = receiver.child_by_field_name(cs.FIELD_VALUE)
+                continue
+            if receiver.type == cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            break
+        if receiver is not None and receiver.type == cs.TS_CSHARP_IDENTIFIER:
+            return safe_decode_text(receiver)
+        return None
+
+    def _csharp_shadow_spans(
+        self,
+        caller_node: Node,
+        function_types: tuple[str, ...],
+        class_types: tuple[str, ...],
+    ) -> dict[str, list[tuple[int, int]]]:
+        # (H) {declared name: [byte span of each declaring SCOPE]} for every
+        # (H) declaration in the scopes the READ WALK descends into (locals
+        # (H) incl. untyped `var x = 3`, parameters, and a simple lambda's
+        # (H) bare implicit_parameter). A declaration shadows a same-name
+        # (H) property only for reads INSIDE its declaring scope -- a lambda
+        # (H) param or a sibling block's local must not suppress an outer
+        # (H) read, while an in-lambda shadowed read must not fabricate a
+        # (H) property reference. The two walks skip the SAME nested
+        # (H) function/class scopes (each of those has its own pass).
+        def scope_span(decl: Node) -> tuple[int, int]:
+            anc = decl.parent
+            while anc is not None and anc != caller_node:
+                if anc.type in (cs.TS_CSHARP_BLOCK, cs.TS_CSHARP_LAMBDA_EXPRESSION):
+                    return (anc.start_byte, anc.end_byte)
+                anc = anc.parent
+            return (caller_node.start_byte, caller_node.end_byte)
+
+        spans: dict[str, list[tuple[int, int]]] = {}
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            name = None
+            if node_type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
+                name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+            elif node_type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
+                name = safe_decode_text(node)
+            if name:
+                spans.setdefault(name, []).append(scope_span(node))
+            stack.extend(node.children)
+        return spans
+
+    def _ingest_csharp_property_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # (H) Emit a REFERENCES edge (a read is not an invocation; the call
+        # (H) graph stays invocation-only) from the caller to each property of
+        # (H) its enclosing type read in receiver position. Registry-guarded via
+        # (H) resolve_property_read, which accepts only marked properties.
+        engine = self._resolver.type_inference.csharp_type_inference
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        refs_rel = cs.RelationshipType.REFERENCES
+        qn_key = cs.KEY_QUALIFIED_NAME
+        method_label = cs.NodeLabel.METHOD
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        shadowed: dict[str, list[tuple[int, int]]] | None = None
+        seen: set[str] = set()
+
+        def try_emit(name: str | None, read_node: Node, this_read: bool) -> None:
+            nonlocal shadowed
+            if not name or name not in prop_names or name in seen:
+                return
+            if shadowed is None:
+                shadowed = self._csharp_shadow_spans(
+                    caller_node, function_types, class_types
+                )
+            pos = read_node.start_byte
+            is_shadowed = any(lo <= pos < hi for lo, hi in shadowed.get(name, ()))
+            if (this_read or not is_shadowed) and (
+                prop_qn := engine.resolve_property_read(name, caller_qn)
+            ):
+                seen.add(name)
+                if prop_qn != caller_qn:
+                    ensure_rel(caller_spec, refs_rel, (method_label, qn_key, prop_qn))
+
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+                receiver = node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+                # (H) `this.Size` is ALWAYS the member (a local can never
+                # (H) shadow a this-qualified read), so the read is the NAME
+                # (H) field and the shadow check does not apply.
+                this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
+                if this_read:
+                    try_emit(
+                        safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
+                        node,
+                        True,
+                    )
+                else:
+                    recv_name = self._csharp_read_identifier(receiver)
+                    try_emit(recv_name, node, False)
+                    # (H) The NAME field can be a property of the RECEIVER's
+                    # (H) type: `Cfg.Value` (static, class-name receiver),
+                    # (H) `w.Inner` (instance, local of inferred type), or
+                    # (H) `N.Cfg.Value` (namespace/type-qualified: a dotted
+                    # (H) receiver of all-PascalCase segments names a type, a
+                    # (H) camelCase head is an expression chain and is skipped).
+                    # (H) An unresolvable receiver yields nothing, so unrelated
+                    # (H) chains never fabricate an edge.
+                    member = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                    recv_type = None
+                    if recv_name:
+                        recv_type = (local_var_types or {}).get(recv_name, recv_name)
+                    elif (
+                        receiver is not None
+                        and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    ):
+                        dotted = safe_decode_text(receiver)
+                        if dotted and all(
+                            seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
+                        ):
+                            recv_type = dotted
+                    if recv_type and member and member in prop_names:
+                        prop_qn = engine.resolve_member_property_read(
+                            recv_type, member, module_qn
+                        )
+                        if (
+                            prop_qn is not None
+                            and prop_qn != caller_qn
+                            and prop_qn not in seen
+                        ):
+                            seen.add(prop_qn)
+                            ensure_rel(
+                                caller_spec, refs_rel, (method_label, qn_key, prop_qn)
+                            )
+            elif node_type == cs.TS_CSHARP_IDENTIFIER:
+                # (H) A bare identifier expression (`return Size;`, `Use(Size)`,
+                # (H) `var n = Size;`) reads the getter just the same. NOT a
+                # (H) read: any member-access position (receiver/name handled
+                # (H) above), a parent's NAME field (a declarator/parameter's
+                # (H) own name, a named-argument label `Use(Size: 3)`), or a
+                # (H) parent's TYPE field (`new Size()`, `(Size)x`).
+                # (H) `==`, not `is`: child_by_field_name returns a fresh Node
+                # (H) wrapper each call, so identity never matches.
+                parent = node.parent
+                if (
+                    parent is not None
+                    and parent.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    and parent.child_by_field_name(cs.FIELD_NAME) != node
+                    and parent.child_by_field_name(cs.FIELD_TYPE) != node
+                ):
+                    try_emit(safe_decode_text(node), node, False)
             stack.extend(node.children)
 
     def _build_nested_qualified_name(

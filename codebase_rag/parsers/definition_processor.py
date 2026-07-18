@@ -101,7 +101,7 @@ class DefinitionProcessor(
         # (H) the call's receiver -- a lookup the instance-hierarchy walk can't
         # (H) make (the method lives on an unrelated static class). Populated at
         # (H) method ingestion, read by the type-inference engine as a fallback.
-        self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
+        self.csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]] = {}
         # (H) C# local functions: {local_fn_qn: (host span key, parameter count)}.
         # (H) The host (method/ctor/enclosing local fn) is pinned by SPAN because
         # (H) at Function-pass time the host method's signatured identity may not
@@ -110,6 +110,19 @@ class DefinitionProcessor(
         # (H) fn is callable only from inside its host, and shadows same-name
         # (H) method overloads there (Polly's PredicateBuilder.HandleInner).
         self.csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] = {}
+        # (H) qns of C# methods declared WITH type parameters (`M<T>(X)`), so
+        # (H) bare-call resolution can prefer the overload whose genericness
+        # (H) matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
+        # (H) parameter arity alone cannot tell same-name twins apart.
+        self.csharp_generic_methods: set[str] = set()
+        # (H) {class qn: declared type-parameter count} for C# generic types,
+        # (H) so `Builder` vs `Builder<TResult>` (same simple name) can be told
+        # (H) apart when a type reference's written arity is known.
+        self.csharp_class_generic_arity: dict[str, int] = {}
+        # (H) {method qn: (normalized return type, its written generic arity)}
+        # (H) for chained-receiver typing; separate from the cross-language
+        # (H) method_return_types because the arity is C#-specific.
+        self.csharp_method_return_types: dict[str, tuple[str, int]] = {}
         # (H) C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
         # (H) {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
         # (H) frontend ran, split_csharp_bases reads a base's kind here (exact,
@@ -121,6 +134,11 @@ class DefinitionProcessor(
         # (H) consults this before any heuristic; MUTATED IN PLACE across runs
         # (H) because the type-inference engine holds a reference.
         self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        # (H) Sites Roslyn resolved to METADATA (external) methods: the resolver
+        # (H) returns the external sentinel there instead of letting the
+        # (H) name-trie fabricate a first-party edge. Same in-place mutation
+        # (H) discipline as csharp_call_sites.
+        self.csharp_external_sites: set[CallSiteKey] = set()
         # (H) (rel_file, type_start_line) -> class qn for every ingested C# type,
         # (H) the reverse of the Roslyn fact keys, so partial declaration groups
         # (H) join back to the Pass-2 Class nodes.
@@ -150,6 +168,10 @@ class DefinitionProcessor(
         # (H) Unnamed JS/TS function expressions held back until the named
         # (H) JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list = []
+        # (H) Macro-invocation-shaped C++ nodes held until every class (incl.
+        # (H) rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
+        # (H) orphaned-ctor vs macro.
+        self._deferred_cpp_artifacts: list = []
         # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
         # (H) out-of-class C++ method the definition pass bound; Pass-3 call
         # (H) attribution reuses these decisions instead of re-resolving.

@@ -18,20 +18,24 @@ _MILVUS_VECTOR_FIELD = "embedding"
 _CLIENT: Any | None = None
 _CLIENT_BACKEND: VectorStoreBackend | None = None
 
+# (H) Each name is the real class or None (dependency absent), typed Any via
+# (H) cast so ty does not flag the guarded call sites: the availability gates
+# (H) in _get_vector_store/get_*_client keep the None case from ever being
+# (H) called, and the module-level binding is what the tests patch.
 if has_qdrant_client():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
 else:
-    QdrantClient = None  # type: ignore[assignment]
-    Distance = None  # type: ignore[assignment]
-    PointStruct = None  # type: ignore[assignment]
-    VectorParams = None  # type: ignore[assignment]
+    QdrantClient = cast(Any, None)
+    Distance = cast(Any, None)
+    PointStruct = cast(Any, None)
+    VectorParams = cast(Any, None)
 
 if has_pymilvus():
     from pymilvus import DataType, MilvusClient
 else:
-    DataType = None  # type: ignore[assignment]
-    MilvusClient = None  # type: ignore[assignment]
+    DataType = cast(Any, None)
+    MilvusClient = cast(Any, None)
 
 
 class VectorStore(Protocol):

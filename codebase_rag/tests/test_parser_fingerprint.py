@@ -242,3 +242,32 @@ class TestCleanRemovesStamp:
         assert not (tmp_path / cs.PARSER_FINGERPRINT_FILENAME).exists()
         assert not (tmp_path / cs.HASH_CACHE_FILENAME).exists()
         assert not (tmp_path / cs.DIR_MTIMES_FILENAME).exists()
+
+
+def test_fingerprint_resolves_auto_to_effective_frontend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (H) AUTO's fingerprint must reflect what actually RAN: a graph built with
+    # (H) dotnet present carries hybrid edges, one built without does not, and
+    # (H) the two must not share a fingerprint just because the setting string
+    # (H) is the same.
+    import codebase_rag.parser_fingerprint as pf
+    from codebase_rag.parsers.csharp_frontend import frontend as fe
+
+    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
+    fp_auto_with_dotnet = pf.compute_parser_fingerprint()
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: False)
+    fp_auto_without_dotnet = pf.compute_parser_fingerprint()
+    assert fp_auto_with_dotnet != fp_auto_without_dotnet
+
+    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
+    assert pf.compute_parser_fingerprint() == fp_auto_with_dotnet
+    # (H) An EXPLICIT hybrid request that cannot run degrades the build to
+    # (H) tree-sitter (graph_updater warns and returns), so the fingerprint
+    # (H) must record what actually ran there too, not the setting string.
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: False)
+    assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
+    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+    assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet

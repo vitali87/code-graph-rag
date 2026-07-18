@@ -20,12 +20,23 @@ from ...utils.path_utils import cached_relative_path
 from ..csharp_frontend import CallSiteKey, CSharpCallSite
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
-from .utils import _normalize_type_name
+from .utils import (
+    _normalize_type_name,
+    annotate_type_ref,
+    generic_arity_of_type_text,
+    split_type_ref,
+)
 
 if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+
+# (H) Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
+# (H) static call on an unregistered type). The dispatcher must emit nothing
+# (H) and must NOT fall back to the name-only trie, which would fabricate an
+# (H) edge onto an unrelated same-name first-party member.
+CSHARP_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
 def _arity(leaf: str) -> int:
@@ -65,7 +76,12 @@ class CSharpTypeInferenceEngine:
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_external_sites",
         "csharp_local_functions",
+        "csharp_generic_methods",
+        "csharp_class_generic_arity",
+        "csharp_method_return_types",
+        "method_return_types",
         "function_locations",
         "_rel_to_module",
     )
@@ -83,9 +99,15 @@ class CSharpTypeInferenceEngine:
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]],
         csharp_partial_groups: dict[str, list[str]] | None = None,
-        csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
+        csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
+        | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
+        csharp_generic_methods: set[str] | None = None,
+        csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
+        method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -109,8 +131,25 @@ class CSharpTypeInferenceEngine:
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
         )
+        self.csharp_external_sites = (
+            csharp_external_sites if csharp_external_sites is not None else set()
+        )
         self.csharp_local_functions = (
             csharp_local_functions if csharp_local_functions is not None else {}
+        )
+        self.csharp_generic_methods = (
+            csharp_generic_methods if csharp_generic_methods is not None else set()
+        )
+        self.csharp_class_generic_arity = (
+            csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
+        )
+        self.csharp_method_return_types = (
+            csharp_method_return_types if csharp_method_return_types is not None else {}
+        )
+        # (H) Shared reference (as above): {method qn: normalized return type},
+        # (H) populated during ingestion, read by chained-receiver typing.
+        self.method_return_types = (
+            method_return_types if method_return_types is not None else {}
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -133,13 +172,25 @@ class CSharpTypeInferenceEngine:
         param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if param_list is None:
             return
+        prev_loose_type: str | None = None
         for child in param_list.children:
+            # (H) A `params string[] xs` tail is not wrapped in a `parameter`
+            # (H) node (grammar quirk, same as extract_parameter_type_names):
+            # (H) its array_type and identifier sit loose under the list.
+            if child.type == cs.TS_CSHARP_ARRAY_TYPE:
+                prev_loose_type = safe_decode_text(child)
+                continue
+            if child.type == cs.TS_CSHARP_IDENTIFIER and prev_loose_type:
+                if name := safe_decode_text(child):
+                    types[name] = annotate_type_ref(prev_loose_type)
+                prev_loose_type = None
+                continue
             if child.type != cs.TS_CSHARP_PARAMETER:
                 continue
             name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
             type_text = safe_decode_text(child.child_by_field_name(cs.FIELD_TYPE))
             if name and type_text:
-                types[name] = _normalize_type_name(type_text)
+                types[name] = annotate_type_ref(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
         # (H) One type map per method (as every language engine here builds), so
@@ -161,7 +212,7 @@ class CSharpTypeInferenceEngine:
         if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
             return None
         if type_text := safe_decode_text(type_node):
-            return _normalize_type_name(type_text)
+            return annotate_type_ref(type_text)
         return None
 
     def _record_local(
@@ -196,7 +247,7 @@ class CSharpTypeInferenceEngine:
             declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
         ):
             if type_text := safe_decode_text(node.child_by_field_name(cs.FIELD_TYPE)):
-                return _normalize_type_name(type_text)
+                return annotate_type_ref(type_text)
         return None
 
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
@@ -250,7 +301,32 @@ class CSharpTypeInferenceEngine:
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
             return None
+        # (H) `Policy.Handle<TException>()`: a generic member's NAME field is a
+        # (H) generic_name; methods register generic-free, so strip the type
+        # (H) arguments or the fluent entry point never matches.
+        method_name = method_name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
+
+        # (H) `base.X()` binds the BASE chain only: a first-party base's member
+        # (H) when one exists, otherwise the base is external (object.Equals in
+        # (H) Polly's hide-object-members regions) and the call must emit
+        # (H) nothing -- the trie fallback was self-looping it onto the
+        # (H) caller's own override.
+        if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
+            if class_qn := self._containing_class_qn(caller_qn):
+                seen: set[str] = set()
+                for root in self._partial_roots(class_qn):
+                    for base_qn in self.class_inheritance.get(root, []):
+                        if hit := self._find_method_by_arity(
+                            base_qn, method_name, arg_count, seen
+                        ):
+                            return cs.NodeLabel.METHOD.value, hit
+                seen = set()
+                for root in self._partial_roots(class_qn):
+                    for base_qn in self.class_inheritance.get(root, []):
+                        if hit := self._find_method_by_name(base_qn, method_name, seen):
+                            return cs.NodeLabel.METHOD.value, hit
+            return CSHARP_EXTERNAL_TARGET
 
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
@@ -264,6 +340,12 @@ class CSharpTypeInferenceEngine:
             if arity_hit := self._find_arity_across_parts(
                 receiver_class_qn, method_name, arg_count
             ):
+                # (H) A delegate-typed PROPERTY registers as a METHOD node with
+                # (H) a bare (arity-0) qn, so a 0-arg invoke slips through the
+                # (H) ARITY path too: `entry.Callback()` is Delegate.Invoke,
+                # (H) not a call to the property node.
+                if self.function_registry.is_property(arity_hit):
+                    return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, arity_hit
         # (H) An extension method (`static M(this T x, ...)` on an unrelated static
         # (H) class) whose `this` receiver type matches the call's receiver -- the
@@ -279,7 +361,103 @@ class CSharpTypeInferenceEngine:
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
+                # (H) A delegate-typed PROPERTY invoked with call syntax
+                # (H) (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
+                # (H) method call; binding the property as a METHOD fabricates
+                # (H) an edge. Its reachability comes from the read pass.
+                if self.function_registry.is_property(name_hit):
+                    return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, name_hit
+        # (H) An object-virtual miss on a TYPED receiver (`severity.ToString()`
+        # (H) on an enum, `options.GetType()`) resolves to System.Object/Enum;
+        # (H) falling to the trie lands on whatever unrelated
+        # (H) hide-object-members override exists (Polly's PolicyBuilder).
+        if method_name in cs.CSHARP_OBJECT_VIRTUALS:
+            return CSHARP_EXTERNAL_TARGET
+        if receiver_class_qn is None and self._externally_targeted(
+            receiver, method_name, local_var_types or {}, caller_qn
+        ):
+            return CSHARP_EXTERNAL_TARGET
+        return None
+
+    def _externally_targeted(
+        self,
+        receiver: Node,
+        method_name: str,
+        local_var_types: dict[str, str],
+        caller_qn: str | None,
+    ) -> bool:
+        # (H) Only for UNTYPED receivers (a typed miss keeps today's trie
+        # (H) rescue): (a) a PascalCase identifier/dotted path that is no
+        # (H) local, no field, and no registered type is an external TYPE
+        # (H) (`Console`, `System.Console`); (b) an object-virtual member name
+        # (H) on an untyped receiver resolves to System.Object.
+        if method_name in cs.CSHARP_OBJECT_VIRTUALS:
+            return True
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return False
+        receiver = unwrapped
+        if receiver.type not in (
+            cs.TS_CSHARP_IDENTIFIER,
+            cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        ):
+            return False
+        text = safe_decode_text(receiver)
+        if not text:
+            return False
+        segments = text.split(cs.SEPARATOR_DOT)
+        head = segments[0]
+        if head in local_var_types:
+            # (H) A local/param (any casing) whose DECLARED type resolves to
+            # (H) no registered type (`string[]`, reflection FieldInfo) is
+            # (H) external; its members cannot be attributed by name
+            # (H) (`names.Contains(x)` bound Context.Contains).
+            return not self._registered_type_declares(
+                local_var_types[head], method_name
+            )
+        if not all(seg[:1].isupper() for seg in segments):
+            return False
+        if class_qn := self._containing_class_qn(caller_qn):
+            verdict = self._enclosing_member_external(
+                class_qn, head, method_name, caller_qn
+            )
+            if verdict is not None:
+                return verdict
+        # (H) Any registered type with this simple name means the receiver may
+        # (H) be first-party (even when twin ambiguity kept it untyped).
+        if any(
+            self.function_registry.get(qn) in _TYPE_DECLS
+            for qn in self.simple_name_lookup.get(head, set())
+        ):
+            return False
+        return True
+
+    def _enclosing_member_external(
+        self,
+        class_qn: str,
+        head: str,
+        method_name: str,
+        caller_qn: str | None,
+    ) -> bool | None:
+        # (H) Tri-state: True/False decide externality from what the enclosing
+        # (H) type knows about the receiver head; None leaves it to the
+        # (H) registered-simple-name sweep.
+        if member_type := self._field_type(class_qn, head):
+            # (H) A field/property receiver whose declared type is external
+            # (H) (`Wrapper` of BCL RateLimiter) makes the call external (the
+            # (H) trie self-looped `Wrapper.DisposeAsync()` onto the enclosing
+            # (H) class).
+            return not self._registered_type_declares(member_type, method_name)
+        if prop_qn := self.resolve_property_read(head, caller_qn):
+            if entry := self.csharp_method_return_types.get(prop_qn):
+                return not self._registered_type_declares(entry[0], method_name)
+        # (H) A PascalCase receiver is very often a PROPERTY or member of
+        # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
+        # (H) enclosing type declares by that name is first-party, not an
+        # (H) external type.
+        if self._find_name_across_parts(class_qn, head) is not None:
+            return False
         return None
 
     def _resolve_bare_call(
@@ -300,9 +478,34 @@ class CSharpTypeInferenceEngine:
             name, arg_count, caller_qn, module_qn
         ):
             return cs.NodeLabel.FUNCTION.value, local
+        # (H) Same-arity twins (`M(X) => M<Void>(x)` beside `M<T>(X)` on another
+        # (H) partial part, Polly's ResiliencePipeline Get*/Initialize*Context):
+        # (H) parameter arity cannot tell them apart, so prefer the overload
+        # (H) whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
+        # (H) generic_name, `M(...)` a plain identifier).
+        generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
         for class_qn in self._caller_class_candidates(caller_qn, module_qn):
-            if hit := self._find_arity_across_parts(class_qn, name, arg_count):
-                return cs.NodeLabel.METHOD.value, hit
+            matches = self._find_arity_matches_across_parts(class_qn, name, arg_count)
+            if matches:
+                preferred = [
+                    m
+                    for m in matches
+                    if (m in self.csharp_generic_methods) == generic_call
+                ]
+                return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
+        # (H) A bare object-virtual with no local declaration is
+        # (H) `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
+        # (H) a bare name that IS a delegate-typed member of the enclosing type
+        # (H) (`Callback();` on a record positional property) is
+        # (H) Delegate.Invoke. Neither may fall to the bare-name trie.
+        if name in cs.CSHARP_OBJECT_VIRTUALS:
+            return CSHARP_EXTERNAL_TARGET
+        if self.resolve_property_read(name, caller_qn) is not None:
+            return CSHARP_EXTERNAL_TARGET
+        if (class_qn := self._containing_class_qn(caller_qn)) and self._field_type(
+            class_qn, name
+        ):
+            return CSHARP_EXTERNAL_TARGET
         return None
 
     def _find_in_scope_local_function(
@@ -342,6 +545,41 @@ class CSharpTypeInferenceEngine:
                 return None
             scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return None
+
+    def csharp_local_function_group(
+        self, name: str, caller_qn: str | None, module_qn: str
+    ) -> list[str]:
+        # (H) Every in-scope local function with this name, arity-blind: a
+        # (H) method GROUP argument (`return new(..., Dispose)` handing
+        # (H) Serilog's CreateLogger locals to the Logger ctor) carries no call
+        # (H) arity, so the whole registered group at the nearest declaring
+        # (H) scope is the referenced set. Locals shadow members, matching
+        # (H) _find_in_scope_local_function's scope-chain discipline.
+        if not caller_qn:
+            return []
+        scope = caller_qn
+        while len(scope) > len(module_qn):
+            stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            if matches := self._local_function_group_at_scope(
+                name, caller_qn, scope, stripped
+            ):
+                return matches
+            if cs.SEPARATOR_DOT not in stripped:
+                return []
+            scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return []
+
+    def _local_function_group_at_scope(
+        self, name: str, caller_qn: str, scope: str, stripped: str
+    ) -> list[str]:
+        matches: list[str] = []
+        for probe_scope in dict.fromkeys((scope, stripped)):
+            candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
+            for variant in self.function_registry.variants(candidate):
+                entry = self.csharp_local_functions.get(variant)
+                if entry is not None and self._caller_within_host(caller_qn, entry[0]):
+                    matches.append(variant)
+        return matches
 
     def _caller_within_host(self, caller_qn: str, host_key: FunctionSpanKey) -> bool:
         # (H) True when the caller IS the local function's host scope or a local
@@ -384,11 +622,64 @@ class CSharpTypeInferenceEngine:
                 return
             yield scope
 
+    def resolve_property_read(self, name: str, caller_qn: str | None) -> str | None:
+        # (H) A bare-identifier read (`WrappedDictionary.Keys`) targets a
+        # (H) property of the caller's enclosing type (implicit this); resolve
+        # (H) across partial parts and base classes and accept ONLY a
+        # (H) registered property, so same-name methods stay out of the read
+        # (H) pass.
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
+    def resolve_member_property_read(
+        self, receiver_type: str, name: str, module_qn: str
+    ) -> str | None:
+        # (H) `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
+        # (H) receiver's type (a class name for a static read, an inferred
+        # (H) local/parameter type for an instance read). Accepts ONLY a
+        # (H) registered property; an unresolvable receiver yields nothing, so
+        # (H) unrelated `x.Value` chains never fabricate an edge.
+        class_qn = self._type_name_to_qn(receiver_type, module_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
+    def semantic_fact_resolved(self, call_node: Node, module_qn: str) -> bool:
+        # (H) True when a Roslyn call fact pinned this exact site: the target is
+        # (H) the compiler's own overload choice, so arity-based widening (the
+        # (H) same-arity family fan-out) must stay off for it.
+        return self._semantic_call_target(call_node, module_qn) is not None
+
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
-        if not self.csharp_call_sites:
+        if not (self.csharp_call_sites or self.csharp_external_sites):
             return None
+        key = self._call_site_key(call_node, module_qn)
+        if key is None:
+            return None
+        fact = self.csharp_call_sites.get(key)
+        if fact is not None:
+            return self._declared_location(
+                fact.target_file, fact.target_line, fact.target_col
+            )
+        if key in self.csharp_external_sites:
+            # (H) Roslyn resolved this site to a METADATA method: the call
+            # (H) provably leaves the repo, so return the external sentinel and
+            # (H) keep the name trie from fabricating a first-party edge (the
+            # (H) untypeable-receiver fp class the pure frontend cannot see).
+            return CSHARP_EXTERNAL_TARGET
+        return None
+
+    def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
         name_node = self._callee_name_node(call_node)
         if name_node is None:
             return None
@@ -402,17 +693,11 @@ class CSharpTypeInferenceEngine:
         # (H) Keyed on the callee NAME token (nested invocations share an
         # (H) expression start, never a name token), with generic arguments
         # (H) stripped to match Roslyn's symbol name.
-        key: CallSiteKey = (
+        return (
             rel,
             name_node.start_point[0] + 1,
             name_node.start_point[1],
             name.split(cs.CHAR_ANGLE_OPEN, 1)[0],
-        )
-        fact = self.csharp_call_sites.get(key)
-        if fact is None:
-            return None
-        return self._declared_location(
-            fact.target_file, fact.target_line, fact.target_col
         )
 
     def _callee_name_node(self, call_node: Node) -> Node | None:
@@ -479,7 +764,12 @@ class CSharpTypeInferenceEngine:
         )
         if not type_name:
             return None
-        return self._find_extension_method(type_name, method_name, arg_count)
+        return self._find_extension_method(
+            type_name,
+            method_name,
+            arg_count,
+            self._receiver_type_arity(receiver, local_var_types, module_qn, caller_qn),
+        )
 
     def _receiver_type_name(
         self,
@@ -493,6 +783,26 @@ class CSharpTypeInferenceEngine:
         # (H) (`string`, `int`) that are never registered as classes, so the raw
         # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
         # (H) branches but stops at the name.
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
+        # (H) extension-only method still binds on a cast receiver; same for a
+        # (H) `new Widget(...)` receiver.
+        if receiver.type in (
+            cs.TS_CSHARP_CAST_EXPRESSION,
+            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+        ):
+            return self._annotated_type_field(receiver)
+        # (H) Same chained-receiver typing as the instance path, stopping at
+        # (H) the (arity-annotated) type name -- extensions often target
+        # (H) unregistered BCL types like `string`, and both sides of the
+        # (H) matcher carry the annotation consistently.
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            return self._invocation_return_type_name(
+                receiver, local_var_types, module_qn, caller_qn
+            )
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
@@ -500,6 +810,41 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
         return None
+
+    def _annotated_type_field(self, receiver: Node) -> str | None:
+        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        raw = safe_decode_text(type_node) if type_node else None
+        return annotate_type_ref(raw) if raw else None
+
+    def _invocation_return_type_name(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        inner = self.resolve_csharp_method_call(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if inner is None:
+            return None
+        if entry := self.csharp_method_return_types.get(inner[1]):
+            rname, rarity = entry
+            return f"{rname}`{rarity}" if rarity else rname
+        return None
+
+    def _unwrap_receiver(self, receiver: Node) -> Node | None:
+        # (H) Peel interleaved parens and null-forgiving postfix wrappers
+        # (H) (`((Component)s)!` puts the `!` OUTSIDE the parens) to a fixpoint.
+        while receiver.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION,
+        ):
+            inner = receiver.named_children[0] if receiver.named_children else None
+            if inner is None:
+                return None
+            receiver = inner
+        return receiver
 
     def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
         qn = self._containing_class_qn(caller_qn)
@@ -540,8 +885,65 @@ class CSharpTypeInferenceEngine:
         # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
 
+    def _receiver_type_arity(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> int | None:
+        # (H) The receiver's WRITTEN generic arity where it is knowable
+        # (H) (object-creation/cast text, a chained call's recorded return, or
+        # (H) `this` inside a generic type); None when unknowable (an untyped
+        # (H) identifier), which skips the arity gate rather than guessing.
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            return generic_arity_of_type_text(raw) if raw else None
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            return generic_arity_of_type_text(raw) if raw else None
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            # (H) Full caller context: locals and imports participate in the
+            # (H) inner resolution exactly as they did for the instance path.
+            inner = self.resolve_csharp_method_call(
+                receiver, local_var_types, module_qn, caller_qn
+            )
+            if inner is not None and (
+                entry := self.csharp_method_return_types.get(inner[1])
+            ):
+                return entry[1]
+            return None
+        if receiver.type == cs.TS_CSHARP_THIS:
+            class_qn = self._containing_class_qn(caller_qn)
+            if class_qn is not None:
+                return self.csharp_class_generic_arity.get(class_qn, 0)
+        return None
+
+    def _registered_type_declares(self, type_name: str, method_name: str) -> bool:
+        # (H) A registered type merely SHARING the receiver type's simple name
+        # (H) (Polly's Snippets.Docs.RateLimiter demo class vs BCL RateLimiter)
+        # (H) must not defeat the external gate: the candidate counts only if
+        # (H) it actually DECLARES the called member somewhere in its
+        # (H) parts/bases.
+        simple = split_type_ref(type_name)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        for qn in self.simple_name_lookup.get(simple, set()):
+            if self.function_registry.get(qn) in _TYPE_DECLS:
+                if self._find_name_across_parts(qn, method_name) is not None:
+                    return True
+        return False
+
     def _find_extension_method(
-        self, receiver_type_name: str, method_name: str, arg_count: int
+        self,
+        receiver_type_name: str,
+        method_name: str,
+        arg_count: int,
+        receiver_arity: int | None = None,
     ) -> str | None:
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
@@ -553,18 +955,32 @@ class CSharpTypeInferenceEngine:
         # (H) genuinely ambiguous -- we can't tell which one it is, so an
         # (H) unqualified-vs-unqualified match must not guess. A qualified receiver
         # (H) or a BCL name (not registered) is not affected.
-        ambiguous_unqualified = not recv_qualified and (
-            len(
-                [
-                    qn
-                    for qn in self.simple_name_lookup.get(recv_simple, set())
-                    if self.function_registry.get(qn) in _TYPE_DECLS
-                ]
-            )
-            > 1
+        same_name_decls = [
+            qn
+            for qn in self.simple_name_lookup.get(recv_simple, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        # (H) Same-name declarations that all differ by GENERIC ARITY (`Builder`
+        # (H) beside `Builder<TResult>`, Polly's dual pipeline builders) are not
+        # (H) the namespace ambiguity this guard exists for: a compilable call
+        # (H) binds the unique matching extension regardless of which twin the
+        # (H) receiver is. Only same-arity twins (true `N1.Widget`/`N2.Widget`
+        # (H) namespace splits) stay ambiguous.
+        distinct_arities = {
+            self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
+        }
+        ambiguous_unqualified = (
+            not recv_qualified
+            and len(same_name_decls) > 1
+            and len(distinct_arities) != len(same_name_decls)
         )
         matches: list[str] = []
-        for qn, recv_type, ext_namespace in candidates:
+        for qn, recv_type, ext_namespace, cand_recv_arity in candidates:
+            # (H) A receiver of KNOWN written arity never binds an extension
+            # (H) declared for the other generic twin (`new Builder<int>()`
+            # (H) cannot take a `this Builder` extension).
+            if receiver_arity is not None and cand_recv_arity != receiver_arity:
+                continue
             # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
             # (H) leaf-split on `.` would land inside a qualified param type.
             if _arity(qn) != arg_count + 1:
@@ -615,6 +1031,49 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
+        # (H) A cast receiver `((Component)s!).Reload()` (Polly's
+        # (H) CancellationToken.Register callback): the cast TYPE is the
+        # (H) receiver's type by construction (mirrors the Java cast-receiver
+        # (H) handling).
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            raw = safe_decode_text(type_node) if type_node else None
+            if raw:
+                # (H) The cast's WRITTEN arity picks between simple-name twins
+                # (H) (`(Opt<int>)o` names the generic Opt<T>, never plain Opt).
+                return self._type_name_to_qn(
+                    _normalize_type_name(raw),
+                    module_qn,
+                    generic_arity_of_type_text(raw),
+                )
+            return None
+        # (H) `new Builder().Add()`: an object-creation receiver IS its type.
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            if type_text := safe_decode_text(type_node) if type_node else None:
+                return self._type_name_to_qn(
+                    _normalize_type_name(type_text),
+                    module_qn,
+                    generic_arity_of_type_text(type_text),
+                )
+            return None
+        # (H) `Policy.Handle<T>().Wrap(...)`: an invocation receiver types the
+        # (H) next hop via the resolved inner call's recorded return type
+        # (H) (Polly's whole fluent surface). Depth is bounded by chain length.
+        if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            inner = self.resolve_csharp_method_call(
+                receiver, local_var_types, module_qn, caller_qn
+            )
+            if inner is None:
+                return None
+            if entry := self.csharp_method_return_types.get(inner[1]):
+                rtype, rarity = entry
+                return self._type_name_to_qn(rtype, module_qn, rarity)
+            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
         # (H) An explicit `this.field` receiver: the field's (possibly inherited)
@@ -652,7 +1111,17 @@ class CSharpTypeInferenceEngine:
         class_qn = base.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
 
-    def _type_name_to_qn(self, type_name: str, module_qn: str) -> str | None:
+    def _type_name_to_qn(
+        self,
+        type_name: str,
+        module_qn: str,
+        generic_arity: int | None = None,
+    ) -> str | None:
+        # (H) Stored type refs carry their written generic arity CLR-style
+        # (H) (`Options`0` is implicit: plain means arity 0); parse it so twin
+        # (H) filtering works for every map-sourced reference.
+        if generic_arity is None:
+            type_name, generic_arity = split_type_ref(type_name)
         # (H) An already-qualified name that IS a registered type resolves directly,
         # (H) skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:
@@ -667,6 +1136,26 @@ class CSharpTypeInferenceEngine:
             for qn in self.simple_name_lookup.get(simple, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
+        return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def _disambiguate_type_candidates(
+        self,
+        candidates: list[str],
+        generic_arity: int | None,
+        module_qn: str,
+    ) -> str | None:
+        # (H) `Builder` vs `Builder<TResult>` share a simple name; when the
+        # (H) reference's WRITTEN generic arity is known, keep only the
+        # (H) declarations with that type-parameter count (Polly's dual
+        # (H) builders, where the ambiguity killed every fluent second hop).
+        if generic_arity is not None and len(candidates) > 1:
+            arity_matched = [
+                qn
+                for qn in candidates
+                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            ]
+            if arity_matched:
+                candidates = arity_matched
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
@@ -715,6 +1204,83 @@ class CSharpTypeInferenceEngine:
             ):
                 return resolved
         return None
+
+    def _find_arity_matches_across_parts(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> list[str]:
+        # (H) ALL exact-arity same-name overloads across partial parts and
+        # (H) bases (the single-hit variant returns the first, which is
+        # (H) arbitrary when same-arity twins exist).
+        seen: set[str] = set()
+        out: list[str] = []
+        for root in self._partial_roots(class_qn):
+            self._collect_arity_matches(root, method_name, arg_count, seen, out)
+        return out
+
+    def _collect_arity_matches(
+        self,
+        class_qn: str,
+        method_name: str,
+        arg_count: int,
+        seen: set[str],
+        out: list[str],
+    ) -> None:
+        if class_qn in seen:
+            return
+        seen.add(class_qn)
+        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+        out.extend(
+            qn
+            for qn in self._direct_same_name_methods(class_qn, method_name)
+            if _arity(qn[len(prefix) :]) == arg_count
+        )
+        for base_qn in self.class_inheritance.get(class_qn, []):
+            self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
+
+    def csharp_same_arity_family(self, method_qn: str) -> list[str]:
+        # (H) Signature-suffixed siblings of a resolved bare call that differ
+        # (H) only in parameter TYPES: a switch-arm dispatch
+        # (H) (`FormatExact(i, o)` / `FormatExact(s, o)`) is untypeable by
+        # (H) arity alone, so the whole same-arity family stays reachable.
+        if cs.CHAR_PAREN_OPEN not in method_qn:
+            return []
+        base = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if cs.SEPARATOR_DOT not in base:
+            return []
+        class_qn, name = base.rsplit(cs.SEPARATOR_DOT, 1)
+        return [
+            qn
+            for qn in self._find_arity_matches_across_parts(
+                class_qn, name, _arity(method_qn)
+            )
+            if qn != method_qn
+        ]
+
+    def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
+        # (H) Every same-name METHOD of the caller's enclosing type (across
+        # (H) partial parts and base classes): a bare method-group pass binds
+        # (H) the enclosing type's method group, and which overload the
+        # (H) delegate selects is invisible to syntax, so the whole family is
+        # (H) referenced. Properties are excluded (a method group never names
+        # (H) a property).
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        queue = deque(self._partial_roots(class_qn))
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            out.extend(
+                qn
+                for qn in self._direct_same_name_methods(current, name)
+                if not self.function_registry.is_property(qn)
+            )
+            queue.extend(self.class_inheritance.get(current, []))
+        return sorted(set(out))
 
     def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
         seen: set[str] = set()

@@ -96,6 +96,32 @@ TS_CSHARP_BASE_LIST = "base_list"
 # (H) a record positional base `primary_constructor_base_type` (`Animal(Name)`),
 # (H) or a `predefined_type` (an enum's underlying integral type -> not a base).
 TS_CSHARP_GENERIC_NAME = "generic_name"
+TS_CSHARP_CAST_EXPRESSION = "cast_expression"
+TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
+TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
+TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"
+TS_CSHARP_TYPE_PARAMETER_LIST = "type_parameter_list"
+# (H) The `base` receiver keyword parses as a bare "base" node in this
+# (H) grammar version (not "base_expression").
+TS_CSHARP_BASE_EXPRESSION = "base"
+
+# (H) object's virtual/universal members: a call to one of these on an UNTYPED
+# (H) receiver resolves to System.Object (or a BCL override), so binding it by
+# (H) bare name to whatever first-party override happens to exist fabricates
+# (H) an edge (exposed by the semantic calls oracle on Polly's
+# (H) hide-object-members regions).
+CSHARP_OBJECT_VIRTUALS = frozenset(
+    {
+        "Equals",
+        "GetHashCode",
+        "GetType",
+        "ToString",
+        "ReferenceEquals",
+        "MemberwiseClone",
+    }
+)
+TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
+TS_CSHARP_BLOCK = "block"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 
@@ -120,6 +146,7 @@ TS_CSHARP_MODIFIER_PROTECTED = "protected"
 # (H) of the parameter_list (grammar quirk), captured directly.
 TS_CSHARP_PARAMETER = "parameter"
 TS_CSHARP_ARRAY_TYPE = "array_type"
+TS_CSHARP_PARAMETER_LIST = "parameter_list"
 
 # (H) Local/field declarations for type inference. A local is a
 # (H) variable_declaration (type field + variable_declarator[s]); `var` makes the
@@ -148,6 +175,10 @@ TS_CSHARP_MEMBER_BINDING_EXPRESSION = "member_binding_expression"
 TS_CSHARP_FIELD_EXPRESSION = "expression"
 TS_CSHARP_THIS = "this"
 TS_CSHARP_ARGUMENT = "argument"
+# (H) implicit_object_creation_expression (`new(...)`) exposes NO field names;
+# (H) its argument_list is an unfielded named child, so argument parsing needs
+# (H) a typed fallback where the `arguments` field lookup returns nothing.
+TS_CSHARP_ARGUMENT_LIST = "argument_list"
 
 # (H) Nested scopes that own their own locals; the variable-type walk stops at
 # (H) these so a lambda/local-function local cannot leak into (or shadow) the

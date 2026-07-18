@@ -31,9 +31,15 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
 
 
 def _frontend_settings() -> list[str]:
+    # (H) The C# entry records the RESOLVED mode, not the setting: under AUTO a
+    # (H) graph built with dotnet present carries hybrid edges and one built
+    # (H) without does not, so the two must not share a fingerprint. Imported
+    # (H) lazily to keep this module free of the parsers package at import time.
+    from .parsers.csharp_frontend import resolve_csharp_frontend
+
     return [
         f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
-        f"CSHARP_FRONTEND={settings.CSHARP_FRONTEND.value}",
+        f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
     ]
 
 

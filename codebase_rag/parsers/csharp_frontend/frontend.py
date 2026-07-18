@@ -63,12 +63,16 @@ class CSharpSemanticFacts(NamedTuple):
     call_sites: dict[CallSiteKey, CSharpCallSite]
     partial_groups: list[list[tuple[str, int]]]
     query_calls: list[CSharpQueryCall]
+    # (H) Sites Roslyn resolved to a METADATA method (no first-party
+    # (H) declaration): the compiler proof that the call leaves the repo, so
+    # (H) the name-trie fallback must not fabricate a first-party edge there.
+    external_sites: set[CallSiteKey]
 
 
 def _empty_facts() -> CSharpSemanticFacts:
     # (H) A fresh instance per failure path: the maps are handed to mutable
     # (H) processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [])
+    return CSharpSemanticFacts({}, {}, [], [], set())
 
 
 _DOTNET = "dotnet"
@@ -88,6 +92,23 @@ _IGNORE_DIRS = frozenset({"bin", "obj", ".git", "node_modules", "vendor", "packa
 
 def csharp_frontend_available() -> bool:
     return shutil.which(_DOTNET) is not None
+
+
+def resolve_csharp_frontend() -> cs.CSharpFrontend:
+    # (H) The single source of truth for the EFFECTIVE frontend: without a
+    # (H) dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
+    # (H) HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
+    # (H) warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
+    # (H) parser fingerprint resolves through here so a graph's recorded
+    # (H) identity always matches the frontend that actually ran.
+    mode = settings.CSHARP_FRONTEND
+    if mode == cs.CSharpFrontend.TREESITTER:
+        return mode
+    if not csharp_frontend_available():
+        return cs.CSharpFrontend.TREESITTER
+    if mode == cs.CSharpFrontend.AUTO:
+        return cs.CSharpFrontend.HYBRID
+    return mode
 
 
 def _project_candidates(repo_path: Path) -> list[Path]:
@@ -253,6 +274,10 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             )
             for query in payload.get("queries", [])
         ],
+        external_sites={
+            (site["file"], int(site["line"]), int(site["col"]), site["name"])
+            for site in payload.get("externals", [])
+        },
     )
     if not any(facts) and stderr.strip():
         # (H) A well-formed but entirely empty payload means the workspace load

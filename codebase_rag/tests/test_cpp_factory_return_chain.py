@@ -6,6 +6,7 @@
 # (H) resolve the chained method on it.
 from pathlib import Path
 
+from codebase_rag import constants as cs
 from evals.cgr_graph import _capture
 
 
@@ -136,7 +137,9 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
     from codebase_rag.parsers.cpp.utils import extract_return_type_name
 
     parsers, _ = load_parsers()
-    tree = parsers["cpp"].parse(b"Outer<T>::Inner make() { return {}; }\n")
+    tree = parsers[cs.SupportedLanguage.CPP].parse(
+        b"Outer<T>::Inner make() { return {}; }\n"
+    )
 
     def find_fn(node):
         if node.type == "function_definition":
@@ -149,3 +152,154 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
     fn = find_fn(tree.root_node)
     assert fn is not None
     assert extract_return_type_name(fn) == "Outer.Inner"
+
+
+def test_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
+    # (H) nlohmann from_cbor shape: `Reader<decltype(ia)>(std::move(ia), fmt)
+    # (H) .sax_parse(...)` chains a method on a CONSTRUCTOR TEMPORARY -- the
+    # (H) callee is the class itself, so the receiver type IS that class. Aaa
+    # (H) is the alphabetical trie decoy.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "template<typename T>\n"
+        "struct Reader {\n"
+        "    Reader(T&& t, int f) {}\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "template<typename T>\n"
+        "bool driver(T&& ia) {\n"
+        "    return Reader<T>(static_cast<T&&>(ia), 1).sax_parse(1);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.Reader.sax_parse") in calls, sorted(
+        c for c in calls if "sax_parse" in c[1]
+    )
+    assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
+
+
+def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
+    # (H) The namespace-qualified form `detail::Reader<...>(...).sax_parse(...)`
+    # (H) (nlohmann json.hpp:4159) must resolve through the qualified path too.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "namespace detail {\n"
+        "template<typename T>\n"
+        "struct Reader {\n"
+        "    Reader(T&& t, int f) {}\n"
+        "    bool sax_parse(int f) { return true; }\n"
+        "};\n"
+        "}\n"
+        "template<typename T>\n"
+        "bool driver(T&& ia) {\n"
+        "    return detail::Reader<T>(static_cast<T&&>(ia), 1).sax_parse(1);\n"
+        "}\n",
+    )
+    calls = _calls(tmp_path)
+    assert ("crate.f.driver", "crate.f.detail.Reader.sax_parse") in calls, sorted(
+        c for c in calls if "sax_parse" in c[1]
+    )
+    assert ("crate.f.driver", "crate.f.Aaa.sax_parse") not in calls
+
+
+def test_macro_attributed_definition_name_extracted() -> None:
+    # (H) nlohmann shape (JSON_HEDLEY_NON_NULL(3) before bool sax_parse(...)):
+    # (H) tree-sitter merges the attribute macro into the definition as a
+    # (H) parenthesized_declarator wrapping an ERROR plus the REAL
+    # (H) function_declarator. The name walk must descend through it, or the
+    # (H) method never registers and its whole callee cluster (binary_reader's
+    # (H) 37 methods) reads as dead.
+    from tree_sitter import Node
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp import utils as cpp_utils
+
+    parsers, _queries = load_parsers()
+    src = (
+        "class Reader {\n"
+        "  public:\n"
+        "    HEDLEY_NON_NULL(2)\n"
+        "    bool sax_parse(const int format, void* sax_, const bool strict = true)\n"
+        "    {\n"
+        "        return true;\n"
+        "    }\n"
+        "    bool other() { return true; }\n"
+        "};\n"
+    )
+    tree = parsers[cs.SupportedLanguage.CPP].parse(src.encode())
+
+    def find(node: Node, node_type: str) -> Node | None:
+        if node.type == node_type:
+            return node
+        for child in node.named_children:
+            if (hit := find(child, node_type)) is not None:
+                return hit
+        return None
+
+    defn = find(tree.root_node, "function_definition")
+    assert defn is not None
+    # (H) Pin the mangled shape this test exists for: if a grammar bump starts
+    # (H) parsing the macro cleanly, this guard flags the test for revisit.
+    assert find(defn, "parenthesized_declarator") is not None
+    assert cpp_utils.extract_function_name(defn) == "sax_parse"
+
+    # (H) Macro-attributed CONSTRUCTOR with a member-initializer list
+    # (H) (nlohmann's exception hierarchy): recovery buries the REAL ctor
+    # (H) declarator inside the ERROR and leaves the base-initializer
+    # (H) (`: exception(...)`) as the sibling function_declarator. The walk
+    # (H) must take the first declarator in SOURCE order, entering the ERROR,
+    # (H) or every such ctor registers under the base class's name.
+    ctor_src = (
+        "class invalid_iterator : public exception {\n"
+        "  private:\n"
+        "    HEDLEY_NON_NULL(3)\n"
+        "    invalid_iterator(int id_, const char* what_arg)\n"
+        "        : exception(id_, what_arg) {}\n"
+        "};\n"
+    )
+    ctor_tree = parsers[cs.SupportedLanguage.CPP].parse(ctor_src.encode())
+    ctor_defn = find(ctor_tree.root_node, "function_definition")
+    assert ctor_defn is not None
+    assert find(ctor_defn, "parenthesized_declarator") is not None
+    assert cpp_utils.extract_function_name(ctor_defn) == "invalid_iterator"
+
+
+def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
+    # (H) nlohmann's exception factories: `static invalid_iterator create(...)
+    # (H) { return {id_, w.c_str()}; }` constructs via a braced initializer
+    # (H) list -- no call node exists, so the private ctor gets no CALLS edge
+    # (H) and reports dead even though its only factory is alive. The declared
+    # (H) return type names the constructed class.
+    _make(
+        tmp_path,
+        "struct Aaa {\n"
+        "    Aaa(int a, const char* b) {}\n"
+        "};\n"
+        "struct Widget {\n"
+        "    Widget(int a, const char* b) {}\n"
+        "    static Widget create(int a) {\n"
+        '        return {a, "x"};\n'
+        "    }\n"
+        "};\n"
+        "int helper() { return 1; }\n"
+        "void unrelated() { helper(); }\n",
+    )
+    ingestor = _capture(tmp_path, "crate")
+    calls = {
+        (str(f), str(r), str(t))
+        for _fl, f, r, _tl, t in ingestor.rels
+        if str(r) in ("CALLS", "INSTANTIATES")
+    }
+    assert ("crate.f.Widget.create", "INSTANTIATES", "crate.f.Widget") in calls, sorted(
+        c for c in calls if "create" in c[0]
+    )
+    assert ("crate.f.Widget.create", "CALLS", "crate.f.Widget.Widget") in calls, sorted(
+        c for c in calls if "create" in c[0]
+    )
+    assert not any("Aaa" in t for _f, _r, t in calls if _f.endswith("create"))

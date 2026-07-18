@@ -649,6 +649,7 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = {}
         dp.csharp_call_sites.clear()
+        dp.csharp_external_sites.clear()
         self._csharp_partial_decls = []
         self._csharp_query_calls = []
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
@@ -659,12 +660,19 @@ class GraphUpdater:
             # (H) and building the net tool for a non-C# repo would be wasteful.
             return
         if not csharp_frontend_available():
-            logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
+            # (H) AUTO promises hybrid only where the toolchain exists, so a
+            # (H) missing dotnet is the expected fallback (info); an EXPLICIT
+            # (H) hybrid/roslyn request that cannot run stays a warning.
+            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
+                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
+            else:
+                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
         logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
         facts = run_csharp_frontend(self.repo_path)
         dp.csharp_base_kinds = facts.base_kinds
         dp.csharp_call_sites.update(facts.call_sites)
+        dp.csharp_external_sites.update(facts.external_sites)
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
@@ -673,6 +681,7 @@ class GraphUpdater:
                 calls=len(facts.call_sites),
                 partials=len(facts.partial_groups),
                 queries=len(facts.query_calls),
+                externals=len(facts.external_sites),
             )
         )
 
@@ -932,6 +941,16 @@ class GraphUpdater:
                 "Registered {} forward-declared C/C++ types with no definition",
                 kept_forwards,
             )
+
+        # (H) After rehydration (an incremental run's class may live in an
+        # (H) unchanged header) and after forward declarations (a kept
+        # (H) forward-declared TYPE also proves the name is a class, not a
+        # (H) macro).
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
 
         # (H) After forward declarations so a base whose only representation is
         # (H) a kept forward declaration still resolves to a real node.

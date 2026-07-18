@@ -150,8 +150,11 @@ class ClassIngestMixin:
     csharp_methods: set[str]
     csharp_override_methods: set[str]
     csharp_partial_groups: dict[str, list[str]]
+    csharp_generic_methods: set[str]
+    csharp_class_generic_arity: dict[str, int]
+    csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str]]]
+    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
     csharp_type_locations: dict[tuple[str, int], str]
     class_field_guard_inner: dict[str, dict[str, str]]
@@ -887,8 +890,36 @@ class ClassIngestMixin:
             # (H) (`_w.M()`, `this._w.M()`) resolves, including a field inherited
             # (H) from a base class in another file (the resolver walks
             # (H) class_inheritance over these per-class maps).
-            if field_types := csharp_utils.build_field_type_map(member_node):
+            field_types = csharp_utils.build_field_type_map(member_node) or {}
+            # (H) A record's positional parameters ARE public properties of
+            # (H) the record type; record them as members so receiver typing
+            # (H) and the delegate-invoke gate see them (`Callback();` on a
+            # (H) record param is Action.Invoke, not a first-party call).
+            if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
+                for pl in member_node.children:
+                    if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
+                        continue
+                    for prm in pl.children:
+                        if prm.type != cs.TS_CSHARP_PARAMETER:
+                            continue
+                        pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
+                        ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
+                        if pname and ptype:
+                            field_types.setdefault(
+                                pname, csharp_utils.annotate_type_ref(ptype)
+                            )
+            if field_types:
                 self.class_field_types[class_qn] = field_types
+            # (H) Declared type-parameter count: `Builder<TResult>` -> 1;
+            # (H) unrecorded means 0, so only generics are stored. A class
+            # (H) node's type_parameter_list carries NO field name (unlike a
+            # (H) method's), so scan the children.
+            for child in member_node.children:
+                if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
+                    self.csharp_class_generic_arity[class_qn] = len(
+                        child.named_children
+                    )
+                    break
             # (H) A `partial` type is split across files into N path-distinct
             # (H) nodes; group the parts into one shared list so a typed receiver
             # (H) resolves members and bases from any part. The key is the
@@ -1115,6 +1146,13 @@ class ClassIngestMixin:
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,
             )
+            if (
+                ingested_qn is not None
+                and language == cs.SupportedLanguage.CSHARP
+                and method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+                is not None
+            ):
+                self.csharp_generic_methods.add(ingested_qn)
             if ingested_qn is not None:
                 record_cpp_definition_span(
                     self.cpp_definition_spans,
@@ -1183,6 +1221,29 @@ class ClassIngestMixin:
                         container_qn=class_qn,
                     )
                 )
+            if (
+                language == cs.SupportedLanguage.CSHARP
+                and ingested_qn is not None
+                and (
+                    rt_node := method_node.child_by_field_name(
+                        cs.TS_CSHARP_FIELD_RETURNS
+                    )
+                    # (H) property_declaration exposes its type via `type`,
+                    # (H) not `returns`; recording it lets chained typing and
+                    # (H) the external-member gate see through properties.
+                    or method_node.child_by_field_name(cs.FIELD_TYPE)
+                )
+                is not None
+            ):
+                # (H) Record a C# method's return type so a chained call
+                # (H) (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
+                # (H) fluent surface) can type the receiver for the next hop.
+                if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+                    raw = csharp_utils.safe_decode_text(rt_node) or rt_text
+                    self.csharp_method_return_types[ingested_qn] = (
+                        rt_text,
+                        csharp_utils.generic_arity_of_type_text(raw),
+                    )
             if language == cs.SupportedLanguage.CPP:
                 # (H) Record a C++ method's return type so a chained call off a
                 # (H) static factory method (`parser(...).parse(...)`, nlohmann's
