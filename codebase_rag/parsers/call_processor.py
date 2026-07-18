@@ -4200,6 +4200,21 @@ class CallProcessor:
         shadowed: set[str] | None = None
         seen: set[str] = set()
 
+        def try_emit(name: str | None, this_read: bool) -> None:
+            nonlocal shadowed
+            if not name or name not in prop_names or name in seen:
+                return
+            if shadowed is None:
+                shadowed = self._csharp_declared_names(
+                    caller_node, function_types, class_types
+                )
+            if (this_read or name not in shadowed) and (
+                prop_qn := engine.resolve_property_read(name, caller_qn)
+            ):
+                seen.add(name)
+                if prop_qn != caller_qn:
+                    ensure_rel(caller_spec, refs_rel, (method_label, qn_key, prop_qn))
+
         stack = list(caller_node.children)
         while stack:
             node = stack.pop()
@@ -4212,26 +4227,29 @@ class CallProcessor:
                 # (H) shadow a this-qualified read), so the read is the NAME
                 # (H) field and the shadow check does not apply.
                 this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
-                name = (
+                try_emit(
                     safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
                     if this_read
-                    else self._csharp_read_identifier(receiver)
+                    else self._csharp_read_identifier(receiver),
+                    this_read,
                 )
-                if name and name in prop_names and name not in seen:
-                    if shadowed is None:
-                        shadowed = self._csharp_declared_names(
-                            caller_node, function_types, class_types
-                        )
-                    if (this_read or name not in shadowed) and (
-                        prop_qn := engine.resolve_property_read(name, caller_qn)
-                    ):
-                        seen.add(name)
-                        if prop_qn != caller_qn:
-                            ensure_rel(
-                                caller_spec,
-                                refs_rel,
-                                (method_label, qn_key, prop_qn),
-                            )
+            elif node_type == cs.TS_CSHARP_IDENTIFIER:
+                # (H) A bare identifier expression (`return Size;`, `Use(Size)`,
+                # (H) `var n = Size;`) reads the getter just the same. NOT a
+                # (H) read: any member-access position (receiver/name handled
+                # (H) above), a parent's NAME field (a declarator/parameter's
+                # (H) own name, a named-argument label `Use(Size: 3)`), or a
+                # (H) parent's TYPE field (`new Size()`, `(Size)x`).
+                # (H) `==`, not `is`: child_by_field_name returns a fresh Node
+                # (H) wrapper each call, so identity never matches.
+                parent = node.parent
+                if (
+                    parent is not None
+                    and parent.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    and parent.child_by_field_name(cs.FIELD_NAME) != node
+                    and parent.child_by_field_name(cs.FIELD_TYPE) != node
+                ):
+                    try_emit(safe_decode_text(node), False)
             stack.extend(node.children)
 
     def _build_nested_qualified_name(
