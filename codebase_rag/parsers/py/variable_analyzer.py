@@ -556,7 +556,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
 
     def _analyze_repository_item_type(self, module_qn: str) -> str | None:
         repo_qn_patterns = [
-            f"{module_qn.split(cs.SEPARATOR_DOT)[0]}{cs.PY_MODELS_BASE_PATH}{cs.PY_CLASS_REPOSITORY}",
+            f"{module_qn.split(cs.SEPARATOR_DOT, maxsplit=1)[0]}{cs.PY_MODELS_BASE_PATH}{cs.PY_CLASS_REPOSITORY}",
             cs.PY_CLASS_REPOSITORY,
         ]
 

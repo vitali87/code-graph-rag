@@ -1,5 +1,4 @@
 from statistics import fmean
-from typing import TypeVar
 
 from codebase_rag import constants as cs
 
@@ -14,8 +13,6 @@ from .types_defs import (
     ScoreResult,
     ScoreRow,
 )
-
-T = TypeVar("T")
 
 
 def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
@@ -247,7 +244,7 @@ def _name_edge_bucket(cgr_set: set[NameEdge], oracle_set: set[NameEdge]) -> Diff
     return DiffBucket(missing=missing, extra=extra)
 
 
-def _prf(category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:
+def _prf[T](category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:
     tp = len(cgr & oracle)
     fp = len(cgr - oracle)
     fn = len(oracle - cgr)

@@ -76,7 +76,7 @@ def discover_python_source_roots(repo_path: Path) -> dict[str, list[tuple[str, s
     def _add(name: str, dotted_dir: str) -> None:
         if dotted_dir == name:
             return
-        top_level = name.split(cs.SEPARATOR_DOT)[0]
+        top_level = name.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
         candidates = roots.setdefault(top_level, [])
         if (name, dotted_dir) not in candidates:
             candidates.append((name, dotted_dir))
@@ -121,7 +121,7 @@ def resolve_via_source_roots(
     # (H) remap answers `acme.widgets.impl`). Among matching roots, the one that
     # (H) actually contains the imported submodule on disk wins; with no on-disk
     # (H) confirmation, a sole match is trusted.
-    top_level = module_name.split(cs.SEPARATOR_DOT)[0]
+    top_level = module_name.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
     candidates = roots.get(top_level)
     if not candidates:
         return None

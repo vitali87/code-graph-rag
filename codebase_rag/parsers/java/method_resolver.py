@@ -106,7 +106,7 @@ def _callable_visible_to_caller(
         return True
     if not caller_qn:
         return False
-    owner = qn.split(cs.CHAR_PAREN_OPEN)[0].rsplit(cs.SEPARATOR_DOT, 1)[0]
+    owner = qn.split(cs.CHAR_PAREN_OPEN, maxsplit=1)[0].rsplit(cs.SEPARATOR_DOT, 1)[0]
     return caller_qn == owner or caller_qn.startswith(f"{owner}{cs.SEPARATOR_DOT}")
 
 
@@ -463,7 +463,7 @@ class JavaMethodResolverMixin:
             candidate_modules, class_qn, current_module_qn
         )
 
-        simple_class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
+        simple_class_name = class_qn.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
 
         for module_qn in ranked_candidates:
             registry_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{simple_class_name}"

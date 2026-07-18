@@ -129,8 +129,8 @@ class TestEmbedCallsSync:
         from codebase_rag.embedder import embed_code_batch
 
         snippets = [f"def f{i}(): pass" for i in range(5)]
-        mock_unixcoder.tokenize.side_effect = lambda batch, **_kw: [[1, 2, 3]] * len(
-            batch
+        mock_unixcoder.tokenize.side_effect = lambda batch, **_kw: (
+            [[1, 2, 3]] * len(batch)
         )
         mock_unixcoder.side_effect = lambda tensor: (
             torch.zeros(tensor.shape[0], 5, 768),

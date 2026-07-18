@@ -73,8 +73,9 @@ class TestLuaTypeInferenceWithRealParsing:
         mock_function_registry: MagicMock,
     ) -> None:
         mock_function_registry.__contains__ = MagicMock(
-            side_effect=lambda x: x
-            in {"myapp.main.Person", "myapp.main.Logger", "myapp.main.Config"}
+            side_effect=lambda x: (
+                x in {"myapp.main.Person", "myapp.main.Logger", "myapp.main.Config"}
+            )
         )
 
         code = b"""

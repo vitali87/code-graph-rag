@@ -282,7 +282,7 @@ def parse_cpp_base_classes(
 
 def extract_cpp_base_class_name(parent_text: str) -> str:
     if cs.CHAR_ANGLE_OPEN in parent_text:
-        parent_text = parent_text.split(cs.CHAR_ANGLE_OPEN)[0]
+        parent_text = parent_text.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
 
     if cs.SEPARATOR_DOUBLE_COLON in parent_text:
         parent_text = parent_text.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
