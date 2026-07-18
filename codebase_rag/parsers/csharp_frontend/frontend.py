@@ -95,16 +95,20 @@ def csharp_frontend_available() -> bool:
 
 
 def resolve_csharp_frontend() -> cs.CSharpFrontend:
-    # (H) The single source of truth for what AUTO means: HYBRID wherever a
-    # (H) dotnet toolchain is present, TREESITTER otherwise. Both the graph
-    # (H) build and the parser fingerprint resolve through here so a graph's
-    # (H) recorded identity always matches the frontend that actually ran.
+    # (H) The single source of truth for the EFFECTIVE frontend: without a
+    # (H) dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
+    # (H) HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
+    # (H) warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
+    # (H) parser fingerprint resolves through here so a graph's recorded
+    # (H) identity always matches the frontend that actually ran.
     mode = settings.CSHARP_FRONTEND
-    if mode != cs.CSharpFrontend.AUTO:
+    if mode == cs.CSharpFrontend.TREESITTER:
         return mode
-    if csharp_frontend_available():
+    if not csharp_frontend_available():
+        return cs.CSharpFrontend.TREESITTER
+    if mode == cs.CSharpFrontend.AUTO:
         return cs.CSharpFrontend.HYBRID
-    return cs.CSharpFrontend.TREESITTER
+    return mode
 
 
 def _project_candidates(repo_path: Path) -> list[Path]:
