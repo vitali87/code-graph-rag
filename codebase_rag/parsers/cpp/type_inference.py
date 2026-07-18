@@ -69,6 +69,48 @@ class CppTypeInferenceEngine:
                     # (H) (and extern "C" blocks), so recurse to reach nested ones.
                     self.collect_type_aliases(child, aliases, conflicts)
 
+    def collect_local_type_aliases(
+        self, caller_node: Node
+    ) -> dict[str, list[tuple[str, int, int]]]:
+        # (H) Aliases declared INSIDE a caller's body (`void f() { using w =
+        # (H) basic_writer; w(1); }`) are exactly what collect_type_aliases
+        # (H) skips, so construction-site resolution collects them per caller.
+        # (H) Each entry carries the declaration's end byte and the enclosing
+        # (H) block's end byte: C++ name lookup is declaration-ordered AND
+        # (H) lexically scoped, so a call before the alias or after its
+        # (H) block/lambda closes must not bind to it. Same-name entries from
+        # (H) different blocks all survive -- disjoint windows never compete
+        # (H) for one call, and among overlapping windows the binder picks the
+        # (H) latest declaration, which is exactly C++ shadowing.
+        aliases: dict[str, list[tuple[str, int, int]]] = {}
+        stack = [(child, caller_node.end_byte) for child in caller_node.children]
+        while stack:
+            node, scope_end = stack.pop()
+            match node.type:
+                case cs.CppNodeType.TYPE_DEFINITION:
+                    pair = self._typedef_pair(node)
+                case cs.CppNodeType.ALIAS_DECLARATION:
+                    pair = self._using_pair(node)
+                case _:
+                    # (H) blocks and lambdas narrow visibility to their span;
+                    # (H) so does a local class/struct body, whose member
+                    # (H) aliases never escape it (only member functions,
+                    # (H) which sit inside the same span, can use them).
+                    if (
+                        node.type == cs.CppNodeType.COMPOUND_STATEMENT
+                        or node.type in cs.CPP_COMPOUND_TYPES
+                    ):
+                        scope_end = node.end_byte
+                    stack.extend((child, scope_end) for child in node.children)
+                    continue
+            if pair is None:
+                continue
+            alias_name, underlying = pair
+            aliases.setdefault(alias_name, []).append(
+                (underlying, node.end_byte, scope_end)
+            )
+        return aliases
+
     def _record_alias(
         self,
         pair: tuple[str, str] | None,
