@@ -4252,13 +4252,27 @@ class CallProcessor:
                     recv_name = self._csharp_read_identifier(receiver)
                     try_emit(recv_name, node, False)
                     # (H) The NAME field can be a property of the RECEIVER's
-                    # (H) type: `Cfg.Value` (static, class-name receiver) or
-                    # (H) `w.Inner` (instance, local of inferred type). An
-                    # (H) unresolvable receiver yields nothing, so unrelated
+                    # (H) type: `Cfg.Value` (static, class-name receiver),
+                    # (H) `w.Inner` (instance, local of inferred type), or
+                    # (H) `N.Cfg.Value` (namespace/type-qualified: a dotted
+                    # (H) receiver of all-PascalCase segments names a type, a
+                    # (H) camelCase head is an expression chain and is skipped).
+                    # (H) An unresolvable receiver yields nothing, so unrelated
                     # (H) chains never fabricate an edge.
                     member = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
-                    if recv_name and member and member in prop_names:
+                    recv_type = None
+                    if recv_name:
                         recv_type = (local_var_types or {}).get(recv_name, recv_name)
+                    elif (
+                        receiver is not None
+                        and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    ):
+                        dotted = safe_decode_text(receiver)
+                        if dotted and all(
+                            seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
+                        ):
+                            recv_type = dotted
+                    if recv_type and member and member in prop_names:
                         prop_qn = engine.resolve_member_property_read(
                             recv_type, member, module_qn
                         )
