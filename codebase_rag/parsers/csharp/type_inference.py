@@ -27,6 +27,12 @@ if TYPE_CHECKING:
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
+# (H) Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
+# (H) static call on an unregistered type). The dispatcher must emit nothing
+# (H) and must NOT fall back to the name-only trie, which would fabricate an
+# (H) edge onto an unrelated same-name first-party member.
+CSHARP_EXTERNAL_TARGET: tuple[str, str] = ("", "")
+
 
 def _arity(leaf: str) -> int:
     # (H) Parameter count of a (possibly signatured) method leaf: `M(int, string)`
@@ -279,6 +285,27 @@ class CSharpTypeInferenceEngine:
         method_name = method_name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
 
+        # (H) `base.X()` binds the BASE chain only: a first-party base's member
+        # (H) when one exists, otherwise the base is external (object.Equals in
+        # (H) Polly's hide-object-members regions) and the call must emit
+        # (H) nothing -- the trie fallback was self-looping it onto the
+        # (H) caller's own override.
+        if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
+            if class_qn := self._containing_class_qn(caller_qn):
+                seen: set[str] = set()
+                for root in self._partial_roots(class_qn):
+                    for base_qn in self.class_inheritance.get(root, []):
+                        if hit := self._find_method_by_arity(
+                            base_qn, method_name, arg_count, seen
+                        ):
+                            return cs.NodeLabel.METHOD.value, hit
+                seen = set()
+                for root in self._partial_roots(class_qn):
+                    for base_qn in self.class_inheritance.get(root, []):
+                        if hit := self._find_method_by_name(base_qn, method_name, seen):
+                            return cs.NodeLabel.METHOD.value, hit
+            return CSHARP_EXTERNAL_TARGET
+
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
@@ -307,7 +334,48 @@ class CSharpTypeInferenceEngine:
         if receiver_class_qn is not None:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
                 return cs.NodeLabel.METHOD.value, name_hit
+        if receiver_class_qn is None and self._externally_targeted(
+            receiver, method_name, local_var_types or {}, caller_qn
+        ):
+            return CSHARP_EXTERNAL_TARGET
         return None
+
+    def _externally_targeted(
+        self,
+        receiver: Node,
+        method_name: str,
+        local_var_types: dict[str, str],
+        caller_qn: str | None,
+    ) -> bool:
+        # (H) Only for UNTYPED receivers (a typed miss keeps today's trie
+        # (H) rescue): (a) a PascalCase identifier/dotted path that is no
+        # (H) local, no field, and no registered type is an external TYPE
+        # (H) (`Console`, `System.Console`); (b) an object-virtual member name
+        # (H) on an untyped receiver resolves to System.Object.
+        if method_name in cs.CSHARP_OBJECT_VIRTUALS:
+            return True
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return False
+        receiver = unwrapped
+        if receiver.type not in (
+            cs.TS_CSHARP_IDENTIFIER,
+            cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        ):
+            return False
+        text = safe_decode_text(receiver)
+        if not text:
+            return False
+        segments = text.split(cs.SEPARATOR_DOT)
+        if not all(seg[:1].isupper() for seg in segments):
+            return False
+        head = segments[0]
+        if head in local_var_types:
+            return False
+        if class_qn := self._containing_class_qn(caller_qn):
+            if self._field_type(class_qn, head):
+                return False
+        return True
 
     def _resolve_bare_call(
         self,
