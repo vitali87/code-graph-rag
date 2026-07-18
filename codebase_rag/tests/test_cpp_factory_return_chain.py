@@ -212,6 +212,8 @@ def test_macro_attributed_definition_name_extracted() -> None:
     # (H) function_declarator. The name walk must descend through it, or the
     # (H) method never registers and its whole callee cluster (binary_reader's
     # (H) 37 methods) reads as dead.
+    from tree_sitter import Node
+
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp import utils as cpp_utils
 
@@ -229,7 +231,7 @@ def test_macro_attributed_definition_name_extracted() -> None:
     )
     tree = parsers["cpp"].parse(src.encode())
 
-    def find(node: object, node_type: str) -> object | None:
+    def find(node: Node, node_type: str) -> Node | None:
         if node.type == node_type:
             return node
         for child in node.named_children:
