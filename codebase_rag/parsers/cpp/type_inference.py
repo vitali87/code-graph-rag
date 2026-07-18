@@ -92,7 +92,14 @@ class CppTypeInferenceEngine:
                 case cs.CppNodeType.ALIAS_DECLARATION:
                     pair = self._using_pair(node)
                 case _:
-                    if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+                    # (H) blocks and lambdas narrow visibility to their span;
+                    # (H) so does a local class/struct body, whose member
+                    # (H) aliases never escape it (only member functions,
+                    # (H) which sit inside the same span, can use them).
+                    if (
+                        node.type == cs.CppNodeType.COMPOUND_STATEMENT
+                        or node.type in cs.CPP_COMPOUND_TYPES
+                    ):
                         scope_end = node.end_byte
                     stack.extend((child, scope_end) for child in node.children)
                     continue
