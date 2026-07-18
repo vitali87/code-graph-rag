@@ -263,3 +263,51 @@ public class Guards {
 
     refs = _reference_targets(mock_ingestor)
     assert not any(t.endswith("N.Guards.Size") for t in refs), refs
+
+
+def test_lambda_shadow_does_not_suppress_outer_read(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A shadow only covers reads INSIDE its declaring scope: the lambda
+    # (H) parameter must not suppress the OUTER `Size` getter read in the same
+    # (H) expression.
+    (csharp_project / "OS.cs").write_text(
+        """
+namespace N;
+public class OuterShadow {
+    private int Size { get; }
+    public int Mix(System.Collections.Generic.List<int> xs)
+        => Size + System.Linq.Enumerable.First(
+               System.Linq.Enumerable.Select(xs, Size => Size));
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.OuterShadow.Size") for t in refs), refs
+
+
+def test_sibling_block_local_does_not_suppress_outer_read(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A local declared in one BLOCK must not suppress a read outside that
+    # (H) block: shadowing is scoped to the declaring block's span.
+    (csharp_project / "SB.cs").write_text(
+        """
+namespace N;
+public class BlockShadow {
+    private int Size { get; }
+    public int Mix() {
+        { var Size = 3; Size += 1; }
+        return Size;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.BlockShadow.Size") for t in refs), refs
