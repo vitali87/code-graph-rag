@@ -400,3 +400,97 @@ public class App {
 
     targets = _call_targets(mock_ingestor)
     assert any(t.endswith("N.Policy.Handle") for t in targets), targets
+
+
+def test_base_receiver_binds_base_chain_never_own_override(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `base.X()` inside an override must bind the BASE chain: a first-party
+    # (H) base's member when one exists, and NOTHING when the base is external
+    # (H) (object.Equals) -- the trie fallback was binding the call to the
+    # (H) caller's OWN override (a self-loop false positive on every
+    # (H) hide-object-members region, Polly's PolicyBuilder).
+    (csharp_project / "BaseRecv.cs").write_text(
+        """
+namespace N;
+public class Root {
+    public virtual string Report() => "r";
+}
+public class Mid : Root {
+    public override string Report() => base.Report();
+    public override string ToString() => base.ToString();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("N.Mid.Report") and t.endswith("N.Root.Report") for s, t in pairs
+    ), pairs
+    assert not any(t.endswith("N.Mid.ToString") for s, t in pairs), pairs
+    assert not any(
+        s.endswith("N.Mid.Report") and t.endswith("N.Mid.Report") for s, t in pairs
+    ), pairs
+
+
+def test_unresolvable_type_receiver_does_not_fall_to_name_trie(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Console.WriteLine(x)`: the receiver is a PascalCase identifier that
+    # (H) is no local, field, or registered type -- an external static type.
+    # (H) The name-only trie must not bind the call to an unrelated
+    # (H) first-party `WriteLine`.
+    (csharp_project / "ConsoleLike.cs").write_text(
+        """
+namespace N;
+public class Logger {
+    public void WriteLine(string s) { }
+}
+public class App {
+    public void Run() { System.Console.WriteLine("x"); }
+    public void Run2() { Console.WriteLine("y"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith("N.Logger.WriteLine(string)") for s, t in pairs), pairs
+
+
+def test_object_virtual_names_never_bind_by_name_only(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `x.GetType()` / `y.ToString()` on untyped receivers resolve to
+    # (H) object's virtuals; binding them BY NAME to whatever first-party
+    # (H) override exists fabricates edges (19 exposed by the semantic
+    # (H) oracle). A typed receiver still binds via the arity path.
+    (csharp_project / "ObjVirt.cs").write_text(
+        """
+namespace N;
+public class Weird {
+    public new System.Type GetType() => base.GetType();
+    public override string ToString() => "w";
+}
+public class App {
+    public string Run(object x) { return x.GetType().ToString(); }
+    public string Typed(Weird w) { return w.ToString(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        s.endswith("N.App.Run(object)") and t.endswith("N.Weird.GetType")
+        for s, t in pairs
+    ), pairs
+    # (H) The TYPED receiver keeps its correct override binding.
+    assert any(
+        s.endswith("N.App.Typed(Weird)") and t.endswith("N.Weird.ToString")
+        for s, t in pairs
+    ), pairs
