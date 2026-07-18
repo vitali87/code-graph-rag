@@ -307,6 +307,7 @@ def test_empty_search_returns_empty_list(integration_client: QdrantClient) -> No
     assert results == []
 
 
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
 def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> None:
     import codebase_rag.vector_store as vs
 
