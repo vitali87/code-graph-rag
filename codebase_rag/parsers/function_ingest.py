@@ -102,14 +102,16 @@ class FunctionResolution(NamedTuple):
 
 
 class _DeferredCppArtifact(NamedTuple):
-    """Macro-invocation-shaped C++ node held until every class is registered.
+    """Artifact-shaped C++ node held until every class is registered.
 
-    A type-less plain-identifier definition with no named parameter is either
-    a macro invocation (`FMT_CATCH(...) {}`) or a recovery-orphaned zero-param
-    constructor (`file() {}` whose class ancestor the parse recovery
-    destroyed). The tiebreak is whether a registered class bears the name, and
-    the class pass for the SAME file runs after the function pass, so the
-    decision must wait for resolve_deferred_cpp_artifacts.
+    A type-less plain-identifier definition is either a macro invocation
+    (`FMT_CATCH(...) {}`) or a recovery-mangled real definition (`file(int fd)
+    {}` whose class ancestor the parse recovery destroyed). A registered class
+    bearing the name reattaches the node as that class's ctor METHOD; failing
+    that, a named parameter keeps it as a module Function; failing both it is
+    dropped as a macro. The class pass for the SAME file runs after the
+    function pass, so every branch of the decision must wait for
+    resolve_deferred_cpp_artifacts.
     """
 
     func_node: Node
@@ -297,13 +299,14 @@ class FunctionIngestMixin:
                 ):
                     continue
                 # (H) A macro invocation parsed as a type-less definition
-                # (H) (`FMT_CATCH(...) {}`) must not mint a phantom Function.
-                # (H) A recovery-orphaned zero-param ctor shares the shape, so
-                # (H) the class registry is the tiebreak: a registered class
-                # (H) bearing the name means ctor (keep), no class means macro
-                # (H) (drop). Same-file classes register after this pass, so
-                # (H) the decision is deferred, not made here.
-                if cpp_utils.is_macro_invocation_artifact(func_node):
+                # (H) (`FMT_CATCH(...) {}`) must not mint a phantom Function,
+                # (H) and a recovery-orphaned ctor sharing the shape must
+                # (H) register as a METHOD of its class, not a module Function
+                # (H) that steals the class's qualified name. Same-file classes
+                # (H) register after this pass, so EVERY artifact-shaped node
+                # (H) (named-param or not) is deferred; the flush applies the
+                # (H) class-registry tiebreak and the named-param evidence.
+                if cpp_utils.is_recovery_artifact_shape(func_node):
                     self._deferred_cpp_artifacts.append(
                         _DeferredCppArtifact(
                             func_node, module_qn, lang_config, lang_queries
@@ -759,11 +762,13 @@ class FunctionIngestMixin:
         return True
 
     def resolve_deferred_cpp_artifacts(self) -> int:
-        """Decide held-back macro-invocation-shaped nodes now classes are known.
+        """Decide held-back artifact-shaped nodes now every class is known.
 
-        Registers each deferred node whose name a registered class bears (a
-        recovery-orphaned constructor); drops the rest as macro invocations.
-        Returns the number registered.
+        A registered class bearing the node's name reattaches it as that
+        class's ctor METHOD (a recovery-orphaned constructor); otherwise a
+        named parameter keeps it as a module Function (a real definition whose
+        type recovery destroyed); otherwise it is dropped as a macro
+        invocation. Returns the number registered.
         """
         deferred = self._deferred_cpp_artifacts
         if not deferred:
@@ -781,12 +786,21 @@ class FunctionIngestMixin:
                 cpp_utils.extract_namespace_path(entry.func_node)
             ):
                 candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
-            if not any(
-                self._resolve_cpp_class_qn(candidate, entry.module_qn)[1]
-                for candidate in candidates
-            ):
-                continue
+            class_qn = ""
+            resolved = False
+            for candidate in candidates:
+                class_qn, resolved = self._resolve_cpp_class_qn(
+                    candidate, entry.module_qn
+                )
+                if resolved:
+                    break
             file_path = self.module_qn_to_file_path.get(entry.module_qn)
+            if resolved:
+                if self._reattach_orphan_cpp_ctor(entry, class_qn, file_path):
+                    registered += 1
+                continue
+            if not cpp_utils.has_named_parameter(entry.func_node):
+                continue
             resolution = self._resolve_function_identity(
                 entry.func_node,
                 entry.module_qn,
@@ -807,6 +821,53 @@ class FunctionIngestMixin:
             registered += 1
         deferred.clear()
         return registered
+
+    def _reattach_orphan_cpp_ctor(
+        self,
+        entry: _DeferredCppArtifact,
+        class_qn: str,
+        file_path: Path | None,
+    ) -> bool:
+        # (H) Mirror of the resolved branch of _handle_cpp_out_of_class_method:
+        # (H) the recorded location and span let Pass-3 attribute the ctor
+        # (H) body's calls to the METHOD qn instead of re-deciding (and
+        # (H) diverging into the artifact-skip).
+        method_qn = ingest_method(
+            method_node=entry.func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            lang_queries=entry.lang_queries,
+            file_path=file_path,
+            repo_path=self.repo_path,
+            skip_cpp_artifact_check=True,
+        )
+        if method_qn is None:
+            return False
+        self.cpp_out_of_class_methods[
+            (entry.module_qn, entry.func_node.start_point[0] + 1)
+        ] = (method_qn, class_qn)
+        self.function_locations[
+            function_span_key(entry.module_qn, entry.func_node)
+        ] = FunctionLocation(
+            label=cs.NodeLabel.METHOD.value,
+            qualified_name=method_qn,
+            container_qn=class_qn,
+        )
+        record_cpp_definition_span(
+            self.cpp_definition_spans,
+            cs.SupportedLanguage.CPP,
+            file_path,
+            self.repo_path,
+            entry.func_node,
+            cs.NodeLabel.METHOD.value,
+            method_qn,
+        )
+        return True
 
     def _resolve_go_container_qn(self, module_qn: str, receiver_type: str) -> str:
         # (H) A method binds to its receiver type. Prefer the same-file type, but
