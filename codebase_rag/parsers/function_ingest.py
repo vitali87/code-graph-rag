@@ -781,9 +781,7 @@ class FunctionIngestMixin:
             if namespace_path := cs.SEPARATOR_DOT.join(
                 cpp_utils.extract_namespace_path(entry.func_node)
             ):
-                candidates.insert(
-                    0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}"
-                )
+                candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
             if not any(
                 self._resolve_cpp_class_qn(candidate, entry.module_qn)[1]
                 for candidate in candidates

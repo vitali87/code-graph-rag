@@ -305,9 +305,7 @@ def _has_named_parameter(declarator: Node) -> bool:
             cs.CppNodeType.PARENTHESIZED_DECLARATOR,
         ):
             return any(
-                declares_identifier(child)
-                for child in node.children
-                if child.is_named
+                declares_identifier(child) for child in node.children if child.is_named
             )
         return False
 
