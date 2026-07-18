@@ -83,6 +83,19 @@ struct pipe {
 pipe() {}
 """
 
+# (H) Identifiers reachable only OUTSIDE the declarator-field path must not
+# (H) count as named parameters: `x` names the inner fn-ptr's parameter and
+# (H) `MAX_SIZE` is an array bound, so both callbacks stay macro artifacts.
+# (H) The reference-parameter ctor is the counter-control: `s` hangs off a
+# (H) reference_declarator as a bare child, not a `declarator` field, and must
+# (H) still register.
+NESTED_IDENTIFIER_MACROS_CC = """
+TRACE_CB(void (*)(int x)) {}
+DECLARE_POOL(int[MAX_SIZE]) {}
+
+view(const view& s) { helper(s); }
+"""
+
 
 def _def_qns(mock_ingestor: MagicMock) -> set[str]:
     labels = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
@@ -160,6 +173,18 @@ def test_orphaned_zero_param_ctor_kept_via_class_registry(
     # (H) `pipe() {}` shares the macro-invocation shape; the registered class
     # (H) `pipe` is what keeps it alive.
     assert any(qn.endswith(".pipe") or ".pipe@" in qn for qn in qns), qns
+
+
+def test_nested_identifiers_do_not_count_as_named_params(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "cb.cc").write_text(NESTED_IDENTIFIER_MACROS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    qns = _def_qns(mock_ingestor)
+    assert not any("TRACE_CB" in qn for qn in qns), qns
+    assert not any("DECLARE_POOL" in qn for qn in qns), qns
+    assert any(qn.endswith(".view") or ".view@" in qn for qn in qns), qns
 
 
 PIPE_HDR = """

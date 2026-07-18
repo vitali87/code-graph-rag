@@ -289,10 +289,27 @@ def _has_named_parameter(declarator: Node) -> bool:
     if params is None:
         return False
 
-    def contains_identifier(node: Node) -> bool:
+    def declares_identifier(node: Node) -> bool:
+        # (H) Follow only the declarator-field spine (plus the two wrapper
+        # (H) nodes that hold their declarator as a bare child): identifiers
+        # (H) reachable ONLY off that path are array bounds (`int[MAX_SIZE]`)
+        # (H) or an inner fn-ptr's parameter names (`void (*)(int x)`), not
+        # (H) names of THIS parameter.
         if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
             return True
-        return any(contains_identifier(child) for child in node.children)
+        inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is not None:
+            return declares_identifier(inner)
+        if node.type in (
+            cs.CppNodeType.REFERENCE_DECLARATOR,
+            cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+        ):
+            return any(
+                declares_identifier(child)
+                for child in node.children
+                if child.is_named
+            )
+        return False
 
     for param in params.children:
         if param.type not in (
@@ -301,7 +318,7 @@ def _has_named_parameter(declarator: Node) -> bool:
         ):
             continue
         inner = param.child_by_field_name(cs.FIELD_DECLARATOR)
-        if inner is not None and contains_identifier(inner):
+        if inner is not None and declares_identifier(inner):
             return True
     return False
 
