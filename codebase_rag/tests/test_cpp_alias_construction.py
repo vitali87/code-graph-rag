@@ -182,3 +182,53 @@ def test_alias_declared_after_call_site_does_not_bind(
     assert not any(
         src.endswith(".confused") and "real_thing" in dst for src, dst in calls
     ), calls
+
+
+SCOPED_ALIAS_CC = """
+struct real_widget {
+  real_widget(int x) {}
+};
+
+void blocked() {
+  {
+    using widget_t = real_widget;
+  }
+  widget_t(1);
+}
+
+void lambda_leak() {
+  auto fn = [] {
+    using lam_t = real_widget;
+  };
+  lam_t(2);
+}
+
+void inside() {
+  {
+    using in_t = real_widget;
+    auto w = in_t(3);
+  }
+}
+"""
+
+
+def test_alias_out_of_lexical_scope_does_not_bind(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "scoped.cc").write_text(SCOPED_ALIAS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    # (H) A block/lambda-local alias dies at its closing brace: a later call in
+    # (H) the enclosing scope can never mean it (PR #797 review round 4).
+    assert not any(
+        src.endswith(".blocked") and "real_widget" in dst for src, dst in calls
+    ), calls
+    assert not any(
+        src.endswith(".lambda_leak") and "real_widget" in dst for src, dst in calls
+    ), calls
+    # (H) inside its own block the alias still binds
+    assert any(
+        src.endswith(".inside") and dst.endswith(".real_widget.real_widget")
+        for src, dst in calls
+    ), calls
