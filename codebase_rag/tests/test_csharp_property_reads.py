@@ -311,3 +311,51 @@ public class BlockShadow {
 
     refs = _reference_targets(mock_ingestor)
     assert any(t.endswith("N.BlockShadow.Size") for t in refs), refs
+
+
+def test_class_qualified_static_property_read_is_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Cfg.Value` reads a STATIC property through the class name; the NAME
+    # (H) field is the read, resolved against the receiver TYPE rather than
+    # (H) the caller's enclosing class.
+    (csharp_project / "ST.cs").write_text(
+        """
+namespace N;
+public class Cfg {
+    private static int Value { get; }
+    public static int Get() { return Cfg.Value; }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Cfg.Value") for t in refs), refs
+
+
+def test_typed_receiver_instance_property_read_is_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `w.Inner` on a local whose type is known reads Widget.Inner; resolve
+    # (H) the name field against the receiver's inferred type.
+    (csharp_project / "TR.cs").write_text(
+        """
+namespace N;
+public class Widget {
+    internal int Inner { get; }
+}
+public class App {
+    public int Run() {
+        var w = new Widget();
+        return w.Inner;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Widget.Inner") for t in refs), refs
