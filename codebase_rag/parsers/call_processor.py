@@ -787,11 +787,16 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes and language != cs.SupportedLanguage.CSHARP:
+            if not all_call_nodes and language not in (
+                cs.SupportedLanguage.CSHARP,
+                cs.SupportedLanguage.CPP,
+            ):
                 # (H) A file with no call expressions has nothing further to
                 # (H) process -- except in C#, where a class can still READ
-                # (H) properties (`return Size;`); the member-read pass runs
-                # (H) per caller inside class processing, so C# proceeds.
+                # (H) properties (`return Size;`), and C++, where a ctor's
+                # (H) member initializer list (`: buffer(g, 0)`) runs base
+                # (H) ctors without any call_expression node; both passes run
+                # (H) per caller inside class processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -1907,6 +1912,7 @@ class CallProcessor:
             self._ingest_cpp_braced_return_instantiations(
                 caller_node, caller_spec, caller_qn, module_qn
             )
+            self._ingest_cpp_member_init_ctor_calls(caller_node, caller_spec, module_qn)
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -3133,6 +3139,78 @@ class CallProcessor:
                     cs.RelationshipType.CALLS,
                     (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
                 )
+
+    def _ingest_cpp_member_init_ctor_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+    ) -> None:
+        # (H) A ctor's member initializer list runs base-class ctors
+        # (H) (`: buffer(g, 0)`) and delegated ctors (`: widget(0)`) with no
+        # (H) call_expression node, so a base ctor only ever reached through
+        # (H) derived member-init had zero incoming CALLS and reported dead
+        # (H) (fmt buffer.buffer). Each initializer whose head name resolves to
+        # (H) a registered class emits CALLS to that class's ctors; a member
+        # (H) FIELD initializer resolves to no class and emits nothing (a field
+        # (H) named exactly like a registered class still emits, which is the
+        # (H) common field-shadows-its-own-type case where the ctor does run).
+        # (H) The list is a DIRECT child of function_definition, so a nested
+        # (H) lambda's or local class's initializers never leak in here.
+        registry = self._resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for init_list in caller_node.children:
+            if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
+                continue
+            for initializer in init_list.named_children:
+                if initializer.type != cs.CppNodeType.FIELD_INITIALIZER:
+                    continue
+                name = self._cpp_member_init_head_name(initializer)
+                if not name:
+                    continue
+                class_qn = self._resolver._resolve_type_to_class_qn(name, module_qn)
+                if class_qn is None:
+                    continue
+                for ctor_type, ctor_qn in sorted(
+                    self._resolver.java_constructor_targets(class_qn)
+                ):
+                    for variant in registry.variants(ctor_qn):
+                        ensure_rel(
+                            caller_spec,
+                            cs.RelationshipType.CALLS,
+                            (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+                        )
+
+    @staticmethod
+    def _cpp_member_init_head_name(initializer: Node) -> str | None:
+        # (H) The head is the initializer's first named child: a plain
+        # (H) field_identifier (`buffer`), a template_method (`base<T>` -- take
+        # (H) the bare name, specialization args never reach the qn), or a
+        # (H) qualified_identifier (`ns::other` -- keep the full path so the
+        # (H) namespace disambiguates same-leaf classes).
+        head = next(iter(initializer.named_children), None)
+        if head is None:
+            return None
+        if head.type == cs.CppNodeType.TEMPLATE_METHOD:
+            inner = next(
+                (
+                    child
+                    for child in head.named_children
+                    if child.type == cs.CppNodeType.FIELD_IDENTIFIER
+                ),
+                None,
+            )
+            head = inner if inner is not None else head
+        if head.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
+            text = head.text
+            if text is None:
+                return None
+            return text.decode(cs.ENCODING_UTF8).replace(
+                cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+            )
+        if head.type != cs.CppNodeType.FIELD_IDENTIFIER or head.text is None:
+            return None
+        return head.text.decode(cs.ENCODING_UTF8)
 
     def _ingest_go_composite_function_references(
         self,

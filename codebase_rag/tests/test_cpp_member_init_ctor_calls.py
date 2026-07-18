@@ -88,9 +88,7 @@ def test_plain_field_init_emits_no_ctor_call(
     calls = _calls(mock_ingestor)
     # (H) `c_(g)` and `g_(g)` are member field inits; nothing named c_/g_ may
     # (H) receive a CALLS edge.
-    assert not any(
-        dst.rsplit(".", 1)[-1] in ("c_", "g_") for _, dst in calls
-    ), calls
+    assert not any(dst.rsplit(".", 1)[-1] in ("c_", "g_") for _, dst in calls), calls
 
 
 def test_delegating_ctor_emits_ctor_call(
