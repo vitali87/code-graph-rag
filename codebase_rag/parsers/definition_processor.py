@@ -102,6 +102,14 @@ class DefinitionProcessor(
         # (H) make (the method lives on an unrelated static class). Populated at
         # (H) method ingestion, read by the type-inference engine as a fallback.
         self.csharp_extension_methods: dict[str, list[tuple[str, str, str]]] = {}
+        # (H) C# local functions: {local_fn_qn: (host span key, parameter count)}.
+        # (H) The host (method/ctor/enclosing local fn) is pinned by SPAN because
+        # (H) at Function-pass time the host method's signatured identity may not
+        # (H) be registered yet; the resolver joins the span to function_locations
+        # (H) lazily. Bare-name resolution uses this to honor C# scoping: a local
+        # (H) fn is callable only from inside its host, and shadows same-name
+        # (H) method overloads there (Polly's PredicateBuilder.HandleInner).
+        self.csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] = {}
         # (H) C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
         # (H) {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
         # (H) frontend ran, split_csharp_bases reads a base's kind here (exact,

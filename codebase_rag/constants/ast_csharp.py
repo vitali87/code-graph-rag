@@ -43,6 +43,19 @@ TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
+# (H) The scopes a local function can be declared in (and therefore be
+# (H) call-visible from): a method/constructor body or an enclosing local
+# (H) function. Used to pin each local function to its HOST so bare-name
+# (H) resolution honors C# scoping (a local fn in one overload's body is not
+# (H) in scope in a sibling overload).
+CSHARP_LOCAL_FN_HOST_TYPES = frozenset(
+    {
+        TS_CSHARP_METHOD_DECLARATION,
+        TS_CSHARP_CONSTRUCTOR_DECLARATION,
+        TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+    }
+)
+
 # (H) Members whose registered leaf name is synthesized (no usable `name` field,
 # (H) or one that collides), routed through csharp.utils.synthesize_method_name.
 CSHARP_SYNTHESIZED_NAME_TYPES = frozenset(
