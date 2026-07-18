@@ -94,6 +94,23 @@ def csharp_frontend_available() -> bool:
     return shutil.which(_DOTNET) is not None
 
 
+def resolve_csharp_frontend() -> cs.CSharpFrontend:
+    # (H) The single source of truth for the EFFECTIVE frontend: without a
+    # (H) dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
+    # (H) HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
+    # (H) warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
+    # (H) parser fingerprint resolves through here so a graph's recorded
+    # (H) identity always matches the frontend that actually ran.
+    mode = settings.CSHARP_FRONTEND
+    if mode == cs.CSharpFrontend.TREESITTER:
+        return mode
+    if not csharp_frontend_available():
+        return cs.CSharpFrontend.TREESITTER
+    if mode == cs.CSharpFrontend.AUTO:
+        return cs.CSharpFrontend.HYBRID
+    return mode
+
+
 def _project_candidates(repo_path: Path) -> list[Path]:
     def not_ignored(p: Path) -> bool:
         return not any(part in _IGNORE_DIRS for part in p.relative_to(repo_path).parts)

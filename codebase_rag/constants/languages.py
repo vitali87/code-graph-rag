@@ -90,6 +90,11 @@ class CppFrontend(StrEnum):
 
 
 class CSharpFrontend(StrEnum):
+    # (H) AUTO resolves at run time: HYBRID wherever a dotnet toolchain is on
+    # (H) PATH, TREESITTER otherwise (resolve_csharp_frontend). The parser
+    # (H) fingerprint records the RESOLVED mode, so graphs built with and
+    # (H) without dotnet never share an identity.
+    AUTO = "auto"
     TREESITTER = "treesitter"
     ROSLYN = "roslyn"
     HYBRID = "hybrid"

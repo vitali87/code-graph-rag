@@ -200,7 +200,7 @@ class AppConfig(BaseSettings):
     # (H) but not to assume. HYBRID augments (base-vs-interface, overload and
     # (H) extension binding, partial-class identity); tree-sitter stays the
     # (H) standalone-correct backbone.
-    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.TREESITTER
+    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
