@@ -292,3 +292,34 @@ def test_same_name_aliases_in_disjoint_scopes_both_bind(
         src.endswith(".shadowed") and dst.endswith(".real_one.real_one")
         for src, dst in calls
     ), calls
+
+
+MEMBER_ALIAS_CC = """
+struct real_gadget {
+  real_gadget(int x) {}
+};
+
+void local_struct() {
+  struct holder {
+    using held_t = real_gadget;
+  };
+  held_t(6);
+}
+"""
+
+
+def test_local_struct_member_alias_does_not_leak_to_function(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "member.cc").write_text(MEMBER_ALIAS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    inst = _edges(mock_ingestor, cs.RelationshipType.INSTANTIATES)
+    # (H) a member type alias of a local struct is scoped to the struct body;
+    # (H) an unqualified call in the enclosing function can never mean it
+    # (H) (PR #797 review round 6).
+    assert not any(
+        src.endswith(".local_struct") and "real_gadget" in dst
+        for src, dst in calls | inst
+    ), calls | inst
