@@ -232,3 +232,63 @@ def test_alias_out_of_lexical_scope_does_not_bind(
         src.endswith(".inside") and dst.endswith(".real_widget.real_widget")
         for src, dst in calls
     ), calls
+
+
+DISJOINT_ALIAS_CC = """
+struct real_one {
+  real_one(int x) {}
+};
+struct real_two {
+  real_two(int x) {}
+};
+
+void two_blocks() {
+  {
+    using block_t = real_one;
+    auto a = block_t(1);
+  }
+  {
+    using block_t = real_two;
+    auto b = block_t(2);
+  }
+}
+
+void shadowed() {
+  using sh_t = real_one;
+  {
+    using sh_t = real_two;
+    auto s = sh_t(3);
+  }
+  auto o = sh_t(4);
+}
+"""
+
+
+def test_same_name_aliases_in_disjoint_scopes_both_bind(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "disjoint.cc").write_text(DISJOINT_ALIAS_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    # (H) disjoint blocks each own their alias: neither is a conflict of the
+    # (H) other, and each call binds to its own block's target (PR #797 review
+    # (H) round 5).
+    assert any(
+        src.endswith(".two_blocks") and dst.endswith(".real_one.real_one")
+        for src, dst in calls
+    ), calls
+    assert any(
+        src.endswith(".two_blocks") and dst.endswith(".real_two.real_two")
+        for src, dst in calls
+    ), calls
+    # (H) shadowing: the innermost alias wins inside its block, the outer one
+    # (H) resumes after the block closes
+    assert any(
+        src.endswith(".shadowed") and dst.endswith(".real_two.real_two")
+        for src, dst in calls
+    ), calls
+    assert any(
+        src.endswith(".shadowed") and dst.endswith(".real_one.real_one")
+        for src, dst in calls
+    ), calls
