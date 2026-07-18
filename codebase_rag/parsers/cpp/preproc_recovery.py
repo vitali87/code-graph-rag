@@ -105,32 +105,37 @@ def _count_error_nodes(root: Node) -> int:
     return count
 
 
+def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
+    # (H) Mutates skip_stack for the directive on this line; True means the
+    # (H) line IS a directive (always blanked). `#elif`/`#else` flip the
+    # (H) current group to skipping so only the FIRST branch survives; an
+    # (H) `#if` inside a skipped branch inherits the skip.
+    if stripped.startswith(b"#if"):
+        skip_stack.append(any(skip_stack))
+        return True
+    if stripped.startswith((b"#elif", b"#else")):
+        if skip_stack:
+            skip_stack[-1] = True
+        return True
+    if stripped.startswith(b"#endif"):
+        if skip_stack:
+            skip_stack.pop()
+        return True
+    return False
+
+
 def _blank_csharp_directives(source_bytes: bytes) -> bytes:
     # (H) Keep only the FIRST branch of each conditional group: retaining both
     # (H) branches of an `#if X bodyA #else bodyB #endif` around an
     # (H) expression-bodied member leaves an orphaned second body that
     # (H) misparses into a phantom bare-name declaration (Polly's
-    # (H) DelegatingComponent grew a parameterless ExecuteComponent). Nested
-    # (H) groups inside a skipped branch stay skipped.
+    # (H) DelegatingComponent grew a parameterless ExecuteComponent).
     lines = source_bytes.split(_CHAR_NEWLINE)
     skip_stack: list[bool] = []
     for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith(b"#if"):
-            skip_stack.append(any(skip_stack))
-            lines[i] = b""
-            continue
-        if stripped.startswith((b"#elif", b"#else")):
-            if skip_stack:
-                skip_stack[-1] = True
-            lines[i] = b""
-            continue
-        if stripped.startswith(b"#endif"):
-            if skip_stack:
-                skip_stack.pop()
-            lines[i] = b""
-            continue
-        if skip_stack and skip_stack[-1]:
+        if _track_csharp_directive(line.lstrip(), skip_stack) or (
+            skip_stack and skip_stack[-1]
+        ):
             lines[i] = b""
     return _CHAR_NEWLINE.join(lines)
 
