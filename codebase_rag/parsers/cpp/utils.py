@@ -156,6 +156,12 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
                 cs.CppNodeType.POINTER_DECLARATOR,
                 cs.CppNodeType.REFERENCE_DECLARATOR,
                 cs.CppNodeType.FUNCTION_DECLARATOR,
+                cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+                # (H) A macro-attributed ctor buries its REAL declarator inside
+                # (H) the ERROR while the base-initializer (`: exception(...)`)
+                # (H) survives as a sibling declarator; depth-first source order
+                # (H) must enter the ERROR so the ctor's own name wins.
+                cs.TS_ERROR,
             ):
                 result = find_function_declarator(child)
                 if result:
