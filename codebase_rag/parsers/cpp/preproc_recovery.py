@@ -109,9 +109,31 @@ def _count_error_nodes(root: Node) -> int:
 
 
 def _blank_csharp_directives(source_bytes: bytes) -> bytes:
+    # (H) Keep only the FIRST branch of each conditional group: retaining both
+    # (H) branches of an `#if X bodyA #else bodyB #endif` around an
+    # (H) expression-bodied member leaves an orphaned second body that
+    # (H) misparses into a phantom bare-name declaration (Polly's
+    # (H) DelegatingComponent grew a parameterless ExecuteComponent). Nested
+    # (H) groups inside a skipped branch stay skipped.
     lines = source_bytes.split(_CHAR_NEWLINE)
+    skip_stack: list[bool] = []
     for i, line in enumerate(lines):
-        if line.lstrip().startswith(_CSHARP_DIRECTIVE_PREFIXES):
+        stripped = line.lstrip()
+        if stripped.startswith(b"#if"):
+            skip_stack.append(any(skip_stack))
+            lines[i] = b""
+            continue
+        if stripped.startswith((b"#elif", b"#else")):
+            if skip_stack:
+                skip_stack[-1] = True
+            lines[i] = b""
+            continue
+        if stripped.startswith(b"#endif"):
+            if skip_stack:
+                skip_stack.pop()
+            lines[i] = b""
+            continue
+        if any(skip_stack) and skip_stack[-1]:
             lines[i] = b""
     return _CHAR_NEWLINE.join(lines)
 
