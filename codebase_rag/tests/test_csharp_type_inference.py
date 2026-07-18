@@ -292,3 +292,30 @@ public class App { public void Run() { var c = new Calc(); c.Add(1, 2); } }
     # (H) c.Add(1, 2) binds the two-argument overload, not the one-argument one.
     assert any(t.endswith("N.Calc.Add(int, int)") for t in targets), targets
     assert not any(t.endswith("N.Calc.Add(int)") for t in targets), targets
+
+
+def test_cast_expression_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A cast receiver `((ReloadableComponent)s!).Reload()` (Polly's
+    # (H) CancellationToken.Register callback pattern) hands the resolver a
+    # (H) parenthesized_expression wrapping a cast_expression; without
+    # (H) unwrapping to the cast TYPE the receiver is untypable, no CALLS edge
+    # (H) is emitted, and the callback target is flagged dead.
+    (csharp_project / "C.cs").write_text(
+        """
+namespace N;
+public class Component {
+    public void Reload() {}
+    public void Wire(System.Threading.CancellationToken token) {
+        token.Register(static s => ((Component)s!).Reload(), this);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert any(
+        t.endswith("N.Component.Reload") for t in _call_targets(mock_ingestor)
+    ), _call_targets(mock_ingestor)

@@ -786,7 +786,11 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes:
+            if not all_call_nodes and language != cs.SupportedLanguage.CSHARP:
+                # (H) A file with no call expressions has nothing further to
+                # (H) process -- except in C#, where a class can still READ
+                # (H) properties (`return Size;`); the member-read pass runs
+                # (H) per caller inside class processing, so C# proceeds.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -1772,6 +1776,24 @@ class CallProcessor:
                 class_context,
                 queries[language][cs.QUERY_CONFIG],
                 prop_names,
+            )
+
+        # (H) Same need as the Python pass above, C# shape: a property getter
+        # (H) access is a member_access_expression (usually in RECEIVER
+        # (H) position), never an invocation, so callers that only READ a
+        # (H) property emit no edge to it and dead-code flags it (Polly's
+        # (H) Context.WrappedDictionary, ResiliencePipeline<T>.Pipeline).
+        if language == cs.SupportedLanguage.CSHARP and (
+            csharp_prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_csharp_property_reads(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                queries[language][cs.QUERY_CONFIG],
+                csharp_prop_names,
             )
 
         # (H) Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
@@ -4102,6 +4124,184 @@ class CallProcessor:
                                     calls_rel,
                                     (method_label, qn_key, target_qn),
                                 )
+            stack.extend(node.children)
+
+    def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
+        # (H) The identifier actually being READ in receiver position: unwrap
+        # (H) parens, a cast's VALUE (`((IDictionary<...>)WrappedDictionary)`),
+        # (H) and a null-forgiving postfix (`s!`) down to a bare identifier.
+        while receiver is not None:
+            if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+                receiver = receiver.child_by_field_name(cs.FIELD_VALUE)
+                continue
+            if receiver.type == cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            break
+        if receiver is not None and receiver.type == cs.TS_CSHARP_IDENTIFIER:
+            return safe_decode_text(receiver)
+        return None
+
+    def _csharp_shadow_spans(
+        self,
+        caller_node: Node,
+        function_types: tuple[str, ...],
+        class_types: tuple[str, ...],
+    ) -> dict[str, list[tuple[int, int]]]:
+        # (H) {declared name: [byte span of each declaring SCOPE]} for every
+        # (H) declaration in the scopes the READ WALK descends into (locals
+        # (H) incl. untyped `var x = 3`, parameters, and a simple lambda's
+        # (H) bare implicit_parameter). A declaration shadows a same-name
+        # (H) property only for reads INSIDE its declaring scope -- a lambda
+        # (H) param or a sibling block's local must not suppress an outer
+        # (H) read, while an in-lambda shadowed read must not fabricate a
+        # (H) property reference. The two walks skip the SAME nested
+        # (H) function/class scopes (each of those has its own pass).
+        def scope_span(decl: Node) -> tuple[int, int]:
+            anc = decl.parent
+            while anc is not None and anc != caller_node:
+                if anc.type in (cs.TS_CSHARP_BLOCK, cs.TS_CSHARP_LAMBDA_EXPRESSION):
+                    return (anc.start_byte, anc.end_byte)
+                anc = anc.parent
+            return (caller_node.start_byte, caller_node.end_byte)
+
+        spans: dict[str, list[tuple[int, int]]] = {}
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            name = None
+            if node_type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
+                name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+            elif node_type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
+                name = safe_decode_text(node)
+            if name:
+                spans.setdefault(name, []).append(scope_span(node))
+            stack.extend(node.children)
+        return spans
+
+    def _ingest_csharp_property_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # (H) Emit a REFERENCES edge (a read is not an invocation; the call
+        # (H) graph stays invocation-only) from the caller to each property of
+        # (H) its enclosing type read in receiver position. Registry-guarded via
+        # (H) resolve_property_read, which accepts only marked properties.
+        engine = self._resolver.type_inference.csharp_type_inference
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        refs_rel = cs.RelationshipType.REFERENCES
+        qn_key = cs.KEY_QUALIFIED_NAME
+        method_label = cs.NodeLabel.METHOD
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        shadowed: dict[str, list[tuple[int, int]]] | None = None
+        seen: set[str] = set()
+
+        def try_emit(name: str | None, read_node: Node, this_read: bool) -> None:
+            nonlocal shadowed
+            if not name or name not in prop_names or name in seen:
+                return
+            if shadowed is None:
+                shadowed = self._csharp_shadow_spans(
+                    caller_node, function_types, class_types
+                )
+            pos = read_node.start_byte
+            is_shadowed = any(lo <= pos < hi for lo, hi in shadowed.get(name, ()))
+            if (this_read or not is_shadowed) and (
+                prop_qn := engine.resolve_property_read(name, caller_qn)
+            ):
+                seen.add(name)
+                if prop_qn != caller_qn:
+                    ensure_rel(caller_spec, refs_rel, (method_label, qn_key, prop_qn))
+
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+                receiver = node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+                # (H) `this.Size` is ALWAYS the member (a local can never
+                # (H) shadow a this-qualified read), so the read is the NAME
+                # (H) field and the shadow check does not apply.
+                this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
+                if this_read:
+                    try_emit(
+                        safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
+                        node,
+                        True,
+                    )
+                else:
+                    recv_name = self._csharp_read_identifier(receiver)
+                    try_emit(recv_name, node, False)
+                    # (H) The NAME field can be a property of the RECEIVER's
+                    # (H) type: `Cfg.Value` (static, class-name receiver),
+                    # (H) `w.Inner` (instance, local of inferred type), or
+                    # (H) `N.Cfg.Value` (namespace/type-qualified: a dotted
+                    # (H) receiver of all-PascalCase segments names a type, a
+                    # (H) camelCase head is an expression chain and is skipped).
+                    # (H) An unresolvable receiver yields nothing, so unrelated
+                    # (H) chains never fabricate an edge.
+                    member = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                    recv_type = None
+                    if recv_name:
+                        recv_type = (local_var_types or {}).get(recv_name, recv_name)
+                    elif (
+                        receiver is not None
+                        and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    ):
+                        dotted = safe_decode_text(receiver)
+                        if dotted and all(
+                            seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
+                        ):
+                            recv_type = dotted
+                    if recv_type and member and member in prop_names:
+                        prop_qn = engine.resolve_member_property_read(
+                            recv_type, member, module_qn
+                        )
+                        if (
+                            prop_qn is not None
+                            and prop_qn != caller_qn
+                            and prop_qn not in seen
+                        ):
+                            seen.add(prop_qn)
+                            ensure_rel(
+                                caller_spec, refs_rel, (method_label, qn_key, prop_qn)
+                            )
+            elif node_type == cs.TS_CSHARP_IDENTIFIER:
+                # (H) A bare identifier expression (`return Size;`, `Use(Size)`,
+                # (H) `var n = Size;`) reads the getter just the same. NOT a
+                # (H) read: any member-access position (receiver/name handled
+                # (H) above), a parent's NAME field (a declarator/parameter's
+                # (H) own name, a named-argument label `Use(Size: 3)`), or a
+                # (H) parent's TYPE field (`new Size()`, `(Size)x`).
+                # (H) `==`, not `is`: child_by_field_name returns a fresh Node
+                # (H) wrapper each call, so identity never matches.
+                parent = node.parent
+                if (
+                    parent is not None
+                    and parent.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+                    and parent.child_by_field_name(cs.FIELD_NAME) != node
+                    and parent.child_by_field_name(cs.FIELD_TYPE) != node
+                ):
+                    try_emit(safe_decode_text(node), node, False)
             stack.extend(node.children)
 
     def _build_nested_qualified_name(

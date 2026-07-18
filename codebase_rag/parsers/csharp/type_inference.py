@@ -384,6 +384,36 @@ class CSharpTypeInferenceEngine:
                 return
             yield scope
 
+    def resolve_property_read(self, name: str, caller_qn: str | None) -> str | None:
+        # (H) A bare-identifier read (`WrappedDictionary.Keys`) targets a
+        # (H) property of the caller's enclosing type (implicit this); resolve
+        # (H) across partial parts and base classes and accept ONLY a
+        # (H) registered property, so same-name methods stay out of the read
+        # (H) pass.
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
+    def resolve_member_property_read(
+        self, receiver_type: str, name: str, module_qn: str
+    ) -> str | None:
+        # (H) `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
+        # (H) receiver's type (a class name for a static read, an inferred
+        # (H) local/parameter type for an instance read). Accepts ONLY a
+        # (H) registered property; an unresolvable receiver yields nothing, so
+        # (H) unrelated `x.Value` chains never fabricate an edge.
+        class_qn = self._type_name_to_qn(receiver_type, module_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
@@ -493,6 +523,14 @@ class CSharpTypeInferenceEngine:
         # (H) (`string`, `int`) that are never registered as classes, so the raw
         # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
         # (H) branches but stops at the name.
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
+        # (H) extension-only method still binds on a cast receiver.
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            return self._cast_type_name(receiver)
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
@@ -500,6 +538,23 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
         return None
+
+    def _unwrap_receiver(self, receiver: Node) -> Node | None:
+        # (H) Peel interleaved parens and null-forgiving postfix wrappers
+        # (H) (`((Component)s)!` puts the `!` OUTSIDE the parens) to a fixpoint.
+        while receiver.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION,
+        ):
+            inner = receiver.named_children[0] if receiver.named_children else None
+            if inner is None:
+                return None
+            receiver = inner
+        return receiver
+
+    def _cast_type_name(self, cast_node: Node) -> str | None:
+        cast_type = safe_decode_text(cast_node.child_by_field_name(cs.FIELD_TYPE))
+        return _normalize_type_name(cast_type) if cast_type else None
 
     def _this_receiver_type(self, module_qn: str, caller_qn: str | None) -> str | None:
         qn = self._containing_class_qn(caller_qn)
@@ -615,6 +670,18 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
+        # (H) A cast receiver `((Component)s!).Reload()` (Polly's
+        # (H) CancellationToken.Register callback): the cast TYPE is the
+        # (H) receiver's type by construction (mirrors the Java cast-receiver
+        # (H) handling).
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None:
+            return None
+        receiver = unwrapped
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            if cast_type := self._cast_type_name(receiver):
+                return self._type_name_to_qn(cast_type, module_qn)
+            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
         # (H) An explicit `this.field` receiver: the field's (possibly inherited)
