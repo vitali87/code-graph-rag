@@ -262,6 +262,12 @@ def test_fingerprint_resolves_auto_to_effective_frontend(
     assert fp_auto_with_dotnet != fp_auto_without_dotnet
 
     monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
     assert pf.compute_parser_fingerprint() == fp_auto_with_dotnet
+    # (H) An EXPLICIT hybrid request that cannot run degrades the build to
+    # (H) tree-sitter (graph_updater warns and returns), so the fingerprint
+    # (H) must record what actually ran there too, not the setting string.
+    monkeypatch.setattr(fe, "csharp_frontend_available", lambda: False)
+    assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
     monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
     assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
