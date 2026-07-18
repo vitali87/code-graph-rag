@@ -255,6 +255,10 @@ class CSharpTypeInferenceEngine:
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
             return None
+        # (H) `Policy.Handle<TException>()`: a generic member's NAME field is a
+        # (H) generic_name; methods register generic-free, so strip the type
+        # (H) arguments or the fluent entry point never matches.
+        method_name = method_name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
 
         receiver_class_qn = self._resolve_receiver_class_qn(
