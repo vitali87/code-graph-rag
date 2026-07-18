@@ -602,3 +602,67 @@ public class App {
 
     pairs = _call_pairs(mock_ingestor)
     assert not any(t.endswith("N.Options.ShouldHandle") for s, t in pairs), pairs
+
+
+def test_bcl_typed_member_receiver_with_name_colliding_decoy_is_external(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Wrapper.DisposeAsync()` where Wrapper is typed to BCL RateLimiter:
+    # (H) an unrelated first-party class that merely SHARES the simple name
+    # (H) (Polly's Snippets.Docs.RateLimiter demo) must not defeat the
+    # (H) external gate; the candidate type must actually DECLARE the member.
+    (csharp_project / "Decoy.cs").write_text(
+        "namespace N.Docs;\npublic static class RateLimiter {\n"
+        "    public static void Snippet() { }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (csharp_project / "Strat.cs").write_text(
+        """
+namespace N;
+public class Strategy {
+    private System.Threading.RateLimiting.RateLimiter Wrapper { get; }
+    public System.Threading.Tasks.ValueTask DisposeAsync() {
+        return Wrapper.DisposeAsync();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        s.endswith("N.Strategy.DisposeAsync") and t.endswith("DisposeAsync")
+        for s, t in pairs
+    ), pairs
+
+
+def test_var_from_plain_twin_ctor_respects_property_guard(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `var options = new Options();` where Options : Options<object> are
+    # (H) simple-name twins: the local's WRITTEN type has generic arity 0, so
+    # (H) receiver typing must pick the non-generic twin, reach the delegate
+    # (H) property guard, and emit no CALLS edge for
+    # (H) `options.ShouldHandle(...)` (Polly's CircuitBreakerStrategyOptions).
+    (csharp_project / "TwinOpt.cs").write_text(
+        """
+namespace N;
+public class Options<TResult> {
+    public System.Func<TResult, bool> ShouldHandle { get; set; }
+}
+public class Options : Options<object> { }
+public class App {
+    public bool Run() {
+        var options = new Options();
+        return options.ShouldHandle(3);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(t.endswith(".ShouldHandle") for s, t in pairs), pairs

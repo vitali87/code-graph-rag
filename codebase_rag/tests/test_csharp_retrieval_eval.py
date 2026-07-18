@@ -193,3 +193,27 @@ def test_oracle_excludes_bcl_calls_colliding_with_first_party_names(
     assert ("OnlyBcl.cs", "Clear") not in edges2, edges2
     assert ("App.cs", "Clear") in edges2
     assert site_count == 1
+
+
+@needs_dotnet
+def test_oracle_resolves_across_namespaces_without_usings(tmp_path: Path) -> None:
+    # (H) SDK ImplicitUsings materialize as generated GlobalUsings.g.cs under
+    # (H) obj/, which the oracle's file walk rightly skips; the oracle must
+    # (H) synthesize global usings for every in-source namespace or a
+    # (H) cross-namespace call (Polly's bench GetPipeline) becomes an
+    # (H) unresolvable receiver and silently drops from the truth set.
+    (tmp_path / "Prov.cs").write_text(
+        "namespace Lib.Registry;\npublic class Provider {\n"
+        "    public int GetPipeline(string key) { return 1; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Bench.cs").write_text(
+        "namespace App.Benchmarks;\npublic class Bench {\n"
+        "    private Provider? _provider;\n"
+        '    public int Run() { return _provider!.GetPipeline("k"); }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    edges, _declared = oracle_csharp_call_edges(tmp_path)
+    assert ("Bench.cs", "GetPipeline") in edges, edges
