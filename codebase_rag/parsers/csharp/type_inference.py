@@ -546,6 +546,36 @@ class CSharpTypeInferenceEngine:
             scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return None
 
+    def csharp_local_function_group(
+        self, name: str, caller_qn: str | None, module_qn: str
+    ) -> list[str]:
+        # (H) Every in-scope local function with this name, arity-blind: a
+        # (H) method GROUP argument (`return new(..., Dispose)` handing
+        # (H) Serilog's CreateLogger locals to the Logger ctor) carries no call
+        # (H) arity, so the whole registered group at the nearest declaring
+        # (H) scope is the referenced set. Locals shadow members, matching
+        # (H) _find_in_scope_local_function's scope-chain discipline.
+        if not caller_qn:
+            return []
+        scope = caller_qn
+        while len(scope) > len(module_qn):
+            stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            matches: list[str] = []
+            for probe_scope in dict.fromkeys((scope, stripped)):
+                candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
+                for variant in self.function_registry.variants(candidate):
+                    entry = self.csharp_local_functions.get(variant)
+                    if entry is not None and self._caller_within_host(
+                        caller_qn, entry[0]
+                    ):
+                        matches.append(variant)
+            if matches:
+                return matches
+            if cs.SEPARATOR_DOT not in stripped:
+                return []
+            scope = stripped.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return []
+
     def _caller_within_host(self, caller_qn: str, host_key: FunctionSpanKey) -> bool:
         # (H) True when the caller IS the local function's host scope or a local
         # (H) function transitively hosted inside it (a sibling or nested local

@@ -175,6 +175,10 @@ TS_CSHARP_MEMBER_BINDING_EXPRESSION = "member_binding_expression"
 TS_CSHARP_FIELD_EXPRESSION = "expression"
 TS_CSHARP_THIS = "this"
 TS_CSHARP_ARGUMENT = "argument"
+# (H) implicit_object_creation_expression (`new(...)`) exposes NO field names;
+# (H) its argument_list is an unfielded named child, so argument parsing needs
+# (H) a typed fallback where the `arguments` field lookup returns nothing.
+TS_CSHARP_ARGUMENT_LIST = "argument_list"
 
 # (H) Nested scopes that own their own locals; the variable-type walk stops at
 # (H) these so a lambda/local-function local cannot leak into (or shadow) the
