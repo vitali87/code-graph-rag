@@ -61,6 +61,28 @@ struct widget {
 widget::widget(int x) : x_(x) {}
 """
 
+# (H) Simulates recovery-orphaned ctors: type-less plain-identifier definitions
+# (H) at module scope (fmt's os.h `file(int fd)` whose class ancestor the parse
+# (H) recovery destroyed). Named parameters prove `file(int fd)` real; the
+# (H) zero-param `file()` shares the macro shape and survives only because a
+# (H) registered class bears its name; UNKNOWN_MACRO() has neither and drops.
+ORPHANED_CTOR_CC = """
+struct file {
+  int fd_;
+};
+
+file(int fd) { helper(fd); }
+UNKNOWN_MACRO() {}
+"""
+
+ORPHANED_ZERO_PARAM_CTOR_CC = """
+struct pipe {
+  int fd_;
+};
+
+pipe() {}
+"""
+
 
 def _def_qns(mock_ingestor: MagicMock) -> set[str]:
     labels = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
@@ -114,3 +136,27 @@ def test_type_less_ctor_still_registered(
     # (H) Both the in-class type-less ctor declaration and the out-of-class
     # (H) qualified definition must survive the artifact guard.
     assert any(qn.endswith(".widget.widget") for qn in qns), qns
+
+
+def test_orphaned_ctor_shapes_kept_and_macro_dropped(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "os.cc").write_text(ORPHANED_CTOR_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    qns = _def_qns(mock_ingestor)
+    # (H) The named parameter proves `file(int fd)` is a real (orphaned) ctor.
+    assert any(qn.endswith(".file") or ".file@" in qn for qn in qns), qns
+    assert not any("UNKNOWN_MACRO" in qn for qn in qns), qns
+
+
+def test_orphaned_zero_param_ctor_kept_via_class_registry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "pipe.cc").write_text(ORPHANED_ZERO_PARAM_CTOR_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    qns = _def_qns(mock_ingestor)
+    # (H) `pipe() {}` shares the macro-invocation shape; the registered class
+    # (H) `pipe` is what keeps it alive.
+    assert any(qn.endswith(".pipe") or ".pipe@" in qn for qn in qns), qns

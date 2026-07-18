@@ -719,6 +719,11 @@ def ingest_method(
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
+        # (H) Inside an intact class body a macro invocation parsed as a
+        # (H) type-less member (`FMT_CATCH(...) {}`) can never be a ctor of
+        # (H) another class, so the shape check alone is decisive here.
+        if cpp_utils.is_macro_invocation_artifact(method_node):
+            return None
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return None

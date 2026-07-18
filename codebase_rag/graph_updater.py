@@ -900,6 +900,12 @@ class GraphUpdater:
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
 
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
+
         contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
         if contained:
             logger.info("Resolved {} deferred C++ nested containments", contained)
