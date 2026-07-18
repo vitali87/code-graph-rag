@@ -20,6 +20,10 @@ from tree_sitter import Node, Parser, Tree
 from ... import constants as cs
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
+# (H) a line holding nothing but an ALL_CAPS identifier: a scope-marker macro
+# (H) invocation without a trailing semicolon (NLOHMANN_JSON_NAMESPACE_BEGIN,
+# (H) FMT_BEGIN_NAMESPACE)
+_MACRO_MARKER = re.compile(rb"^[A-Z_][A-Z0-9_]{2,}$")
 _CHAR_OPEN_BRACE = b"{"
 _CHAR_CLOSE_BRACE = b"}"
 _CHAR_SPACE = b" "
@@ -105,6 +109,35 @@ def _count_error_nodes(root: Node) -> int:
     return count
 
 
+def _retry_without_macro_markers(
+    parser: Parser, tree: Tree, source_bytes: bytes
+) -> tuple[Tree, bytes]:
+    # (H) A bare scope-marker macro line (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no
+    # (H) semicolon) glues onto the NEXT top-level construct: tree-sitter
+    # (H) parses macro + `template <...> struct ordered_map : base` as ONE
+    # (H) declaration whose struct head sinks into an init_declarator, and
+    # (H) macro + `namespace detail {` as a function_definition named
+    # (H) `namespace`. The damage is silent-ish -- a couple of SMALL error
+    # (H) nodes -- so the catastrophic whole-file pass never fires, yet the
+    # (H) class/namespace and every member are lost or leak to module scope.
+    # (H) Blanking just the marker lines (space-filled, offsets preserved) and
+    # (H) re-parsing recovers the real structure; the strict error-count
+    # (H) improvement guard keeps benign marker uses untouched.
+    if not tree.root_node.has_error:
+        return tree, source_bytes
+    lines = source_bytes.split(_CHAR_NEWLINE)
+    markers = [
+        (i, i) for i, line in enumerate(lines) if _MACRO_MARKER.match(line.strip())
+    ]
+    if not markers:
+        return tree, source_bytes
+    blanked = _blank(lines, markers)
+    retry = parser.parse(blanked)
+    if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
+        return retry, blanked
+    return tree, source_bytes
+
+
 def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
     # (H) Mutates skip_stack for the directive on this line; True means the
     # (H) line IS a directive (always blanked). `#elif`/`#else` flip the
@@ -166,6 +199,7 @@ def parse_with_preproc_recovery(
         return tree
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
+    tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)
     worst = _max_error_span(tree.root_node)
     total_lines = source_bytes.count(_CHAR_NEWLINE) + 1
     # (H) local errors recover fine through query matching; only a collapse
