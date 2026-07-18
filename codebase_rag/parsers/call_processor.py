@@ -1977,7 +1977,7 @@ class CallProcessor:
         )
         alias_map: dict[str, str] | None = None
         factory_aliases: dict[str, str] | None = None
-        cpp_local_aliases: dict[str, tuple[str, int, int]] | None = None
+        cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -2160,15 +2160,21 @@ class CallProcessor:
                         CppTypeInferenceEngine().collect_local_type_aliases(caller_node)
                     )
                 lookup_name = call_name
-                local_entry = cpp_local_aliases.get(call_name)
                 # (H) Declaration-ordered AND lexically-scoped lookup: a call
                 # (H) BEFORE the body-local alias's declaration or AFTER its
-                # (H) enclosing block/lambda closes can never mean it.
-                if (
-                    local_entry is not None
-                    and local_entry[1] <= call_node.start_byte < local_entry[2]
+                # (H) enclosing block/lambda closes can never mean it; among
+                # (H) windows that do contain the call, the latest declaration
+                # (H) wins (C++ shadowing).
+                best_decl_end = -1
+                for underlying, decl_end, scope_end in cpp_local_aliases.get(
+                    call_name, ()
                 ):
-                    lookup_name = local_entry[0]
+                    if (
+                        decl_end <= call_node.start_byte < scope_end
+                        and decl_end > best_decl_end
+                    ):
+                        lookup_name = underlying
+                        best_decl_end = decl_end
                 if (
                     lookup_name != call_name or call_name in resolver.type_aliases
                 ) and (

@@ -71,18 +71,18 @@ class CppTypeInferenceEngine:
 
     def collect_local_type_aliases(
         self, caller_node: Node
-    ) -> dict[str, tuple[str, int, int]]:
+    ) -> dict[str, list[tuple[str, int, int]]]:
         # (H) Aliases declared INSIDE a caller's body (`void f() { using w =
         # (H) basic_writer; w(1); }`) are exactly what collect_type_aliases
         # (H) skips, so construction-site resolution collects them per caller.
         # (H) Each entry carries the declaration's end byte and the enclosing
         # (H) block's end byte: C++ name lookup is declaration-ordered AND
         # (H) lexically scoped, so a call before the alias or after its
-        # (H) block/lambda closes must not bind to it. Conflicting
-        # (H) redefinitions (a nested lambda re-aliasing the name) drop,
-        # (H) mirroring the cross-file map's conflict rule.
-        aliases: dict[str, tuple[str, int, int]] = {}
-        conflicts: set[str] = set()
+        # (H) block/lambda closes must not bind to it. Same-name entries from
+        # (H) different blocks all survive -- disjoint windows never compete
+        # (H) for one call, and among overlapping windows the binder picks the
+        # (H) latest declaration, which is exactly C++ shadowing.
+        aliases: dict[str, list[tuple[str, int, int]]] = {}
         stack = [(child, caller_node.end_byte) for child in caller_node.children]
         while stack:
             node, scope_end = stack.pop()
@@ -99,13 +99,9 @@ class CppTypeInferenceEngine:
             if pair is None:
                 continue
             alias_name, underlying = pair
-            if alias_name in conflicts:
-                continue
-            if alias_name in aliases and aliases[alias_name][0] != underlying:
-                conflicts.add(alias_name)
-                del aliases[alias_name]
-                continue
-            aliases[alias_name] = (underlying, node.end_byte, scope_end)
+            aliases.setdefault(alias_name, []).append(
+                (underlying, node.end_byte, scope_end)
+            )
         return aliases
 
     def _record_alias(
