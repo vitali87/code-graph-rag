@@ -3157,8 +3157,6 @@ class CallProcessor:
         # (H) common field-shadows-its-own-type case where the ctor does run).
         # (H) The list is a DIRECT child of function_definition, so a nested
         # (H) lambda's or local class's initializers never leak in here.
-        registry = self._resolver.function_registry
-        ensure_rel = self.ingestor.ensure_relationship_batch
         for init_list in caller_node.children:
             if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
                 continue
@@ -3166,51 +3164,55 @@ class CallProcessor:
                 if initializer.type != cs.CppNodeType.FIELD_INITIALIZER:
                     continue
                 name = self._cpp_member_init_head_name(initializer)
-                if not name:
-                    continue
-                class_qn = self._resolver._resolve_type_to_class_qn(name, module_qn)
-                if class_qn is None:
-                    continue
-                for ctor_type, ctor_qn in sorted(
-                    self._resolver.java_constructor_targets(class_qn)
-                ):
-                    for variant in registry.variants(ctor_qn):
-                        ensure_rel(
-                            caller_spec,
-                            cs.RelationshipType.CALLS,
-                            (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
-                        )
+                class_qn = (
+                    self._resolver._resolve_type_to_class_qn(name, module_qn)
+                    if name
+                    else None
+                )
+                if class_qn is not None:
+                    self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _emit_cpp_ctor_calls(
+        self, caller_spec: tuple[str, str, str], class_qn: str
+    ) -> None:
+        # (H) sorted(): the target label is a hash-randomized StrEnum, so sort
+        # (H) for deterministic output.
+        registry = self._resolver.function_registry
+        for ctor_type, ctor_qn in sorted(
+            self._resolver.java_constructor_targets(class_qn)
+        ):
+            for variant in registry.variants(ctor_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+                )
 
     @staticmethod
     def _cpp_member_init_head_name(initializer: Node) -> str | None:
         # (H) The head is the initializer's first named child: a plain
-        # (H) field_identifier (`buffer`), a template_method (`base<T>` -- take
-        # (H) the bare name, specialization args never reach the qn), or a
-        # (H) qualified_identifier (`ns::other` -- keep the full path so the
-        # (H) namespace disambiguates same-leaf classes).
+        # (H) field_identifier (`buffer`), a template_method (`base<T>`), or a
+        # (H) qualified_identifier (`ns::other`, `ns::base<int>` -- the
+        # (H) qualified node CONTAINS the template one, so branching on the
+        # (H) outer type cannot strip the specialization args). The raw text
+        # (H) carries the written spelling in every shape; registered class qns
+        # (H) are unspecialized and dot-separated, so cut at the first `<` and
+        # (H) normalize `::` (PR #792 review: `ns::base<int>(g)` resolved
+        # (H) nothing because the args leaked into the lookup).
         head = next(iter(initializer.named_children), None)
-        if head is None:
-            return None
-        if head.type == cs.CppNodeType.TEMPLATE_METHOD:
-            inner = next(
-                (
-                    child
-                    for child in head.named_children
-                    if child.type == cs.CppNodeType.FIELD_IDENTIFIER
-                ),
-                None,
+        if (
+            head is None
+            or head.type
+            not in (
+                cs.CppNodeType.FIELD_IDENTIFIER,
+                cs.CppNodeType.TEMPLATE_METHOD,
+                cs.CppNodeType.QUALIFIED_IDENTIFIER,
             )
-            head = inner if inner is not None else head
-        if head.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
-            text = head.text
-            if text is None:
-                return None
-            return text.decode(cs.ENCODING_UTF8).replace(
-                cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-            )
-        if head.type != cs.CppNodeType.FIELD_IDENTIFIER or head.text is None:
+            or head.text is None
+        ):
             return None
-        return head.text.decode(cs.ENCODING_UTF8)
+        name = head.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT) or None
 
     def _ingest_go_composite_function_references(
         self,

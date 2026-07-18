@@ -56,6 +56,18 @@ struct wrapper : ns::other {
 };
 """
 
+QUALIFIED_TEMPLATE_BASE_CC = """
+namespace ns {
+template <typename T> struct base {
+  base(int g) {}
+};
+}
+
+struct wrapper : ns::base<int> {
+  wrapper() : ns::base<int>(1) {}
+};
+"""
+
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
@@ -126,5 +138,21 @@ def test_qualified_base_member_init_emits_ctor_call(
     calls = _calls(mock_ingestor)
     assert any(
         src.endswith(".wrapper.wrapper") and dst.endswith(".other.other")
+        for src, dst in calls
+    ), calls
+
+
+def test_qualified_template_base_member_init_emits_ctor_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "qt.cc").write_text(QUALIFIED_TEMPLATE_BASE_CC)
+    run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(mock_ingestor)
+    # (H) `ns::base<int>(1)`: the qualified_identifier CONTAINS the
+    # (H) template_method, so the head's raw text carries the specialization
+    # (H) args; registered class qns are unspecialized (PR #792 review).
+    assert any(
+        src.endswith(".wrapper.wrapper") and dst.endswith(".base.base")
         for src, dst in calls
     ), calls
