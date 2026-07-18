@@ -6,6 +6,8 @@
 # (H) resolve the chained method on it.
 from pathlib import Path
 
+from codebase_rag import constants as cs
+
 from evals.cgr_graph import _capture
 
 
@@ -136,7 +138,7 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
     from codebase_rag.parsers.cpp.utils import extract_return_type_name
 
     parsers, _ = load_parsers()
-    tree = parsers["cpp"].parse(b"Outer<T>::Inner make() { return {}; }\n")
+    tree = parsers[cs.SupportedLanguage.CPP].parse(b"Outer<T>::Inner make() { return {}; }\n")
 
     def find_fn(node):
         if node.type == "function_definition":
@@ -229,7 +231,7 @@ def test_macro_attributed_definition_name_extracted() -> None:
         "    bool other() { return true; }\n"
         "};\n"
     )
-    tree = parsers["cpp"].parse(src.encode())
+    tree = parsers[cs.SupportedLanguage.CPP].parse(src.encode())
 
     def find(node: Node, node_type: str) -> Node | None:
         if node.type == node_type:
@@ -260,7 +262,7 @@ def test_macro_attributed_definition_name_extracted() -> None:
         "        : exception(id_, what_arg) {}\n"
         "};\n"
     )
-    ctor_tree = parsers["cpp"].parse(ctor_src.encode())
+    ctor_tree = parsers[cs.SupportedLanguage.CPP].parse(ctor_src.encode())
     ctor_defn = find(ctor_tree.root_node, "function_definition")
     assert ctor_defn is not None
     assert find(ctor_defn, "parenthesized_declarator") is not None
