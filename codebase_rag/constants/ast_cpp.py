@@ -181,6 +181,8 @@ TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
 # (H) `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
+# (H) `return {args};` -- a braced construction of the declared return type.
+TS_CPP_INITIALIZER_LIST = "initializer_list"
 # (H) Stream-insertion operator; a `binary_expression` using it whose left-spine base
 # (H) is std::cout / std::cerr writes STDOUT.
 CPP_OP_LEFT_SHIFT = "<<"

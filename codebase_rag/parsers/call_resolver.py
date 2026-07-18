@@ -507,6 +507,15 @@ class CallResolver:
                 targets.add((node_type, qn))
         return targets
 
+    def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
+        # (H) The class constructed by a `return {...};` inside caller_qn: the
+        # (H) caller's recorded return type, resolved to a registered class
+        # (H) (None for primitives/auto/unrecorded).
+        return_type = self.type_inference.method_return_types.get(caller_qn)
+        if not return_type:
+            return None
+        return self._resolve_type_to_class_qn(return_type, module_qn)
+
     def cpp_dispatch_targets(
         self,
         call_name: str,

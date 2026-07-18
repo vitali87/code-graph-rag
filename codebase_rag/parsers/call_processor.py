@@ -1854,6 +1854,10 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
+        if language == cs.SupportedLanguage.CPP:
+            self._ingest_cpp_braced_return_instantiations(
+                caller_node, caller_spec, caller_qn, module_qn
+            )
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -2970,6 +2974,60 @@ class CallProcessor:
                             ensure_rel,
                         )
             stack.extend(node.children)
+
+    def _ingest_cpp_braced_return_instantiations(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+    ) -> None:
+        # (H) `return {args};` (nlohmann's exception factories) constructs the
+        # (H) caller's DECLARED return type through a bare initializer_list --
+        # (H) no call node exists, so the constructed class's ctor gets no edge
+        # (H) and reports dead even when its only factory is alive. Emit
+        # (H) INSTANTIATES to the class and CALLS to its ctors, exactly like an
+        # (H) explicit construction. A lambda body is skipped: its returns are
+        # (H) not the caller's. Revive-only: nothing is emitted unless the
+        # (H) return type resolves to a registered first-party class.
+        has_braced_return = False
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_CPP_LAMBDA_EXPRESSION:
+                continue
+            if node.type == cs.TS_RETURN_STATEMENT and any(
+                child.type == cs.TS_CPP_INITIALIZER_LIST
+                for child in node.named_children
+            ):
+                has_braced_return = True
+                break
+            stack.extend(node.children)
+        if not has_braced_return:
+            return
+        class_qn = self._resolver.cpp_braced_return_class(caller_qn, module_qn)
+        if class_qn is None:
+            return
+        registry = self._resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            ensure_rel(
+                caller_spec,
+                cs.RelationshipType.INSTANTIATES,
+                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
+            )
+        for ctor_type, ctor_qn in sorted(
+            self._resolver.java_constructor_targets(class_qn)
+        ):
+            for variant in registry.variants(ctor_qn):
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+                )
 
     def _ingest_go_composite_function_references(
         self,

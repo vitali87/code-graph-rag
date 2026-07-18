@@ -285,7 +285,9 @@ def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
         "    static Widget create(int a) {\n"
         "        return {a, \"x\"};\n"
         "    }\n"
-        "};\n",
+        "};\n"
+        "int helper() { return 1; }\n"
+        "void unrelated() { helper(); }\n",
     )
     ingestor = _capture(tmp_path, "crate")
     calls = {
