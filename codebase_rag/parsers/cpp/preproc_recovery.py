@@ -24,6 +24,20 @@ _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
 # (H) invocation without a trailing semicolon (NLOHMANN_JSON_NAMESPACE_BEGIN,
 # (H) FMT_BEGIN_NAMESPACE)
 _MACRO_MARKER = re.compile(rb"^[A-Z_][A-Z0-9_]{2,}$")
+# (H) node types whose content is payload, not code: a marker-shaped line
+# (H) inside one must never be blanked
+_PAYLOAD_NODE_TYPES = frozenset(
+    (
+        "comment",
+        "string_literal",
+        "raw_string_literal",
+        "raw_string_content",
+        "string_content",
+        "char_literal",
+        "concatenated_string",
+        "system_lib_string",
+    )
+)
 _CHAR_OPEN_BRACE = b"{"
 _CHAR_CLOSE_BRACE = b"}"
 _CHAR_SPACE = b" "
@@ -122,13 +136,31 @@ def _retry_without_macro_markers(
     # (H) class/namespace and every member are lost or leak to module scope.
     # (H) Blanking just the marker lines (space-filled, offsets preserved) and
     # (H) re-parsing recovers the real structure; the strict error-count
-    # (H) improvement guard keeps benign marker uses untouched.
+    # (H) improvement guard keeps benign marker uses untouched. A `//` comment
+    # (H) after the marker is prose, not part of the invocation. All gated
+    # (H) markers blank TOGETHER: per-marker subsets cannot work here, because
+    # (H) a marker glued into an otherwise well-formed neighbor (an attribute
+    # (H) macro between `template<...>` and the declarator) damages the tree
+    # (H) SILENTLY -- no error node -- so no per-subset metric can see which
+    # (H) single marker repairs it. Collateral is prevented structurally
+    # (H) instead: a marker-shaped line whose covering node is string or
+    # (H) comment payload is never a candidate.
     if not tree.root_node.has_error:
         return tree, source_bytes
     lines = source_bytes.split(_CHAR_NEWLINE)
-    markers = [
-        (i, i) for i, line in enumerate(lines) if _MACRO_MARKER.match(line.strip())
-    ]
+    markers: list[tuple[int, int]] = []
+    offset = 0
+    for i, line in enumerate(lines):
+        code = line.split(_LINE_COMMENT, 1)[0]
+        stripped = code.strip()
+        if _MACRO_MARKER.match(stripped):
+            start = offset + code.index(stripped)
+            covering = tree.root_node.named_descendant_for_byte_range(
+                start, start + len(stripped)
+            )
+            if covering is None or covering.type not in _PAYLOAD_NODE_TYPES:
+                markers.append((i, i))
+        offset += len(line) + 1
     if not markers:
         return tree, source_bytes
     blanked = _blank(lines, markers)

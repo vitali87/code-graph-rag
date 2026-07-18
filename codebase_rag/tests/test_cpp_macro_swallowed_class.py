@@ -120,6 +120,45 @@ SOME_NAMESPACE_END
     assert "mshealthy.scope.detail.helper" in functions, sorted(functions)
 
 
+def test_independent_marker_damage_sites_all_recover(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) two independent glue sites: the scope marker swallows the struct
+    # (H) head, and a bare attribute macro swallows the member after it
+    # (H) (nlohmann json_sax's JSON_HEDLEY_RETURNS_NON_NULL). Greedy
+    # (H) single-marker rounds must fix BOTH, not stop at the first
+    # (H) error-count tie (PR #800 review).
+    root = temp_repo / "msmulti"
+    root.mkdir()
+    (root / "sax.hpp").write_text(
+        """\
+LIB_SCOPE_BEGIN
+
+struct sax_like
+{
+    RETURNS_NON_NULL
+    int guarded()
+    {
+        return helper();
+    }
+
+    int helper()
+    {
+        return 2;
+    }
+};
+
+LIB_SCOPE_END
+""",
+        encoding="utf-8",
+    )
+    run_updater(root, mock_ingestor, skip_if_missing="cpp")
+
+    methods = get_qualified_names(get_nodes(mock_ingestor, "Method"))
+    assert "msmulti.sax.sax_like.guarded" in methods, sorted(methods)
+    assert "msmulti.sax.sax_like.helper" in methods, sorted(methods)
+
+
 def test_marker_retry_guard_shapes() -> None:
     import pytest as _pytest
 
