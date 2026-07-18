@@ -4144,18 +4144,35 @@ class CallProcessor:
             return safe_decode_text(receiver)
         return None
 
-    def _csharp_declared_names(self, caller_node: Node) -> set[str]:
-        # (H) Every name declared anywhere in the body (locals incl. untyped
-        # (H) `var x = 3`, parameters, lambda params): a declaration shadows a
-        # (H) same-name property for the read pass. Method-wide rather than
-        # (H) block-precise -- suppression can only drop a REFERENCES edge,
-        # (H) never fabricate one.
+    def _csharp_declared_names(
+        self,
+        caller_node: Node,
+        function_types: tuple[str, ...],
+        class_types: tuple[str, ...],
+    ) -> set[str]:
+        # (H) Every name declared in the scopes the READ WALK descends into
+        # (H) (locals incl. untyped `var x = 3`, parameters, lambda params): a
+        # (H) declaration shadows a same-name property for the read pass. The
+        # (H) two walks must skip the SAME nested scopes: a local declared in a
+        # (H) nested local function must not suppress the outer body's reads
+        # (H) (that scope has its own pass), and a lambda body -- which the
+        # (H) read walk does descend into -- must contribute its params,
+        # (H) including a simple lambda's bare-identifier parameter, or an
+        # (H) in-lambda shadowed read fabricates a property reference.
         names: set[str] = set()
-        stack = [caller_node]
+        stack = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
                 if name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)):
+                    names.add(name)
+            elif node_type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
+                # (H) A simple lambda's parameter (`Size => ...`) is an
+                # (H) implicit_parameter whose text IS the name.
+                if name := safe_decode_text(node):
                     names.add(name)
             stack.extend(node.children)
         return names
@@ -4191,11 +4208,21 @@ class CallProcessor:
                 continue
             if node_type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
                 receiver = node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
-                name = self._csharp_read_identifier(receiver)
+                # (H) `this.Size` is ALWAYS the member (a local can never
+                # (H) shadow a this-qualified read), so the read is the NAME
+                # (H) field and the shadow check does not apply.
+                this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
+                name = (
+                    safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                    if this_read
+                    else self._csharp_read_identifier(receiver)
+                )
                 if name and name in prop_names and name not in seen:
                     if shadowed is None:
-                        shadowed = self._csharp_declared_names(caller_node)
-                    if name not in shadowed and (
+                        shadowed = self._csharp_declared_names(
+                            caller_node, function_types, class_types
+                        )
+                    if (this_read or name not in shadowed) and (
                         prop_qn := engine.resolve_property_read(name, caller_qn)
                     ):
                         seen.add(name)

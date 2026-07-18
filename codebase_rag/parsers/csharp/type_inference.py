@@ -632,10 +632,14 @@ class CSharpTypeInferenceEngine:
         # (H) A cast receiver `((Component)s!).Reload()` (Polly's
         # (H) CancellationToken.Register callback) arrives as
         # (H) parenthesized_expression > cast_expression; the cast TYPE is the
-        # (H) receiver's type by construction, so unwrap parens and read it
-        # (H) (mirrors the Java cast-receiver handling). The null-forgiving `s!`
-        # (H) sits INSIDE the cast, so no postfix peeling is needed.
-        while receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        # (H) receiver's type by construction, so peel interleaved parens and
+        # (H) null-forgiving postfix wrappers (`((Component)s)!` puts the `!`
+        # (H) OUTSIDE the parens) to a fixpoint and read it (mirrors the Java
+        # (H) cast-receiver handling).
+        while receiver.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION,
+        ):
             inner = receiver.named_children[0] if receiver.named_children else None
             if inner is None:
                 return None
