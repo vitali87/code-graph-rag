@@ -103,9 +103,7 @@ def test_unconstructed_class_dtor_gets_no_edge(
     assert not any("~orphaned" in dst for _, dst in calls), calls
 
 
-def test_braced_return_reaches_dtor(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
+def test_braced_return_reaches_dtor(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     (temp_repo / "e.cc").write_text(BRACED_RETURN_DTOR_CC)
     run_updater(temp_repo, mock_ingestor)
 
