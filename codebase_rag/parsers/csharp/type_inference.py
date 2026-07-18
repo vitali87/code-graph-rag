@@ -66,6 +66,7 @@ class CSharpTypeInferenceEngine:
         "csharp_extension_methods",
         "csharp_call_sites",
         "csharp_local_functions",
+        "csharp_generic_methods",
         "function_locations",
         "_rel_to_module",
     )
@@ -86,6 +87,7 @@ class CSharpTypeInferenceEngine:
         csharp_extension_methods: dict[str, list[tuple[str, str, str]]] | None = None,
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
+        csharp_generic_methods: set[str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -111,6 +113,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_local_functions = (
             csharp_local_functions if csharp_local_functions is not None else {}
+        )
+        self.csharp_generic_methods = (
+            csharp_generic_methods if csharp_generic_methods is not None else set()
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -300,9 +305,21 @@ class CSharpTypeInferenceEngine:
             name, arg_count, caller_qn, module_qn
         ):
             return cs.NodeLabel.FUNCTION.value, local
+        # (H) Same-arity twins (`M(X) => M<Void>(x)` beside `M<T>(X)` on another
+        # (H) partial part, Polly's ResiliencePipeline Get*/Initialize*Context):
+        # (H) parameter arity cannot tell them apart, so prefer the overload
+        # (H) whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
+        # (H) generic_name, `M(...)` a plain identifier).
+        generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
         for class_qn in self._caller_class_candidates(caller_qn, module_qn):
-            if hit := self._find_arity_across_parts(class_qn, name, arg_count):
-                return cs.NodeLabel.METHOD.value, hit
+            matches = self._find_arity_matches_across_parts(class_qn, name, arg_count)
+            if matches:
+                preferred = [
+                    m
+                    for m in matches
+                    if (m in self.csharp_generic_methods) == generic_call
+                ]
+                return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
         return None
 
     def _find_in_scope_local_function(
@@ -782,6 +799,64 @@ class CSharpTypeInferenceEngine:
             ):
                 return resolved
         return None
+
+    def _find_arity_matches_across_parts(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> list[str]:
+        # (H) ALL exact-arity same-name overloads across partial parts and
+        # (H) bases (the single-hit variant returns the first, which is
+        # (H) arbitrary when same-arity twins exist).
+        seen: set[str] = set()
+        out: list[str] = []
+        for root in self._partial_roots(class_qn):
+            self._collect_arity_matches(root, method_name, arg_count, seen, out)
+        return out
+
+    def _collect_arity_matches(
+        self,
+        class_qn: str,
+        method_name: str,
+        arg_count: int,
+        seen: set[str],
+        out: list[str],
+    ) -> None:
+        if class_qn in seen:
+            return
+        seen.add(class_qn)
+        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+        out.extend(
+            qn
+            for qn in self._direct_same_name_methods(class_qn, method_name)
+            if _arity(qn[len(prefix) :]) == arg_count
+        )
+        for base_qn in self.class_inheritance.get(class_qn, []):
+            self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
+
+    def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
+        # (H) Every same-name METHOD of the caller's enclosing type (across
+        # (H) partial parts and base classes): a bare method-group pass binds
+        # (H) the enclosing type's method group, and which overload the
+        # (H) delegate selects is invisible to syntax, so the whole family is
+        # (H) referenced. Properties are excluded (a method group never names
+        # (H) a property).
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        queue = deque(self._partial_roots(class_qn))
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            out.extend(
+                qn
+                for qn in self._direct_same_name_methods(current, name)
+                if not self.function_registry.is_property(qn)
+            )
+            queue.extend(self.class_inheritance.get(current, []))
+        return sorted(set(out))
 
     def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
         seen: set[str] = set()

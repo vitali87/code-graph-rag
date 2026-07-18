@@ -252,3 +252,125 @@ public class Ext {
     refs = _reference_targets(mock_ingestor)
     assert any(t.endswith("N.Ext.Sink(int)") for t in refs), refs
     assert not any(t.endswith("N.Ext.Sink(int)") for t in calls), calls
+
+
+def test_method_group_references_whole_overload_family(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) A method group carries no argument list, so which overload it binds
+    # (H) depends on the delegate type we cannot see; the pass must reference
+    # (H) EVERY same-name overload of the enclosing type, not the one the
+    # (H) arity-blind trie happens to pick (Polly's AsyncRetrySyntax
+    # (H) EmptyHandler family: the arity-3 overload reported dead).
+    (csharp_project / "Fam.cs").write_text(
+        """
+namespace N;
+public class Fam {
+    public void Configure() { Retry(3, Handler); }
+    public void Retry(int count, System.Action<int> cb) { }
+    private static void Handler(int a) { }
+    private static void Handler(int a, int b) { }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Fam.Handler(int)") for t in refs), refs
+    assert any(t.endswith("N.Fam.Handler(int, int)") for t in refs), refs
+
+
+def test_generic_method_group_argument_is_referenced(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) `Retry(3, Callback<int>)`: the method-group argument carries explicit
+    # (H) type arguments; without stripping them the name resolves to nothing
+    # (H) and the target reports dead (Polly's EmptyHandlerOfT<TResult>, its
+    # (H) ONLY overload, referenced solely in generic form).
+    (csharp_project / "Gen.cs").write_text(
+        """
+namespace N;
+public class Gen {
+    public void Configure() { Retry(3, Callback<int>); }
+    public void Retry(int count, System.Action<int> cb) { }
+    private static void Callback<T>(T x) { }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Gen.Callback(T)") for t in refs), refs
+
+
+def test_method_group_prefers_enclosing_type_family(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) The bare method-group name binds the ENCLOSING type's method group;
+    # (H) a lexicographically earlier same-name method in a sibling class must
+    # (H) not capture the reference (Polly's EmptyAction: FallbackSyntax's
+    # (H) overload captured refs belonging to FallbackTResultSyntax).
+    (csharp_project / "Sib.cs").write_text(
+        """
+namespace N;
+public class AaaOther {
+    public static void Handler(string s) { }
+}
+public class Zzz {
+    public void Configure() { Retry(3, Handler); }
+    public void Retry(int count, System.Action<int> cb) { }
+    private static void Handler(int a) { }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    refs = _reference_targets(mock_ingestor)
+    assert any(t.endswith("N.Zzz.Handler(int)") for t in refs), refs
+    assert not any(t.endswith("N.AaaOther.Handler(string)") for t in refs), refs
+
+
+def test_generic_call_prefers_generic_overload_across_partial_parts(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # (H) Polly's ResiliencePipeline: the non-generic partial part declares
+    # (H) `M(X) => M<Void>(x)` while another part declares `M<T>(X)` with the
+    # (H) SAME parameter arity. A call `M<TResult>(x)` must bind the GENERIC
+    # (H) overload, and a plain `M(x)` call the non-generic one; arity alone
+    # (H) cannot tell them apart.
+    (csharp_project / "PipeCore.cs").write_text(
+        """
+namespace N;
+public partial class Pipe {
+    public int Run(int x) { return M(x); }
+    private int M(int x) { return M<int>(x); }
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "PipeT.cs").write_text(
+        """
+namespace N;
+public partial class Pipe {
+    public int RunT(int x) { return M<int>(x); }
+    private int M<T>(int x) { return x; }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    # (H) The generic call in PipeT binds its own part's generic overload.
+    assert any(
+        "PipeT" in s and s.endswith("N.Pipe.RunT(int)") and "PipeT" in t
+        for s, t in pairs
+    ), pairs
+    # (H) The plain call in PipeCore binds the non-generic overload.
+    assert any(
+        "PipeCore" in s and s.endswith("N.Pipe.Run(int)") and "PipeCore" in t
+        for s, t in pairs
+    ), pairs
