@@ -371,7 +371,17 @@ def test_milvus_lite_30_cosine_workaround_versions(
         assert vs._uses_milvus_lite_30_cosine_distance() is expected
 
 
+def _has_milvus_lite() -> bool:
+    # (H) A LOCAL Milvus uri needs the embedded milvus-lite server, which ships
+    # (H) no Windows wheels: pymilvus alone installs there and the connect
+    # (H) raises ConnectionConfigException (Windows CI).
+    import importlib.util
+
+    return importlib.util.find_spec("milvus_lite") is not None
+
+
 @pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+@pytest.mark.skipif(not _has_milvus_lite(), reason="milvus-lite not installed")
 def test_milvus_store_search_verify_delete_roundtrip(
     tmp_path: Path, reset_global_client: None
 ) -> None:
