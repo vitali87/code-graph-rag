@@ -250,3 +250,61 @@ def test_roslyn_frontend_corrects_base_classification(
     assert _has(implements, "N.Button", "N.Renderer"), implements
     assert not _has(implements, "N.Button", "N.IWidget"), implements
     assert not _has(inherits, "N.Button", "N.Renderer"), inherits
+
+
+def _button_facts() -> object:
+    from codebase_rag.parsers.csharp_frontend import CSharpSemanticFacts
+
+    line = next(
+        i for i, text in enumerate(_TYPES.splitlines(), 1) if "class Button" in text
+    )
+    return CSharpSemanticFacts(
+        base_kinds={("Types.cs", line): {"IWidget": "class", "Renderer": "interface"}},
+        call_sites={},
+        partial_groups=[],
+        query_calls=[],
+        external_sites=set(),
+    )
+
+
+def test_default_csharp_frontend_is_auto() -> None:
+    # (H) The shipped default: hybrid wherever a dotnet toolchain exists,
+    # (H) pure tree-sitter otherwise. Read from the FIELD default because the
+    # (H) test suite pins the live settings instance to tree-sitter.
+    from codebase_rag.config import Settings
+
+    assert Settings.model_fields["CSHARP_FRONTEND"].default == cs.CSharpFrontend.AUTO
+
+
+def test_auto_mode_runs_frontend_when_dotnet_available(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "autoproj"
+    _write_project(root)
+    monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
+    monkeypatch.setattr(gu, "csharp_frontend_available", lambda: True)
+    monkeypatch.setattr(gu, "run_csharp_frontend", lambda repo_path: _button_facts())
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    inherits = _pairs(ingestor, "INHERITS")
+    assert _has(inherits, "N.Button", "N.IWidget"), inherits
+
+
+def test_auto_mode_falls_back_silently_without_dotnet(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "autofallproj"
+    _write_project(root)
+    frontend_runner = MagicMock()
+    monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
+    monkeypatch.setattr(gu, "csharp_frontend_available", lambda: False)
+    monkeypatch.setattr(gu, "run_csharp_frontend", frontend_runner)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    frontend_runner.assert_not_called()
+    inherits = _pairs(ingestor, "INHERITS")
+    assert not _has(inherits, "N.Button", "N.IWidget"), inherits
