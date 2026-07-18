@@ -1774,6 +1774,23 @@ class CallProcessor:
                 prop_names,
             )
 
+        # (H) Same need as the Python pass above, C# shape: a property getter
+        # (H) access is a member_access_expression (usually in RECEIVER
+        # (H) position), never an invocation, so callers that only READ a
+        # (H) property emit no edge to it and dead-code flags it (Polly's
+        # (H) Context.WrappedDictionary, ResiliencePipeline<T>.Pipeline).
+        if language == cs.SupportedLanguage.CSHARP and (
+            csharp_prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_csharp_property_reads(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                local_var_types,
+                queries[language][cs.QUERY_CONFIG],
+                csharp_prop_names,
+            )
+
         # (H) Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
         # (H) methods; emit those edges when the operand is a first-party type.
         if language == cs.SupportedLanguage.PYTHON:
@@ -4102,6 +4119,92 @@ class CallProcessor:
                                     calls_rel,
                                     (method_label, qn_key, target_qn),
                                 )
+            stack.extend(node.children)
+
+    def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
+        # (H) The identifier actually being READ in receiver position: unwrap
+        # (H) parens, a cast's VALUE (`((IDictionary<...>)WrappedDictionary)`),
+        # (H) and a null-forgiving postfix (`s!`) down to a bare identifier.
+        while receiver is not None:
+            if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+                receiver = receiver.child_by_field_name(cs.FIELD_VALUE)
+                continue
+            if receiver.type == cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION:
+                receiver = (
+                    receiver.named_children[0] if receiver.named_children else None
+                )
+                continue
+            break
+        if receiver is not None and receiver.type == cs.TS_CSHARP_IDENTIFIER:
+            return safe_decode_text(receiver)
+        return None
+
+    def _csharp_declared_names(self, caller_node: Node) -> set[str]:
+        # (H) Every name declared anywhere in the body (locals incl. untyped
+        # (H) `var x = 3`, parameters, lambda params): a declaration shadows a
+        # (H) same-name property for the read pass. Method-wide rather than
+        # (H) block-precise -- suppression can only drop a REFERENCES edge,
+        # (H) never fabricate one.
+        names: set[str] = set()
+        stack = [caller_node]
+        while stack:
+            node = stack.pop()
+            if node.type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
+                if name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)):
+                    names.add(name)
+            stack.extend(node.children)
+        return names
+
+    def _ingest_csharp_property_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        local_var_types: dict[str, str] | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # (H) Emit a REFERENCES edge (a read is not an invocation; the call
+        # (H) graph stays invocation-only) from the caller to each property of
+        # (H) its enclosing type read in receiver position. Registry-guarded via
+        # (H) resolve_property_read, which accepts only marked properties.
+        engine = self._resolver.type_inference.csharp_type_inference
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        refs_rel = cs.RelationshipType.REFERENCES
+        qn_key = cs.KEY_QUALIFIED_NAME
+        method_label = cs.NodeLabel.METHOD
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        shadowed: set[str] | None = None
+        seen: set[str] = set()
+
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in function_types or node_type in class_types:
+                continue
+            if node_type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+                receiver = node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+                name = self._csharp_read_identifier(receiver)
+                if name and name in prop_names and name not in seen:
+                    if shadowed is None:
+                        shadowed = self._csharp_declared_names(caller_node)
+                    if name not in shadowed and (
+                        prop_qn := engine.resolve_property_read(name, caller_qn)
+                    ):
+                        seen.add(name)
+                        if prop_qn != caller_qn:
+                            ensure_rel(
+                                caller_spec,
+                                refs_rel,
+                                (method_label, qn_key, prop_qn),
+                            )
             stack.extend(node.children)
 
     def _build_nested_qualified_name(

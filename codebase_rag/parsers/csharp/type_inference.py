@@ -384,6 +384,20 @@ class CSharpTypeInferenceEngine:
                 return
             yield scope
 
+    def resolve_property_read(self, name: str, caller_qn: str | None) -> str | None:
+        # (H) A bare-identifier read (`WrappedDictionary.Keys`) targets a
+        # (H) property of the caller's enclosing type (implicit this); resolve
+        # (H) across partial parts and base classes and accept ONLY a
+        # (H) registered property, so same-name methods stay out of the read
+        # (H) pass.
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return None
+        qn = self._find_name_across_parts(class_qn, name)
+        if qn is not None and self.function_registry.is_property(qn):
+            return qn
+        return None
+
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
