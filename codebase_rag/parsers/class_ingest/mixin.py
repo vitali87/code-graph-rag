@@ -890,7 +890,25 @@ class ClassIngestMixin:
             # (H) (`_w.M()`, `this._w.M()`) resolves, including a field inherited
             # (H) from a base class in another file (the resolver walks
             # (H) class_inheritance over these per-class maps).
-            if field_types := csharp_utils.build_field_type_map(member_node):
+            field_types = csharp_utils.build_field_type_map(member_node) or {}
+            # (H) A record's positional parameters ARE public properties of
+            # (H) the record type; record them as members so receiver typing
+            # (H) and the delegate-invoke gate see them (`Callback();` on a
+            # (H) record param is Action.Invoke, not a first-party call).
+            if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
+                for pl in member_node.children:
+                    if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
+                        continue
+                    for prm in pl.children:
+                        if prm.type != cs.TS_CSHARP_PARAMETER:
+                            continue
+                        pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
+                        ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
+                        if pname and ptype:
+                            field_types.setdefault(
+                                pname, csharp_utils._normalize_type_name(ptype)
+                            )
+            if field_types:
                 self.class_field_types[class_qn] = field_types
             # (H) Declared type-parameter count: `Builder<TResult>` -> 1;
             # (H) unrecorded means 0, so only generics are stored. A class
@@ -1210,6 +1228,10 @@ class ClassIngestMixin:
                     rt_node := method_node.child_by_field_name(
                         cs.TS_CSHARP_FIELD_RETURNS
                     )
+                    # (H) property_declaration exposes its type via `type`,
+                    # (H) not `returns`; recording it lets chained typing and
+                    # (H) the external-member gate see through properties.
+                    or method_node.child_by_field_name(cs.FIELD_TYPE)
                 )
                 is not None
             ):

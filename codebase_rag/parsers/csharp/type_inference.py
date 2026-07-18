@@ -162,7 +162,19 @@ class CSharpTypeInferenceEngine:
         param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if param_list is None:
             return
+        prev_loose_type: str | None = None
         for child in param_list.children:
+            # (H) A `params string[] xs` tail is not wrapped in a `parameter`
+            # (H) node (grammar quirk, same as extract_parameter_type_names):
+            # (H) its array_type and identifier sit loose under the list.
+            if child.type == cs.TS_CSHARP_ARRAY_TYPE:
+                prev_loose_type = safe_decode_text(child)
+                continue
+            if child.type == cs.TS_CSHARP_IDENTIFIER and prev_loose_type:
+                if name := safe_decode_text(child):
+                    types[name] = _normalize_type_name(prev_loose_type)
+                prev_loose_type = None
+                continue
             if child.type != cs.TS_CSHARP_PARAMETER:
                 continue
             name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
@@ -333,7 +345,19 @@ class CSharpTypeInferenceEngine:
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
+                # (H) A delegate-typed PROPERTY invoked with call syntax
+                # (H) (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
+                # (H) method call; binding the property as a METHOD fabricates
+                # (H) an edge. Its reachability comes from the read pass.
+                if self.function_registry.is_property(name_hit):
+                    return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, name_hit
+        # (H) An object-virtual miss on a TYPED receiver (`severity.ToString()`
+        # (H) on an enum, `options.GetType()`) resolves to System.Object/Enum;
+        # (H) falling to the trie lands on whatever unrelated
+        # (H) hide-object-members override exists (Polly's PolicyBuilder).
+        if method_name in cs.CSHARP_OBJECT_VIRTUALS:
+            return CSHARP_EXTERNAL_TARGET
         if receiver_class_qn is None and self._externally_targeted(
             receiver, method_name, local_var_types or {}, caller_qn
         ):
@@ -367,14 +391,25 @@ class CSharpTypeInferenceEngine:
         if not text:
             return False
         segments = text.split(cs.SEPARATOR_DOT)
-        if not all(seg[:1].isupper() for seg in segments):
-            return False
         head = segments[0]
         if head in local_var_types:
+            # (H) A local/param (any casing) whose DECLARED type resolves to
+            # (H) no registered type (`string[]`, reflection FieldInfo) is
+            # (H) external; its members cannot be attributed by name
+            # (H) (`names.Contains(x)` bound Context.Contains).
+            return not self._type_simple_name_registered(local_var_types[head])
+        if not all(seg[:1].isupper() for seg in segments):
             return False
         if class_qn := self._containing_class_qn(caller_qn):
-            if self._field_type(class_qn, head):
-                return False
+            if member_type := self._field_type(class_qn, head):
+                # (H) Same rule for a field/property receiver: an
+                # (H) external-typed member (`Wrapper` of BCL RateLimiter)
+                # (H) makes the call external (the trie self-looped
+                # (H) `Wrapper.DisposeAsync()` onto the enclosing class).
+                return not self._type_simple_name_registered(member_type)
+            if prop_qn := self.resolve_property_read(head, caller_qn):
+                if entry := self.csharp_method_return_types.get(prop_qn):
+                    return not self._type_simple_name_registered(entry[0])
             # (H) A PascalCase receiver is very often a PROPERTY or member of
             # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
             # (H) enclosing type declares by that name is first-party, not an
@@ -423,6 +458,19 @@ class CSharpTypeInferenceEngine:
                     if (m in self.csharp_generic_methods) == generic_call
                 ]
                 return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
+        # (H) A bare object-virtual with no local declaration is
+        # (H) `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
+        # (H) a bare name that IS a delegate-typed member of the enclosing type
+        # (H) (`Callback();` on a record positional property) is
+        # (H) Delegate.Invoke. Neither may fall to the bare-name trie.
+        if name in cs.CSHARP_OBJECT_VIRTUALS:
+            return CSHARP_EXTERNAL_TARGET
+        if self.resolve_property_read(name, caller_qn) is not None:
+            return CSHARP_EXTERNAL_TARGET
+        if (class_qn := self._containing_class_qn(caller_qn)) and self._field_type(
+            class_qn, name
+        ):
+            return CSHARP_EXTERNAL_TARGET
         return None
 
     def _find_in_scope_local_function(
@@ -775,6 +823,13 @@ class CSharpTypeInferenceEngine:
             if class_qn is not None:
                 return self.csharp_class_generic_arity.get(class_qn, 0)
         return None
+
+    def _type_simple_name_registered(self, type_name: str) -> bool:
+        simple = type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return any(
+            self.function_registry.get(qn) in _TYPE_DECLS
+            for qn in self.simple_name_lookup.get(simple, set())
+        )
 
     def _find_extension_method(
         self,

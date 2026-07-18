@@ -146,6 +146,7 @@ TS_CSHARP_MODIFIER_PROTECTED = "protected"
 # (H) of the parameter_list (grammar quirk), captured directly.
 TS_CSHARP_PARAMETER = "parameter"
 TS_CSHARP_ARRAY_TYPE = "array_type"
+TS_CSHARP_PARAMETER_LIST = "parameter_list"
 
 # (H) Local/field declarations for type inference. A local is a
 # (H) variable_declaration (type field + variable_declarator[s]); `var` makes the
