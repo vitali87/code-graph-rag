@@ -20,7 +20,7 @@ from ...utils.path_utils import cached_relative_path
 from ..csharp_frontend import CallSiteKey, CSharpCallSite
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
-from .utils import _normalize_type_name
+from .utils import _normalize_type_name, generic_arity_of_type_text
 
 if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
@@ -67,6 +67,8 @@ class CSharpTypeInferenceEngine:
         "csharp_call_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
+        "csharp_class_generic_arity",
+        "csharp_method_return_types",
         "method_return_types",
         "function_locations",
         "_rel_to_module",
@@ -89,6 +91,8 @@ class CSharpTypeInferenceEngine:
         csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
+        csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
@@ -118,6 +122,12 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_generic_methods = (
             csharp_generic_methods if csharp_generic_methods is not None else set()
+        )
+        self.csharp_class_generic_arity = (
+            csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
+        )
+        self.csharp_method_return_types = (
+            csharp_method_return_types if csharp_method_return_types is not None else {}
         )
         # (H) Shared reference (as above): {method qn: normalized return type},
         # (H) populated during ingestion, read by chained-receiver typing.
@@ -572,7 +582,9 @@ class CSharpTypeInferenceEngine:
             )
             if inner is None:
                 return None
-            return self.method_return_types.get(inner[1])
+            if entry := self.csharp_method_return_types.get(inner[1]):
+                return entry[0]
+            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
@@ -650,15 +662,24 @@ class CSharpTypeInferenceEngine:
         # (H) genuinely ambiguous -- we can't tell which one it is, so an
         # (H) unqualified-vs-unqualified match must not guess. A qualified receiver
         # (H) or a BCL name (not registered) is not affected.
-        ambiguous_unqualified = not recv_qualified and (
-            len(
-                [
-                    qn
-                    for qn in self.simple_name_lookup.get(recv_simple, set())
-                    if self.function_registry.get(qn) in _TYPE_DECLS
-                ]
-            )
-            > 1
+        same_name_decls = [
+            qn
+            for qn in self.simple_name_lookup.get(recv_simple, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        # (H) Same-name declarations that all differ by GENERIC ARITY (`Builder`
+        # (H) beside `Builder<TResult>`, Polly's dual pipeline builders) are not
+        # (H) the namespace ambiguity this guard exists for: a compilable call
+        # (H) binds the unique matching extension regardless of which twin the
+        # (H) receiver is. Only same-arity twins (true `N1.Widget`/`N2.Widget`
+        # (H) namespace splits) stay ambiguous.
+        distinct_arities = {
+            self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
+        }
+        ambiguous_unqualified = (
+            not recv_qualified
+            and len(same_name_decls) > 1
+            and len(distinct_arities) != len(same_name_decls)
         )
         matches: list[str] = []
         for qn, recv_type, ext_namespace in candidates:
@@ -728,7 +749,11 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             if type_text := safe_decode_text(type_node) if type_node else None:
-                return self._type_name_to_qn(_normalize_type_name(type_text), module_qn)
+                return self._type_name_to_qn(
+                    _normalize_type_name(type_text),
+                    module_qn,
+                    generic_arity_of_type_text(type_text),
+                )
             return None
         # (H) `Policy.Handle<T>().Wrap(...)`: an invocation receiver types the
         # (H) next hop via the resolved inner call's recorded return type
@@ -739,8 +764,9 @@ class CSharpTypeInferenceEngine:
             )
             if inner is None:
                 return None
-            if rtype := self.method_return_types.get(inner[1]):
-                return self._type_name_to_qn(rtype, module_qn)
+            if entry := self.csharp_method_return_types.get(inner[1]):
+                rtype, rarity = entry
+                return self._type_name_to_qn(rtype, module_qn, rarity)
             return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
@@ -779,7 +805,12 @@ class CSharpTypeInferenceEngine:
         class_qn = base.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
 
-    def _type_name_to_qn(self, type_name: str, module_qn: str) -> str | None:
+    def _type_name_to_qn(
+        self,
+        type_name: str,
+        module_qn: str,
+        generic_arity: int | None = None,
+    ) -> str | None:
         # (H) An already-qualified name that IS a registered type resolves directly,
         # (H) skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:
@@ -794,6 +825,18 @@ class CSharpTypeInferenceEngine:
             for qn in self.simple_name_lookup.get(simple, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
+        # (H) `Builder` vs `Builder<TResult>` share a simple name; when the
+        # (H) reference's WRITTEN generic arity is known, keep only the
+        # (H) declarations with that type-parameter count (Polly's dual
+        # (H) builders, where the ambiguity killed every fluent second hop).
+        if generic_arity is not None and len(candidates) > 1:
+            arity_matched = [
+                qn
+                for qn in candidates
+                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            ]
+            if arity_matched:
+                candidates = arity_matched
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:

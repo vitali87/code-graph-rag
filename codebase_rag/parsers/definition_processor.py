@@ -115,6 +115,14 @@ class DefinitionProcessor(
         # (H) matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
         # (H) parameter arity alone cannot tell same-name twins apart.
         self.csharp_generic_methods: set[str] = set()
+        # (H) {class qn: declared type-parameter count} for C# generic types,
+        # (H) so `Builder` vs `Builder<TResult>` (same simple name) can be told
+        # (H) apart when a type reference's written arity is known.
+        self.csharp_class_generic_arity: dict[str, int] = {}
+        # (H) {method qn: (normalized return type, its written generic arity)}
+        # (H) for chained-receiver typing; separate from the cross-language
+        # (H) method_return_types because the arity is C#-specific.
+        self.csharp_method_return_types: dict[str, tuple[str, int]] = {}
         # (H) C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
         # (H) {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
         # (H) frontend ran, split_csharp_bases reads a base's kind here (exact,

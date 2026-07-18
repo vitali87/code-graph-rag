@@ -130,6 +130,8 @@ class ProcessorFactory:
                 csharp_call_sites=self.definition_processor.csharp_call_sites,
                 csharp_local_functions=self.definition_processor.csharp_local_functions,
                 csharp_generic_methods=self.definition_processor.csharp_generic_methods,
+                csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
+                csharp_method_return_types=self.definition_processor.csharp_method_return_types,
                 function_locations=self.definition_processor.function_locations,
             )
         return self._type_inference

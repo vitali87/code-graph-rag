@@ -45,6 +45,29 @@ def _normalize_type_name(text: str) -> str:
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
+def generic_arity_of_type_text(text: str) -> int:
+    # (H) Number of top-level type arguments in a type reference:
+    # (H) `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
+    # (H) disambiguate same-simple-name generic/non-generic type declarations.
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN)
+    if open_idx < 0:
+        return 0
+    depth = 0
+    count = 1
+    for ch in text[open_idx + 1 :]:
+        if ch in "<([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == cs.SEPARATOR_COMMA and depth == 0:
+            count += 1
+    return count
+
+
 def normalize_csharp_type_name(type_node: Node) -> str | None:
     # (H) A type node's normalized name (generic-free, nullable-stripped) or
     # (H) None for unnameable types (`void` callers never chain off it, but a
