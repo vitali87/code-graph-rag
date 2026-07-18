@@ -96,6 +96,7 @@ TS_CSHARP_BASE_LIST = "base_list"
 # (H) a record positional base `primary_constructor_base_type` (`Animal(Name)`),
 # (H) or a `predefined_type` (an enum's underlying integral type -> not a base).
 TS_CSHARP_GENERIC_NAME = "generic_name"
+TS_CSHARP_CAST_EXPRESSION = "cast_expression"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 

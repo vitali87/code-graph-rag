@@ -615,6 +615,22 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
+        # (H) A cast receiver `((Component)s!).Reload()` (Polly's
+        # (H) CancellationToken.Register callback) arrives as
+        # (H) parenthesized_expression > cast_expression; the cast TYPE is the
+        # (H) receiver's type by construction, so unwrap parens and read it
+        # (H) (mirrors the Java cast-receiver handling). The null-forgiving `s!`
+        # (H) sits INSIDE the cast, so no postfix peeling is needed.
+        while receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            inner = receiver.named_children[0] if receiver.named_children else None
+            if inner is None:
+                return None
+            receiver = inner
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            cast_type = safe_decode_text(receiver.child_by_field_name(cs.FIELD_TYPE))
+            if not cast_type:
+                return None
+            return self._type_name_to_qn(_normalize_type_name(cast_type), module_qn)
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
         # (H) An explicit `this.field` receiver: the field's (possibly inherited)
