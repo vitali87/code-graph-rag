@@ -149,3 +149,47 @@ def test_score_csharp_retrieval_prf() -> None:
     )
     row = next(r for r in result.rows if r["label"] == ec.CSHARP_RETRIEVAL_LABEL)
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
+
+
+@needs_dotnet
+def test_oracle_excludes_bcl_calls_colliding_with_first_party_names(
+    tmp_path: Path,
+) -> None:
+    # (H) `sb.Clear()` resolves to BCL StringBuilder.Clear; the oracle must not
+    # (H) count it just because an unrelated first-party `Clear` exists (Polly:
+    # (H) ~130 phantom "missing" edges from cts.Cancel/HashSet.Add/Dispose
+    # (H) colliding with first-party names). The first-party call in the same
+    # (H) project must still count.
+    (tmp_path / "Own.cs").write_text(
+        "namespace N;\npublic class Own {\n    public void Clear() { }\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "App.cs").write_text(
+        "namespace N;\npublic class App {\n"
+        "    public void Bcl() {\n"
+        "        var sb = new System.Text.StringBuilder();\n"
+        "        sb.Clear();\n"
+        "    }\n"
+        "    public void Own2(Own o) { o.Clear(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    edges, _declared = oracle_csharp_call_edges(tmp_path)
+
+    assert ("App.cs", "Clear") in edges
+    site_count = sum(1 for e in edges if e == ("App.cs", "Clear"))
+    # (H) Edges are a SET of (file, name); the reduction cannot distinguish the
+    # (H) two Clear sites, so instead pin the BCL-only file shape directly:
+    (tmp_path / "OnlyBcl.cs").write_text(
+        "namespace N;\npublic class OnlyBcl {\n"
+        "    public void Run() {\n"
+        "        var sb = new System.Text.StringBuilder();\n"
+        "        sb.Clear();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    edges2, _ = oracle_csharp_call_edges(tmp_path)
+    assert ("OnlyBcl.cs", "Clear") not in edges2, edges2
+    assert ("App.cs", "Clear") in edges2
+    assert site_count == 1
