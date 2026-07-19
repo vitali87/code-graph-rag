@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import NamedTuple
 
+from defusedxml import ElementTree
 from loguru import logger
 
 from ... import constants as cs
@@ -133,6 +135,55 @@ def _project_candidates(repo_path: Path) -> list[Path]:
 def find_csharp_project(repo_path: Path) -> Path | None:
     candidates = _project_candidates(repo_path)
     return candidates[0] if candidates else None
+
+
+# (H) Matches the project path (second quoted field) of a classic .sln entry:
+# (H) Project("{type-guid}") = "Name", "rel\path.csproj", "{project-guid}".
+_SLN_PROJECT_RE = re.compile(r'^Project\("[^"]*"\)\s*=\s*"[^"]*",\s*"([^"]+)"', re.M)
+
+
+def _solution_member_projects(project: Path) -> set[Path]:
+    # (H) The set of .csproj files a solution covers, resolved absolute. A bare
+    # (H) .csproj input covers only itself.
+    suffix = project.suffix.lower()
+    base = project.parent
+    if suffix == ".sln":
+        text = project.read_text(encoding="utf-8", errors="replace")
+        rels = [
+            m.replace("\\", "/")
+            for m in _SLN_PROJECT_RE.findall(text)
+            if m.lower().endswith(".csproj")
+        ]
+        return {(base / rel).resolve() for rel in rels}
+    if suffix == ".slnx":
+        try:
+            tree = ElementTree.parse(project)
+        except (ElementTree.ParseError, OSError):
+            return set()
+        return {
+            (base / path.replace("\\", "/")).resolve()
+            for element in tree.iter("Project")
+            if (path := element.get("Path")) is not None
+            and path.lower().endswith(".csproj")
+        }
+    return {project.resolve()}
+
+
+def uncovered_csharp_projects(repo_path: Path, project: Path) -> list[Path]:
+    # (H) Repos routinely keep bench/samples projects OUTSIDE the solution
+    # (H) (Polly's bench/), so a solution-scoped workspace emits no facts for
+    # (H) their files and every call in them degrades to tree-sitter
+    # (H) heuristics. These uncovered projects load additively.
+    members = _solution_member_projects(project)
+
+    def not_ignored(p: Path) -> bool:
+        return not any(part in _IGNORE_DIRS for part in p.relative_to(repo_path).parts)
+
+    return sorted(
+        p
+        for p in repo_path.rglob("*.csproj")
+        if not_ignored(p) and p.resolve() not in members
+    )
 
 
 def _cache_dir() -> Path:
@@ -318,9 +369,12 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
         logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
         return _empty_facts()
     _restore(dotnet, project)
+    uncovered = uncovered_csharp_projects(repo_path, project)
+    for extra in uncovered:
+        _restore(dotnet, extra)
     try:
         proc = subprocess.run(
-            [dotnet, str(dll), str(repo_path), str(project)],
+            [dotnet, str(dll), str(repo_path), str(project), *map(str, uncovered)],
             capture_output=True,
             text=True,
             check=False,
