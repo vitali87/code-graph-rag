@@ -227,6 +227,23 @@ _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
 
 _JAVA_SINKS: tuple[IOSink, ...] = (
     *_JAVA_SYSTEM_SINKS,
+    # (H) System properties are process-level configuration like env vars
+    # (H) (java.io.tmpdir/user.home reads are ubiquitous): modelled as ENV.
+    IOSink("System.getProperty", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink(
+        "java.lang.System.getProperty",
+        ResourceKind.ENV,
+        IODirection.READ,
+        target_arg=0,
+    ),
+    IOSink("System.setProperty", ResourceKind.ENV, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "java.lang.System.setProperty",
+        ResourceKind.ENV,
+        IODirection.WRITE,
+        target_arg=0,
+    ),
+    IOSink("System.clearProperty", ResourceKind.ENV, IODirection.WRITE, target_arg=0),
     *(
         IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
         for method, direction in _JAVA_FILES_METHODS
