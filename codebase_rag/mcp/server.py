@@ -212,11 +212,16 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
             if key.lower() == b"authorization":
                 provided = value
                 break
-        expected = b"Bearer " + token_bytes
-        # (H) compare_digest keeps the check constant-time; comparing against
-        # (H) the full "Bearer <token>" bytes covers scheme and value in one
-        # (H) comparison without an early-exit prefix check
-        if provided is None or not secrets.compare_digest(provided, expected):
+        # (H) RFC 7235: the SCHEME compares case-insensitively (it is not a
+        # (H) secret, so an ordinary compare is fine); only the token value
+        # (H) needs the constant-time compare_digest
+        authorized = False
+        if provided is not None:
+            scheme, _, credential = provided.partition(b" ")
+            authorized = scheme.lower() == b"bearer" and secrets.compare_digest(
+                credential, token_bytes
+            )
+        if not authorized:
             await send(
                 {
                     "type": "http.response.start",
