@@ -286,6 +286,15 @@ class AppConfig(BaseSettings):
     MILVUS_VECTOR_DIM: int = 768
     MILVUS_TOP_K: int = 5
     MILVUS_CONSISTENCY_LEVEL: str = "Strong"
+    EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
+        cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
+    )
+    OPENAI_EMBEDDING_BASE_URL: str = cs.OPENAI_DEFAULT_ENDPOINT
+    OPENAI_EMBEDDING_MODEL: str = cs.OPENAI_EMBEDDING_DEFAULT_MODEL
+    OPENAI_EMBEDDING_API_KEY: str | None = None
+    OPENAI_EMBEDDING_DIMENSIONS: int | None = Field(default=None, gt=0)
+    OPENAI_EMBEDDING_BATCH_SIZE: int = Field(default=128, gt=0)
+    OPENAI_EMBEDDING_TIMEOUT: float = Field(default=60.0, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
     SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")

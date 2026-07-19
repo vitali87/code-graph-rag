@@ -2,16 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from functools import lru_cache
+from operator import itemgetter
 from pathlib import Path
 
+import httpx
 from loguru import logger
 
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import settings
+from .config import API_KEY_INFO, settings
 from .utils.dependencies import has_torch, has_transformers
+
+
+def _cache_namespace() -> str:
+    # (H) Embeddings from different providers/models live in different vector
+    # (H) spaces (and dimensions); namespacing cache keys prevents a provider
+    # (H) or model switch from replaying stale vectors of the wrong space.
+    if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
+        return f"{cs.EmbeddingProvider.OPENAI}:{settings.OPENAI_EMBEDDING_MODEL}"
+    return f"{cs.EmbeddingProvider.UNIXCODER}:{cs.UNIXCODER_MODEL}"
 
 
 class EmbeddingCache:
@@ -23,7 +35,7 @@ class EmbeddingCache:
 
     @staticmethod
     def _content_hash(content: str) -> str:
-        return hashlib.sha256(content.encode()).hexdigest()
+        return hashlib.sha256(f"{_cache_namespace()}\x00{content}".encode()).hexdigest()
 
     def get(self, content: str) -> list[float] | None:
         return self._cache.get(self._content_hash(content))
@@ -91,6 +103,51 @@ def clear_embedding_cache() -> None:
         _embedding_cache = None
 
 
+def _openai_client() -> httpx.Client:
+    headers: dict[str, str] = {}
+    api_key = settings.OPENAI_EMBEDDING_API_KEY or os.environ.get(
+        API_KEY_INFO[cs.Provider.OPENAI]["env_var"]
+    )
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return httpx.Client(
+        base_url=settings.OPENAI_EMBEDDING_BASE_URL,
+        headers=headers,
+        timeout=settings.OPENAI_EMBEDDING_TIMEOUT,
+    )
+
+
+def _openai_embed_batch(snippets: list[str]) -> list[list[float]]:
+    embeddings: list[list[float]] = []
+    batch_size = settings.OPENAI_EMBEDDING_BATCH_SIZE
+    with _openai_client() as client:
+        for start in range(0, len(snippets), batch_size):
+            batch = snippets[start : start + batch_size]
+            payload: dict[str, object] = {
+                "model": settings.OPENAI_EMBEDDING_MODEL,
+                "input": batch,
+            }
+            if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
+                payload["dimensions"] = settings.OPENAI_EMBEDDING_DIMENSIONS
+            response = client.post(cs.OPENAI_EMBEDDINGS_PATH, json=payload)
+            if response.status_code != cs.HTTP_OK:
+                raise RuntimeError(
+                    ex.OPENAI_EMBEDDING_HTTP_ERROR.format(
+                        status=response.status_code, body=response.text[:500]
+                    )
+                )
+            rows = response.json()["data"]
+            if len(rows) != len(batch):
+                raise RuntimeError(
+                    ex.OPENAI_EMBEDDING_COUNT_MISMATCH.format(
+                        got=len(rows), expected=len(batch)
+                    )
+                )
+            rows.sort(key=itemgetter("index"))
+            embeddings.extend(row["embedding"] for row in rows)
+    return embeddings
+
+
 if has_torch() and has_transformers():
     import numpy as np
     import torch
@@ -144,57 +201,31 @@ if has_torch() and has_transformers():
             model = model.to(device)
         return model
 
-    def embed_code(code: str, max_length: int | None = None) -> list[float]:
-        try:
-            cache = get_embedding_cache()
-            if (cached := cache.get(code)) is not None:
-                return cached
-
-            if max_length is None:
-                max_length = settings.EMBEDDING_MAX_LENGTH
-            model = get_model()
-            device = next(model.parameters()).device
-            tokens = model.tokenize([code], max_length=max_length)
-            tokens_tensor = torch.tensor(tokens).to(device)
-            with torch.no_grad():
-                _, sentence_embeddings = model(tokens_tensor)
-                embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
-            _sync_after_batch(device)
-            result: list[float] = embedding[0].tolist()
-
-            cache.put(code, result)
-            return result
-        except Exception:
-            logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
-            raise
-
-    def embed_code_batch(
-        snippets: list[str],
-        max_length: int | None = None,
-        batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
-    ) -> list[list[float]]:
-        if not snippets:
-            return []
-
+    def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
         if max_length is None:
             max_length = settings.EMBEDDING_MAX_LENGTH
+        model = get_model()
+        device = next(model.parameters()).device
+        tokens = model.tokenize([code], max_length=max_length)
+        tokens_tensor = torch.tensor(tokens).to(device)
+        with torch.no_grad():
+            _, sentence_embeddings = model(tokens_tensor)
+            embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
+        _sync_after_batch(device)
+        result: list[float] = embedding[0].tolist()
+        return result
 
-        cache = get_embedding_cache()
-        cached_results = cache.get_many(snippets)
-
-        if len(cached_results) == len(snippets):
-            logger.debug(ls.EMBEDDING_CACHE_HIT, count=len(snippets))
-            return [cached_results[i] for i in range(len(snippets))]
-
-        uncached_indices = [i for i in range(len(snippets)) if i not in cached_results]
-        uncached_snippets = [snippets[i] for i in uncached_indices]
-
+    def _unixcoder_embed_batch(
+        snippets: list[str], max_length: int | None, batch_size: int
+    ) -> list[list[float]]:
+        if max_length is None:
+            max_length = settings.EMBEDDING_MAX_LENGTH
         model = get_model()
         device = next(model.parameters()).device
 
         all_new_embeddings: list[list[float]] = []
-        for start in range(0, len(uncached_snippets), batch_size):
-            batch = uncached_snippets[start : start + batch_size]
+        for start in range(0, len(snippets), batch_size):
+            batch = snippets[start : start + batch_size]
             tokens_list = model.tokenize(batch, max_length=max_length, padding=True)
             tokens_tensor = torch.tensor(tokens_list).to(device)
             with torch.no_grad():
@@ -203,25 +234,66 @@ if has_torch() and has_transformers():
             _sync_after_batch(device)
             for row in batch_np:
                 all_new_embeddings.append(row.tolist())
-
-        cache.put_many(uncached_snippets, all_new_embeddings)
-
-        results: list[list[float]] = [[] for _ in snippets]
-        for i, emb in cached_results.items():
-            results[i] = emb
-        for idx, orig_i in enumerate(uncached_indices):
-            results[orig_i] = all_new_embeddings[idx]
-
-        return results
+        return all_new_embeddings
 
 else:
 
-    def embed_code(code: str, max_length: int | None = None) -> list[float]:
+    def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
         raise RuntimeError(ex.SEMANTIC_EXTRA)
 
-    def embed_code_batch(
-        snippets: list[str],
-        max_length: int | None = None,
-        batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
+    def _unixcoder_embed_batch(
+        snippets: list[str], max_length: int | None, batch_size: int
     ) -> list[list[float]]:
         raise RuntimeError(ex.SEMANTIC_EXTRA)
+
+
+def embed_code(code: str, max_length: int | None = None) -> list[float]:
+    cache = get_embedding_cache()
+    if (cached := cache.get(code)) is not None:
+        return cached
+    try:
+        if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
+            result = _openai_embed_batch([code])[0]
+        else:
+            result = _unixcoder_embed_code(code, max_length)
+    except Exception:
+        logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
+        raise
+    cache.put(code, result)
+    return result
+
+
+def embed_code_batch(
+    snippets: list[str],
+    max_length: int | None = None,
+    batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
+) -> list[list[float]]:
+    if not snippets:
+        return []
+
+    cache = get_embedding_cache()
+    cached_results = cache.get_many(snippets)
+
+    if len(cached_results) == len(snippets):
+        logger.debug(ls.EMBEDDING_CACHE_HIT, count=len(snippets))
+        return [cached_results[i] for i in range(len(snippets))]
+
+    uncached_indices = [i for i in range(len(snippets)) if i not in cached_results]
+    uncached_snippets = [snippets[i] for i in uncached_indices]
+
+    if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
+        all_new_embeddings = _openai_embed_batch(uncached_snippets)
+    else:
+        all_new_embeddings = _unixcoder_embed_batch(
+            uncached_snippets, max_length, batch_size
+        )
+
+    cache.put_many(uncached_snippets, all_new_embeddings)
+
+    results: list[list[float]] = [[] for _ in snippets]
+    for i, emb in cached_results.items():
+        results[i] = emb
+    for idx, orig_i in enumerate(uncached_indices):
+        results[orig_i] = all_new_embeddings[idx]
+
+    return results

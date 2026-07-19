@@ -40,6 +40,15 @@ UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {availab
 # (H) Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
 
+# (H) OpenAI-compatible embedding errors
+OPENAI_EMBEDDING_HTTP_ERROR = (
+    "OpenAI-compatible embedding request failed with status {status}: {body}"
+)
+OPENAI_EMBEDDING_COUNT_MISMATCH = (
+    "OpenAI-compatible embedding response returned {got} embeddings "
+    "for {expected} inputs"
+)
+
 # (H) Configuration errors
 PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
 MODEL_ID_EMPTY = "Model ID cannot be empty."

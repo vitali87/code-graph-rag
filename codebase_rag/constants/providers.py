@@ -53,6 +53,14 @@ UNIXCODER_MODEL = "microsoft/unixcoder-base"
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
+OPENAI_EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small"
+OPENAI_EMBEDDINGS_PATH = "/embeddings"
+
+
+class EmbeddingProvider(StrEnum):
+    UNIXCODER = "unixcoder"
+    OPENAI = "openai"
+
 
 class EmbeddingDevice(StrEnum):
     CUDA = "cuda"
