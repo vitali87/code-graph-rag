@@ -7,9 +7,9 @@
 # (H) state. The clean re-index is the oracle, so any divergence is a real
 # (H) incremental-update bug (e.g. dropped inbound CALLS, issue #532).
 import os
-from collections.abc import Mapping
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
