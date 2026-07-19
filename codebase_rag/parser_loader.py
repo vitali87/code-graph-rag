@@ -379,6 +379,9 @@ def _process_language(
         logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
         return True
     except Exception as e:
+        # (H) query compilation can fail AFTER the parser insert; drop the
+        # (H) orphan so the store never exposes a parser without its queries
+        parsers.pop(lang_name, None)
         logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
         return False
 
@@ -436,11 +439,16 @@ class _LazyGrammarStore:
         )
 
     def _ensure(self, lang_name: object) -> bool:
-        if lang_name in self._parser_data:
+        # (H) the lock-free fast path must see BOTH twin entries: the loader
+        # (H) writes the parser before the queries, so a lone parser entry is a
+        # (H) mid-load (or failed-load) state, not a completed language
+        if lang_name in self._parser_data and lang_name in self._query_data:
             return True
         with self._lock:
             if lang_name in self._attempted:
-                return lang_name in self._parser_data
+                return (
+                    lang_name in self._parser_data and lang_name in self._query_data
+                )
             self._attempted.add(lang_name)
             if not isinstance(lang_name, str):
                 return False
