@@ -1004,9 +1004,15 @@ class FlowProcessor:
                     node.child_by_field_name(cs.FIELD_ALTERNATIVE), tainted, jc
                 ),
             )
-        if node_type == cs.TS_BINARY_EXPRESSION and _is_short_circuit(node):
-            # (H) `env || 'fallback'` / `??` / `&&` yield one OPERAND as the
-            # (H) result, so the taints of both union (MAY).
+        if (
+            node_type == cs.TS_BINARY_EXPRESSION
+            and jc.flow.language in _HOISTED_DECL_LANGS
+            and _is_short_circuit(node)
+        ):
+            # (H) JS-ONLY: `env || 'fallback'` / `??` / `&&` yield one OPERAND
+            # (H) as the result, so the taints of both union (MAY). In
+            # (H) Go/Java/C++/Rust these operators produce a boolean, never an
+            # (H) operand, so the value stays clean there.
             return _merge_optional_taints(
                 self._js_expr_taint(
                     node.child_by_field_name(cs.TS_FIELD_LEFT), tainted, jc
