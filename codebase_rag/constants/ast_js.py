@@ -181,6 +181,10 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
 # (H) values coincide with the Python grammar's but stay JS-scoped per the per-language
 # (H) constants convention.
 TS_JS_IF_STATEMENT = "if_statement"
+# (H) Switch family: cases may fall through into the next case.
+TS_JS_SWITCH_STATEMENT = "switch_statement"
+TS_JS_SWITCH_CASE = "switch_case"
+TS_JS_SWITCH_DEFAULT = "switch_default"
 TS_JS_ELSE_CLAUSE = "else_clause"
 TS_JS_WHILE_STATEMENT = "while_statement"
 TS_JS_FOR_STATEMENT = "for_statement"

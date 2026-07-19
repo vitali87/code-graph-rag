@@ -39,6 +39,17 @@ TS_GO_RANGE_CLAUSE = "range_clause"
 # (H) The init;cond;post header of a C-style Go for; its post statement lives in
 # (H) an `update` field.
 TS_GO_FOR_CLAUSE = "for_clause"
+# (H) Switch family: arms are EXCLUSIVE (Go has no implicit fallthrough).
+TS_GO_EXPRESSION_SWITCH_STATEMENT = "expression_switch_statement"
+TS_GO_TYPE_SWITCH_STATEMENT = "type_switch_statement"
+TS_GO_SELECT_STATEMENT = "select_statement"
+TS_GO_EXPRESSION_CASE = "expression_case"
+TS_GO_TYPE_CASE = "type_case"
+TS_GO_COMMUNICATION_CASE = "communication_case"
+TS_GO_DEFAULT_CASE = "default_case"
+# (H) Legal only as an arm's LAST statement; transfers into the next case.
+TS_GO_FALLTHROUGH_STATEMENT = "fallthrough_statement"
+TS_GO_STATEMENT_LIST = "statement_list"
 TS_GO_BLOCK = "block"
 # (H) Go wraps a block's statements in a single `statement_list` node (unlike JS/Java,
 # (H) whose block children are the statements directly); the source-order I/O walk

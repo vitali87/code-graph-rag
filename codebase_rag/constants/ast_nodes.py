@@ -229,6 +229,8 @@ TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
 TS_ARGUMENT_LIST = "argument_list"
 # (H) `do { .. } while (cond)` -- same node type in the Java and C++ grammars.
 TS_DO_STATEMENT = "do_statement"
+# (H) Shared verbatim by the JS/TS, Java, and C++ grammars.
+TS_BREAK_STATEMENT = "break_statement"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
 
