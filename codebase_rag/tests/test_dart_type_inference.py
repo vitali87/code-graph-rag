@@ -84,6 +84,16 @@ String useUntypedHelper() {
   return h.greet();
 }
 
+String outerScoped() {
+  var s = Greeter('o');
+  void inner() {
+    var s = Shouter();
+    return s.greet();
+  }
+  inner();
+  return s.greet();
+}
+
 String useMultiDeclaration() {
   var first = Greeter('a'), second = Shouter();
   Greeter third = makeIt(), fourth = makeIt();
@@ -151,6 +161,18 @@ def test_field_typed_receiver(dart_typed_project: Path, mock_ingestor: MagicMock
     assert _has(calls, ".Holder.viaField", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".Holder.viaField", ".Shouter.greet"), sorted(calls)
     assert _has(calls, ".Holder.viaThisField", ".Greeter.hail"), sorted(calls)
+
+
+def test_nested_local_function_does_not_poison_outer_scope(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) inner()'s same-named `s` (a Shouter) must not conflict-drop the
+    # (H) outer `s` (a Greeter) from the outer caller's type map
+    # (H) (PR #806 review round 3)
+    assert _has(calls, ".app.outerScoped", ".Greeter.greet"), sorted(calls)
+    assert _has(calls, ".outerScoped.inner", ".Shouter.greet"), sorted(calls)
 
 
 def test_multi_variable_declarations_type_every_binding(
