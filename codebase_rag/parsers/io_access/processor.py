@@ -893,22 +893,26 @@ class IOAccessProcessor:
     @staticmethod
     def _member_directions(
         node: Node, descriptor: LanguageDescriptor
-    ) -> tuple[IODirection, ...]:
+    ) -> list[IODirection]:
         # (H) A member access on an assignment's LHS mutates the resource:
         # (H) `process.env.KEY = v` is a WRITE (mislabeling it a read hid
         # (H) dotenv's core behavior); `+=` reads the old value AND writes.
         # (H) Any other position (including the assignment RHS) stays a read.
+        # (H) Parent type gates first: most member accesses are plain reads,
+        # (H) so the field lookup runs only for assignment parents. Node
+        # (H) equality is by .id (the bindings hand out fresh Node objects).
         parent = node.parent
-        if parent is None:
-            return (IODirection.READ,)
+        if parent is None or parent.type not in (
+            descriptor.assignment_type,
+            descriptor.augmented_assignment_type,
+        ):
+            return [IODirection.READ]
         left = parent.child_by_field_name(cs.FIELD_LEFT)
         if left is None or left.id != node.id:
-            return (IODirection.READ,)
+            return [IODirection.READ]
         if parent.type == descriptor.assignment_type:
-            return (IODirection.WRITE,)
-        if parent.type == descriptor.augmented_assignment_type:
-            return (IODirection.READ, IODirection.WRITE)
-        return (IODirection.READ,)
+            return [IODirection.WRITE]
+        return [IODirection.READ, IODirection.WRITE]
 
     def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
         # (H) The accessed key: a member's `property` (`process.env.SECRET` -> SECRET),
