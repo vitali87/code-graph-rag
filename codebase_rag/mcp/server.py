@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import contextlib
 import json
 import os
 import sys
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from mcp.server import Server
@@ -21,10 +23,10 @@ from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.vector_store import close_qdrant_client
 
-Scope = MutableMapping[str, Any]
-Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
-Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+if TYPE_CHECKING:
+    # (H) starlette is a lazy dependency of the HTTP path only; its canonical
+    # (H) ASGI types are needed solely for annotations
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 def setup_logging() -> None:
