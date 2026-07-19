@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -232,7 +233,7 @@ class FunctionIngestMixin:
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         combined_captures: dict[str, list] | None = None,
     ) -> None:
         if combined_captures is not None:

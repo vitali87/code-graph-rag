@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 from loguru import logger
@@ -30,7 +31,7 @@ class StructureProcessor:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):

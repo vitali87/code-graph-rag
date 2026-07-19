@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable, ItemsView, KeysView
+from collections.abc import Callable, ItemsView, KeysView, Mapping
 from pathlib import Path
 
 from loguru import logger
@@ -488,8 +488,8 @@ class GraphUpdater:
         self,
         ingestor: IngestorProtocol,
         repo_path: Path,
-        parsers: dict[cs.SupportedLanguage, Parser],
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        parsers: Mapping[cs.SupportedLanguage, Parser],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,

@@ -7,6 +7,7 @@
 # (H) state. The clean re-index is the oracle, so any divergence is a real
 # (H) incremental-update bug (e.g. dropped inbound CALLS, issue #532).
 import os
+from collections.abc import Mapping
 import shutil
 import tempfile
 from pathlib import Path
@@ -31,8 +32,8 @@ from .types_defs import DiffBucket, GraphState, LocationStats, ScoreResult, Scor
 
 console_target = Path(ec.INCREMENTAL_DEFAULT_TARGET)
 
-_Parsers = dict[cs.SupportedLanguage, Parser]
-_Queries = dict[cs.SupportedLanguage, LanguageQueries]
+_Parsers = Mapping[cs.SupportedLanguage, Parser]
+_Queries = Mapping[cs.SupportedLanguage, LanguageQueries]
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 

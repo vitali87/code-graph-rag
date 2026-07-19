@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -277,7 +278,7 @@ class ClassIngestMixin:
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         combined_captures: dict[str, list] | None = None,
     ) -> None:
         lang_queries = queries[language]

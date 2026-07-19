@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from tree_sitter import Language, Node, QueryCursor
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 def get_js_ts_language_obj(
     language: cs.SupportedLanguage,
-    queries: dict[cs.SupportedLanguage, "LanguageQueries"],
+    queries: Mapping[cs.SupportedLanguage, "LanguageQueries"],
 ) -> Language | None:
     if language not in cs.JS_TS_LANGUAGES:
         return None

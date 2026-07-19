@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -86,7 +87,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         if language not in cs.JS_TS_LANGUAGES:
             return
@@ -104,7 +105,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         lang_queries = queries[language]
 
@@ -159,7 +160,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         lang_queries = queries[language]
 
@@ -284,7 +285,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
@@ -449,7 +450,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         if language not in cs.JS_TS_LANGUAGES:
             return

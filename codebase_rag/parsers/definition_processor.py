@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -226,7 +227,7 @@ class DefinitionProcessor(
         self,
         file_path: Path,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
         source_bytes: bytes | None = None,
         pre_parsed: tuple[ASTNode, dict[str, list] | None] | None = None,

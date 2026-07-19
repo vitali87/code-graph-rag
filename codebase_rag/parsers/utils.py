@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -144,7 +144,7 @@ def _span_key(n: ASTNode) -> tuple[int, int]:
 def get_function_captures(
     root_node: ASTNode,
     language: cs.SupportedLanguage,
-    queries: dict[cs.SupportedLanguage, LanguageQueries],
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries],
 ) -> FunctionCapturesResult | None:
     lang_queries = queries[language]
     lang_config = lang_queries[cs.QUERY_CONFIG]
