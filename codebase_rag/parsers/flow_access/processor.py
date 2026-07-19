@@ -198,6 +198,13 @@ _JAVA_SWITCH_ARM_TYPES = frozenset(
 )
 
 
+def _ends_with_break(arm: Node) -> bool:
+    # (H) True when the arm's last top-level statement is a plain break, so
+    # (H) control can never reach the next arm by falling off this one's end.
+    last = arm.named_children[-1] if arm.named_children else None
+    return last is not None and last.type == cs.TS_BREAK_STATEMENT
+
+
 def _switch_arm_is_default(arm: Node) -> bool:
     # (H) C++ default is a case_statement without a `value` field; a Java
     # (H) default arm's switch_label has no named children (a case label
@@ -599,10 +606,9 @@ class FlowProcessor:
         # (H) arm walks against a copy and the exits union (MAY join). An
         # (H) exclusive arm (Go, Java arrow rule) enters from the header state
         # (H) only; a fallthrough-capable arm also unions the previous arm's
-        # (H) exit (break is not modelled, so the fallthrough entry is the
-        # (H) sound over-approximation). Without a default arm the implicit
-        # (H) no-match path joins the exit merge; with one, some arm always
-        # (H) runs, so a kill on EVERY arm kills.
+        # (H) fall-through state. Without a default arm the implicit no-match
+        # (H) path joins the exit merge; with one, some arm always runs, so a
+        # (H) kill on EVERY arm kills.
         body = node.child_by_field_name(cs.FIELD_BODY)
         arm_container = body if body is not None else node
         arms = [
@@ -620,15 +626,28 @@ class FlowProcessor:
         if not arms:
             self._restore_shadows(pre_switch_shadows, jc)
             return state
+        exits, has_default = self._walk_switch_arms(arms, state, jc, walk)
+        if not has_default:
+            exits.append(dict(state))
+        self._restore_shadows(pre_switch_shadows, jc)
+        return self._merge(exits)
+
+    def _walk_switch_arms(
+        self,
+        arms: list[Node],
+        state: _TaintMap,
+        jc: _JsCtx,
+        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
+    ) -> tuple[list[_TaintMap], bool]:
         pre_arm_shadows = set(jc.local_names)
         exits: list[_TaintMap] = []
-        previous_exit: _TaintMap | None = None
+        fall_in: _TaintMap | None = None
         has_default = False
         for index, arm in enumerate(arms):
             has_default = has_default or _switch_arm_is_default(arm)
             entry = dict(state)
-            if previous_exit is not None and arm.type in _FALLTHROUGH_ARM_TYPES:
-                entry = self._merge([entry, previous_exit])
+            if fall_in is not None and arm.type in _FALLTHROUGH_ARM_TYPES:
+                entry = self._merge([entry, fall_in])
             # (H) Each break inside the arm exits the switch with the state it
             # (H) saw THEN (a conditional break before a later kill carries the
             # (H) live taint out), captured by the arm's own collector.
@@ -645,11 +664,13 @@ class FlowProcessor:
             # (H) through), so it reaches the merge only THROUGH the next arm.
             if index == len(arms) - 1 or arm.type not in _FALLTHROUGH_ARM_TYPES:
                 exits.append(arm_exit)
-            previous_exit = arm_exit
-        if not has_default:
-            exits.append(dict(state))
-        self._restore_shadows(pre_switch_shadows, jc)
-        return self._merge(exits)
+            # (H) An arm whose LAST top-level statement is an unconditional
+            # (H) break has no fall-through path: its end state must not feed
+            # (H) the next arm's entry (the break snapshot already carried it
+            # (H) out). Conditional breaks keep the full end state, the sound
+            # (H) over-approximation.
+            fall_in = None if _ends_with_break(arm) else arm_exit
+        return exits, has_default
 
     def _walk_flat_match(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
         # (H) Rust match: the scrutinee runs on all paths; each arm is walked
