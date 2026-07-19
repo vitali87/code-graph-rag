@@ -66,6 +66,10 @@ vectors, install the `milvus` extra (`code-graph-rag[semantic,milvus]`), then
 set `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI` to a local `.db` file
 before indexing.
 
+To compute embeddings on an OpenAI-compatible endpoint (OpenAI, Ollama, vLLM)
+instead of locally, set `CGR_EMBEDDING_PROVIDER=openai`; see
+[Semantic Search](../sdk/semantic-search.md) for configuration.
+
 ## Agentic Tools
 
 The interactive agent has access to these tools:

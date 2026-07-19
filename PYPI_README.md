@@ -25,6 +25,11 @@ install `code-graph-rag[semantic,milvus]`, then set
 `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI=./.milvus_code_embeddings.db`
 before indexing.
 
+To compute embeddings on an OpenAI-compatible endpoint (OpenAI, Ollama, vLLM)
+instead of locally, set `CGR_EMBEDDING_PROVIDER=openai` with
+`OPENAI_EMBEDDING_BASE_URL` and `OPENAI_EMBEDDING_MODEL`; torch and
+transformers are then not required locally.
+
 ### Prerequisites
 
 - Python 3.12+

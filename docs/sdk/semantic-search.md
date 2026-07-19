@@ -26,6 +26,37 @@ export MILVUS_URI="./.milvus_code_embeddings.db"
 You can also point `MILVUS_URI` at a self-hosted open-source Milvus endpoint,
 such as `http://localhost:19530`.
 
+## OpenAI-Compatible Embedding Providers
+
+By default embeddings are computed locally with UniXcoder (requires the
+`semantic` extra's torch/transformers). Alternatively, any OpenAI-compatible
+embeddings endpoint (OpenAI, Ollama, vLLM, LM Studio, and others) can compute
+them server-side, so torch and transformers are not needed locally; only the
+vector store dependency (`qdrant-client` or the `milvus` extra) is required:
+
+```bash
+pip install 'code-graph-rag' qdrant-client
+export CGR_EMBEDDING_PROVIDER=openai
+export OPENAI_EMBEDDING_BASE_URL="http://localhost:11434/v1"  # default: https://api.openai.com/v1
+export OPENAI_EMBEDDING_MODEL="nomic-embed-text"              # default: text-embedding-3-small
+export OPENAI_EMBEDDING_API_KEY="sk-..."                      # optional; falls back to OPENAI_API_KEY
+```
+
+Additional settings:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OPENAI_EMBEDDING_DIMENSIONS` | unset | Forwarded as the `dimensions` request parameter for models that support truncated output |
+| `OPENAI_EMBEDDING_BATCH_SIZE` | `128` | Snippets per HTTP request |
+| `OPENAI_EMBEDDING_TIMEOUT` | `60` | Request timeout in seconds |
+
+The vector store dimension must match the embedding model's output. UniXcoder
+produces 768-dimensional vectors (the default), while `text-embedding-3-small`
+produces 1536; set `QDRANT_VECTOR_DIM` (or `MILVUS_VECTOR_DIM`) accordingly, or
+use `OPENAI_EMBEDDING_DIMENSIONS` to request 768-dimensional output. Cached
+embeddings are keyed per provider and model, so switching models never replays
+vectors from another embedding space.
+
 ## Usage
 
 ### Generate Code Embeddings

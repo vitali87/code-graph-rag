@@ -202,6 +202,20 @@ cgr start
 For a self-hosted open-source Milvus endpoint, set `MILVUS_URI` to the endpoint,
 for example `http://localhost:19530`.
 
+Embeddings are computed locally with UniXcoder by default. To use an
+OpenAI-compatible embeddings endpoint instead (OpenAI, Ollama, vLLM, LM
+Studio), which drops the local torch/transformers requirement:
+
+```bash
+export CGR_EMBEDDING_PROVIDER=openai
+export OPENAI_EMBEDDING_BASE_URL="http://localhost:11434/v1"
+export OPENAI_EMBEDDING_MODEL="nomic-embed-text"
+export QDRANT_VECTOR_DIM=768  # must match the model's output dimension
+```
+
+`OPENAI_EMBEDDING_API_KEY` (falling back to `OPENAI_API_KEY`) is sent as a
+bearer token when set; local servers that need no key work without one.
+
 ### Local development install
 
 ```bash
