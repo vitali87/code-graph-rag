@@ -734,13 +734,18 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = None
             return None
 
-        # (H) A JS/TS member call on an UNTYPED receiver (`view.render(...)` where
-        # (H) `view` is a param constructed in the caller) targets a MEMBER: the
-        # (H) bare-name trie would rebind it to a free function of the same name
-        # (H) (express's application.render), a false edge that also kills the real
-        # (H) prototype method. Bind the UNIQUE member-like candidate (parent qn
-        # (H) itself registered) or drop.
-        if language in cs.JS_TS_LANGUAGES and cs.SEPARATOR_DOT in call_name:
+        # (H) A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
+        # (H) where `view` is a param constructed in the caller) targets a
+        # (H) MEMBER: the bare-name trie would rebind it to an arbitrary
+        # (H) same-named candidate (express's application.render; a Dart
+        # (H) `h.greet()` picking whichever class's greet is closest), a false
+        # (H) edge that also hides the real method from dead-code. Bind the
+        # (H) UNIQUE member-like candidate (parent qn itself registered) or
+        # (H) drop. Typed Dart receivers never reach this: the local-type path
+        # (H) above already bound them.
+        if (
+            language in cs.JS_TS_LANGUAGES or language == cs.SupportedLanguage.DART
+        ) and cs.SEPARATOR_DOT in call_name:
             result = self._resolve_js_member_call_unique(call_name, module_qn)
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
