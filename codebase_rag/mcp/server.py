@@ -6,11 +6,6 @@ from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from pathlib import Path
 from typing import Any
 
-Scope = MutableMapping[str, Any]
-Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
-Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
-
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -25,6 +20,11 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.vector_store import close_qdrant_client
+
+Scope = MutableMapping[str, Any]
+Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 def setup_logging() -> None:
