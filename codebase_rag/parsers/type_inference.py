@@ -42,6 +42,7 @@ class TypeInferenceEngine:
         "class_field_types",
         "class_field_guard_inner",
         "method_return_types",
+        "go_function_return_types",
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
@@ -76,6 +77,7 @@ class TypeInferenceEngine:
         class_field_types: dict[str, dict[str, str]] | None = None,
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
+        go_function_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
@@ -114,6 +116,11 @@ class TypeInferenceEngine:
         # (H) resolver's chained-call path.
         self.method_return_types = (
             method_return_types if method_return_types is not None else {}
+        )
+        # (H) Shared reference (as with class_field_types): Go free-fn qn ->
+        # (H) FIRST return type, read only by the single-segment binding path.
+        self.go_function_return_types = (
+            go_function_return_types if go_function_return_types is not None else {}
         )
         # (H) Shared reference (as with class_field_types): C# partial-class part
         # (H) groups, populated during ingestion and read by the C# resolver to
@@ -364,8 +371,11 @@ class TypeInferenceEngine:
     ) -> str | None:
         # (H) `['e','trees','get']`: base `e` -> Engine (a typed local), field `trees`
         # (H) -> its struct-field type, then method `get` -> its recorded return type.
-        # (H) A plain function (`['f']`) has no receiver, so its return type is not in
-        # (H) the method map and stays unresolved (rare in the receiver-dispatch gap).
+        # (H) A plain function (`['f']`) types from the free-fn return map:
+        # (H) same-module first, then a same-package sibling file (Go package
+        # (H) scope spans the directory, viper's remote.go shape).
+        if len(segments) == 1:
+            return self._go_free_fn_return_type(segments[0], module_qn)
         if len(segments) < 2:
             return None
         base_type = var_types.get(segments[0])
@@ -379,6 +389,28 @@ class TypeInferenceEngine:
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
         return self.method_return_types.get(method_qn)
+
+    def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
+        # (H) Same module (file) first; then the enclosing package's sibling
+        # (H) files (same parent dir, exactly one file segment between), since
+        # (H) Go free functions are package-scoped, not file-scoped.
+        if hit := self.go_function_return_types.get(
+            f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        ):
+            return hit
+        if cs.SEPARATOR_DOT not in module_qn:
+            return None
+        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        prefix_dots = package_prefix.count(cs.SEPARATOR_DOT)
+        suffix = f"{cs.SEPARATOR_DOT}{name}"
+        for qn, return_type in self.go_function_return_types.items():
+            if (
+                qn.endswith(suffix)
+                and qn.startswith(f"{package_prefix}{cs.SEPARATOR_DOT}")
+                and qn.count(cs.SEPARATOR_DOT) == prefix_dots + 2
+            ):
+                return return_type
+        return None
 
     def _enrich_rust_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]

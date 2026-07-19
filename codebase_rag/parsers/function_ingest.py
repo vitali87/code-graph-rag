@@ -209,6 +209,7 @@ class FunctionIngestMixin:
     _deferred_cpp_containment: list[_DeferredCppContainment]
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
+    go_function_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
@@ -372,6 +373,16 @@ class FunctionIngestMixin:
                 return_type := dart_return_type_name(func_node)
             ):
                 self.method_return_types[resolution.qualified_name] = return_type
+
+            # (H) Go free functions record their FIRST return type in a
+            # (H) dedicated map so `cm, err := getManager()` types cm under the
+            # (H) (T, error) idiom (viper's false Get->Get self edge). Not
+            # (H) method_return_types: chaining must keep skipping uncallable
+            # (H) multi-return callees.
+            if language == cs.SupportedLanguage.GO and (
+                return_type := go_utils.extract_first_return_type_name(func_node)
+            ):
+                self.go_function_return_types[resolution.qualified_name] = return_type
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # (H) A span is claimed when a pass recorded THIS function node's

@@ -60,6 +60,9 @@ TS_GO_UNARY_EXPRESSION = "unary_expression"
 # (H) lean flow walk so the operand's taint carries through (issue #714).
 TS_GO_TYPE_CONVERSION_EXPRESSION = "type_conversion_expression"
 TS_GO_POINTER_TYPE = "pointer_type"
+# (H) `pkg.Type` in a signature; kept as dotted text so a binding typed to an
+# (H) external package's type stays TYPED (and drops) instead of trie-guessed.
+TS_GO_QUALIFIED_TYPE = "qualified_type"
 # (H) Go composite types a method may return; a chained call lands on the CONTAINER,
 # (H) not its element, so return-type inference must not unwrap these to an element
 # (H) name (a `[]Command` return must not resolve `.Run()` to `Command.Run`).

@@ -126,6 +126,7 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 method_return_types=self.definition_processor.method_return_types,
+                go_function_return_types=self.definition_processor.go_function_return_types,
                 csharp_partial_groups=self.definition_processor.csharp_partial_groups,
                 csharp_extension_methods=self.definition_processor.csharp_extension_methods,
                 csharp_call_sites=self.definition_processor.csharp_call_sites,
