@@ -24,6 +24,10 @@ public static class Frontend
 
         var rootFull = Path.GetFullPath(args[0]);
         var projectOrSolution = args.Length > 1 ? Path.GetFullPath(args[1]) : null;
+        // Projects the solution does not cover (bench/samples outside the .sln);
+        // the Python side discovers and restores them, this side loads them
+        // additively so their files get facts too.
+        var extraProjects = args.Skip(2).Select(Path.GetFullPath).ToList();
 
         var debug = Environment.GetEnvironmentVariable("CGR_FE_DEBUG") == "1";
         using var workspace = MSBuildWorkspace.Create();
@@ -45,7 +49,7 @@ public static class Frontend
             }
         });
 
-        var projects = await LoadProjectsAsync(workspace, projectOrSolution, rootFull);
+        var projects = await LoadProjectsAsync(workspace, projectOrSolution, rootFull, extraProjects);
         Console.Error.WriteLine($"[projects] {projects.Count} loaded, {failures} workspace failure(s)");
 
         var collector = new FactCollector(rootFull, IgnoredDirs());
@@ -416,31 +420,59 @@ public static class Frontend
     }
 
     private static async Task<List<Project>> LoadProjectsAsync(
-        MSBuildWorkspace workspace, string? projectOrSolution, string rootFull)
+        MSBuildWorkspace workspace, string? projectOrSolution, string rootFull,
+        IReadOnlyList<string> extraProjects)
     {
         var input = projectOrSolution ?? FindProjectOrSolution(rootFull);
-        if (input is null)
+        if (input is not null)
         {
-            return new List<Project>();
-        }
-        try
-        {
-            if (input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-                || input.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                var solution = await workspace.OpenSolutionAsync(input);
-                return solution.Projects.ToList();
+                if (input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                    || input.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+                {
+                    await workspace.OpenSolutionAsync(input);
+                }
+                else
+                {
+                    await workspace.OpenProjectAsync(input);
+                }
             }
-            var project = await workspace.OpenProjectAsync(input);
-            return new List<Project> { project };
+            catch (Exception ex)
+            {
+                // Always on stderr: a load failure otherwise degrades the whole run
+                // to zero facts with no visible cause.
+                Console.Error.WriteLine($"[LoadProjects] {input}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+        foreach (var extra in extraProjects)
         {
-            // Always on stderr: a load failure otherwise degrades the whole run
-            // to zero facts with no visible cause.
-            Console.Error.WriteLine($"[LoadProjects] {input}: {ex.Message}");
-            return new List<Project>();
+            // A supplemental project may already sit in the workspace as a
+            // project-reference of an earlier load; re-opening it would throw.
+            var loaded = workspace.CurrentSolution.Projects
+                .Select(p => p.FilePath)
+                .OfType<string>()
+                .Select(Path.GetFullPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (loaded.Contains(extra))
+            {
+                continue;
+            }
+            try
+            {
+                await workspace.OpenProjectAsync(extra);
+            }
+            catch (Exception ex)
+            {
+                // Per-project degradation: one broken sample must not cost the
+                // facts of the solution or the other supplemental projects.
+                Console.Error.WriteLine($"[LoadProjects] {extra}: {ex.Message}");
+            }
         }
+        // CurrentSolution accumulates every load (solution members, supplemental
+        // projects, and their project-references); non-first-party trees are
+        // filtered per file by IsFirstParty.
+        return workspace.CurrentSolution.Projects.ToList();
     }
 
     private static string? FindProjectOrSolution(string rootFull)
