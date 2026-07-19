@@ -29,6 +29,10 @@ class Greeter {
   String hail() {
     return name;
   }
+
+  static Greeter create() {
+    return Greeter('s');
+  }
 }
 
 class Shouter {
@@ -40,6 +44,60 @@ class Shouter {
 
   String hail() {
     return 'LOUD';
+  }
+}
+
+class Animal {
+  String speak() {
+    return 'a';
+  }
+}
+
+class Dog extends Animal {
+  Dog();
+
+  String bark() {
+    return 'b';
+  }
+}
+
+class OtherSpeaker {
+  String speak() {
+    return 'o';
+  }
+}
+
+class Registry {
+  Registry();
+
+  static String describe() {
+    return 'r';
+  }
+
+  String evict() {
+    return 'e';
+  }
+}
+
+class Widgetry {
+  Widgetry();
+
+  static void configure() {
+    return;
+  }
+
+  String render() {
+    return 'w';
+  }
+}
+
+class OtherRenderer {
+  String render() {
+    return 'o';
+  }
+
+  String evict() {
+    return 'o';
   }
 }
 
@@ -82,6 +140,35 @@ String useNamedCtor() {
 String useUntypedHelper() {
   var h = lowercaseFactory();
   return h.greet();
+}
+
+String useStaticFactory() {
+  var s = Greeter.create();
+  return s.greet();
+}
+
+String useInherited(Dog d) {
+  return d.speak();
+}
+
+String misuseFactory() {
+  var r = Registry.describe();
+  return r.evict();
+}
+
+String useDeclaredWins() {
+  Widgetry w = Widgetry.configure();
+  return w.render();
+}
+
+String outerEnrich() {
+  var r = Registry();
+  void innerBind() {
+    var r = Registry.describe();
+    r.evict();
+  }
+  innerBind();
+  return r.evict();
 }
 
 String outerScoped() {
@@ -189,6 +276,67 @@ def test_multi_variable_declarations_type_every_binding(
     assert _has(calls, ".app.useMultiDeclaration", ".Shouter.greet"), sorted(calls)
     assert not _has(calls, ".app.useMultiDeclaration", ".Greeter.greet"), sorted(calls)
     assert _has(calls, ".app.useMultiDeclaration", ".Greeter.hail"), sorted(calls)
+
+
+def test_static_factory_return_types_the_local(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) `var s = Greeter.create()` types s from create's recorded return
+    # (H) type; the Shouter.greet decoy defeats both the suffix trie and the
+    # (H) unique-member gate, so only return typing can bind this
+    assert _has(calls, ".app.useStaticFactory", ".Greeter.greet"), sorted(calls)
+    assert not _has(calls, ".app.useStaticFactory", ".Shouter.greet"), sorted(calls)
+
+
+def test_non_class_static_return_does_not_type_the_local(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) Registry.describe() returns a String, not a Registry: the recorded
+    # (H) return type must override the construction heuristic, so `r` is a
+    # (H) String and `r.evict()` must NOT bind Registry.evict
+    assert not _has(calls, ".app.misuseFactory", ".Registry.evict"), sorted(calls)
+    # (H) the static call itself still resolves
+    assert _has(calls, ".app.misuseFactory", ".Registry.describe"), sorted(calls)
+
+
+def test_declared_type_wins_over_initializer_return(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) an EXPLICIT declared type statically fixes the variable's type; the
+    # (H) initializer's recorded (void) return must not untype it
+    # (H) (PR #807 review). OtherRenderer.render is the decoy.
+    assert _has(calls, ".app.useDeclaredWins", ".Widgetry.render"), sorted(calls)
+    assert not _has(calls, ".app.useDeclaredWins", ".OtherRenderer.render"), sorted(
+        calls
+    )
+
+
+def test_nested_binding_does_not_retype_outer_local(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) an inner function's same-named `var r = Registry.describe()` must
+    # (H) not retype the OUTER r (a constructed Registry) to String
+    # (H) (PR #807 review). OtherRenderer.evict is the decoy.
+    assert _has(calls, ".app.outerEnrich", ".Registry.evict"), sorted(calls)
+
+
+def test_inherited_method_on_typed_receiver(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) speak() is defined on Animal, the receiver is typed Dog: lookup must
+    # (H) walk the inheritance chain; OtherSpeaker.speak is the decoy
+    assert _has(calls, ".app.useInherited", ".Animal.speak"), sorted(calls)
+    assert not _has(calls, ".app.useInherited", ".OtherSpeaker.speak"), sorted(calls)
 
 
 def test_lowercase_initializer_does_not_type(

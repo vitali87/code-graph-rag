@@ -27,6 +27,7 @@ from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
+from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -1163,6 +1164,16 @@ class ClassIngestMixin:
                 is not None
             ):
                 self.csharp_generic_methods.add(ingested_qn)
+            # (H) Record Dart return types (a constructor "returns" its class)
+            # (H) so a local bound from a static factory or named constructor
+            # (H) (`var s = Greeter.create()`) types from the RECORDED return
+            # (H) instead of guessing the class from the call's base name.
+            if (
+                ingested_qn is not None
+                and language == cs.SupportedLanguage.DART
+                and (dart_return := dart_utils.dart_return_type_name(method_node))
+            ):
+                self.method_return_types[ingested_qn] = dart_return
             if ingested_qn is not None:
                 record_cpp_definition_span(
                     self.cpp_definition_spans,

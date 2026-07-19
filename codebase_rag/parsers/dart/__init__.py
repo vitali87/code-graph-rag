@@ -7,6 +7,7 @@ from .utils import (
     dart_get_name,
     dart_local_name,
     dart_resolve_import,
+    dart_return_type_name,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "dart_get_name",
     "dart_local_name",
     "dart_resolve_import",
+    "dart_return_type_name",
 ]
