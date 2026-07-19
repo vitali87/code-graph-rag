@@ -45,6 +45,21 @@ TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
+# (H) Match statement: arms are exclusive; an UNGUARDED `case _` (empty
+# (H) case_pattern) always matches, removing the implicit no-match path.
+TS_PY_MATCH_STATEMENT = "match_statement"
+TS_PY_CASE_CLAUSE = "case_clause"
+TS_PY_CASE_PATTERN = "case_pattern"
+TS_PY_FIELD_GUARD = "guard"
+FIELD_SUBJECT = "subject"
+# (H) A bare name in a case pattern parses as dotted_name with ONE identifier
+# (H) and is a CAPTURE (irrefutable); multi-part dotted names are value
+# (H) patterns that compare.
+TS_PY_DOTTED_NAME = "dotted_name"
+# (H) `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
+# (H) node, invisible to named_children.
+TS_PY_UNION_PATTERN = "union_pattern"
+TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"

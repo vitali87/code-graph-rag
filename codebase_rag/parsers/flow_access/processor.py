@@ -218,6 +218,56 @@ def _arm_falls_into_next(arm: Node) -> bool:
     return last is not None and last.type == cs.TS_GO_FALLTHROUGH_STATEMENT
 
 
+def _py_case_always_matches(arm: Node) -> bool:
+    # (H) An UNGUARDED irrefutable pattern always matches; a guarded one can
+    # (H) fail its guard, so it never removes the no-match path.
+    if arm.child_by_field_name(cs.TS_PY_FIELD_GUARD) is not None:
+        return False
+    pattern = next(
+        (child for child in arm.named_children if child.type == cs.TS_PY_CASE_PATTERN),
+        None,
+    )
+    return pattern is not None and _py_pattern_irrefutable(pattern)
+
+
+def _py_pattern_irrefutable(pattern: Node) -> bool:
+    # (H) Irrefutable case patterns: `_` (empty case_pattern), a bare CAPTURE
+    # (H) name (dotted_name with exactly one identifier; multi-part dotted
+    # (H) names are value patterns that compare), and `<irrefutable> as x`.
+    children = pattern.named_children
+    if not children:
+        return True
+    if len(children) != 1:
+        return False
+    child = children[0]
+    if child.type == cs.TS_PY_DOTTED_NAME:
+        return child.named_child_count == 1
+    if child.type == cs.TS_PY_AS_PATTERN:
+        inner = next(
+            (c for c in child.named_children if c.type == cs.TS_PY_CASE_PATTERN),
+            None,
+        )
+        return inner is not None and _py_pattern_irrefutable(inner)
+    if child.type == cs.TS_PY_UNION_PATTERN:
+        # (H) `1 | _` / `1 | other`: only the LAST alternative may legally be
+        # (H) irrefutable, and a bare `_` alternative is an ANONYMOUS node, so
+        # (H) inspect ALL children for the final non-separator one.
+        last = next(
+            (
+                c
+                for c in reversed(child.children)
+                if c.is_named or c.type == cs.TS_PY_WILDCARD_NODE
+            ),
+            None,
+        )
+        if last is None:
+            return False
+        if last.type == cs.TS_PY_WILDCARD_NODE:
+            return True
+        return last.type == cs.TS_PY_DOTTED_NAME and last.named_child_count == 1
+    return False
+
+
 def _merge_optional_taints(left: Taint | None, right: Taint | None) -> Taint | None:
     if left is None:
         return right
@@ -1521,6 +1571,8 @@ class FlowProcessor:
             return self._walk_loop(node, state, ctx)
         if node_type == cs.TS_PY_TRY_STATEMENT:
             return self._walk_try(node, state, ctx)
+        if node_type == cs.TS_PY_MATCH_STATEMENT:
+            return self._walk_py_match(node, state, ctx)
         if node_type == cs.TS_PY_ASSIGNMENT:
             self._apply_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_CALL:
@@ -1539,6 +1591,31 @@ class FlowProcessor:
         for child in node.children:
             state = self._walk_stmt(child, state, ctx)
         return state
+
+    def _walk_py_match(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        # (H) match arms are EXCLUSIVE: each case_clause walks against a copy
+        # (H) of the post-subject state and the exits union (MAY join), same
+        # (H) semantics as the lean walk's switch family. The implicit
+        # (H) no-match path joins unless an UNGUARDED `case _` (empty
+        # (H) case_pattern, no guard) always matches.
+        subject = node.child_by_field_name(cs.FIELD_SUBJECT)
+        if subject is not None:
+            state = self._walk_stmt(subject, state, ctx)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return state
+        arm_exits: list[_TaintMap] = []
+        has_wildcard = False
+        for arm in body.named_children:
+            if arm.type != cs.TS_PY_CASE_CLAUSE:
+                continue
+            has_wildcard = has_wildcard or _py_case_always_matches(arm)
+            arm_exits.append(self._walk_stmt(arm, dict(state), ctx))
+        if not arm_exits:
+            return state
+        if not has_wildcard:
+            arm_exits.append(dict(state))
+        return self._merge(arm_exits)
 
     def _walk_if(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         # (H) The if-condition runs on all paths; process it in the incoming state.
