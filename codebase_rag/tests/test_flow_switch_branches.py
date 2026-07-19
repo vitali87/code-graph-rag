@@ -118,6 +118,60 @@ def test_python_match_as_wildcard_is_irrefutable(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
 
 
+def test_python_match_or_pattern_with_wildcard_is_irrefutable(
+    tmp_path: Path,
+) -> None:
+    # (H) `case 1 | _:` covers everything through its wildcard alternative
+    # (H) (only the LAST alternative may legally be irrefutable).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | _:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_or_pattern_with_capture_is_irrefutable(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | other:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_refutable_or_pattern_keeps_skip_path(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | 2:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
 def test_python_match_refutable_patterns_keep_skip_path(tmp_path: Path) -> None:
     # (H) A dotted value pattern (`case Color.RED`) and a sequence pattern
     # (H) compare rather than bind: the no-match path survives their kills.
