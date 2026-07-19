@@ -190,6 +190,18 @@ String useMultiDeclaration() {
 Greeter lowercaseFactory() {
   return Greeter('z');
 }
+
+String useConstructionChain() {
+  return Greeter('x').greet();
+}
+
+String useFactoryChain() {
+  return lowercaseFactory().hail();
+}
+
+String useInheritedConstructionChain() {
+  return Dog().speak();
+}
 """
 
 
@@ -337,6 +349,44 @@ def test_inherited_method_on_typed_receiver(
     # (H) walk the inheritance chain; OtherSpeaker.speak is the decoy
     assert _has(calls, ".app.useInherited", ".Animal.speak"), sorted(calls)
     assert not _has(calls, ".app.useInherited", ".OtherSpeaker.speak"), sorted(calls)
+
+
+def test_construction_temporary_chain_resolves(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) `Greeter('x').greet()` invokes a method on a construction temporary;
+    # (H) the receiver is a call result, so only chained typing off the ctor
+    # (H) can bind it. Shouter.greet is the decoy.
+    assert _has(calls, ".app.useConstructionChain", ".Greeter.greet"), sorted(calls)
+    assert not _has(calls, ".app.useConstructionChain", ".Shouter.greet"), sorted(calls)
+
+
+def test_factory_return_chain_resolves(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) `lowercaseFactory().hail()` types the receiver from the factory's
+    # (H) recorded return type (Greeter), then binds hail on it
+    assert _has(calls, ".app.useFactoryChain", ".Greeter.hail"), sorted(calls)
+    assert not _has(calls, ".app.useFactoryChain", ".Shouter.hail"), sorted(calls)
+
+
+def test_inherited_method_on_construction_chain(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) `Dog().speak()` where speak is defined on Animal: chained typing must
+    # (H) walk the inheritance chain. OtherSpeaker.speak is the decoy.
+    assert _has(calls, ".app.useInheritedConstructionChain", ".Animal.speak"), sorted(
+        calls
+    )
+    assert not _has(
+        calls, ".app.useInheritedConstructionChain", ".OtherSpeaker.speak"
+    ), sorted(calls)
 
 
 def test_lowercase_initializer_does_not_type(

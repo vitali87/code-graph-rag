@@ -187,9 +187,11 @@ class A extends B {
     assert "obj.field.chainCascade" in calls
     assert "brokenCascade" not in calls
     assert "Widget.of" in calls
-    # (H) index and call-result receivers have no static name, and neither
-    # (H) does a cascade on a call result
-    assert calls.count(None) >= 3
+    # (H) a call-result receiver is now preserved as a `()` chain form so the
+    # (H) resolver can type it (`f().chained` -> f's return type); an index
+    # (H) receiver and a cascade on a call result still have no static name
+    assert "f().chained" in calls
+    assert calls.count(None) >= 2
 
     # (H) span helpers pass non-signature nodes through unchanged
     root = tree.root_node

@@ -1716,10 +1716,11 @@ class CallResolver:
             return_type = self.type_inference.method_return_types.get(resolved[1])
             if return_type:
                 return self._resolve_type_to_class_qn(return_type, module_qn)
-        if language == cs.SupportedLanguage.CPP:
+        if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.DART):
             # (H) Constructor temporary: `X(...)` resolved to a ctor (never a
             # (H) recorded return) or to nothing at all; if X names a registered
-            # (H) class, that class IS the receiver type.
+            # (H) class, that class IS the receiver type (C++ `Reader<T>(...)`,
+            # (H) Dart `_Usage(...).generate()`).
             return self._resolve_type_to_class_qn(callee, module_qn)
         return None
 
