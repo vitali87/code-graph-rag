@@ -192,41 +192,6 @@ _EXPLICIT_DEFAULT_ARM_TYPES = frozenset(
     {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT}
 )
 
-# (H) Constructs that capture a `break` of their own: a break nested inside one
-# (H) of these targets IT, not the enclosing switch, so the break search stops
-# (H) descending there.
-_BREAK_BOUNDARY_TYPES = frozenset(
-    {
-        cs.TS_JS_WHILE_STATEMENT,
-        cs.TS_JS_FOR_STATEMENT,
-        cs.TS_JS_FOR_IN_STATEMENT,
-        cs.TS_ENHANCED_FOR_STATEMENT,
-        cs.TS_CPP_FOR_RANGE_LOOP,
-        cs.TS_DO_STATEMENT,
-        cs.TS_GO_EXPRESSION_SWITCH_STATEMENT,
-        cs.TS_GO_TYPE_SWITCH_STATEMENT,
-        cs.TS_GO_SELECT_STATEMENT,
-        cs.TS_JAVA_SWITCH_EXPRESSION,
-        cs.TS_CPP_SWITCH_STATEMENT,
-        cs.TS_JS_SWITCH_STATEMENT,
-    }
-)
-
-
-def _arm_may_break(arm: Node) -> bool:
-    # (H) True when the arm holds a break at ITS OWN nesting level (a break in
-    # (H) a nested loop/switch targets that construct). Labeled breaks
-    # (H) over-approximate to True, the sound MAY direction.
-    stack = list(arm.named_children)
-    while stack:
-        node = stack.pop()
-        if node.type == cs.TS_BREAK_STATEMENT:
-            return True
-        if node.type in _BREAK_BOUNDARY_TYPES:
-            continue
-        stack.extend(node.named_children)
-    return False
-
 
 _JAVA_SWITCH_ARM_TYPES = frozenset(
     {cs.TS_JAVA_SWITCH_RULE, cs.TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP}
@@ -297,6 +262,12 @@ class FlowProcessor:
         # (H) caller_spec, callee_type, callee_qn, via) emit iff a pending callee
         # (H) resolves to a tainted return.
         self._return_edge_candidates: list[tuple[str, str, tuple[str, str, str]]] = []
+        # (H) Break-exit collectors: the top list captures the taint state AT
+        # (H) each `break` inside the switch arm being walked (a break exits
+        # (H) the switch with the state it saw THEN, not the arm's end state).
+        # (H) Loop walkers push None to shield the collector: a break in a
+        # (H) nested loop targets that loop, not the enclosing switch.
+        self._break_exit_stack: list[list[_TaintMap] | None] = []
         self._deferred_resource_flows: list[
             tuple[frozenset[str], ResourceKind, str]
         ] = []
@@ -428,6 +399,9 @@ class FlowProcessor:
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
             return state
+        if node_type == cs.TS_BREAK_STATEMENT:
+            self._record_break_exit(state)
+            return state
         if node_type in _FLAT_IF_TYPES:
             return self._walk_flat_if(node, state, jc)
         if node_type in _FLAT_LOOP_TYPES:
@@ -446,6 +420,17 @@ class FlowProcessor:
         return state
 
     def _walk_flat_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) Loop shield: a break inside the body targets THIS loop, never an
+        # (H) enclosing switch arm's collector.
+        self._shield_breaks()
+        try:
+            return self._walk_flat_loop_inner(node, state, jc)
+        finally:
+            self._unshield_breaks()
+
+    def _walk_flat_loop_inner(
+        self, node: Node, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
         # (H) The body runs zero or more times: union the skip path with one pass,
         # (H) then re-walk once from that merge so taint carried from a later
         # (H) iteration into an earlier statement is caught (same two-pass
@@ -523,6 +508,21 @@ class FlowProcessor:
         return self._walk_mandatory_loop(node, state, jc, self._walk_flat_stmt)
 
     def _walk_mandatory_loop(
+        self,
+        node: Node,
+        state: _TaintMap,
+        jc: _JsCtx,
+        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
+    ) -> _TaintMap:
+        # (H) Loop shield: a break inside the body targets THIS loop, never an
+        # (H) enclosing switch arm's collector.
+        self._shield_breaks()
+        try:
+            return self._walk_mandatory_loop_inner(node, state, jc, walk)
+        finally:
+            self._unshield_breaks()
+
+    def _walk_mandatory_loop_inner(
         self,
         node: Node,
         state: _TaintMap,
@@ -629,17 +629,21 @@ class FlowProcessor:
             entry = dict(state)
             if previous_exit is not None and arm.type in _FALLTHROUGH_ARM_TYPES:
                 entry = self._merge([entry, previous_exit])
-            arm_exit = walk(arm, entry, jc)
+            # (H) Each break inside the arm exits the switch with the state it
+            # (H) saw THEN (a conditional break before a later kill carries the
+            # (H) live taint out), captured by the arm's own collector.
+            self._break_exit_stack.append([])
+            try:
+                arm_exit = walk(arm, entry, jc)
+            finally:
+                break_exits = self._break_exit_stack.pop() or []
             self._restore_shadows(pre_arm_shadows, jc)
-            # (H) A non-final fallthrough arm without its own break never
-            # (H) terminates the switch (a stacked `case 1: default:` label's
-            # (H) empty group falls straight through), so its exit reaches the
-            # (H) merge only THROUGH the next arm's walk, not directly.
-            if (
-                index == len(arms) - 1
-                or arm.type not in _FALLTHROUGH_ARM_TYPES
-                or _arm_may_break(arm)
-            ):
+            exits.extend(break_exits)
+            # (H) A non-final fallthrough arm's END state never exits the
+            # (H) switch directly (control continues into the next arm; a
+            # (H) stacked `case 1: default:` label's empty group falls straight
+            # (H) through), so it reaches the merge only THROUGH the next arm.
+            if index == len(arms) - 1 or arm.type not in _FALLTHROUGH_ARM_TYPES:
                 exits.append(arm_exit)
             previous_exit = arm_exit
         if not has_default:
@@ -697,6 +701,21 @@ class FlowProcessor:
         self._restore_shadows(pre_if_shadows, jc)
         return self._merge(branch_exits)
 
+    def _record_break_exit(self, state: _TaintMap) -> None:
+        # (H) Snapshot the live state at a `break` for the enclosing switch
+        # (H) arm's collector. None on top = a loop shield (the break targets
+        # (H) that loop); empty stack = no enclosing switch at all. A labeled
+        # (H) break targeting a farther construct still records here: the
+        # (H) extra state only widens the MAY join, the sound direction.
+        if self._break_exit_stack and self._break_exit_stack[-1] is not None:
+            self._break_exit_stack[-1].append(dict(state))
+
+    def _shield_breaks(self) -> None:
+        self._break_exit_stack.append(None)
+
+    def _unshield_breaks(self) -> None:
+        self._break_exit_stack.pop()
+
     @staticmethod
     def _restore_shadows(pre_shadows: set[str], jc: _JsCtx) -> None:
         # (H) Reset the mutable live shadow set to a pre-branch snapshot in place (jc is
@@ -710,6 +729,9 @@ class FlowProcessor:
         # (H) in source order (so a nested call in an argument is still seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
+            return state
+        if node_type == cs.TS_BREAK_STATEMENT:
+            self._record_break_exit(state)
             return state
         if node_type == cs.TS_JS_IF_STATEMENT:
             return self._walk_js_if(node, state, jc)
@@ -754,6 +776,17 @@ class FlowProcessor:
         return self._merge(branch_exits)
 
     def _walk_js_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+        # (H) Loop shield: a break inside the body targets THIS loop, never an
+        # (H) enclosing switch arm's collector.
+        self._shield_breaks()
+        try:
+            return self._walk_js_loop_inner(node, state, jc)
+        finally:
+            self._unshield_breaks()
+
+    def _walk_js_loop_inner(
+        self, node: Node, state: _TaintMap, jc: _JsCtx
+    ) -> _TaintMap:
         # (H) The initializer/condition/iterable runs before the body; the body runs
         # (H) zero or more times, so union the skip path with one pass, then re-walk
         # (H) once from that merge to catch taint carried from a later iteration into
