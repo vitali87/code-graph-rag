@@ -124,6 +124,8 @@ JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
 # (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
 # (H) compound suffixes are handled before the bare `.ts`.
 JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
+    ".d.mts",
+    ".d.cts",
     ".d.ts",
     ".tsx",
     ".mts",
