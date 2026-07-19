@@ -256,6 +256,100 @@ def test_semantic_dependencies_still_require_torch_for_unixcoder(
     assert dependencies.has_semantic_dependencies() is False
 
 
+def test_openai_cache_namespace_includes_dimensions(
+    openai_provider: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag.embedder import embed_code
+
+    handler = RecordingHandler()
+    with patch(
+        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+    ):
+        embed_code("def dimswitch(): pass")
+        monkeypatch.setattr(settings, "OPENAI_EMBEDDING_DIMENSIONS", 4)
+        embed_code("def dimswitch(): pass")
+
+    assert len(handler.requests) == 2
+
+
+def test_openai_request_url_joins_base_path(openai_provider: None) -> None:
+    from codebase_rag.embedder import embed_code
+
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://embeddings.test/v1"
+    )
+    with patch("codebase_rag.embedder._openai_client", return_value=client):
+        embed_code("def urljoin(): pass")
+
+    assert seen_urls == ["http://embeddings.test/v1/embeddings"]
+
+
+def test_openai_non_json_response_raises_runtime_error(openai_provider: None) -> None:
+    from codebase_rag.embedder import embed_code_batch
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>gateway error</html>")
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
+    )
+    with patch("codebase_rag.embedder._openai_client", return_value=client):
+        with pytest.raises(RuntimeError, match="malformed"):
+            embed_code_batch(["def a(): pass"])
+
+
+def test_openai_missing_data_key_raises_runtime_error(openai_provider: None) -> None:
+    from codebase_rag.embedder import embed_code_batch
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": "wrong shape"})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
+    )
+    with patch("codebase_rag.embedder._openai_client", return_value=client):
+        with pytest.raises(RuntimeError, match="malformed"):
+            embed_code_batch(["def a(): pass"])
+
+
+def test_openai_duplicate_index_raises_runtime_error(openai_provider: None) -> None:
+    from codebase_rag.embedder import embed_code_batch
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        rows = [
+            {"index": 0, "embedding": [1.0]},
+            {"index": 0, "embedding": [2.0]},
+        ]
+        return httpx.Response(200, json={"data": rows})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
+    )
+    with patch("codebase_rag.embedder._openai_client", return_value=client):
+        with pytest.raises(RuntimeError, match="index"):
+            embed_code_batch(["def a(): pass", "def b(): pass"])
+
+
+def test_openai_out_of_range_index_raises_runtime_error(openai_provider: None) -> None:
+    from codebase_rag.embedder import embed_code_batch
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"index": 5, "embedding": [1.0]}]})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
+    )
+    with patch("codebase_rag.embedder._openai_client", return_value=client):
+        with pytest.raises(RuntimeError, match="index"):
+            embed_code_batch(["def a(): pass"])
+
+
 def test_openai_batch_mixes_cache_hits_and_misses(openai_provider: None) -> None:
     from codebase_rag.embedder import embed_code_batch
 
