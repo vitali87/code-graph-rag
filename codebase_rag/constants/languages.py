@@ -283,6 +283,11 @@ class TreeSitterModule(StrEnum):
     DART = "tree_sitter_dart"
 
 
+# (H) Directory names with a context-dependent ignore: `bin` is build output
+# (H) everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
+DIR_BIN = "bin"
+DIR_SRC = "src"
+
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(
     {
