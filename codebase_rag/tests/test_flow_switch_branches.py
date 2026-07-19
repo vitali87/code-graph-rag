@@ -217,6 +217,59 @@ def test_java_stacked_default_label_kills_skip_path(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
 
 
+def test_java_conditional_break_before_kill_keeps_taint(tmp_path: Path) -> None:
+    # (H) `if (c) break;` exits the switch BEFORE the kill, so the break path
+    # (H) carries the taint out even though every arm ends with a kill: the
+    # (H) exit state must be captured AT the break, not at the arm's end.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x, boolean c) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "        if (c) break;\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_java_break_in_nested_loop_does_not_exit_switch(tmp_path: Path) -> None:
+    # (H) A break inside a loop nested in the arm targets the LOOP: the arm
+    # (H) still ends with the kill on every switch-exiting path, so no edge.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "        while (true) { break; }\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
 def test_java_colon_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
     # (H) No break between the groups: taint bound in case 1 falls through to
     # (H) the sink in case 2.
