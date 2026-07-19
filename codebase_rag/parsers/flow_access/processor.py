@@ -191,6 +191,43 @@ _FALLTHROUGH_ARM_TYPES = frozenset(
 _EXPLICIT_DEFAULT_ARM_TYPES = frozenset(
     {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT}
 )
+
+# (H) Constructs that capture a `break` of their own: a break nested inside one
+# (H) of these targets IT, not the enclosing switch, so the break search stops
+# (H) descending there.
+_BREAK_BOUNDARY_TYPES = frozenset(
+    {
+        cs.TS_JS_WHILE_STATEMENT,
+        cs.TS_JS_FOR_STATEMENT,
+        cs.TS_JS_FOR_IN_STATEMENT,
+        cs.TS_ENHANCED_FOR_STATEMENT,
+        cs.TS_CPP_FOR_RANGE_LOOP,
+        cs.TS_DO_STATEMENT,
+        cs.TS_GO_EXPRESSION_SWITCH_STATEMENT,
+        cs.TS_GO_TYPE_SWITCH_STATEMENT,
+        cs.TS_GO_SELECT_STATEMENT,
+        cs.TS_JAVA_SWITCH_EXPRESSION,
+        cs.TS_CPP_SWITCH_STATEMENT,
+        cs.TS_JS_SWITCH_STATEMENT,
+    }
+)
+
+
+def _arm_may_break(arm: Node) -> bool:
+    # (H) True when the arm holds a break at ITS OWN nesting level (a break in
+    # (H) a nested loop/switch targets that construct). Labeled breaks
+    # (H) over-approximate to True, the sound MAY direction.
+    stack = list(arm.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_BREAK_STATEMENT:
+            return True
+        if node.type in _BREAK_BOUNDARY_TYPES:
+            continue
+        stack.extend(node.named_children)
+    return False
+
+
 _JAVA_SWITCH_ARM_TYPES = frozenset(
     {cs.TS_JAVA_SWITCH_RULE, cs.TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP}
 )
@@ -205,15 +242,12 @@ def _switch_arm_is_default(arm: Node) -> bool:
     if arm.type == cs.TS_CPP_CASE_STATEMENT:
         return arm.child_by_field_name(cs.FIELD_VALUE) is None
     if arm.type in _JAVA_SWITCH_ARM_TYPES:
-        label = next(
-            (
-                child
-                for child in arm.named_children
-                if child.type == cs.TS_JAVA_SWITCH_LABEL
-            ),
-            None,
+        # (H) A group can stack labels (`case 1: default:`), so ANY empty
+        # (H) label marks the arm as the default target.
+        return any(
+            child.type == cs.TS_JAVA_SWITCH_LABEL and child.named_child_count == 0
+            for child in arm.named_children
         )
-        return label is not None and label.named_child_count == 0
     return False
 
 
@@ -590,14 +624,23 @@ class FlowProcessor:
         exits: list[_TaintMap] = []
         previous_exit: _TaintMap | None = None
         has_default = False
-        for arm in arms:
+        for index, arm in enumerate(arms):
             has_default = has_default or _switch_arm_is_default(arm)
             entry = dict(state)
             if previous_exit is not None and arm.type in _FALLTHROUGH_ARM_TYPES:
                 entry = self._merge([entry, previous_exit])
             arm_exit = walk(arm, entry, jc)
             self._restore_shadows(pre_arm_shadows, jc)
-            exits.append(arm_exit)
+            # (H) A non-final fallthrough arm without its own break never
+            # (H) terminates the switch (a stacked `case 1: default:` label's
+            # (H) empty group falls straight through), so its exit reaches the
+            # (H) merge only THROUGH the next arm's walk, not directly.
+            if (
+                index == len(arms) - 1
+                or arm.type not in _FALLTHROUGH_ARM_TYPES
+                or _arm_may_break(arm)
+            ):
+                exits.append(arm_exit)
             previous_exit = arm_exit
         if not has_default:
             exits.append(dict(state))
