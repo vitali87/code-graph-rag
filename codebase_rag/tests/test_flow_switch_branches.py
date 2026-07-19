@@ -80,6 +80,62 @@ def test_python_match_kill_on_every_arm_with_wildcard_kills(tmp_path: Path) -> N
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
 
 
+def test_python_match_bare_capture_is_irrefutable(tmp_path: Path) -> None:
+    # (H) `case other:` is a CAPTURE pattern (a bare name binds, it never
+    # (H) compares), so it always matches like `case _`: a kill on every arm
+    # (H) including it kills on every path.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1:\n"
+            "            s = 'clean'\n"
+            "        case other:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_as_wildcard_is_irrefutable(tmp_path: Path) -> None:
+    # (H) `case _ as y:` wraps an irrefutable pattern: still always matches.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case _ as y:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_refutable_patterns_keep_skip_path(tmp_path: Path) -> None:
+    # (H) A dotted value pattern (`case Color.RED`) and a sequence pattern
+    # (H) compare rather than bind: the no-match path survives their kills.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case [a, b]:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
 def test_python_match_guarded_wildcard_keeps_skip_path(tmp_path: Path) -> None:
     # (H) `case _ if cond` can fail its guard, so the no-match path survives
     # (H) even when every listed arm kills.
