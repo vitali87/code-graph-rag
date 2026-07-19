@@ -115,6 +115,21 @@ def test_c_fprintf_stderr_writes_stderr(tmp_path: Path) -> None:
     assert _has(rels, "main.work", WRITES_TO, "resource::STDERR::<dynamic>"), rels
 
 
+def test_c_comment_before_handle_arg_still_resolves(tmp_path: Path) -> None:
+    # (H) A comment inside the argument list is a named node in some grammars;
+    # (H) it must not shift the handle-argument index.
+    files = {
+        "main.c": (
+            "#include <stdio.h>\n"
+            "void work(void) {\n"
+            '    fprintf(/* stream */ stderr, "boom");\n'
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "main.work", WRITES_TO, "resource::STDERR::<dynamic>"), rels
+
+
 def test_c_perror_writes_stderr(tmp_path: Path) -> None:
     files = {
         "main.c": ('#include <stdio.h>\nvoid work(void) {\n    perror("open");\n}\n')

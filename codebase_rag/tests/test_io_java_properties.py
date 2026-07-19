@@ -56,6 +56,20 @@ def test_java_get_property_reads_env(tmp_path: Path) -> None:
     assert _has(rels, "A.tmp", READS_FROM, "resource::ENV::java.io.tmpdir"), rels
 
 
+def test_java_qualified_clear_property_writes_env(tmp_path: Path) -> None:
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void drop() {\n"
+            '    java.lang.System.clearProperty("flag");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "A.drop", WRITES_TO, "resource::ENV::flag"), rels
+
+
 def test_java_set_property_writes_env(tmp_path: Path) -> None:
     files = {
         "A.java": (
