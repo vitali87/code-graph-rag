@@ -905,10 +905,17 @@ class IOAccessProcessor:
         if parent is None or parent.type not in (
             descriptor.assignment_type,
             descriptor.augmented_assignment_type,
+            descriptor.update_expression_type,
         ):
             return [IODirection.READ]
-        left = parent.child_by_field_name(cs.FIELD_LEFT)
-        if left is None or left.id != node.id:
+        # (H) `++`/`--` wrap the mutated operand in the `argument` field.
+        target_field = (
+            cs.TS_JS_FIELD_ARGUMENT
+            if parent.type == descriptor.update_expression_type
+            else cs.FIELD_LEFT
+        )
+        target = parent.child_by_field_name(target_field)
+        if target is None or target.id != node.id:
             return [IODirection.READ]
         if parent.type == descriptor.assignment_type:
             return [IODirection.WRITE]
