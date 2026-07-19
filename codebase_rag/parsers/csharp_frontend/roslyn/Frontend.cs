@@ -52,7 +52,11 @@ public static class Frontend
         var projects = await LoadProjectsAsync(workspace, projectOrSolution, rootFull, extraProjects);
         Console.Error.WriteLine($"[projects] {projects.Count} loaded, {failures} workspace failure(s)");
 
-        var collector = new FactCollector(rootFull, IgnoredDirs());
+        var firstPartyAssemblies = projects
+            .Select(p => p.AssemblyName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var collector = new FactCollector(rootFull, IgnoredDirs(), firstPartyAssemblies);
         foreach (var project in projects)
         {
             // GetCompilationAsync runs source generators, so symbols that resolve
@@ -96,10 +100,13 @@ public static class Frontend
         private readonly HashSet<(string, int, int, string)> _seenExternals = new();
         private readonly HashSet<(string, int, int, string, int, string)> _seenQueries = new();
 
-        public FactCollector(string rootFull, HashSet<string> ignoredDirs)
+        private readonly HashSet<string> _firstPartyAssemblies;
+
+        public FactCollector(string rootFull, HashSet<string> ignoredDirs, HashSet<string> firstPartyAssemblies)
         {
             _rootFull = rootFull;
             _ignoredDirs = ignoredDirs;
+            _firstPartyAssemblies = firstPartyAssemblies;
         }
 
         public bool IsFirstParty(string path)
@@ -215,7 +222,8 @@ public static class Frontend
             var pos = location.GetLineSpan().StartLinePosition;
             var col = ByteCol(location, pos);
             var name = nameToken.ValueText;
-            if (FirstPartyDecl(DeclaredMethod(symbol)) is not { } target)
+            var declared = DeclaredMethod(symbol);
+            if (FirstPartyDecl(declared) is not { } target)
             {
                 // A successfully resolved symbol with no first-party declaration
                 // lives in metadata: the call provably leaves the repo, and the
@@ -224,6 +232,15 @@ public static class Frontend
                 // A site that is first-party under another target framework's
                 // compilation still wins: the Python lookup consults the
                 // positive call facts before the external set.
+                // EXCEPT metadata from an assembly this repo builds: projects
+                // consuming the repo's own published package (Polly's samples)
+                // resolve first-party code to metadata, and marking those
+                // sites external would suppress the fallback edges that
+                // correctly bind them to the first-party source.
+                if (_firstPartyAssemblies.Contains(declared.ContainingAssembly?.Name ?? ""))
+                {
+                    return;
+                }
                 if (_seenExternals.Add((rel, pos.Line + 1, col, name)))
                 {
                     _externals.Add(new ExternalFact(rel, pos.Line + 1, col, name));
