@@ -43,18 +43,12 @@ class DartTypeInferenceEngine:
 
     @staticmethod
     def _record_field(member: Node, fields: dict[str, str]) -> None:
-        type_name: str | None = None
+        type_name = _declared_type_name(member)
+        if type_name is None:
+            return
         for part in member.named_children:
-            if part.type == cs.TS_DART_TYPE_IDENTIFIER and part.text:
-                type_name = part.text.decode(cs.ENCODING_UTF8)
-            elif part.type == cs.TS_DART_INITIALIZED_IDENTIFIER_LIST and type_name:
-                for entry in part.named_children:
-                    if entry.type != cs.TS_DART_INITIALIZED_IDENTIFIER:
-                        continue
-                    for ident in entry.named_children:
-                        if ident.type == cs.TS_DART_IDENTIFIER and ident.text:
-                            fields[ident.text.decode(cs.ENCODING_UTF8)] = type_name
-                        break
+            if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER_LIST:
+                _record_field_names(part, type_name, fields)
 
     def _collect_parameters(
         self, caller_node: Node, types: dict[str, str], conflicts: set[str]
@@ -102,15 +96,32 @@ class DartTypeInferenceEngine:
         # (H) (`var a = X(), b = Y();`) nests as an initialized_identifier
         # (H) carrying the same name-plus-initializer shape, with a declared
         # (H) type (if any) shared by every binding.
-        declared_type: str | None = None
-        for part in node.named_children:
-            if part.type == cs.TS_DART_TYPE_IDENTIFIER and part.text:
-                declared_type = part.text.decode(cs.ENCODING_UTF8)
-                break
+        declared_type = _declared_type_name(node)
         _record_binding(node.named_children, declared_type, types, conflicts)
         for part in node.named_children:
             if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
                 _record_binding(part.named_children, declared_type, types, conflicts)
+
+
+def _declared_type_name(node: Node) -> str | None:
+    for part in node.named_children:
+        if part.type == cs.TS_DART_TYPE_IDENTIFIER and part.text:
+            return part.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
+def _record_field_names(
+    id_list: Node, type_name: str, fields: dict[str, str]
+) -> None:
+    # (H) only an entry's FIRST identifier is the field name; later
+    # (H) identifiers belong to its initializer
+    for entry in id_list.named_children:
+        if entry.type != cs.TS_DART_INITIALIZED_IDENTIFIER:
+            continue
+        for ident in entry.named_children:
+            if ident.type == cs.TS_DART_IDENTIFIER and ident.text:
+                fields[ident.text.decode(cs.ENCODING_UTF8)] = type_name
+            break
 
 
 def _record_binding(
