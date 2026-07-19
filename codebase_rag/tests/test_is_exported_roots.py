@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
@@ -426,8 +427,8 @@ def test_dart_unnamed_extension_member_is_private() -> None:
         pytest.skip("dart parser not available")
     tree = parsers["dart"].parse(b"extension on String {\n  void shout() {}\n}\n")
 
-    def _find(node: object, wanted: str):
-        for child in node.children:  # type: ignore[attr-defined]
+    def _find(node: Node, wanted: str) -> Node | None:
+        for child in node.children:
             if child.type == wanted:
                 return child
             found = _find(child, wanted)
