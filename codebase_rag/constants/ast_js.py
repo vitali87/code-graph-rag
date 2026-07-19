@@ -82,6 +82,12 @@ TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
 TS_ASSIGNMENT_PATTERN = "assignment_pattern"
+TS_JS_ASSIGNMENT_EXPRESSION = "assignment_expression"
+# (H) `x += v` and friends: reads the old value AND writes the new one.
+TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION = "augmented_assignment_expression"
+# (H) `x++` / `--x`: also a read-then-write; the operand is the `argument` field.
+TS_JS_UPDATE_EXPRESSION = "update_expression"
+TS_JS_FIELD_ARGUMENT = "argument"
 TS_FIELD_PATTERN = "pattern"
 TS_FIELD_PARAMETER = "parameter"
 TS_MODULE = "module"
