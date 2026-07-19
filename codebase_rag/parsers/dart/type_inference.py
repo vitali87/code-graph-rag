@@ -110,9 +110,7 @@ class DartTypeInferenceEngine:
         _record_binding(node.named_children, declared_type, types, conflicts)
         for part in node.named_children:
             if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
-                _record_binding(
-                    part.named_children, declared_type, types, conflicts
-                )
+                _record_binding(part.named_children, declared_type, types, conflicts)
 
 
 def _record_binding(
