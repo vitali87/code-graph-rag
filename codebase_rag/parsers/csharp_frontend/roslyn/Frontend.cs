@@ -462,15 +462,11 @@ public static class Frontend
                 Console.Error.WriteLine($"[LoadProjects] {input}: {ex.Message}");
             }
         }
+        var loaded = LoadedProjectPaths(workspace);
         foreach (var extra in extraProjects)
         {
             // A supplemental project may already sit in the workspace as a
             // project-reference of an earlier load; re-opening it would throw.
-            var loaded = workspace.CurrentSolution.Projects
-                .Select(p => p.FilePath)
-                .OfType<string>()
-                .Select(Path.GetFullPath)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (loaded.Contains(extra))
             {
                 continue;
@@ -478,6 +474,9 @@ public static class Frontend
             try
             {
                 await workspace.OpenProjectAsync(extra);
+                // One open can pull in project-references, so refresh from the
+                // workspace rather than adding only the opened path.
+                loaded.UnionWith(LoadedProjectPaths(workspace));
             }
             catch (Exception ex)
             {
@@ -491,6 +490,13 @@ public static class Frontend
         // filtered per file by IsFirstParty.
         return workspace.CurrentSolution.Projects.ToList();
     }
+
+    private static HashSet<string> LoadedProjectPaths(MSBuildWorkspace workspace) =>
+        workspace.CurrentSolution.Projects
+            .Select(p => p.FilePath)
+            .OfType<string>()
+            .Select(Path.GetFullPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static string? FindProjectOrSolution(string rootFull)
     {
