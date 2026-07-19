@@ -185,6 +185,12 @@ TS_JS_IF_STATEMENT = "if_statement"
 TS_JS_SWITCH_STATEMENT = "switch_statement"
 TS_JS_SWITCH_CASE = "switch_case"
 TS_JS_SWITCH_DEFAULT = "switch_default"
+# (H) `c ? a : b` (shared name with the Java grammar); C++ spells it
+# (H) conditional_expression.
+TS_JS_TERNARY_EXPRESSION = "ternary_expression"
+# (H) Short-circuit operators whose result IS one of the operands, so a
+# (H) bind through them unions both operands' taints.
+JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
 TS_JS_ELSE_CLAUSE = "else_clause"
 TS_JS_WHILE_STATEMENT = "while_statement"
 TS_JS_FOR_STATEMENT = "for_statement"
