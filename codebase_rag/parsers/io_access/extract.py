@@ -105,6 +105,20 @@ def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     return f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
 
 
+def default_export_collapsed(name: str) -> str | None:
+    # (H) A JS default import maps the local name to `<module>.default` (and a
+    # (H) node: builtin to `node:<module>.default`), but sink registries are
+    # (H) keyed by the module's own dotted API (`fs.readFileSync`). Collapse
+    # (H) the default-export segment and scheme for a lookup candidate; a
+    # (H) local-module base keeps its project-qualified prefix, so its
+    # (H) collapsed form can never collide with a sink key. Returns None when
+    # (H) nothing collapsed.
+    collapsed = name.removeprefix(cs.NODE_BUILTIN_PREFIX).replace(
+        ".default.", cs.SEPARATOR_DOT, 1
+    )
+    return collapsed if collapsed != name else None
+
+
 def registry_match[T](
     mapping: dict[str, T], raw_name: str | None, import_map: dict[str, str]
 ) -> T | None:
@@ -120,6 +134,12 @@ def registry_match[T](
         return None
     name = normalise(raw_name, import_map)
     if name is not None and (hit := mapping.get(name)) is not None:
+        return hit
+    if (
+        name is not None
+        and (collapsed := default_export_collapsed(name)) is not None
+        and (hit := mapping.get(collapsed)) is not None
+    ):
         return hit
     if cs.SEPARATOR_DOT in raw_name:
         return mapping.get(raw_name)
@@ -150,6 +170,8 @@ def match_normalised[T](
     hit = mapping.get(normalised)
     if hit is None and normalised.startswith(cs.NODE_BUILTIN_PREFIX):
         hit = mapping.get(normalised.removeprefix(cs.NODE_BUILTIN_PREFIX))
+    if hit is None and (collapsed := default_export_collapsed(normalised)) is not None:
+        hit = mapping.get(collapsed)
     return hit
 
 
