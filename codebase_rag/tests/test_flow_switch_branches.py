@@ -192,6 +192,31 @@ def test_java_arrow_switch_rule_kill_does_not_erase_other_rules(
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
 
 
+def test_java_stacked_default_label_kills_skip_path(tmp_path: Path) -> None:
+    # (H) `case 1: default:` stacks both labels on ONE group: the arm is the
+    # (H) default target, so some arm always runs and the kill inside it kills
+    # (H) on every path. Only the first label being `case` must not hide the
+    # (H) default.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
 def test_java_colon_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
     # (H) No break between the groups: taint bound in case 1 falls through to
     # (H) the sink in case 2.
