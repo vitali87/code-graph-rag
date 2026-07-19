@@ -270,6 +270,31 @@ def test_java_break_in_nested_loop_does_not_exit_switch(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
 
 
+def test_java_trailing_break_does_not_fall_through(tmp_path: Path) -> None:
+    # (H) An arm ending in an UNCONDITIONAL break has no fall-through path:
+    # (H) its end state must not union into the next arm's entry, or taint
+    # (H) bound in case 1 fabricates a flow into case 2's sink.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = "clean";\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            '        s = System.getenv("SECRET");\n'
+            "        break;\n"
+            "      case 2:\n"
+            "        System.out.println(s);\n"
+            "        break;\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
 def test_java_colon_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
     # (H) No break between the groups: taint bound in case 1 falls through to
     # (H) the sink in case 2.
