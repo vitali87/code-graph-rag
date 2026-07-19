@@ -9,7 +9,7 @@ from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..import_processor import ImportProcessor
-from ..utils import cpp_declarator_name
+from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
     DYNAMIC_TARGET,
     KEY_KIND,
@@ -1097,16 +1097,16 @@ class IOAccessProcessor:
         if sink is None:
             return False
         arguments = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        handle = (
-            arguments.named_children[sink.handle_arg]
-            if arguments is not None and sink.handle_arg < len(arguments.named_children)
-            else None
+        # (H) Comments are named nodes inside the argument list and must not
+        # (H) shift the handle-argument index; safe_decode_text keeps malformed
+        # (H) bytes from raising.
+        args = (
+            [child for child in arguments.named_children if child.type != cs.TS_COMMENT]
+            if arguments is not None
+            else []
         )
-        text = (
-            handle.text.decode(cs.ENCODING_UTF8)
-            if handle is not None and handle.text is not None
-            else None
-        )
+        handle = args[sink.handle_arg] if sink.handle_arg < len(args) else None
+        text = safe_decode_text(handle)
         if text is not None:
             if (binding := lean_handles.bindings.get(text)) is not None:
                 self._emit(caller_spec, sink.direction, binding.kind, binding.identity)

@@ -244,6 +244,12 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
         target_arg=0,
     ),
     IOSink("System.clearProperty", ResourceKind.ENV, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "java.lang.System.clearProperty",
+        ResourceKind.ENV,
+        IODirection.WRITE,
+        target_arg=0,
+    ),
     *(
         IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
         for method, direction in _JAVA_FILES_METHODS
@@ -309,6 +315,7 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
 _LIBC_ARG_HANDLE_METHODS: tuple[tuple[str, int, IODirection], ...] = (
     ("fprintf", 0, IODirection.WRITE),
     ("vfprintf", 0, IODirection.WRITE),
+    ("vfscanf", 0, IODirection.READ),
     ("fputs", 1, IODirection.WRITE),
     ("fputc", 1, IODirection.WRITE),
     ("putc", 1, IODirection.WRITE),
