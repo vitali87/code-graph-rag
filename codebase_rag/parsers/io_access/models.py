@@ -46,6 +46,16 @@ class HandleConstructor:
 
 
 @dataclass(frozen=True)
+class ArgHandleSink:
+    """A call-shaped handle sink: the resource handle arrives as an ARGUMENT
+    (libc's `fprintf(f, ...)` / `fgets(buf, n, f)`), not as a receiver."""
+
+    callee: str
+    handle_arg: int
+    direction: IODirection
+
+
+@dataclass(frozen=True)
 class HandleBinding:
     """A local variable bound to a resource handle within one function body."""
 

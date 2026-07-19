@@ -35,8 +35,9 @@ from .extract import (
     scope_seed_nodes,
     string_literal,
 )
-from .models import HandleBinding, HandleConstructor, IOSink
+from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .registry import (
+    IO_ARG_HANDLE_SINKS,
     IO_CALL_HANDLE_WRAPPERS,
     IO_HANDLE_CONSTRUCTORS,
     IO_HANDLE_DERIVES,
@@ -52,6 +53,7 @@ from .registry import (
     IO_SINKS,
     IO_STREAM_SINKS,
     IO_TYPE_HANDLE_CONSTRUCTORS,
+    LIBC_STD_STREAMS,
 )
 
 _DIRECTION_REL = {
@@ -78,6 +80,7 @@ class _LeanHandles(NamedTuple):
     methods: dict[ResourceKind, dict[str, IODirection]]
     identity_calls: frozenset[str]
     identity_new_types: dict[str, ResourceKind]
+    arg_sinks: dict[str, ArgHandleSink]
     bindings: dict[str, HandleBinding]
 
 
@@ -96,6 +99,7 @@ def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
         methods=IO_LEAN_HANDLE_METHODS.get(language, {}),
         identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(language, frozenset()),
         identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(language, {}),
+        arg_sinks=IO_ARG_HANDLE_SINKS.get(language, {}),
         bindings={},
     )
 
@@ -1054,6 +1058,10 @@ class IOAccessProcessor:
             node, caller_spec, raw, descriptor, lean_handles
         ):
             return
+        if lean_handles is not None and self._emit_arg_handle_sink(
+            node, caller_spec, raw, lean_handles
+        ):
+            return
         sink = self._resolve_sink(
             raw,
             import_map,
@@ -1073,6 +1081,41 @@ class IOAccessProcessor:
             keyword_arg_type=descriptor.keyword_arg_type,
         )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    def _emit_arg_handle_sink(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        raw_name: str,
+        lean_handles: _LeanHandles,
+    ) -> bool:
+        # (H) libc FILE* access: the handle is an ARGUMENT (`fprintf(f, ..)`,
+        # (H) `fgets(buf, n, f)`). A bound handle resolves to its resource; the
+        # (H) pre-bound stdin/stdout/stderr globals resolve to their streams;
+        # (H) any other handle expression is a FILE by signature (<dynamic>).
+        sink = lean_handles.arg_sinks.get(raw_name)
+        if sink is None:
+            return False
+        arguments = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        handle = (
+            arguments.named_children[sink.handle_arg]
+            if arguments is not None and sink.handle_arg < len(arguments.named_children)
+            else None
+        )
+        text = (
+            handle.text.decode(cs.ENCODING_UTF8)
+            if handle is not None and handle.text is not None
+            else None
+        )
+        if text is not None:
+            if (binding := lean_handles.bindings.get(text)) is not None:
+                self._emit(caller_spec, sink.direction, binding.kind, binding.identity)
+                return True
+            if (stream_kind := LIBC_STD_STREAMS.get(text)) is not None:
+                self._emit(caller_spec, sink.direction, stream_kind, DYNAMIC_TARGET)
+                return True
+        self._emit(caller_spec, sink.direction, ResourceKind.FILE, DYNAMIC_TARGET)
+        return True
 
     def _emit_lean_handle_method(
         self,

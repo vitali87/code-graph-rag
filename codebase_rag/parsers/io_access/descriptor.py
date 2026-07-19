@@ -322,4 +322,8 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.JAVA: _JAVA_DESCRIPTOR,
     cs.SupportedLanguage.RUST: _RUST_DESCRIPTOR,
     cs.SupportedLanguage.CPP: _CPP_DESCRIPTOR,
+    # (H) The C grammar shares every node type the C++ descriptor references
+    # (H) (call_expression, string_literal, init_declarator, compound_statement),
+    # (H) so C reuses it verbatim.
+    cs.SupportedLanguage.C: _CPP_DESCRIPTOR,
 }
