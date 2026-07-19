@@ -193,6 +193,10 @@ CPP_OP_LEFT_SHIFT = "<<"
 # (H) READ of that handle's resource (issue #714).
 CPP_OP_RIGHT_SHIFT = ">>"
 TS_CPP_FOR_RANGE_LOOP = "for_range_loop"
+# (H) Switch family: cases may fall through; a default arm is a
+# (H) case_statement without a `value` field.
+TS_CPP_SWITCH_STATEMENT = "switch_statement"
+TS_CPP_CASE_STATEMENT = "case_statement"
 # (H) field_expression = `obj.field` (argument/field); subscript_expression =
 # (H) `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
 # (H) correctness / future value-level sinks.

@@ -31,6 +31,12 @@ TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_METHOD_DECLARATION = "method_declaration"
 TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"
+# (H) Switch family: colon groups may fall through, arrow rules are exclusive;
+# (H) a default arm is a switch_label with no named children.
+TS_JAVA_SWITCH_EXPRESSION = "switch_expression"
+TS_JAVA_SWITCH_RULE = "switch_rule"
+TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP = "switch_block_statement_group"
+TS_JAVA_SWITCH_LABEL = "switch_label"
 TS_TRY_WITH_RESOURCES_STATEMENT = "try_with_resources_statement"
 # (H) One declaration inside a try-with-resources header; binds via `name`/`value`
 # (H) fields exactly like a variable_declarator.
