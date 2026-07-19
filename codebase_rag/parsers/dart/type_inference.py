@@ -97,30 +97,53 @@ class DartTypeInferenceEngine:
         # (H) initializer's base identifier, UpperCamelCase by Dart
         # (H) convention, names the constructed class; a lowercase base is an
         # (H) ordinary call whose return type is unknown, so the local stays
-        # (H) untyped).
+        # (H) untyped). The FIRST variable's name and initializer are direct
+        # (H) children; each ADDITIONAL variable of a multi-declaration
+        # (H) (`var a = X(), b = Y();`) nests as an initialized_identifier
+        # (H) carrying the same name-plus-initializer shape, with a declared
+        # (H) type (if any) shared by every binding.
         declared_type: str | None = None
-        var_name: str | None = None
-        init_base: str | None = None
-        has_argument_selector = False
         for part in node.named_children:
             if part.type == cs.TS_DART_TYPE_IDENTIFIER and part.text:
                 declared_type = part.text.decode(cs.ENCODING_UTF8)
-            elif part.type == cs.TS_DART_IDENTIFIER and part.text:
-                if var_name is None:
-                    var_name = part.text.decode(cs.ENCODING_UTF8)
-                elif init_base is None:
-                    init_base = part.text.decode(cs.ENCODING_UTF8)
-            elif part.type == cs.TS_DART_SELECTOR and any(
-                inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
-            ):
-                has_argument_selector = True
-        if var_name is None:
-            return
-        if declared_type is not None:
-            _record(var_name, declared_type, types, conflicts)
-            return
-        if init_base is not None and has_argument_selector and init_base[:1].isupper():
-            _record(var_name, init_base, types, conflicts)
+                break
+        _record_binding(node.named_children, declared_type, types, conflicts)
+        for part in node.named_children:
+            if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
+                _record_binding(
+                    part.named_children, declared_type, types, conflicts
+                )
+
+
+def _record_binding(
+    parts: list[Node],
+    declared_type: str | None,
+    types: dict[str, str],
+    conflicts: set[str],
+) -> None:
+    # (H) One name-plus-initializer run: the first identifier is the variable,
+    # (H) a second identifier followed by an argument selector is a
+    # (H) construction base typing the variable when no declared type applies.
+    var_name: str | None = None
+    init_base: str | None = None
+    has_argument_selector = False
+    for part in parts:
+        if part.type == cs.TS_DART_IDENTIFIER and part.text:
+            if var_name is None:
+                var_name = part.text.decode(cs.ENCODING_UTF8)
+            elif init_base is None:
+                init_base = part.text.decode(cs.ENCODING_UTF8)
+        elif part.type == cs.TS_DART_SELECTOR and any(
+            inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
+        ):
+            has_argument_selector = True
+    if var_name is None:
+        return
+    if declared_type is not None:
+        _record(var_name, declared_type, types, conflicts)
+        return
+    if init_base is not None and has_argument_selector and init_base[:1].isupper():
+        _record(var_name, init_base, types, conflicts)
 
 
 def _record(
