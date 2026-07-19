@@ -79,6 +79,28 @@ class Registry {
   }
 }
 
+class Widgetry {
+  Widgetry();
+
+  static void configure() {
+    return;
+  }
+
+  String render() {
+    return 'w';
+  }
+}
+
+class OtherRenderer {
+  String render() {
+    return 'o';
+  }
+
+  String evict() {
+    return 'o';
+  }
+}
+
 class Holder {
   Greeter buddy;
   Holder(this.buddy);
@@ -131,6 +153,21 @@ String useInherited(Dog d) {
 
 String misuseFactory() {
   var r = Registry.describe();
+  return r.evict();
+}
+
+String useDeclaredWins() {
+  Widgetry w = Widgetry.configure();
+  return w.render();
+}
+
+String outerEnrich() {
+  var r = Registry();
+  void innerBind() {
+    var r = Registry.describe();
+    r.evict();
+  }
+  innerBind();
   return r.evict();
 }
 
@@ -264,6 +301,31 @@ def test_non_class_static_return_does_not_type_the_local(
     assert not _has(calls, ".app.misuseFactory", ".Registry.evict"), sorted(calls)
     # (H) the static call itself still resolves
     assert _has(calls, ".app.misuseFactory", ".Registry.describe"), sorted(calls)
+
+
+def test_declared_type_wins_over_initializer_return(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) an EXPLICIT declared type statically fixes the variable's type; the
+    # (H) initializer's recorded (void) return must not untype it
+    # (H) (PR #807 review). OtherRenderer.render is the decoy.
+    assert _has(calls, ".app.useDeclaredWins", ".Widgetry.render"), sorted(calls)
+    assert not _has(calls, ".app.useDeclaredWins", ".OtherRenderer.render"), sorted(
+        calls
+    )
+
+
+def test_nested_binding_does_not_retype_outer_local(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) an inner function's same-named `var r = Registry.describe()` must
+    # (H) not retype the OUTER r (a constructed Registry) to String
+    # (H) (PR #807 review). OtherRenderer.evict is the decoy.
+    assert _has(calls, ".app.outerEnrich", ".Registry.evict"), sorted(calls)
 
 
 def test_inherited_method_on_typed_receiver(
