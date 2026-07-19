@@ -6,6 +6,27 @@
 # (H) signature nodes for structural support and derives full spans from the
 # (H) sibling body; a precise CALLS graph is out of scope for this grammar.
 
+# (H) Call-site nodes: the grammar has no call-expression node; an invocation
+# (H) is whatever selector chain precedes a `selector` that holds an
+# (H) `argument_part` (`f(x)` = identifier + selector(argument_part);
+# (H) `a.b()` = identifier + selector(.b) + selector(argument_part)), and a
+# (H) cascade invocation (`obj..m()`) holds its argument_part directly inside
+# (H) the `cascade_section`.
+TS_DART_SELECTOR = "selector"
+TS_DART_ARGUMENT_PART = "argument_part"
+TS_DART_CASCADE_SECTION = "cascade_section"
+TS_DART_CASCADE_SELECTOR = "cascade_selector"
+TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR = "unconditional_assignable_selector"
+TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR = "conditional_assignable_selector"
+TS_DART_THIS = "this"
+TS_DART_SUPER = "super"
+TS_DART_IDENTIFIER = "identifier"
+
+DART_CALL_QUERY = """
+(selector (argument_part)) @call
+(cascade_section (argument_part)) @call
+"""
+
 # (H) Type/class-like declarations (all captured as @class)
 TS_DART_CLASS_DEFINITION = "class_definition"
 TS_DART_MIXIN_DECLARATION = "mixin_declaration"
@@ -70,3 +91,15 @@ DART_SIGNATURE_TYPES = frozenset(
     }
 )
 DART_SIGNATURE_WRAPPERS = frozenset({TS_DART_METHOD_SIGNATURE, TS_DART_DECLARATION})
+
+# (H) Constructor signatures whose grammar `name` field is the CLASS
+# (H) identifier, not the declared name: `C.named` must take its LAST bare
+# (H) identifier or every named constructor collapses into a duplicate of the
+# (H) default one.
+DART_CONSTRUCTOR_SIGNATURE_TYPES = frozenset(
+    {
+        TS_DART_CONSTRUCTOR_SIGNATURE,
+        TS_DART_CONSTANT_CONSTRUCTOR_SIGNATURE,
+        TS_DART_FACTORY_CONSTRUCTOR_SIGNATURE,
+    }
+)

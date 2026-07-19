@@ -27,6 +27,7 @@ from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
+from .dart import utils as dart_utils
 from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -302,6 +303,10 @@ class CallProcessor:
     ) -> list[Node]:
         start = container.start_byte
         end = container.end_byte
+        # (H) A Dart definition is a signature node whose body is a SIBLING;
+        # (H) widen to the body's end or every body call escapes its caller.
+        if container.type in cs.DART_SIGNATURE_TYPES:
+            end = dart_utils.dart_definition_end_byte(container)
         lo = bisect_left(call_starts, start)
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
@@ -323,6 +328,9 @@ class CallProcessor:
         nested_starts: set[int] = set()
         for func_node in func_nodes:
             body = func_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                # (H) a Dart body is a SIBLING of its signature, not a field
+                body = dart_utils.dart_body_node(func_node)
             if body is None:
                 continue
             for call in self._filter_calls_in_node(all_call_nodes, call_starts, body):
@@ -1433,6 +1441,11 @@ class CallProcessor:
         # (H) fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
             return self._macro_call_name(call_node)
+        # (H) A Dart call node is a selector/cascade_section holding the
+        # (H) argument_part; the target name lives in the PRECEDING sibling
+        # (H) chain, not inside the node.
+        if language == cs.SupportedLanguage.DART:
+            return dart_utils.dart_call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -2422,14 +2435,17 @@ class CallProcessor:
                     cs.SupportedLanguage.JAVA,
                     cs.SupportedLanguage.CSHARP,
                     cs.SupportedLanguage.CPP,
+                    cs.SupportedLanguage.DART,
                 ):
-                    # (H) A Java/C#/C++ constructor is a method named like its class
-                    # (H) (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
+                    # (H) A Java/C#/C++/Dart constructor is a method named like its
+                    # (H) class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
                     # (H) runs one, so redirect a CALLS edge to every declared
                     # (H) constructor (overload selection is unneeded for
-                    # (H) reachability). C# and C++ constructors use the same
-                    # (H) class-simple-name convention, so java_constructor_targets
-                    # (H) selects them too. C++ additionally redirects to the
+                    # (H) reachability). C#, C++, and Dart default constructors use
+                    # (H) the same class-simple-name convention, so
+                    # (H) java_constructor_targets selects them too (a Dart NAMED
+                    # (H) constructor is invoked by its own name and resolves as an
+                    # (H) ordinary method). C++ additionally redirects to the
                     # (H) destructor: the constructed object's `~X` runs at end
                     # (H) of lifetime with no call node of its own. sorted():
                     # (H) the target label is a hash-randomized StrEnum, so
