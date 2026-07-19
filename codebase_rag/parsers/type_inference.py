@@ -58,6 +58,8 @@ class TypeInferenceEngine:
         "_js_type_inference",
         "_python_type_inference",
         "_go_type_inference",
+        "_go_free_fn_index",
+        "_go_free_fn_index_size",
         "_rust_type_inference",
         "_cpp_type_inference",
         "_dart_type_inference",
@@ -122,6 +124,8 @@ class TypeInferenceEngine:
         self.go_function_return_types = (
             go_function_return_types if go_function_return_types is not None else {}
         )
+        self._go_free_fn_index: dict[tuple[str, str], str] = {}
+        self._go_free_fn_index_size = -1
         # (H) Shared reference (as with class_field_types): C# partial-class part
         # (H) groups, populated during ingestion and read by the C# resolver to
         # (H) span all parts of a split type.
@@ -392,25 +396,27 @@ class TypeInferenceEngine:
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # (H) Same module (file) first; then the enclosing package's sibling
-        # (H) files (same parent dir, exactly one file segment between), since
-        # (H) Go free functions are package-scoped, not file-scoped.
+        # (H) files (same parent dir), since Go free functions are
+        # (H) package-scoped, not file-scoped. The sibling lookup goes through
+        # (H) a lazily rebuilt (package, name) index: the shared map fills
+        # (H) DURING ingestion, so an init-time index would be empty, and the
+        # (H) size check rebuilds only when entries were added since.
         if hit := self.go_function_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
+        if len(self.go_function_return_types) != self._go_free_fn_index_size:
+            self._go_free_fn_index = {}
+            for qn, return_type in self.go_function_return_types.items():
+                head, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
+                package, _, _file = head.rpartition(cs.SEPARATOR_DOT)
+                if package:
+                    self._go_free_fn_index.setdefault((package, fn_name), return_type)
+            self._go_free_fn_index_size = len(self.go_function_return_types)
         package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        prefix_dots = package_prefix.count(cs.SEPARATOR_DOT)
-        suffix = f"{cs.SEPARATOR_DOT}{name}"
-        for qn, return_type in self.go_function_return_types.items():
-            if (
-                qn.endswith(suffix)
-                and qn.startswith(f"{package_prefix}{cs.SEPARATOR_DOT}")
-                and qn.count(cs.SEPARATOR_DOT) == prefix_dots + 2
-            ):
-                return return_type
-        return None
+        return self._go_free_fn_index.get((package_prefix, name))
 
     def _enrich_rust_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
