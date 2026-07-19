@@ -14,6 +14,7 @@ from ..types_defs import (
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
+from .dart.type_inference import DartTypeInferenceEngine
 from .csharp_frontend import CallSiteKey, CSharpCallSite
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
@@ -58,6 +59,7 @@ class TypeInferenceEngine:
         "_go_type_inference",
         "_rust_type_inference",
         "_cpp_type_inference",
+        "_dart_type_inference",
     )
 
     def __init__(
@@ -157,6 +159,7 @@ class TypeInferenceEngine:
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
+        self._dart_type_inference: DartTypeInferenceEngine | None = None
         self._lua_type_inference: LuaTypeInferenceEngine | None = None
         self._js_type_inference: JsTypeInferenceEngine | None = None
         self._python_type_inference: PythonTypeInferenceEngine | None = None
@@ -224,6 +227,12 @@ class TypeInferenceEngine:
                 function_locations=self.function_locations,
             )
         return self._csharp_type_inference
+
+    @property
+    def dart_type_inference(self) -> DartTypeInferenceEngine:
+        if self._dart_type_inference is None:
+            self._dart_type_inference = DartTypeInferenceEngine()
+        return self._dart_type_inference
 
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
@@ -516,6 +525,10 @@ class TypeInferenceEngine:
                 )
             case cs.SupportedLanguage.CSHARP:
                 return self.csharp_type_inference.build_variable_type_map(caller_node)
+            case cs.SupportedLanguage.DART:
+                return self.dart_type_inference.build_local_variable_type_map(
+                    caller_node
+                )
             case cs.SupportedLanguage.LUA:
                 return self.lua_type_inference.build_local_variable_type_map(
                     caller_node, module_qn

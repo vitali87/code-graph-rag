@@ -25,6 +25,7 @@ from ...types_defs import (
 )
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
+from ..dart.type_inference import DartTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..go import GoTypeInferenceEngine
@@ -886,6 +887,14 @@ class ClassIngestMixin:
                 self.class_field_types[class_qn] = field_types
             if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
                 self.class_field_guard_inner[class_qn] = guard_inner
+        elif language == cs.SupportedLanguage.DART:
+            # (H) Record Dart field types (`Greeter buddy;`) so a field-typed
+            # (H) receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
+            # (H) through the field's declared type.
+            if field_types := DartTypeInferenceEngine().build_field_type_map(
+                class_node
+            ):
+                self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.CSHARP:
             # (H) Record C# field/property types so a field-typed receiver
             # (H) (`_w.M()`, `this._w.M()`) resolves, including a field inherited

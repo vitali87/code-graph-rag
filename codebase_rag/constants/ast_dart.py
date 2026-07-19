@@ -27,6 +27,17 @@ DART_CALL_QUERY = """
 (cascade_section (argument_part)) @call
 """
 
+# (H) Declaration shapes for receiver typing: a class field is
+# (H) declaration(type_identifier, initialized_identifier_list); a body local
+# (H) is initialized_variable_definition with either a leading type_identifier
+# (H) (declared) or an inferred_type plus a construction initializer; a
+# (H) parameter is formal_parameter(type_identifier, identifier).
+TS_DART_CLASS_BODY = "class_body"
+TS_DART_INITIALIZED_IDENTIFIER_LIST = "initialized_identifier_list"
+TS_DART_INITIALIZED_IDENTIFIER = "initialized_identifier"
+TS_DART_INITIALIZED_VARIABLE_DEFINITION = "initialized_variable_definition"
+TS_DART_FORMAL_PARAMETER = "formal_parameter"
+
 # (H) Type/class-like declarations (all captured as @class)
 TS_DART_CLASS_DEFINITION = "class_definition"
 TS_DART_MIXIN_DECLARATION = "mixin_declaration"

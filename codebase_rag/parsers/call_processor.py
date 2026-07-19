@@ -85,6 +85,7 @@ _TYPED_LANGUAGES = frozenset(
         cs.SupportedLanguage.GO,
         cs.SupportedLanguage.CPP,
         cs.SupportedLanguage.RUST,
+        cs.SupportedLanguage.DART,
     }
 )
 
