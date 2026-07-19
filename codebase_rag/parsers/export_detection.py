@@ -61,6 +61,8 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _rust_exported(node)
         case cs.SupportedLanguage.CPP:
             return cpp_utils.is_exported(node)
+        case cs.SupportedLanguage.DART:
+            return _dart_exported(node, name)
         case _:
             return False
 
@@ -88,6 +90,36 @@ def _python_nested_in_function(node: Node) -> bool:
 
 def _go_exported(name: str) -> bool:
     return bool(name) and name[0].isupper()
+
+
+_DART_PRIVATE_BYTE = cs.DART_PRIVATE_PREFIX.encode(cs.ENCODING_UTF8)
+
+
+def _dart_exported(node: Node, name: str) -> bool:
+    # (H) Dart visibility is purely lexical: a leading underscore means
+    # (H) library-private, everything else is public. A public member is only
+    # (H) externally reachable when EVERY enclosing type is also public, since
+    # (H) a private class/mixin/extension cannot be named outside its library
+    # (H) (`_Internal.doThing` is unreachable from other libraries even though
+    # (H) `doThing` has no underscore). An UNNAMED extension (`extension on
+    # (H) String {...}`, no name field) is likewise usable only in its
+    # (H) declaring library, so its members are private too. Walk the ancestor
+    # (H) type chain and treat any private link as private.
+    if name.startswith(cs.DART_PRIVATE_PREFIX):
+        return False
+    ancestor = node.parent
+    while ancestor is not None:
+        if ancestor.type in cs.DART_TYPE_DECLARATION_NODE_TYPES:
+            type_name = ancestor.child_by_field_name(cs.FIELD_NAME)
+            if type_name is None or type_name.text is None:
+                # (H) only an extension_declaration legitimately lacks a name,
+                # (H) and an unnamed one is library-private
+                if ancestor.type == cs.TS_DART_EXTENSION_DECLARATION:
+                    return False
+            elif type_name.text.startswith(_DART_PRIVATE_BYTE):
+                return False
+        ancestor = ancestor.parent
+    return True
 
 
 def _js_ts_exported(node: Node, name: str) -> bool:

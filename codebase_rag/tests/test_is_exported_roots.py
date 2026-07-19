@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
@@ -374,3 +375,67 @@ def test_script_module_scan_runs_once_per_file(
         for declaration in declarations:
             assert export_detection._is_script_global(declaration) is True
     assert spy.call_count <= len(declarations)
+
+
+DART_SRC = """\
+void publicFn() {}
+void _privateFn() {}
+
+class Command {
+  void run() {}
+  void _wrap() {}
+  Command.named() {}
+}
+
+class _Internal {
+  void doThing() {}
+}
+
+extension PublicExt on String {
+  void boom() {}
+}
+"""
+
+
+def test_dart_visibility_seeds_exported_roots(tmp_path: Path) -> None:
+    # (H) Dart privacy is purely lexical: a leading underscore on the symbol OR
+    # (H) any enclosing type means library-private (not externally reachable),
+    # (H) everything else is public API and must seed a dead-code root. Without
+    # (H) this every public Dart symbol read as private and a library's whole
+    # (H) public surface flagged dead (dart-lang/args: 89 false positives).
+    exported = _run(tmp_path, {"lib.dart": DART_SRC})
+
+    assert _one(exported, ".lib.publicFn") is True
+    assert _one(exported, ".lib._privateFn") is False
+    assert _one(exported, ".Command.run") is True
+    assert _one(exported, ".Command._wrap") is False
+    # (H) a public method of a PRIVATE class is not reachable from outside the
+    # (H) library, so it is not an export root on its own
+    assert _one(exported, "._Internal.doThing") is False
+    # (H) a public NAMED extension is importable, so its members are roots
+    assert _one(exported, ".PublicExt.boom") is True
+
+
+def test_dart_unnamed_extension_member_is_private() -> None:
+    # (H) An unnamed extension (`extension on String {...}`) is usable only in
+    # (H) its declaring library; export detection must treat its members as
+    # (H) private even though the leaf name looks public (PR #819 review).
+    from codebase_rag.parsers.export_detection import _dart_exported
+
+    parsers, _ = load_parsers()
+    if "dart" not in parsers:
+        pytest.skip("dart parser not available")
+    tree = parsers["dart"].parse(b"extension on String {\n  void shout() {}\n}\n")
+
+    def _find(node: Node, wanted: str) -> Node | None:
+        for child in node.children:
+            if child.type == wanted:
+                return child
+            found = _find(child, wanted)
+            if found is not None:
+                return found
+        return None
+
+    sig = _find(tree.root_node, "function_signature")
+    assert sig is not None
+    assert _dart_exported(sig, "shout") is False
