@@ -21,7 +21,11 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset(
 EXT_PY = ".py"
 EXT_JS = ".js"
 EXT_JSX = ".jsx"
+EXT_MJS = ".mjs"
+EXT_CJS = ".cjs"
 EXT_TS = ".ts"
+EXT_MTS = ".mts"
+EXT_CTS = ".cts"
 EXT_TSX = ".tsx"
 EXT_RS = ".rs"
 EXT_GO = ".go"
@@ -47,10 +51,19 @@ EXT_DART = ".dart"
 
 # (H) File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
-JS_EXTENSIONS = (EXT_JS, EXT_JSX)
-TS_EXTENSIONS = (EXT_TS,)
+JS_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_MJS, EXT_CJS)
+TS_EXTENSIONS = (EXT_TS, EXT_MTS, EXT_CTS)
 TSX_EXTENSIONS = (EXT_TSX,)
-JS_TS_ALL_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_TS, EXT_TSX)
+JS_TS_ALL_EXTENSIONS = (
+    EXT_JS,
+    EXT_JSX,
+    EXT_MJS,
+    EXT_CJS,
+    EXT_TS,
+    EXT_MTS,
+    EXT_CTS,
+    EXT_TSX,
+)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -111,8 +124,12 @@ JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
 # (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
 # (H) compound suffixes are handled before the bare `.ts`.
 JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
+    ".d.mts",
+    ".d.cts",
     ".d.ts",
     ".tsx",
+    ".mts",
+    ".cts",
     ".ts",
     ".jsx",
     ".mjs",
@@ -282,6 +299,11 @@ class TreeSitterModule(StrEnum):
     CSHARP = "tree_sitter_c_sharp"
     DART = "tree_sitter_dart"
 
+
+# (H) Directory names with a context-dependent ignore: `bin` is build output
+# (H) everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
+DIR_BIN = "bin"
+DIR_SRC = "src"
 
 # (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(

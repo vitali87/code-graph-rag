@@ -105,7 +105,20 @@ def should_skip_path(
         # (H) or rescued files get no Folder/Package ancestry in the graph.
         return False
     dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
-    return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
+    return has_ignored_dir_part(dir_parts)
+
+
+def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
+    # (H) `bin` is a build-output ignore (dotnet's <proj>/bin, repo-root bin/)
+    # (H) EXCEPT directly under src/: Cargo's standard multi-binary layout puts
+    # (H) first-party binaries in src/bin/, and build systems never emit there.
+    for index, part in enumerate(dir_parts):
+        if part not in cs.IGNORE_PATTERNS:
+            continue
+        if part == cs.DIR_BIN and index > 0 and dir_parts[index - 1] == cs.DIR_SRC:
+            continue
+        return True
+    return False
 
 
 def should_skip_rel_file(
@@ -122,4 +135,4 @@ def should_skip_rel_file(
     # (H) unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
-    return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
+    return has_ignored_dir_part(dir_parts)

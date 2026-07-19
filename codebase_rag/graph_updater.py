@@ -1323,6 +1323,14 @@ class GraphUpdater:
             return False
         if dirname not in cs.IGNORE_PATTERNS:
             return True
+        # (H) Cargo's src/bin/ holds first-party binaries, not build output;
+        # (H) mirrors has_ignored_dir_part.
+        if (
+            dirname == cs.DIR_BIN
+            and dir_prefix.rstrip(cs.SEPARATOR_SLASH).rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+            == cs.DIR_SRC
+        ):
+            return True
         return bool(
             self.unignore_paths
             and any(
