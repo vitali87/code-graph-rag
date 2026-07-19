@@ -196,7 +196,15 @@ def _dart_get_name(node: Node) -> str | None:
     # (H) setters, classes, enums, extensions). Constructors/factories and mixins
     # (H) do not: their LAST bare `identifier` child is the declared name
     # (H) (`C.named` -> `named`, `factory C.create` -> `create`, `mixin Swimmer`
-    # (H) -> `Swimmer`, a default constructor `C(...)` -> `C`).
+    # (H) -> `Swimmer`, a default constructor `C(...)` -> `C`). The constructor
+    # (H) check comes FIRST: the grammar's `name` field on constructor_signature
+    # (H) is the CLASS identifier, which would collapse every named constructor
+    # (H) into a duplicate of the default one.
+    if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+        ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
+        if ids:
+            return ids[-1].text.decode(cs.ENCODING_UTF8)
+        return None
     name_node = node.child_by_field_name(cs.FIELD_NAME)
     if name_node and name_node.text:
         return name_node.text.decode(cs.ENCODING_UTF8)
@@ -631,12 +639,14 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         function_node_types=cs.SPEC_DART_FUNCTION_TYPES,
         class_node_types=cs.SPEC_DART_CLASS_TYPES,
         module_node_types=cs.SPEC_DART_MODULE_TYPES,
-        # (H) No call node types: the tree-sitter-dart grammar has no
-        # (H) call-expression node (a call is an identifier plus a following
-        # (H) `argument_part`/`selector`), so cgr emits no Dart CALLS edges.
-        # (H) Names come from _dart_get_name (bare captures); the signature/body
-        # (H) split is repaired by dart_definition_end_point at ingestion.
+        # (H) The grammar has no call-expression node: a call site is a
+        # (H) `selector` (or `cascade_section`) holding an `argument_part`,
+        # (H) invoking whatever the preceding sibling chain names; the call
+        # (H) name is reassembled by dart_call_name. Names come from
+        # (H) _dart_get_name (bare captures); the signature/body split is
+        # (H) repaired by dart_definition_end_point at ingestion.
         call_node_types=cs.SPEC_DART_CALL_TYPES,
+        call_query=cs.DART_CALL_QUERY,
         import_node_types=cs.SPEC_DART_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_DART_IMPORT_TYPES,
     ),

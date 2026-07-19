@@ -10,6 +10,14 @@ def dart_get_name(node: Node) -> str | None:
     # (H) (ingest_method) that cannot import language_spec without a cycle. Most
     # (H) nodes expose a `name` field; constructors/factories/mixins take their
     # (H) LAST bare identifier child (`C.named` -> `named`, default `C(...)` -> `C`).
+    # (H) The constructor check comes FIRST: the grammar's `name` field on
+    # (H) constructor_signature is the CLASS identifier, which would collapse
+    # (H) every named constructor into a duplicate of the default one.
+    if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+        ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
+        if ids:
+            return ids[-1].text.decode(cs.ENCODING_UTF8)
+        return None
     name_node = node.child_by_field_name(cs.FIELD_NAME)
     if name_node and name_node.text:
         return name_node.text.decode(cs.ENCODING_UTF8)
@@ -37,6 +45,137 @@ def dart_definition_end_point(node: Node) -> tuple[int, int]:
     if following is not None and following.type == cs.TS_DART_FUNCTION_BODY:
         return following.end_point
     return base.end_point
+
+
+def dart_body_node(node: Node) -> Node | None:
+    """The sibling `function_body` completing a captured signature, or None."""
+    if node.type not in cs.DART_SIGNATURE_TYPES:
+        return None
+    base = node
+    if node.parent is not None and node.parent.type in cs.DART_SIGNATURE_WRAPPERS:
+        base = node.parent
+    following = base.next_named_sibling
+    if following is not None and following.type == cs.TS_DART_FUNCTION_BODY:
+        return following
+    return None
+
+
+def dart_definition_end_byte(node: Node) -> int:
+    """End byte of a captured Dart definition, including its sibling body."""
+    body = dart_body_node(node)
+    if body is not None:
+        return body.end_byte
+    return node.end_byte
+
+
+def _selector_member_name(selector: Node) -> str | None:
+    # (H) `.m` / `?.m` -> "m"; an index selector (`[i]`) or a nested
+    # (H) argument_part has no static member name.
+    for child in selector.named_children:
+        if child.type in (
+            cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+        ):
+            for inner in child.named_children:
+                if inner.type == cs.TS_IDENTIFIER and inner.text:
+                    return inner.text.decode(cs.ENCODING_UTF8)
+            return None
+    return None
+
+
+def _first_identifier_text(node: Node) -> str | None:
+    for inner in node.named_children:
+        if inner.type == cs.TS_IDENTIFIER and inner.text:
+            return inner.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
+def _walk_chain(node: Node | None) -> list[str] | None:
+    # (H) Backward walk over a selector chain, shared by plain and cascade
+    # (H) calls: None means the chain is broken (index selector, call result,
+    # (H) arbitrary expression) and has no static name; an empty list means
+    # (H) the chain bottomed out at `this`/`super`.
+    parts_rev: list[str] = []
+    while node is not None:
+        part = _chain_part(node)
+        if part is None:
+            return None
+        if part == _CHAIN_STOP:
+            break
+        parts_rev.append(part)
+        if node.type == cs.TS_DART_IDENTIFIER:
+            break
+        node = node.prev_named_sibling
+    return list(reversed(parts_rev))
+
+
+def _cascade_call_name(call_node: Node) -> str | None:
+    # (H) `obj..m()` holds the argument_part inside the cascade_section; every
+    # (H) section shares the ONE base receiver, so skip earlier sibling
+    # (H) sections, then walk the receiver chain exactly like a plain call --
+    # (H) an `obj.field..m()` cascade must keep its full receiver, or the bare
+    # (H) member name could bind an unrelated same-name function.
+    parts = [
+        name
+        for child in call_node.named_children
+        if child.type == cs.TS_DART_CASCADE_SELECTOR
+        and (name := _first_identifier_text(child)) is not None
+    ]
+    if not parts:
+        return None
+    base = call_node.prev_named_sibling
+    while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
+        base = base.prev_named_sibling
+    receiver = _walk_chain(base)
+    if receiver is None:
+        return None
+    return cs.SEPARATOR_DOT.join(receiver + parts)
+
+
+_CHAIN_STOP = ""
+
+
+def _chain_part(node: Node) -> str | None:
+    # (H) One backward step over the selector chain: a member selector or the
+    # (H) base identifier contributes a name segment; `this`/`super` yield the
+    # (H) empty STOP marker (their member resolves against the caller's
+    # (H) class); anything else (index selector, a call result, an arbitrary
+    # (H) expression base) has no static name.
+    match node.type:
+        case cs.TS_DART_SELECTOR:
+            return _selector_member_name(node)
+        case cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR:
+            # (H) a super call attaches the member selector directly, without
+            # (H) the `selector` wrapper
+            return _first_identifier_text(node)
+        case cs.TS_DART_IDENTIFIER:
+            if node.text is None:
+                return None
+            return node.text.decode(cs.ENCODING_UTF8)
+        case cs.TS_DART_THIS | cs.TS_DART_SUPER:
+            return _CHAIN_STOP
+        case _:
+            return None
+
+
+def dart_call_name(call_node: Node) -> str | None:
+    """The dotted name a Dart invocation targets, reassembled from siblings.
+
+    The grammar has no call-expression node: `f(x)` is `identifier` +
+    `selector(argument_part)`, `a.b(x)` is `identifier` + `selector(.b)` +
+    `selector(argument_part)`, and `obj..m()` holds the `argument_part`
+    inside its `cascade_section`. Walk the preceding sibling chain and
+    rebuild the dotted target; a chain broken by an index (`xs[0].f()`) or a
+    call result (`f().g()`) has no static name and returns None. A `this`/
+    `super` base is dropped so the bare member name resolves against the
+    caller's class.
+    """
+    if call_node.type == cs.TS_DART_CASCADE_SECTION:
+        return _cascade_call_name(call_node)
+    parts = _walk_chain(call_node.prev_named_sibling)
+    if not parts:
+        return None
+    return cs.SEPARATOR_DOT.join(parts)
 
 
 def dart_extract_uri(node: Node) -> str | None:
