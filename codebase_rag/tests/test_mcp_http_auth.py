@@ -55,6 +55,18 @@ def test_correct_bearer_passes_through() -> None:
     assert body == b"inner"
 
 
+def test_scheme_is_case_insensitive() -> None:
+    # (H) RFC 7235: the auth SCHEME compares case-insensitively; the token
+    # (H) itself stays case-sensitive
+    app = _require_bearer_auth(_inner_app, "sekrit")
+    status, _ = _drive(app, [(b"authorization", b"bearer sekrit")])
+    assert status == 200
+    status, _ = _drive(app, [(b"authorization", b"BEARER sekrit")])
+    assert status == 200
+    status, _ = _drive(app, [(b"authorization", b"Bearer SEKRIT")])
+    assert status == 401
+
+
 def test_rejection_carries_www_authenticate() -> None:
     app = _require_bearer_auth(_inner_app, "sekrit")
     scope = {"type": "http", "method": "POST", "headers": [], "path": "/mcp"}
