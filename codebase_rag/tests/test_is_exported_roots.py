@@ -390,10 +390,6 @@ class _Internal {
   void doThing() {}
 }
 
-extension on String {
-  void shout() {}
-}
-
 extension PublicExt on String {
   void boom() {}
 }
@@ -415,7 +411,30 @@ def test_dart_visibility_seeds_exported_roots(tmp_path: Path) -> None:
     # (H) a public method of a PRIVATE class is not reachable from outside the
     # (H) library, so it is not an export root on its own
     assert _one(exported, "._Internal.doThing") is False
-    # (H) an unnamed extension is visible only in its declaring library, so its
-    # (H) members are not export roots; a public NAMED extension is importable
-    assert _one(exported, ".shout") is False
+    # (H) a public NAMED extension is importable, so its members are roots
     assert _one(exported, ".PublicExt.boom") is True
+
+
+def test_dart_unnamed_extension_member_is_private() -> None:
+    # (H) An unnamed extension (`extension on String {...}`) is usable only in
+    # (H) its declaring library; export detection must treat its members as
+    # (H) private even though the leaf name looks public (PR #819 review).
+    from codebase_rag.parsers.export_detection import _dart_exported
+
+    parsers, _ = load_parsers()
+    if "dart" not in parsers:
+        pytest.skip("dart parser not available")
+    tree = parsers["dart"].parse(b"extension on String {\n  void shout() {}\n}\n")
+
+    def _find(node: object, wanted: str):
+        for child in node.children:  # type: ignore[attr-defined]
+            if child.type == wanted:
+                return child
+            found = _find(child, wanted)
+            if found is not None:
+                return found
+        return None
+
+    sig = _find(tree.root_node, "function_signature")
+    assert sig is not None
+    assert _dart_exported(sig, "shout") is False
