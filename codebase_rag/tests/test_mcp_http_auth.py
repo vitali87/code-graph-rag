@@ -14,9 +14,7 @@ from codebase_rag.mcp.server import _require_bearer_auth, _validate_http_exposur
 
 
 async def _inner_app(scope: dict, receive: Any, send: Any) -> None:
-    await send(
-        {"type": "http.response.start", "status": 200, "headers": []}
-    )
+    await send({"type": "http.response.start", "status": 200, "headers": []})
     await send({"type": "http.response.body", "body": b"inner"})
 
 
@@ -32,7 +30,9 @@ def _drive(app: Any, headers: list[tuple[bytes, bytes]]) -> tuple[int, bytes]:
 
     asyncio.run(app(scope, receive, send))
     status = next(m["status"] for m in sent if m["type"] == "http.response.start")
-    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    body = b"".join(
+        m.get("body", b"") for m in sent if m["type"] == "http.response.body"
+    )
     return status, body
 
 
