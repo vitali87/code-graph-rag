@@ -1105,7 +1105,9 @@ class IOAccessProcessor:
             if arguments is not None
             else []
         )
-        handle = args[sink.handle_arg] if sink.handle_arg < len(args) else None
+        handle = next(
+            (arg for index, arg in enumerate(args) if index == sink.handle_arg), None
+        )
         text = safe_decode_text(handle)
         if text is not None:
             if (binding := lean_handles.bindings.get(text)) is not None:
