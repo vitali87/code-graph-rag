@@ -886,8 +886,29 @@ class IOAccessProcessor:
             ):
                 return
             identity = self._member_identity(node, descriptor)
-            self._emit(caller_spec, IODirection.READ, kind, identity)
+            for direction in self._member_directions(node, descriptor):
+                self._emit(caller_spec, direction, kind, identity)
             return
+
+    @staticmethod
+    def _member_directions(
+        node: Node, descriptor: LanguageDescriptor
+    ) -> tuple[IODirection, ...]:
+        # (H) A member access on an assignment's LHS mutates the resource:
+        # (H) `process.env.KEY = v` is a WRITE (mislabeling it a read hid
+        # (H) dotenv's core behavior); `+=` reads the old value AND writes.
+        # (H) Any other position (including the assignment RHS) stays a read.
+        parent = node.parent
+        if parent is None:
+            return (IODirection.READ,)
+        left = parent.child_by_field_name(cs.FIELD_LEFT)
+        if left is None or left.id != node.id:
+            return (IODirection.READ,)
+        if parent.type == descriptor.assignment_type:
+            return (IODirection.WRITE,)
+        if parent.type == descriptor.augmented_assignment_type:
+            return (IODirection.READ, IODirection.WRITE)
+        return (IODirection.READ,)
 
     def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
         # (H) The accessed key: a member's `property` (`process.env.SECRET` -> SECRET),

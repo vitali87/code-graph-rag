@@ -98,6 +98,11 @@ class LanguageDescriptor:
     # (H) Stream-extraction operator (C++ `>>`): on a bound stream handle it is a
     # (H) READ of that handle's resource. None where the language has none.
     stream_extract_operator: str | None = None
+    # (H) Assignment node types, for classifying a member access on the LHS as a
+    # (H) WRITE (`process.env.KEY = v`); augmented (`+=`) reads AND writes.
+    # (H) None where the language has no cataloged member resources.
+    assignment_type: str | None = None
+    augmented_assignment_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -131,6 +136,8 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.FIELD_OBJECT,
     property_field=cs.FIELD_PROPERTY,
     subscript_index_field=cs.TS_FIELD_INDEX,
+    assignment_type=cs.TS_JS_ASSIGNMENT_EXPRESSION,
+    augmented_assignment_type=cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
 )
 
 _GO_DESCRIPTOR = LanguageDescriptor(
