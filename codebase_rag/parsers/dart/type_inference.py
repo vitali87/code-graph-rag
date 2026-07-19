@@ -75,12 +75,8 @@ class DartTypeInferenceEngine:
         for part in node.named_children:
             if part.type == cs.TS_DART_TYPE_IDENTIFIER and part.text:
                 type_name = part.text.decode(cs.ENCODING_UTF8)
-            elif (
-                part.type == cs.TS_DART_IDENTIFIER and part.text and type_name
-            ):
-                _record(
-                    part.text.decode(cs.ENCODING_UTF8), type_name, types, conflicts
-                )
+            elif part.type == cs.TS_DART_IDENTIFIER and part.text and type_name:
+                _record(part.text.decode(cs.ENCODING_UTF8), type_name, types, conflicts)
 
     def _collect_locals(
         self, body: Node, types: dict[str, str], conflicts: set[str]
@@ -94,9 +90,7 @@ class DartTypeInferenceEngine:
             stack.extend(node.named_children)
 
     @staticmethod
-    def _record_local(
-        node: Node, types: dict[str, str], conflicts: set[str]
-    ) -> None:
+    def _record_local(node: Node, types: dict[str, str], conflicts: set[str]) -> None:
         # (H) Two typable shapes: a DECLARED type (`Greeter t = ...` puts a
         # (H) type_identifier before the name) and a CONSTRUCTION initializer
         # (H) (`var b = Greeter('x')` / `final n = Greeter.named('y')`: the
@@ -117,8 +111,7 @@ class DartTypeInferenceEngine:
                 elif init_base is None:
                     init_base = part.text.decode(cs.ENCODING_UTF8)
             elif part.type == cs.TS_DART_SELECTOR and any(
-                inner.type == cs.TS_DART_ARGUMENT_PART
-                for inner in part.named_children
+                inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
             ):
                 has_argument_selector = True
         if var_name is None:
@@ -126,11 +119,7 @@ class DartTypeInferenceEngine:
         if declared_type is not None:
             _record(var_name, declared_type, types, conflicts)
             return
-        if (
-            init_base is not None
-            and has_argument_selector
-            and init_base[:1].isupper()
-        ):
+        if init_base is not None and has_argument_selector and init_base[:1].isupper():
             _record(var_name, init_base, types, conflicts)
 
 

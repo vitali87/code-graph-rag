@@ -14,8 +14,8 @@ from ..types_defs import (
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
-from .dart.type_inference import DartTypeInferenceEngine
 from .csharp_frontend import CallSiteKey, CSharpCallSite
+from .dart.type_inference import DartTypeInferenceEngine
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine

@@ -25,9 +25,9 @@ from ...types_defs import (
 )
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
-from ..dart.type_inference import DartTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
+from ..dart.type_inference import DartTypeInferenceEngine
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..py import external_stdlib_base_method_names, resolve_class_name
