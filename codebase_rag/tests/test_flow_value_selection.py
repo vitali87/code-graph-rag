@@ -141,6 +141,23 @@ def test_js_arithmetic_binary_does_not_carry_taint(tmp_path: Path) -> None:
     assert ("resource::ENV::OTHER", "resource::STDOUT::<dynamic>") not in flows
 
 
+def test_cpp_boolean_and_does_not_carry_taint(tmp_path: Path) -> None:
+    # (H) Outside JS, `&&`/`||` produce a BOOLEAN, not one of the operands:
+    # (H) `ok = getenv(..) && true` must not taint ok.
+    files = {
+        "main.cpp": (
+            "#include <cstdlib>\n"
+            "#include <iostream>\n"
+            "void work() {\n"
+            '    bool ok = getenv("SECRET") && true;\n'
+            "    std::cout << ok;\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert _ENV_TO_STDOUT not in flows
+
+
 def test_java_ternary_bind_carries_taint(tmp_path: Path) -> None:
     files = {
         "A.java": (
