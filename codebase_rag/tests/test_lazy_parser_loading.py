@@ -114,6 +114,36 @@ def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
         COMBINED_FUNC_CLASS_QUERIES.update(saved)
 
 
+def test_mid_load_window_never_exposes_a_partial_language() -> None:
+    # (H) _process_language writes the parser BEFORE the queries; the ensure
+    # (H) fast path must not treat a present parser as a completed load, or a
+    # (H) concurrent queries[lang] in that window raises KeyError
+    # (H) (PR #802 review round 3).
+    from unittest.mock import MagicMock
+
+    from codebase_rag import parser_loader
+
+    store = parser_loader._LazyGrammarStore()
+    store._parser_data[cs.SupportedLanguage.PYTHON] = MagicMock()
+    assert cs.SupportedLanguage.PYTHON in store.queries
+    assert store.queries[cs.SupportedLanguage.PYTHON] is not None
+
+
+def test_failed_load_leaves_no_orphan_parser(monkeypatch) -> None:
+    # (H) a query-compilation failure after the parser insert must not leave a
+    # (H) parser entry without its queries twin
+    from codebase_rag import parser_loader
+
+    store = parser_loader._LazyGrammarStore()
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("query compile failed")
+
+    monkeypatch.setattr(parser_loader, "_create_language_queries", boom)
+    assert cs.SupportedLanguage.PYTHON not in store.parsers
+    assert store.parsers.get(cs.SupportedLanguage.PYTHON) is None
+
+
 def test_full_views_still_cover_every_available_language() -> None:
     # (H) a consumer that iterates the mapping gets the complete availability
     # (H) picture, not just what happens to be loaded already
