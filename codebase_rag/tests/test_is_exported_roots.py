@@ -389,6 +389,14 @@ class Command {
 class _Internal {
   void doThing() {}
 }
+
+extension on String {
+  void shout() {}
+}
+
+extension PublicExt on String {
+  void boom() {}
+}
 """
 
 
@@ -407,3 +415,7 @@ def test_dart_visibility_seeds_exported_roots(tmp_path: Path) -> None:
     # (H) a public method of a PRIVATE class is not reachable from outside the
     # (H) library, so it is not an export root on its own
     assert _one(exported, "._Internal.doThing") is False
+    # (H) an unnamed extension is visible only in its declaring library, so its
+    # (H) members are not export roots; a public NAMED extension is importable
+    assert _one(exported, ".shout") is False
+    assert _one(exported, ".PublicExt.boom") is True
