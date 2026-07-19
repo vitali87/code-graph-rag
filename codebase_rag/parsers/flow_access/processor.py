@@ -268,6 +268,23 @@ def _py_pattern_irrefutable(pattern: Node) -> bool:
     return False
 
 
+def _merge_optional_taints(left: Taint | None, right: Taint | None) -> Taint | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return _merge_taint(left, right)
+
+
+def _is_short_circuit(node: Node) -> bool:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    return (
+        operator is not None
+        and operator.text is not None
+        and operator.text.decode(cs.ENCODING_UTF8) in cs.JS_SHORT_CIRCUIT_OPERATORS
+    )
+
+
 def _switch_arm_is_default(arm: Node) -> bool:
     # (H) C++ default is a case_statement without a `value` field; a Java
     # (H) default arm's switch_label has no named children (a case label
@@ -1025,6 +1042,35 @@ class FlowProcessor:
             return self._js_expr_taint(
                 node.child_by_field_name(cs.FIELD_VALUE), tainted, jc
             )
+        if node_type in (cs.TS_JS_TERNARY_EXPRESSION, cs.TS_PY_CONDITIONAL_EXPRESSION):
+            # (H) `c ? a : b` (Java shares ternary_expression, C++ spells it
+            # (H) conditional_expression): the value MAY be either branch, so
+            # (H) their taints union; the condition never becomes the value.
+            return _merge_optional_taints(
+                self._js_expr_taint(
+                    node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE), tainted, jc
+                ),
+                self._js_expr_taint(
+                    node.child_by_field_name(cs.FIELD_ALTERNATIVE), tainted, jc
+                ),
+            )
+        if (
+            node_type == cs.TS_BINARY_EXPRESSION
+            and jc.flow.language in _HOISTED_DECL_LANGS
+            and _is_short_circuit(node)
+        ):
+            # (H) JS-ONLY: `env || 'fallback'` / `??` / `&&` yield one OPERAND
+            # (H) as the result, so the taints of both union (MAY). In
+            # (H) Go/Java/C++/Rust these operators produce a boolean, never an
+            # (H) operand, so the value stays clean there.
+            return _merge_optional_taints(
+                self._js_expr_taint(
+                    node.child_by_field_name(cs.TS_FIELD_LEFT), tainted, jc
+                ),
+                self._js_expr_taint(
+                    node.child_by_field_name(cs.TS_FIELD_RIGHT), tainted, jc
+                ),
+            )
         if node_type == d.identifier_type:
             return (
                 tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None
@@ -1675,17 +1721,44 @@ class FlowProcessor:
         ):
             return
         lhs = left.text.decode(cs.ENCODING_UTF8)
-        if right.type == cs.TS_PY_IDENTIFIER and right.text is not None:
-            rhs = right.text.decode(cs.ENCODING_UTF8)
-            if rhs in tainted:
-                tainted[lhs] = tainted[rhs]
-            else:
-                tainted.pop(lhs, None)
-            return
-        if right.type == cs.TS_PY_CALL and (raw := call_name(right)) is not None:
-            if seed := self._source_binding(right, raw, ctx.import_map, ctx.read_sinks):
-                tainted[lhs] = Taint(frozenset({seed}), frozenset())
-                return
+        taint = self._py_value_taint(right, tainted, ctx)
+        if taint is not None:
+            tainted[lhs] = taint
+        else:
+            # (H) Any other RHS (literal, expression, unresolved call) leaves
+            # (H) lhs clean.
+            tainted.pop(lhs, None)
+
+    def _py_value_taint(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        # (H) The Taint a Python value expression carries: identifiers
+        # (H) propagate the map, calls seed a source or defer on the callee's
+        # (H) return, and value-selection forms (`a if c else b`, `a or b`,
+        # (H) `a and b`) union their operands (the result MAY be either).
+        if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
+            return tainted.get(node.text.decode(cs.ENCODING_UTF8))
+        if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+            inner = next(iter(node.named_children), None)
+            return self._py_value_taint(inner, tainted, ctx) if inner else None
+        if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            # (H) Named children are [consequence, condition, alternative]; the
+            # (H) condition never becomes the value.
+            values = node.named_children
+            if len(values) != 3:
+                return None
+            return _merge_optional_taints(
+                self._py_value_taint(values[0], tainted, ctx),
+                self._py_value_taint(values[2], tainted, ctx),
+            )
+        if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+            return _merge_optional_taints(
+                self._py_value_taint_field(node, cs.TS_FIELD_LEFT, tainted, ctx),
+                self._py_value_taint_field(node, cs.TS_FIELD_RIGHT, tainted, ctx),
+            )
+        if node.type == cs.TS_PY_CALL and (raw := call_name(node)) is not None:
+            if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
+                return Taint(frozenset({seed}), frozenset())
             callee = self._resolve(
                 raw,
                 ctx.module_qn,
@@ -1695,16 +1768,21 @@ class FlowProcessor:
                 ctx.local_var_types,
             )
             if callee is not None:
-                # (H) Defer: mark lhs pending on the callee's return and record a
-                # (H) candidate return edge. finalize() decides whether the callee
-                # (H) really returns taint, so a callee processed later still counts.
+                # (H) Defer: mark the value pending on the callee's return and
+                # (H) record a candidate return edge. finalize() decides
+                # (H) whether the callee really returns taint, so a callee
+                # (H) processed later still counts.
                 self._return_edge_candidates.append(
                     (callee[0], callee[1], ctx.caller_spec)
                 )
-                tainted[lhs] = Taint(frozenset(), frozenset({callee[1]}))
-                return
-        # (H) Any other RHS (literal, expression, unresolved call) leaves lhs clean.
-        tainted.pop(lhs, None)
+                return Taint(frozenset(), frozenset({callee[1]}))
+        return None
+
+    def _py_value_taint_field(
+        self, node: Node, field: str, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        child = node.child_by_field_name(field)
+        return self._py_value_taint(child, tainted, ctx) if child is not None else None
 
     def _apply_call(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         raw = call_name(node)
