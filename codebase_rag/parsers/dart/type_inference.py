@@ -34,6 +34,14 @@ class DartTypeInferenceEngine:
         # (H) heuristic types them as Base, but a registered member's RECORDED
         # (H) return type should win (a `static String describe()` local is a
         # (H) String, not the class). The hub enrichment consumes this map.
+        # (H) OWN-scope only (PR #807 review): a nested function's same-named
+        # (H) binding must never retype the outer local, and since the
+        # (H) enrichment cannot tell which scope produced a var_types entry, a
+        # (H) nested binding is never collected at all -- nested locals simply
+        # (H) keep the construction heuristic. A definition with an EXPLICIT
+        # (H) declared type is skipped entirely: the declaration statically
+        # (H) fixes the type and the initializer's return must not override
+        # (H) or untype it.
         bindings: dict[str, tuple[str, str]] = {}
         body = dart_body_node(caller_node)
         if body is None:
@@ -41,14 +49,24 @@ class DartTypeInferenceEngine:
         stack = list(body.named_children)
         while stack:
             node = stack.pop()
+            if node.type in cs.DART_NESTED_SCOPE_NODE_TYPES:
+                continue
             if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
-                _record_static_call(node.named_children, bindings)
-                for part in node.named_children:
-                    if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
-                        _record_static_call(part.named_children, bindings)
+                self._record_definition_calls(node, bindings)
                 continue
             stack.extend(node.named_children)
         return bindings
+
+    @staticmethod
+    def _record_definition_calls(
+        node: Node, bindings: dict[str, tuple[str, str]]
+    ) -> None:
+        if _declared_type_name(node) is not None:
+            return
+        _record_static_call(node.named_children, bindings)
+        for part in node.named_children:
+            if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
+                _record_static_call(part.named_children, bindings)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # (H) `String name;` in a class_body is declaration(type_identifier,
