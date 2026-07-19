@@ -74,14 +74,23 @@ def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
     import threading
     import time
 
+    from tree_sitter import Parser
+
     from codebase_rag import parser_loader
+    from codebase_rag.language_spec import LanguageSpec
+    from codebase_rag.types_defs import LanguageQueries
 
     _reset_parser_cache()
     saved = dict(COMBINED_FUNC_CLASS_QUERIES)
     COMBINED_FUNC_CLASS_QUERIES.clear()
     real = parser_loader._process_language
 
-    def slow_process(lang, spec, parsers, queries):  # type: ignore[no-untyped-def]
+    def slow_process(
+        lang: cs.SupportedLanguage,
+        spec: LanguageSpec,
+        parsers: dict[cs.SupportedLanguage, Parser],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+    ) -> bool:
         time.sleep(0.05)
         return real(lang, spec, parsers, queries)
 
