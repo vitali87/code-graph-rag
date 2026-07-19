@@ -90,10 +90,31 @@ def _first_identifier_text(node: Node) -> str | None:
     return None
 
 
+def _walk_chain(node: Node | None) -> list[str] | None:
+    # (H) Backward walk over a selector chain, shared by plain and cascade
+    # (H) calls: None means the chain is broken (index selector, call result,
+    # (H) arbitrary expression) and has no static name; an empty list means
+    # (H) the chain bottomed out at `this`/`super`.
+    parts_rev: list[str] = []
+    while node is not None:
+        part = _chain_part(node)
+        if part is None:
+            return None
+        if part == _CHAIN_STOP:
+            break
+        parts_rev.append(part)
+        if node.type == cs.TS_DART_IDENTIFIER:
+            break
+        node = node.prev_named_sibling
+    return list(reversed(parts_rev))
+
+
 def _cascade_call_name(call_node: Node) -> str | None:
     # (H) `obj..m()` holds the argument_part inside the cascade_section; every
     # (H) section shares the ONE base receiver, so skip earlier sibling
-    # (H) sections to reach it.
+    # (H) sections, then walk the receiver chain exactly like a plain call --
+    # (H) an `obj.field..m()` cascade must keep its full receiver, or the bare
+    # (H) member name could bind an unrelated same-name function.
     parts = [
         name
         for child in call_node.named_children
@@ -105,14 +126,10 @@ def _cascade_call_name(call_node: Node) -> str | None:
     base = call_node.prev_named_sibling
     while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
         base = base.prev_named_sibling
-    if (
-        base is not None
-        and base.type == cs.TS_IDENTIFIER
-        and base.text
-        and base.prev_named_sibling is None
-    ):
-        parts.insert(0, base.text.decode(cs.ENCODING_UTF8))
-    return cs.SEPARATOR_DOT.join(parts)
+    receiver = _walk_chain(base)
+    if receiver is None:
+        return None
+    return cs.SEPARATOR_DOT.join(receiver + parts)
 
 
 _CHAIN_STOP = ""
@@ -155,21 +172,10 @@ def dart_call_name(call_node: Node) -> str | None:
     """
     if call_node.type == cs.TS_DART_CASCADE_SECTION:
         return _cascade_call_name(call_node)
-    parts_rev: list[str] = []
-    node = call_node.prev_named_sibling
-    while node is not None:
-        part = _chain_part(node)
-        if part is None:
-            return None
-        if part == _CHAIN_STOP or node.type == cs.TS_DART_IDENTIFIER:
-            if part != _CHAIN_STOP:
-                parts_rev.append(part)
-            break
-        parts_rev.append(part)
-        node = node.prev_named_sibling
-    if not parts_rev:
+    parts = _walk_chain(call_node.prev_named_sibling)
+    if not parts:
         return None
-    return cs.SEPARATOR_DOT.join(reversed(parts_rev))
+    return cs.SEPARATOR_DOT.join(parts)
 
 
 def dart_extract_uri(node: Node) -> str | None:
