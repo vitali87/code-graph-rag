@@ -1,7 +1,9 @@
 import importlib
 import subprocess
 import sys
+from collections.abc import Callable, ItemsView, Iterator, KeysView, ValuesView
 from copy import deepcopy
+from typing import cast
 from pathlib import Path
 
 from loguru import logger
@@ -95,7 +97,7 @@ def _try_import_language(
         return _try_load_from_submodule(lang_name)
 
 
-def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
+def _language_imports() -> list[LanguageImport]:
     language_imports: list[LanguageImport] = [
         LanguageImport(
             cs.SupportedLanguage.PYTHON,
@@ -188,25 +190,33 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
         ),
     ]
 
-    loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
-        lang_import.lang_key: _try_import_language(
+    return language_imports
+
+
+_IMPORT_SPECS: dict[cs.SupportedLanguage, LanguageImport] = {
+    lang_import.lang_key: lang_import for lang_import in _language_imports()
+}
+
+_loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
+
+
+def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
+    # (H) One grammar module import per language, on first use, cached for the
+    # (H) process (issue #68: importing all 14 grammars up front made every
+    # (H) startup pay for languages the repo does not contain).
+    if lang_name in _loader_cache:
+        return _loader_cache[lang_name]
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    if lang_import is not None:
+        loader = _try_import_language(
             lang_import.module_path,
             lang_import.attr_name,
             lang_import.submodule_name,
         )
-        for lang_import in language_imports
-    }
-    for lang_key in LANGUAGE_SPECS:
-        lang_name = cs.SupportedLanguage(lang_key)
-        if lang_name not in loaders or loaders[lang_name] is None:
-            loaders[lang_name] = _try_load_from_submodule(lang_name)
-
-    return loaders
-
-
-_language_loaders = _import_language_loaders()
-
-LANGUAGE_LIBRARIES: dict[cs.SupportedLanguage, LanguageLoader] = _language_loaders
+    else:
+        loader = _try_load_from_submodule(lang_name)
+    _loader_cache[lang_name] = loader
+    return loader
 
 
 def _build_query_pattern(node_types: tuple[str, ...], capture_name: str) -> str:
@@ -354,7 +364,7 @@ def _process_language(
     parsers: dict[cs.SupportedLanguage, Parser],
     queries: dict[cs.SupportedLanguage, LanguageQueries],
 ) -> bool:
-    lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
+    lang_lib = _get_language_library(lang_name)
     if not lang_lib:
         logger.debug(ls.LIB_NOT_AVAILABLE, lang=lang_name)
         return False
@@ -373,20 +383,103 @@ def _process_language(
         return False
 
 
+class _LazyLanguageDict[V](dict[cs.SupportedLanguage, V]):
+    # (H) A real dict whose storage holds only the languages loaded so far; a
+    # (H) missing key triggers a one-time grammar load (issue #68). Subclassing
+    # (H) dict keeps every `dict[SupportedLanguage, ...]`-typed consumer
+    # (H) signature valid, and dict.__getitem__ routes misses through
+    # (H) __missing__. dict.get would BYPASS __missing__ (C fast path), so it
+    # (H) is overridden. Full-view operations (iteration, len, keys/values/
+    # (H) items) probe every spec first so no consumer ever sees a partial
+    # (H) availability picture.
+    def __init__(self, ensure: Callable[[object], bool]) -> None:
+        super().__init__()
+        self._ensure = ensure
+
+    def __missing__(self, lang_name: cs.SupportedLanguage) -> V:
+        if self._ensure(lang_name) and dict.__contains__(self, lang_name):
+            return dict.__getitem__(self, lang_name)
+        raise KeyError(lang_name)
+
+    def __contains__(self, lang_name: object) -> bool:
+        if dict.__contains__(self, lang_name):
+            return True
+        return self._ensure(lang_name) and dict.__contains__(self, lang_name)
+
+    def get(self, lang_name: object, default: V | None = None) -> V | None:  # ty: ignore[invalid-method-override]
+        if lang_name in self:
+            return dict.__getitem__(self, cast(cs.SupportedLanguage, lang_name))
+        return default
+
+    def _probe_all(self) -> None:
+        for lang_key in LANGUAGE_SPECS:
+            self._ensure(lang_key)
+        if not dict.__len__(self):
+            raise RuntimeError(ex.NO_LANGUAGES)
+
+    def __iter__(self) -> Iterator[cs.SupportedLanguage]:
+        self._probe_all()
+        return dict.__iter__(self)
+
+    def __len__(self) -> int:
+        self._probe_all()
+        return dict.__len__(self)
+
+    def keys(self) -> KeysView[cs.SupportedLanguage]:  # ty: ignore[invalid-method-override]
+        self._probe_all()
+        return dict.keys(self)
+
+    def values(self) -> ValuesView[V]:  # ty: ignore[invalid-method-override]
+        self._probe_all()
+        return dict.values(self)
+
+    def items(self) -> ItemsView[cs.SupportedLanguage, V]:  # ty: ignore[invalid-method-override]
+        self._probe_all()
+        return dict.items(self)
+
+
+class _LazyGrammarStore:
+    # (H) Process-wide cache: grammars load once per interpreter, not once per
+    # (H) load_parsers() call (which previously recompiled EVERY language's
+    # (H) query set on every call).
+    def __init__(self) -> None:
+        self.parsers: _LazyLanguageDict[Parser] = _LazyLanguageDict(self._ensure)
+        self.queries: _LazyLanguageDict[LanguageQueries] = _LazyLanguageDict(
+            self._ensure
+        )
+        self._attempted: set[object] = set()
+
+    def _ensure(self, lang_name: object) -> bool:
+        if lang_name in self._attempted:
+            return dict.__contains__(self.parsers, lang_name)
+        self._attempted.add(lang_name)
+        if not isinstance(lang_name, str):
+            return False
+        try:
+            lang = cs.SupportedLanguage(lang_name)
+        except ValueError:
+            return False
+        spec = LANGUAGE_SPECS.get(lang)
+        if spec is None:
+            return False
+        return _process_language(lang, deepcopy(spec), self.parsers, self.queries)
+
+
+_store: _LazyGrammarStore | None = None
+
+
+def _reset_parser_cache() -> None:
+    # (H) Test hook: discard every cached grammar so laziness itself can be
+    # (H) observed from a clean slate.
+    global _store
+    _store = None
+
+
 def load_parsers() -> tuple[
     dict[cs.SupportedLanguage, Parser], dict[cs.SupportedLanguage, LanguageQueries]
 ]:
-    parsers: dict[cs.SupportedLanguage, Parser] = {}
-    queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
-    available_languages: list[cs.SupportedLanguage] = []
-
-    for lang_key, lang_config in deepcopy(LANGUAGE_SPECS).items():
-        lang_name = cs.SupportedLanguage(lang_key)
-        if _process_language(lang_name, lang_config, parsers, queries):
-            available_languages.append(lang_name)
-
-    if not available_languages:
-        raise RuntimeError(ex.NO_LANGUAGES)
-
-    logger.info(ls.INITIALIZED_PARSERS.format(languages=", ".join(available_languages)))
-    return parsers, queries
+    global _store
+    if _store is None:
+        _store = _LazyGrammarStore()
+        logger.info(ls.PARSERS_LAZY_READY)
+    return _store.parsers, _store.queries

@@ -4,6 +4,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs
+from ..language_spec import LANGUAGE_SPECS
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
 from ..utils.path_utils import (
@@ -61,9 +62,11 @@ class StructureProcessor:
             ):
                 directories.add(path)
 
+        # (H) Package detection needs only the static language specs, never a
+        # (H) loaded grammar; iterating self.queries.values() would force every
+        # (H) lazy grammar to load (issue #68).
         package_indicators: set[str] = set()
-        for lang_queries in self.queries.values():
-            lang_config = lang_queries[cs.QUERY_CONFIG]
+        for lang_config in LANGUAGE_SPECS.values():
             package_indicators.update(lang_config.package_indicators)
 
         for root in sorted(directories):
