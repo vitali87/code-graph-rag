@@ -446,9 +446,7 @@ class _LazyGrammarStore:
             return True
         with self._lock:
             if lang_name in self._attempted:
-                return (
-                    lang_name in self._parser_data and lang_name in self._query_data
-                )
+                return lang_name in self._parser_data and lang_name in self._query_data
             self._attempted.add(lang_name)
             if not isinstance(lang_name, str):
                 return False
