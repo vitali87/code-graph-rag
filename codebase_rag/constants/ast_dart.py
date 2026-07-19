@@ -57,6 +57,20 @@ TS_DART_ENUM_DECLARATION = "enum_declaration"
 TS_DART_EXTENSION_DECLARATION = "extension_declaration"
 TS_DART_EXTENSION_TYPE_DECLARATION = "extension_type_declaration"
 
+# (H) Dart privacy is lexical: a leading underscore marks a library-private
+# (H) symbol; every other name is public. Export detection walks the enclosing
+# (H) type chain, so a public member of a private type is still unreachable.
+DART_PRIVATE_PREFIX = "_"
+DART_TYPE_DECLARATION_NODE_TYPES = frozenset(
+    {
+        TS_DART_CLASS_DEFINITION,
+        TS_DART_MIXIN_DECLARATION,
+        TS_DART_ENUM_DECLARATION,
+        TS_DART_EXTENSION_DECLARATION,
+        TS_DART_EXTENSION_TYPE_DECLARATION,
+    }
+)
+
 # (H) Function/method signature nodes (all captured as @function)
 TS_DART_FUNCTION_SIGNATURE = "function_signature"
 TS_DART_GETTER_SIGNATURE = "getter_signature"
