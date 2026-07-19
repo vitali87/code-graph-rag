@@ -71,6 +71,17 @@ def test_env_augmented_assignment_reads_and_writes(tmp_path: Path) -> None:
     assert _has(rels, "m.grow", READS_FROM, "resource::ENV::PATH_LIKE"), rels
 
 
+def test_env_update_expression_reads_and_writes(tmp_path: Path) -> None:
+    # (H) `process.env.COUNT++` increments in place: an update_expression
+    # (H) parent reads the old value and writes the new one.
+    rels = _run_io(
+        tmp_path,
+        {"m.js": "export function bump() { process.env.COUNT++ }\n"},
+    )
+    assert _has(rels, "m.bump", WRITES_TO, "resource::ENV::COUNT"), rels
+    assert _has(rels, "m.bump", READS_FROM, "resource::ENV::COUNT"), rels
+
+
 def test_env_member_read_stays_a_read(tmp_path: Path) -> None:
     rels = _run_io(
         tmp_path,
