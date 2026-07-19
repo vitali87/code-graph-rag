@@ -56,6 +56,10 @@ FIELD_SUBJECT = "subject"
 # (H) and is a CAPTURE (irrefutable); multi-part dotted names are value
 # (H) patterns that compare.
 TS_PY_DOTTED_NAME = "dotted_name"
+# (H) `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
+# (H) node, invisible to named_children.
+TS_PY_UNION_PATTERN = "union_pattern"
+TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"

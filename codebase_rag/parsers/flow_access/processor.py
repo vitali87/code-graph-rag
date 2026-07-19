@@ -248,6 +248,23 @@ def _py_pattern_irrefutable(pattern: Node) -> bool:
             None,
         )
         return inner is not None and _py_pattern_irrefutable(inner)
+    if child.type == cs.TS_PY_UNION_PATTERN:
+        # (H) `1 | _` / `1 | other`: only the LAST alternative may legally be
+        # (H) irrefutable, and a bare `_` alternative is an ANONYMOUS node, so
+        # (H) inspect ALL children for the final non-separator one.
+        last = next(
+            (
+                c
+                for c in reversed(child.children)
+                if c.is_named or c.type == cs.TS_PY_WILDCARD_NODE
+            ),
+            None,
+        )
+        if last is None:
+            return False
+        if last.type == cs.TS_PY_WILDCARD_NODE:
+            return True
+        return last.type == cs.TS_PY_DOTTED_NAME and last.named_child_count == 1
     return False
 
 
