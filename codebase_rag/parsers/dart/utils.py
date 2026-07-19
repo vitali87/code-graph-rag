@@ -83,6 +83,64 @@ def _selector_member_name(selector: Node) -> str | None:
     return None
 
 
+def _first_identifier_text(node: Node) -> str | None:
+    for inner in node.named_children:
+        if inner.type == cs.TS_IDENTIFIER and inner.text:
+            return inner.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
+def _cascade_call_name(call_node: Node) -> str | None:
+    # (H) `obj..m()` holds the argument_part inside the cascade_section; every
+    # (H) section shares the ONE base receiver, so skip earlier sibling
+    # (H) sections to reach it.
+    parts = [
+        name
+        for child in call_node.named_children
+        if child.type == cs.TS_DART_CASCADE_SELECTOR
+        and (name := _first_identifier_text(child)) is not None
+    ]
+    if not parts:
+        return None
+    base = call_node.prev_named_sibling
+    while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
+        base = base.prev_named_sibling
+    if (
+        base is not None
+        and base.type == cs.TS_IDENTIFIER
+        and base.text
+        and base.prev_named_sibling is None
+    ):
+        parts.insert(0, base.text.decode(cs.ENCODING_UTF8))
+    return cs.SEPARATOR_DOT.join(parts)
+
+
+_CHAIN_STOP = ""
+
+
+def _chain_part(node: Node) -> str | None:
+    # (H) One backward step over the selector chain: a member selector or the
+    # (H) base identifier contributes a name segment; `this`/`super` yield the
+    # (H) empty STOP marker (their member resolves against the caller's
+    # (H) class); anything else (index selector, a call result, an arbitrary
+    # (H) expression base) has no static name.
+    match node.type:
+        case cs.TS_DART_SELECTOR:
+            return _selector_member_name(node)
+        case cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR:
+            # (H) a super call attaches the member selector directly, without
+            # (H) the `selector` wrapper
+            return _first_identifier_text(node)
+        case cs.TS_DART_IDENTIFIER:
+            if node.text is None:
+                return None
+            return node.text.decode(cs.ENCODING_UTF8)
+        case cs.TS_DART_THIS | cs.TS_DART_SUPER:
+            return _CHAIN_STOP
+        case _:
+            return None
+
+
 def dart_call_name(call_node: Node) -> str | None:
     """The dotted name a Dart invocation targets, reassembled from siblings.
 
@@ -96,55 +154,18 @@ def dart_call_name(call_node: Node) -> str | None:
     caller's class.
     """
     if call_node.type == cs.TS_DART_CASCADE_SECTION:
-        parts: list[str] = []
-        for child in call_node.named_children:
-            if child.type == cs.TS_DART_CASCADE_SELECTOR:
-                for inner in child.named_children:
-                    if inner.type == cs.TS_IDENTIFIER and inner.text:
-                        parts.append(inner.text.decode(cs.ENCODING_UTF8))
-        if not parts:
-            return None
-        # (H) every cascade section shares the ONE base receiver; skip earlier
-        # (H) sibling sections to reach it
-        base = call_node.prev_named_sibling
-        while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
-            base = base.prev_named_sibling
-        if (
-            base is not None
-            and base.type == cs.TS_IDENTIFIER
-            and base.text
-            and base.prev_named_sibling is None
-        ):
-            parts.insert(0, base.text.decode(cs.ENCODING_UTF8))
-        return cs.SEPARATOR_DOT.join(parts)
-
+        return _cascade_call_name(call_node)
     parts_rev: list[str] = []
     node = call_node.prev_named_sibling
     while node is not None:
-        match node.type:
-            case cs.TS_DART_SELECTOR:
-                member = _selector_member_name(node)
-                if member is None:
-                    return None
-                parts_rev.append(member)
-            case cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR:
-                # (H) a super call attaches the member selector directly,
-                # (H) without the `selector` wrapper
-                for inner in node.named_children:
-                    if inner.type == cs.TS_IDENTIFIER and inner.text:
-                        parts_rev.append(inner.text.decode(cs.ENCODING_UTF8))
-                        break
-                else:
-                    return None
-            case cs.TS_IDENTIFIER:
-                if node.text is None:
-                    return None
-                parts_rev.append(node.text.decode(cs.ENCODING_UTF8))
-                break
-            case cs.TS_DART_THIS | cs.TS_DART_SUPER:
-                break
-            case _:
-                return None
+        part = _chain_part(node)
+        if part is None:
+            return None
+        if part == _CHAIN_STOP or node.type == cs.TS_DART_IDENTIFIER:
+            if part != _CHAIN_STOP:
+                parts_rev.append(part)
+            break
+        parts_rev.append(part)
         node = node.prev_named_sibling
     if not parts_rev:
         return None

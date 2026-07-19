@@ -129,6 +129,66 @@ def test_static_method_call_via_class_name(
     assert _has(calls, ".app.main", ".Greeter.create"), sorted(calls)
 
 
+def test_call_name_shapes() -> None:
+    # (H) unit coverage of every chain shape dart_call_name handles, straight
+    # (H) off real parse trees
+    import pytest as _pytest
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.dart import (
+        dart_body_node,
+        dart_call_name,
+        dart_definition_end_byte,
+    )
+
+    parsers, _ = load_parsers()
+    if SKIP not in parsers:
+        _pytest.skip("dart parser not available")
+    dart = parsers[cs.SupportedLanguage.DART]
+
+    src = b"""
+class A extends B {
+  void run() {
+    plain();
+    obj.member();
+    obj?.maybe();
+    this.step();
+    super.init();
+    b..first()..second();
+    items[0].touch();
+    f().chained();
+    Widget.of(context);
+  }
+}
+"""
+    tree = dart.parse(src)
+    calls: list[str | None] = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in ("selector", "cascade_section") and any(
+            c.type == "argument_part" for c in node.named_children
+        ):
+            calls.append(dart_call_name(node))
+        stack.extend(reversed(node.named_children))
+    assert "plain" in calls
+    assert "obj.member" in calls
+    assert "obj.maybe" in calls
+    # (H) this./super. bases drop so the member resolves against the class
+    assert "step" in calls
+    assert "init" in calls
+    assert "b.first" in calls
+    assert "b.second" in calls
+    assert "Widget.of" in calls
+    # (H) index and call-result receivers have no static name
+    assert calls.count(None) >= 2
+
+    # (H) span helpers pass non-signature nodes through unchanged
+    root = tree.root_node
+    assert dart_body_node(root) is None
+    assert dart_definition_end_byte(root) == root.end_byte
+
+
 def test_body_calls_not_attributed_to_module(
     dart_calls_project: Path, mock_ingestor: MagicMock
 ):
