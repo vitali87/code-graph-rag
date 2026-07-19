@@ -109,6 +109,11 @@ class _FlowCtx(NamedTuple):
     # (H) `std::cout << x` (stream insertion). Empty for languages without them.
     macro_sinks: dict[str, IOSink]
     stream_sinks: dict[str, IOSink]
+    # (H) The caller's local receiver types (same map the CALLS pipeline used):
+    # (H) callee resolution for taint edges must honor typed receivers, or an
+    # (H) external-typed `cl.Get` unique-binds back to the enclosing method and
+    # (H) fabricates a FLOWS_TO self edge (viper's Get -> Get).
+    local_var_types: dict[str, str] | None
 
 
 # (H) Languages whose local declarations hoist to the whole function scope (JS/TS
@@ -210,6 +215,7 @@ class FlowProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         class_context: str | None,
+        local_var_types: dict[str, str] | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -229,6 +235,7 @@ class FlowProcessor:
             },
             macro_sinks=IO_MACRO_SINKS.get(language, {}),
             stream_sinks=IO_STREAM_SINKS.get(language, {}),
+            local_var_types=local_var_types,
         )
         # (H) Non-Python languages take a lean STRAIGHT-LINE flow walk (issue #714):
         # (H) taint from a read source (process.env, fetch, fs.readFile) reaching a
@@ -737,6 +744,7 @@ class FlowProcessor:
                 jc.flow.class_context,
                 jc.flow.caller_qn,
                 jc.flow.language,
+                jc.flow.local_var_types,
             )
             if callee is not None:
                 self._return_edge_candidates.append(
@@ -786,6 +794,7 @@ class FlowProcessor:
             jc.flow.class_context,
             jc.flow.caller_qn,
             jc.flow.language,
+            jc.flow.local_var_types,
         )
         if callee is None:
             return
@@ -1350,7 +1359,12 @@ class FlowProcessor:
                 tainted[lhs] = Taint(frozenset({seed}), frozenset())
                 return
             callee = self._resolve(
-                raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+                raw,
+                ctx.module_qn,
+                ctx.class_context,
+                ctx.caller_qn,
+                ctx.language,
+                ctx.local_var_types,
             )
             if callee is not None:
                 # (H) Defer: mark lhs pending on the callee's return and record a
@@ -1388,7 +1402,12 @@ class FlowProcessor:
                     )
             return
         callee = self._resolve(
-            raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+            raw,
+            ctx.module_qn,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            ctx.local_var_types,
         )
         if callee is None:
             return
@@ -1435,7 +1454,12 @@ class FlowProcessor:
                     result = _merge_taint(result, Taint(frozenset({seed}), frozenset()))
                     continue
                 callee = self._resolve(
-                    raw, ctx.module_qn, ctx.class_context, ctx.caller_qn, ctx.language
+                    raw,
+                    ctx.module_qn,
+                    ctx.class_context,
+                    ctx.caller_qn,
+                    ctx.language,
+                    ctx.local_var_types,
                 )
                 if callee is not None:
                     self._return_edge_candidates.append(
@@ -1578,9 +1602,10 @@ class FlowProcessor:
         class_context: str | None,
         caller_qn: str,
         language: cs.SupportedLanguage,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
         info = self._resolver.resolve_function_call(
-            raw_name, module_qn, None, class_context, caller_qn, language
+            raw_name, module_qn, local_var_types, class_context, caller_qn, language
         )
         if info is None or info[1].startswith(_BUILTIN_QN_PREFIX):
             return None

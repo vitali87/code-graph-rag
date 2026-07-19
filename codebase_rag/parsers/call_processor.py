@@ -1776,7 +1776,13 @@ class CallProcessor:
             caller_node, caller_spec, module_qn, language
         )
         self._flow_processor.process_flow_for_caller(
-            caller_node, caller_spec, caller_qn, module_qn, language, class_context
+            caller_node,
+            caller_spec,
+            caller_qn,
+            module_qn,
+            language,
+            class_context,
+            local_var_types,
         )
 
         caller_params: frozenset[str] = frozenset()

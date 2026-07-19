@@ -158,6 +158,11 @@ class DefinitionProcessor(
         # (H) ingestion, so a chained call `x.foo().bar()` can resolve `bar` on the
         # (H) type `foo()` returns. Read by the resolver's chained-call path.
         self.method_return_types: dict[str, str] = {}
+        # (H) {go_free_fn_qn: first_return_type} for typing `v, err := f()`
+        # (H) bindings. Kept OFF method_return_types deliberately: that map
+        # (H) feeds chained-call resolution, where a multi-return callee is
+        # (H) uncallable and first-type recording would shift edge behavior.
+        self.go_function_return_types: dict[str, str] = {}
         # (H) Alias names seen with conflicting underlying types across scopes/files;
         # (H) dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()

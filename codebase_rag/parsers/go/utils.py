@@ -36,6 +36,36 @@ def extract_return_type_name(node: Node) -> str | None:
     return _return_type_identifier(result)
 
 
+def extract_first_return_type_name(node: Node) -> str | None:
+    # (H) FIRST return type of a Go function, for typing `v, err := f()`
+    # (H) bindings under the (T, error) idiom. Unlike extract_return_type_name
+    # (H) (chaining, where a multi-return callee is uncallable so the skip is
+    # (H) correct), a parameter_list result contributes its first declared
+    # (H) type, and a qualified `pkg.T` keeps its dotted text so a local bound
+    # (H) to an external package's type stays typed rather than trie-guessed.
+    result = node.child_by_field_name(cs.FIELD_RESULT)
+    if result is None:
+        return None
+    if result.type == cs.TS_GO_PARAMETER_LIST:
+        for param in result.children:
+            if param.type != cs.TS_GO_PARAMETER_DECLARATION:
+                continue
+            type_node = param.child_by_field_name(cs.FIELD_TYPE)
+            return _first_return_identifier(type_node) if type_node else None
+        return None
+    return _first_return_identifier(result)
+
+
+def _first_return_identifier(type_node: Node) -> str | None:
+    if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
+        return safe_decode_text(type_node)
+    if type_node.type == cs.TS_GO_POINTER_TYPE:
+        for child in type_node.named_children:
+            return _first_return_identifier(child)
+        return None
+    return _return_type_identifier(type_node)
+
+
 def _return_type_identifier(type_node: Node) -> str | None:
     # (H) Like type_identifier_text but does NOT unwrap composite types: a
     # (H) `[]Command`/`map[k]Command`/`chan Command` return is a container, and a
