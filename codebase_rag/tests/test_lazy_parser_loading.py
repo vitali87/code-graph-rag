@@ -66,6 +66,45 @@ def test_unknown_language_stays_absent() -> None:
     assert queries.get("cobol") is None
 
 
+def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
+    # (H) An MCP server can probe the same language from several request
+    # (H) threads at once; the mid-load window (attempted but not yet loaded)
+    # (H) must not make a later thread see the language as unavailable
+    # (H) (PR #802 review).
+    import threading
+    import time
+
+    from codebase_rag import parser_loader
+
+    _reset_parser_cache()
+    saved = dict(COMBINED_FUNC_CLASS_QUERIES)
+    COMBINED_FUNC_CLASS_QUERIES.clear()
+    real = parser_loader._process_language
+
+    def slow_process(lang, spec, parsers, queries):  # type: ignore[no-untyped-def]
+        time.sleep(0.05)
+        return real(lang, spec, parsers, queries)
+
+    monkeypatch.setattr(parser_loader, "_process_language", slow_process)
+    try:
+        parsers, _ = load_parsers()
+        results: list[bool] = []
+
+        def probe() -> None:
+            results.append(cs.SupportedLanguage.PYTHON in parsers)
+
+        threads = [threading.Thread(target=probe) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert results == [True] * 8, results
+    finally:
+        _reset_parser_cache()
+        COMBINED_FUNC_CLASS_QUERIES.clear()
+        COMBINED_FUNC_CLASS_QUERIES.update(saved)
+
+
 def test_full_views_still_cover_every_available_language() -> None:
     # (H) a consumer that iterates the mapping gets the complete availability
     # (H) picture, not just what happens to be loaded already
