@@ -172,7 +172,9 @@ def test_nested_local_function_does_not_poison_outer_scope(
     # (H) outer `s` (a Greeter) from the outer caller's type map
     # (H) (PR #806 review round 3)
     assert _has(calls, ".app.outerScoped", ".Greeter.greet"), sorted(calls)
-    assert _has(calls, ".outerScoped.inner", ".Shouter.greet"), sorted(calls)
+    # (H) a local function registers flat (app.inner) per the Dart FQN spec
+    # (H) and its own map types ITS s as Shouter
+    assert _has(calls, ".app.inner", ".Shouter.greet"), sorted(calls)
 
 
 def test_multi_variable_declarations_type_every_binding(

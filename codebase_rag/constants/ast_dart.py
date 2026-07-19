@@ -33,6 +33,18 @@ DART_CALL_QUERY = """
 # (H) (declared) or an inferred_type plus a construction initializer; a
 # (H) parameter is formal_parameter(type_identifier, identifier).
 TS_DART_CLASS_BODY = "class_body"
+TS_DART_FUNCTION_EXPRESSION = "function_expression"
+TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
+
+# (H) Nodes opening their OWN variable scope: the local-type walk must not
+# (H) descend into them, or a nested function's same-named local would
+# (H) conflict-drop the outer binding from the outer caller's map.
+DART_NESTED_SCOPE_NODE_TYPES = frozenset(
+    {
+        TS_DART_FUNCTION_EXPRESSION,
+        TS_DART_LOCAL_FUNCTION_DECLARATION,
+    }
+)
 TS_DART_INITIALIZED_IDENTIFIER_LIST = "initialized_identifier_list"
 TS_DART_INITIALIZED_IDENTIFIER = "initialized_identifier"
 TS_DART_INITIALIZED_VARIABLE_DEFINITION = "initialized_variable_definition"

@@ -75,13 +75,37 @@ class DartTypeInferenceEngine:
     def _collect_locals(
         self, body: Node, types: dict[str, str], conflicts: set[str]
     ) -> None:
+        # (H) Two passes with precedence (PR #806 review): the caller's OWN
+        # (H) scope first, with full conflict semantics; then nested
+        # (H) function/lambda scopes, fill-in only. Nested locals must still
+        # (H) be collected -- a Dart test body is a lambda argument
+        # (H) (`test('x', () { var p = ArgParser(); p.addFlag(...); })`) whose
+        # (H) calls flat-attribute to the enclosing caller -- but an inner
+        # (H) same-named local must never conflict-drop or overwrite the
+        # (H) outer binding.
+        nested: list[Node] = []
         stack = list(body.named_children)
         while stack:
             node = stack.pop()
+            if node.type in cs.DART_NESTED_SCOPE_NODE_TYPES:
+                nested.append(node)
+                continue
             if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
                 self._record_local(node, types, conflicts)
                 continue
             stack.extend(node.named_children)
+        fill_in: dict[str, str] = {}
+        fill_conflicts: set[str] = set(conflicts)
+        stack = nested
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
+                self._record_local(node, fill_in, fill_conflicts)
+                continue
+            stack.extend(node.named_children)
+        for name, type_name in fill_in.items():
+            if name not in types and name not in conflicts:
+                types[name] = type_name
 
     @staticmethod
     def _record_local(node: Node, types: dict[str, str], conflicts: set[str]) -> None:
