@@ -3,7 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
-from .utils import dart_body_node
+from .utils import _selector_member_name, dart_body_node
 
 
 class DartTypeInferenceEngine:
@@ -25,6 +25,30 @@ class DartTypeInferenceEngine:
         if body is not None:
             self._collect_locals(body, types, conflicts)
         return types
+
+    def collect_static_call_bindings(
+        self, caller_node: Node
+    ) -> dict[str, tuple[str, str]]:
+        # (H) Locals bound from a class-qualified call (`var s =
+        # (H) Base.member(args)`, an UpperCamelCase base): the construction
+        # (H) heuristic types them as Base, but a registered member's RECORDED
+        # (H) return type should win (a `static String describe()` local is a
+        # (H) String, not the class). The hub enrichment consumes this map.
+        bindings: dict[str, tuple[str, str]] = {}
+        body = dart_body_node(caller_node)
+        if body is None:
+            return bindings
+        stack = list(body.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
+                _record_static_call(node.named_children, bindings)
+                for part in node.named_children:
+                    if part.type == cs.TS_DART_INITIALIZED_IDENTIFIER:
+                        _record_static_call(part.named_children, bindings)
+                continue
+            stack.extend(node.named_children)
+        return bindings
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # (H) `String name;` in a class_body is declaration(type_identifier,
@@ -175,6 +199,39 @@ def _record_binding(
         return
     if init_base is not None and has_argument_selector and init_base[:1].isupper():
         _record(var_name, init_base, types, conflicts)
+
+
+def _record_static_call(
+    parts: list[Node], bindings: dict[str, tuple[str, str]]
+) -> None:
+    # (H) shape: identifier var, identifier Base, selector(.member),
+    # (H) selector(argument_part); anything else is not a class-qualified call
+    var_name: str | None = None
+    base: str | None = None
+    member: str | None = None
+    has_argument_selector = False
+    for part in parts:
+        if part.type == cs.TS_DART_IDENTIFIER and part.text:
+            if var_name is None:
+                var_name = part.text.decode(cs.ENCODING_UTF8)
+            elif base is None:
+                base = part.text.decode(cs.ENCODING_UTF8)
+        elif part.type == cs.TS_DART_SELECTOR:
+            if any(
+                inner.type == cs.TS_DART_ARGUMENT_PART
+                for inner in part.named_children
+            ):
+                has_argument_selector = True
+            elif member is None:
+                member = _selector_member_name(part)
+    if (
+        var_name is not None
+        and base is not None
+        and member is not None
+        and has_argument_selector
+        and base[:1].isupper()
+    ):
+        bindings[var_name] = (base, member)
 
 
 def _record(

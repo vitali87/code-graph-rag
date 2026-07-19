@@ -178,6 +178,26 @@ def dart_call_name(call_node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(parts)
 
 
+def dart_return_type_name(node: Node) -> str | None:
+    """The declared return type of a Dart signature, or None.
+
+    A constructor "returns" its class (its FIRST identifier); a method or
+    function signature's leading type_identifier before the name is its
+    return type; void, inferred, and getter-less shapes record nothing.
+    """
+    if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+        for child in node.named_children:
+            if child.type == cs.TS_DART_IDENTIFIER and child.text:
+                return child.text.decode(cs.ENCODING_UTF8)
+        return None
+    for child in node.named_children:
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
+            return child.text.decode(cs.ENCODING_UTF8)
+        if child.type == cs.TS_DART_IDENTIFIER:
+            return None
+    return None
+
+
 def dart_extract_uri(node: Node) -> str | None:
     """The unquoted URI of an import/export/part directive, or None."""
     stack = [node]

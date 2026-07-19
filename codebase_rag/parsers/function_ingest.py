@@ -26,7 +26,7 @@ from ..types_defs import (
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .cpp import utils as cpp_utils
-from .dart import dart_definition_end_point
+from .dart import dart_definition_end_point, dart_return_type_name
 from .go import utils as go_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -362,6 +362,14 @@ class FunctionIngestMixin:
             # (H) this map. No impl target here, so a `Self` return stays None.
             if language == cs.SupportedLanguage.RUST and (
                 return_type := rs_utils.extract_return_type_name(func_node, None)
+            ):
+                self.method_return_types[resolution.qualified_name] = return_type
+
+            # (H) Same for a Dart free function: a call-bound local
+            # (H) (`var g = makeIt()` via the enrichment pass) types from
+            # (H) this map.
+            if language == cs.SupportedLanguage.DART and (
+                return_type := dart_return_type_name(func_node)
             ):
                 self.method_return_types[resolution.qualified_name] = return_type
 

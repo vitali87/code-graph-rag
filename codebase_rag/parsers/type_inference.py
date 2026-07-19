@@ -301,7 +301,44 @@ class TypeInferenceEngine:
                         f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", ftype
                     )
             self._enrich_rust_call_locals(caller_node, module_qn, local)
+        elif language == cs.SupportedLanguage.DART:
+            self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def _enrich_dart_call_locals(
+        self, caller_node: ASTNode, var_types: dict[str, str]
+    ) -> None:
+        # (H) A local bound from a class-qualified call (`var s =
+        # (H) Base.member(args)`) was heuristically typed as Base; when the
+        # (H) member is a REGISTERED method with a recorded return type, that
+        # (H) type wins (a named constructor or same-class factory keeps Base,
+        # (H) a `static String describe()` local becomes a String whose member
+        # (H) calls then drop as external). A registered member WITHOUT a
+        # (H) recorded return (void) untypes the local; an unregistered member
+        # (H) (external library factory) keeps the heuristic.
+        bindings = self.dart_type_inference.collect_static_call_bindings(caller_node)
+        for name, (base, member) in bindings.items():
+            if var_types.get(name) != base:
+                continue
+            method_qn = self._dart_unique_class_member(base, member)
+            if method_qn is None:
+                continue
+            recorded = self.method_return_types.get(method_qn)
+            if recorded is None:
+                var_types.pop(name, None)
+            else:
+                var_types[name] = recorded
+
+    def _dart_unique_class_member(self, base: str, member: str) -> str | None:
+        suffix = f"{cs.SEPARATOR_DOT}{base}{cs.SEPARATOR_DOT}{member}"
+        matches = [
+            qn
+            for qn in self.function_registry.find_ending_with(member)
+            if qn.endswith(suffix)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
 
     def _enrich_go_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
