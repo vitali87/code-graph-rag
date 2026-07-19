@@ -325,7 +325,10 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
-    MCP_HTTP_HOST: str = "0.0.0.0"
+    # (H) Loopback by default: the StreamableHTTP endpoint has no built-in
+    # (H) auth, so exposing it beyond the host must be an explicit operator
+    # (H) choice via MCP_HTTP_HOST (issue #808).
+    MCP_HTTP_HOST: str = "127.0.0.1"
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
 
