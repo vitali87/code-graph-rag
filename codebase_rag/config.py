@@ -331,6 +331,10 @@ class AppConfig(BaseSettings):
     MCP_HTTP_HOST: str = "127.0.0.1"
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
+    # (H) Bearer token required by the HTTP MCP endpoint; unset means
+    # (H) loopback-only operation (serve_http refuses a non-loopback bind
+    # (H) without it).
+    MCP_HTTP_AUTH_TOKEN: str | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()

@@ -2,8 +2,14 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from pathlib import Path
+from typing import Any
+
+Scope = MutableMapping[str, Any]
+Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 from loguru import logger
 from mcp.server import Server
@@ -179,6 +185,52 @@ async def serve_stdio() -> None:
             logger.info(lg.MCP_SERVER_SHUTDOWN)
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _validate_http_exposure(host: str, auth_token: str | None) -> None:
+    # (H) The StreamableHTTP endpoint's only protection is the bearer token;
+    # (H) refusing a non-loopback bind without one makes accidental network
+    # (H) exposure of the unauthenticated transport impossible (follow-up to
+    # (H) #808: the loopback default protects default deployments, this
+    # (H) protects intentional remote ones).
+    if host not in _LOOPBACK_HOSTS and not auth_token:
+        raise ValueError(lg.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
+
+
+def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
+    import secrets
+
+    token_bytes = auth_token.encode(cs.ENCODING_UTF8)
+
+    async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        provided: bytes | None = None
+        for key, value in scope.get("headers", []):
+            if key.lower() == b"authorization":
+                provided = value
+                break
+        expected = b"Bearer " + token_bytes
+        # (H) compare_digest keeps the check constant-time; comparing against
+        # (H) the full "Bearer <token>" bytes covers scheme and value in one
+        # (H) comparison without an early-exit prefix check
+        if provided is None or not secrets.compare_digest(provided, expected):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"www-authenticate", b"Bearer")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await app(scope, receive, send)
+
+    return guarded
+
+
 async def serve_http(
     host: str = settings.MCP_HTTP_HOST,
     port: int = settings.MCP_HTTP_PORT,
@@ -187,6 +239,9 @@ async def serve_http(
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
+
+    auth_token = settings.MCP_HTTP_AUTH_TOKEN
+    _validate_http_exposure(host, auth_token)
 
     logger.info(lg.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
 
@@ -205,9 +260,16 @@ async def serve_http(
                 logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
                 yield
 
+    # (H) With a token configured, bearer auth fronts the mount even on
+    # (H) loopback (defense in depth for shared hosts); without one, the
+    # (H) exposure guard above already confined the bind to loopback.
+    endpoint = session_manager.handle_request
+    if auth_token:
+        endpoint = _require_bearer_auth(endpoint, auth_token)
+
     starlette_app = Starlette(
         routes=[
-            Mount(settings.MCP_HTTP_ENDPOINT_PATH, app=session_manager.handle_request),
+            Mount(settings.MCP_HTTP_ENDPOINT_PATH, app=endpoint),
         ],
         lifespan=lifespan,
     )

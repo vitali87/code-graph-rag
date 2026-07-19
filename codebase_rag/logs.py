@@ -765,6 +765,11 @@ MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
+MCP_HTTP_EXPOSURE_REFUSED = (
+    "Refusing to bind the HTTP MCP server to {host}: the endpoint has no "
+    "authentication unless MCP_HTTP_AUTH_TOKEN is set. Configure a token to "
+    "expose it beyond loopback, or bind to 127.0.0.1."
+)
 MCP_HTTP_SERVER_READY = (
     "[GraphCode MCP] HTTP server ready. MCP endpoint: http://{host}:{port}/mcp"
 )
