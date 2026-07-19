@@ -198,11 +198,24 @@ _JAVA_SWITCH_ARM_TYPES = frozenset(
 )
 
 
-def _ends_with_break(arm: Node) -> bool:
-    # (H) True when the arm's last top-level statement is a plain break, so
-    # (H) control can never reach the next arm by falling off this one's end.
+def _last_arm_statement(arm: Node) -> Node | None:
+    # (H) The arm's last top-level statement; Go nests arm statements inside a
+    # (H) statement_list, the C-family grammars keep them flat.
     last = arm.named_children[-1] if arm.named_children else None
-    return last is not None and last.type == cs.TS_BREAK_STATEMENT
+    if last is not None and last.type == cs.TS_GO_STATEMENT_LIST:
+        return last.named_children[-1] if last.named_children else None
+    return last
+
+
+def _arm_falls_into_next(arm: Node) -> bool:
+    # (H) Whether control can leave this arm by entering the NEXT one: a
+    # (H) C-family arm falls through unless its last statement is a plain
+    # (H) break (the break snapshot already carried that path out); a Go arm
+    # (H) falls only via the explicit trailing `fallthrough` keyword.
+    last = _last_arm_statement(arm)
+    if arm.type in _FALLTHROUGH_ARM_TYPES:
+        return last is None or last.type != cs.TS_BREAK_STATEMENT
+    return last is not None and last.type == cs.TS_GO_FALLTHROUGH_STATEMENT
 
 
 def _switch_arm_is_default(arm: Node) -> bool:
@@ -646,7 +659,10 @@ class FlowProcessor:
         for index, arm in enumerate(arms):
             has_default = has_default or _switch_arm_is_default(arm)
             entry = dict(state)
-            if fall_in is not None and arm.type in _FALLTHROUGH_ARM_TYPES:
+            # (H) fall_in is non-None exactly when the PREVIOUS arm can fall
+            # (H) into this one (C-family arm without a trailing break, or a Go
+            # (H) arm ending in the explicit `fallthrough` keyword).
+            if fall_in is not None:
                 entry = self._merge([entry, fall_in])
             # (H) Each break inside the arm exits the switch with the state it
             # (H) saw THEN (a conditional break before a later kill carries the
@@ -658,18 +674,15 @@ class FlowProcessor:
                 break_exits = self._break_exit_stack.pop() or []
             self._restore_shadows(pre_arm_shadows, jc)
             exits.extend(break_exits)
-            # (H) A non-final fallthrough arm's END state never exits the
-            # (H) switch directly (control continues into the next arm; a
-            # (H) stacked `case 1: default:` label's empty group falls straight
-            # (H) through), so it reaches the merge only THROUGH the next arm.
-            if index == len(arms) - 1 or arm.type not in _FALLTHROUGH_ARM_TYPES:
+            falls = index < len(arms) - 1 and _arm_falls_into_next(arm)
+            # (H) An arm's END state exits the switch directly only when it
+            # (H) does NOT continue into the next arm (a falling arm's state
+            # (H) reaches the merge THROUGH that arm instead; a stacked
+            # (H) `case 1: default:` label's empty group falls straight
+            # (H) through).
+            if not falls:
                 exits.append(arm_exit)
-            # (H) An arm whose LAST top-level statement is an unconditional
-            # (H) break has no fall-through path: its end state must not feed
-            # (H) the next arm's entry (the break snapshot already carried it
-            # (H) out). Conditional breaks keep the full end state, the sound
-            # (H) over-approximation.
-            fall_in = None if _ends_with_break(arm) else arm_exit
+            fall_in = arm_exit if falls else None
         return exits, has_default
 
     def _walk_flat_match(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
