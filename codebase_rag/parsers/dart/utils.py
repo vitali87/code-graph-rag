@@ -90,13 +90,30 @@ def _first_identifier_text(node: Node) -> str | None:
     return None
 
 
-def _walk_chain(node: Node | None) -> list[str] | None:
+_CALL_HOP = "()"
+
+
+def _selector_has_argument_part(node: Node) -> bool:
+    return node.type == cs.TS_DART_SELECTOR and any(
+        child.type == cs.TS_DART_ARGUMENT_PART for child in node.named_children
+    )
+
+
+def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
     # (H) Backward walk over a selector chain, shared by plain and cascade
-    # (H) calls: None means the chain is broken (index selector, call result,
-    # (H) arbitrary expression) and has no static name; an empty list means
-    # (H) the chain bottomed out at `this`/`super`.
+    # (H) calls: None means the chain is broken (index selector, arbitrary
+    # (H) expression) and has no static name; an empty list means the chain
+    # (H) bottomed out at `this`/`super`. With allow_calls, a call hop in the
+    # (H) receiver (`Base(args).m()`, `factory().m()`) contributes a `()`
+    # (H) marker so the resolver's chained path can type the receiver from the
+    # (H) callee's return type or constructor class; without it (cascade path)
+    # (H) a call-result receiver stays unresolvable.
     parts_rev: list[str] = []
     while node is not None:
+        if allow_calls and _selector_has_argument_part(node):
+            parts_rev.append(_CALL_HOP)
+            node = node.prev_named_sibling
+            continue
         part = _chain_part(node)
         if part is None:
             return None
@@ -107,6 +124,20 @@ def _walk_chain(node: Node | None) -> list[str] | None:
             break
         node = node.prev_named_sibling
     return list(reversed(parts_rev))
+
+
+def _assemble_chain(tokens: list[str]) -> str:
+    # (H) A `()` marker attaches to the preceding hop with no separator
+    # (H) (`Base` + `()` -> `Base()`); every other hop is dot-joined.
+    out = ""
+    for token in tokens:
+        if token == _CALL_HOP:
+            out += _CALL_HOP
+        elif out:
+            out += cs.SEPARATOR_DOT + token
+        else:
+            out = token
+    return out
 
 
 def _cascade_call_name(call_node: Node) -> str | None:
@@ -165,17 +196,18 @@ def dart_call_name(call_node: Node) -> str | None:
     `selector(argument_part)`, `a.b(x)` is `identifier` + `selector(.b)` +
     `selector(argument_part)`, and `obj..m()` holds the `argument_part`
     inside its `cascade_section`. Walk the preceding sibling chain and
-    rebuild the dotted target; a chain broken by an index (`xs[0].f()`) or a
-    call result (`f().g()`) has no static name and returns None. A `this`/
-    `super` base is dropped so the bare member name resolves against the
-    caller's class.
+    rebuild the target; a call hop in the receiver (`Base(args).m()`,
+    `factory().m()`) is preserved as `()` so the resolver's chained path can
+    type it, while a chain broken by an index (`xs[0].f()`) still has no
+    static name and returns None. A `this`/`super` base is dropped so the
+    bare member name resolves against the caller's class.
     """
     if call_node.type == cs.TS_DART_CASCADE_SECTION:
         return _cascade_call_name(call_node)
-    parts = _walk_chain(call_node.prev_named_sibling)
-    if not parts:
+    tokens = _walk_chain(call_node.prev_named_sibling, allow_calls=True)
+    if not tokens or all(token == _CALL_HOP for token in tokens):
         return None
-    return cs.SEPARATOR_DOT.join(parts)
+    return _assemble_chain(tokens)
 
 
 def dart_return_type_name(node: Node) -> str | None:

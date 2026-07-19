@@ -360,9 +360,7 @@ def test_construction_temporary_chain_resolves(
     # (H) the receiver is a call result, so only chained typing off the ctor
     # (H) can bind it. Shouter.greet is the decoy.
     assert _has(calls, ".app.useConstructionChain", ".Greeter.greet"), sorted(calls)
-    assert not _has(calls, ".app.useConstructionChain", ".Shouter.greet"), sorted(
-        calls
-    )
+    assert not _has(calls, ".app.useConstructionChain", ".Shouter.greet"), sorted(calls)
 
 
 def test_factory_return_chain_resolves(
