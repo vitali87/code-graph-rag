@@ -218,8 +218,7 @@ def _record_static_call(
                 base = part.text.decode(cs.ENCODING_UTF8)
         elif part.type == cs.TS_DART_SELECTOR:
             if any(
-                inner.type == cs.TS_DART_ARGUMENT_PART
-                for inner in part.named_children
+                inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
             ):
                 has_argument_selector = True
             elif member is None:
