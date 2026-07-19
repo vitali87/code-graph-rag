@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag import constants as cs
+from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships, run_updater
+
+_CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 _GO_MOD = "module example.com/multiret\n\ngo 1.22\n"
 
@@ -114,6 +120,68 @@ def test_single_return_free_fn_binding_dispatches_real_receiver(
         caller.endswith("owner.Drive") and callee.endswith("owner.Run")
         for caller, callee in calls
     ), calls
+
+
+_FLOW_SELF_EDGE_SRC = """package main
+
+import (
+	"os"
+
+	"example.com/vendorpkg/thirdparty"
+)
+
+type provider struct{}
+
+func (p provider) Get(path string) ([]byte, error) {
+	cl, err := connect()
+	if err != nil {
+		return nil, err
+	}
+	b, err := cl.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	if b == nil {
+		raw, _ := os.ReadFile(path)
+		return raw, nil
+	}
+	return b, nil
+}
+
+func connect() (thirdparty.Client, error) {
+	var c thirdparty.Client
+	return c, nil
+}
+"""
+
+
+def test_flow_return_taint_honors_receiver_typing(temp_repo: Path) -> None:
+    # (H) The flow walk resolves callees for return-taint edges itself; without
+    # (H) the caller's local type map, `cl.Get` on an external-typed receiver
+    # (H) unique-binds back to the enclosing provider.Get and finalize emits
+    # (H) the FLOWS_TO self edge the CALLS pipeline had already correctly
+    # (H) dropped (viper's remoteConfigProvider Get -> Get).
+    root = temp_repo / "flowmulti"
+    root.mkdir()
+    (root / "go.mod").write_text(_GO_MOD, encoding="utf-8")
+    (root / "main.go").write_text(_FLOW_SELF_EDGE_SRC, encoding="utf-8")
+    parsers, queries = load_parsers()
+    ingestor = MagicMock()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+
+    flows = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(ingestor, "FLOWS_TO")
+    }
+    assert not any(
+        source.endswith("provider.Get") and target.endswith("provider.Get")
+        for source, target in flows
+    ), flows
 
 
 def test_external_qualified_return_does_not_bind_local_decoy(
