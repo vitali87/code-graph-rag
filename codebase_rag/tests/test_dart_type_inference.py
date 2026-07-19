@@ -84,6 +84,12 @@ String useUntypedHelper() {
   return h.greet();
 }
 
+String useMultiDeclaration() {
+  var first = Greeter('a'), second = Shouter();
+  Greeter third = makeIt(), fourth = makeIt();
+  return second.greet() + fourth.hail();
+}
+
 Greeter lowercaseFactory() {
   return Greeter('z');
 }
@@ -145,6 +151,20 @@ def test_field_typed_receiver(dart_typed_project: Path, mock_ingestor: MagicMock
     assert _has(calls, ".Holder.viaField", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".Holder.viaField", ".Shouter.greet"), sorted(calls)
     assert _has(calls, ".Holder.viaThisField", ".Greeter.hail"), sorted(calls)
+
+
+def test_multi_variable_declarations_type_every_binding(
+    dart_typed_project: Path, mock_ingestor: MagicMock
+):
+    run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    # (H) additional variables of a multi-declaration nest as
+    # (H) initialized_identifier children; `second` takes its OWN
+    # (H) construction's type, `fourth` the shared declared type
+    # (H) (PR #806 review).
+    assert _has(calls, ".app.useMultiDeclaration", ".Shouter.greet"), sorted(calls)
+    assert not _has(calls, ".app.useMultiDeclaration", ".Greeter.greet"), sorted(calls)
+    assert _has(calls, ".app.useMultiDeclaration", ".Greeter.hail"), sorted(calls)
 
 
 def test_lowercase_initializer_does_not_type(
