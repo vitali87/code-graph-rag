@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from functools import lru_cache
-from operator import itemgetter
 from pathlib import Path
 
 import httpx
@@ -22,7 +21,10 @@ def _cache_namespace() -> str:
     # (H) spaces (and dimensions); namespacing cache keys prevents a provider
     # (H) or model switch from replaying stale vectors of the wrong space.
     if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
-        return f"{cs.EmbeddingProvider.OPENAI}:{settings.OPENAI_EMBEDDING_MODEL}"
+        namespace = f"{cs.EmbeddingProvider.OPENAI}:{settings.OPENAI_EMBEDDING_MODEL}"
+        if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
+            namespace = f"{namespace}:{settings.OPENAI_EMBEDDING_DIMENSIONS}"
+        return namespace
     return f"{cs.EmbeddingProvider.UNIXCODER}:{cs.UNIXCODER_MODEL}"
 
 
@@ -136,16 +138,44 @@ def _openai_embed_batch(snippets: list[str]) -> list[list[float]]:
                         status=response.status_code, body=response.text[:500]
                     )
                 )
-            rows = response.json()["data"]
-            if len(rows) != len(batch):
-                raise RuntimeError(
-                    ex.OPENAI_EMBEDDING_COUNT_MISMATCH.format(
-                        got=len(rows), expected=len(batch)
-                    )
-                )
-            rows.sort(key=itemgetter("index"))
-            embeddings.extend(row["embedding"] for row in rows)
+            embeddings.extend(_parse_embedding_rows(response, len(batch)))
     return embeddings
+
+
+def _parse_embedding_rows(response: httpx.Response, expected: int) -> list[list[float]]:
+    try:
+        rows = response.json()["data"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise RuntimeError(
+            ex.OPENAI_EMBEDDING_MALFORMED_RESPONSE.format(error=e)
+        ) from e
+    if not isinstance(rows, list):
+        raise RuntimeError(
+            ex.OPENAI_EMBEDDING_MALFORMED_RESPONSE.format(error="'data' is not a list")
+        )
+    if len(rows) != expected:
+        raise RuntimeError(
+            ex.OPENAI_EMBEDDING_COUNT_MISMATCH.format(got=len(rows), expected=expected)
+        )
+    # (H) Place each row at its declared index instead of sorting: a buggy
+    # (H) server emitting duplicate or out-of-range indices must fail loudly
+    # (H) rather than silently pair snippets with the wrong vectors.
+    placed: list[list[float] | None] = [None] * expected
+    for row in rows:
+        try:
+            index, embedding = row["index"], row["embedding"]
+        except (KeyError, TypeError) as e:
+            raise RuntimeError(
+                ex.OPENAI_EMBEDDING_MALFORMED_RESPONSE.format(error=e)
+            ) from e
+        if (
+            not isinstance(index, int)
+            or not 0 <= index < expected
+            or placed[index] is not None
+        ):
+            raise RuntimeError(ex.OPENAI_EMBEDDING_BAD_INDEX.format(index=index))
+        placed[index] = embedding
+    return [row for row in placed if row is not None]
 
 
 if has_torch() and has_transformers():
