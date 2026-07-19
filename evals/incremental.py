@@ -9,6 +9,7 @@
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
@@ -31,8 +32,8 @@ from .types_defs import DiffBucket, GraphState, LocationStats, ScoreResult, Scor
 
 console_target = Path(ec.INCREMENTAL_DEFAULT_TARGET)
 
-_Parsers = dict[cs.SupportedLanguage, Parser]
-_Queries = dict[cs.SupportedLanguage, LanguageQueries]
+_Parsers = Mapping[cs.SupportedLanguage, Parser]
+_Queries = Mapping[cs.SupportedLanguage, LanguageQueries]
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 

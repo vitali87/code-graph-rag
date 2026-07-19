@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -34,7 +34,7 @@ class JsTypeInferenceEngine:
         function_registry: FunctionRegistryTrieProtocol,
         project_name: str,
         find_method_ast_node_func: Callable[[str], ASTNode | None],
-        queries: dict[cs.SupportedLanguage, LanguageQueries] | None = None,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry

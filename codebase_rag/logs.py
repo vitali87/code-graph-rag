@@ -190,7 +190,7 @@ LIB_NOT_AVAILABLE = "Tree-sitter library for {lang} not available."
 LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
-INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
+PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
 
 # (H) Ignore pattern logs
 CGRIGNORE_LOADED = (

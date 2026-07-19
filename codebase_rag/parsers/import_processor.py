@@ -2,6 +2,7 @@ import json
 import os
 import posixpath
 import re
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -366,7 +367,7 @@ class ImportProcessor:
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         pre_captures: dict | None = None,
     ) -> None:
         if language not in queries:

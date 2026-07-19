@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..capture import ALL_ENABLED, CaptureSelection
@@ -42,7 +43,7 @@ class ProcessorFactory:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        queries: Mapping[SupportedLanguage, LanguageQueries],
         function_registry: FunctionRegistryTrieProtocol,
         simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,

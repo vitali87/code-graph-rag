@@ -1,6 +1,8 @@
 import importlib
 import subprocess
 import sys
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from pathlib import Path
 
@@ -95,7 +97,7 @@ def _try_import_language(
         return _try_load_from_submodule(lang_name)
 
 
-def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
+def _language_imports() -> list[LanguageImport]:
     language_imports: list[LanguageImport] = [
         LanguageImport(
             cs.SupportedLanguage.PYTHON,
@@ -188,25 +190,33 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
         ),
     ]
 
-    loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
-        lang_import.lang_key: _try_import_language(
+    return language_imports
+
+
+_IMPORT_SPECS: dict[cs.SupportedLanguage, LanguageImport] = {
+    lang_import.lang_key: lang_import for lang_import in _language_imports()
+}
+
+_loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
+
+
+def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
+    # (H) One grammar module import per language, on first use, cached for the
+    # (H) process (issue #68: importing all 14 grammars up front made every
+    # (H) startup pay for languages the repo does not contain).
+    if lang_name in _loader_cache:
+        return _loader_cache[lang_name]
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    if lang_import is not None:
+        loader = _try_import_language(
             lang_import.module_path,
             lang_import.attr_name,
             lang_import.submodule_name,
         )
-        for lang_import in language_imports
-    }
-    for lang_key in LANGUAGE_SPECS:
-        lang_name = cs.SupportedLanguage(lang_key)
-        if lang_name not in loaders or loaders[lang_name] is None:
-            loaders[lang_name] = _try_load_from_submodule(lang_name)
-
-    return loaders
-
-
-_language_loaders = _import_language_loaders()
-
-LANGUAGE_LIBRARIES: dict[cs.SupportedLanguage, LanguageLoader] = _language_loaders
+    else:
+        loader = _try_load_from_submodule(lang_name)
+    _loader_cache[lang_name] = loader
+    return loader
 
 
 def _build_query_pattern(node_types: tuple[str, ...], capture_name: str) -> str:
@@ -354,7 +364,7 @@ def _process_language(
     parsers: dict[cs.SupportedLanguage, Parser],
     queries: dict[cs.SupportedLanguage, LanguageQueries],
 ) -> bool:
-    lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
+    lang_lib = _get_language_library(lang_name)
     if not lang_lib:
         logger.debug(ls.LIB_NOT_AVAILABLE, lang=lang_name)
         return False
@@ -369,24 +379,117 @@ def _process_language(
         logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
         return True
     except Exception as e:
+        # (H) query compilation can fail AFTER the parser insert; drop the
+        # (H) orphan so the store never exposes a parser without its queries
+        parsers.pop(lang_name, None)
         logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
         return False
 
 
+class _LazyLanguageView[V](Mapping[cs.SupportedLanguage, V]):
+    # (H) A read-only Mapping over the store's per-language dict; a missing key
+    # (H) triggers a one-time grammar load (issue #68). Mapping derives get,
+    # (H) keys, values, items, and __contains__ from the three methods below,
+    # (H) so laziness needs no dict-override tricks: membership and get load on
+    # (H) demand through __getitem__, and full-view operations (iteration, len,
+    # (H) and everything derived from them) probe every spec first so no
+    # (H) consumer ever sees a partial availability picture.
+    __slots__ = ("_data", "_ensure", "_probe_all")
+
+    def __init__(
+        self,
+        data: dict[cs.SupportedLanguage, V],
+        ensure: Callable[[object], bool],
+        probe_all: Callable[[], None],
+    ) -> None:
+        self._data = data
+        self._ensure = ensure
+        self._probe_all = probe_all
+
+    def __getitem__(self, lang_name: cs.SupportedLanguage) -> V:
+        if lang_name not in self._data:
+            self._ensure(lang_name)
+        return self._data[lang_name]
+
+    def __iter__(self) -> Iterator[cs.SupportedLanguage]:
+        self._probe_all()
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        self._probe_all()
+        return len(self._data)
+
+
+class _LazyGrammarStore:
+    # (H) Process-wide cache: grammars load once per interpreter, not once per
+    # (H) load_parsers() call (which previously recompiled EVERY language's
+    # (H) query set on every call). The lock serializes loads: without it a
+    # (H) thread probing a language MID-LOAD would see it in _attempted but not
+    # (H) yet in the dict and wrongly report it unavailable (PR #802 review).
+    def __init__(self) -> None:
+        self._parser_data: dict[cs.SupportedLanguage, Parser] = {}
+        self._query_data: dict[cs.SupportedLanguage, LanguageQueries] = {}
+        self._attempted: set[object] = set()
+        self._lock = threading.Lock()
+        self.parsers: Mapping[cs.SupportedLanguage, Parser] = _LazyLanguageView(
+            self._parser_data, self._ensure, self._probe_all
+        )
+        self.queries: Mapping[cs.SupportedLanguage, LanguageQueries] = (
+            _LazyLanguageView(self._query_data, self._ensure, self._probe_all)
+        )
+
+    def _ensure(self, lang_name: object) -> bool:
+        # (H) the lock-free fast path must see BOTH twin entries: the loader
+        # (H) writes the parser before the queries, so a lone parser entry is a
+        # (H) mid-load (or failed-load) state, not a completed language
+        if lang_name in self._parser_data and lang_name in self._query_data:
+            return True
+        with self._lock:
+            if lang_name in self._attempted:
+                return lang_name in self._parser_data and lang_name in self._query_data
+            self._attempted.add(lang_name)
+            if not isinstance(lang_name, str):
+                return False
+            try:
+                lang = cs.SupportedLanguage(lang_name)
+            except ValueError:
+                return False
+            spec = LANGUAGE_SPECS.get(lang)
+            if spec is None:
+                return False
+            return _process_language(
+                lang, deepcopy(spec), self._parser_data, self._query_data
+            )
+
+    def _probe_all(self) -> None:
+        for lang_key in LANGUAGE_SPECS:
+            self._ensure(lang_key)
+        if not self._parser_data:
+            raise RuntimeError(ex.NO_LANGUAGES)
+
+
+_store: _LazyGrammarStore | None = None
+_store_lock = threading.Lock()
+
+
+def _reset_parser_cache() -> None:
+    # (H) Test hook: discard every cached grammar so laziness itself can be
+    # (H) observed from a clean slate.
+    global _store
+    with _store_lock:
+        _store = None
+
+
 def load_parsers() -> tuple[
-    dict[cs.SupportedLanguage, Parser], dict[cs.SupportedLanguage, LanguageQueries]
+    Mapping[cs.SupportedLanguage, Parser],
+    Mapping[cs.SupportedLanguage, LanguageQueries],
 ]:
-    parsers: dict[cs.SupportedLanguage, Parser] = {}
-    queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
-    available_languages: list[cs.SupportedLanguage] = []
-
-    for lang_key, lang_config in deepcopy(LANGUAGE_SPECS).items():
-        lang_name = cs.SupportedLanguage(lang_key)
-        if _process_language(lang_name, lang_config, parsers, queries):
-            available_languages.append(lang_name)
-
-    if not available_languages:
-        raise RuntimeError(ex.NO_LANGUAGES)
-
-    logger.info(ls.INITIALIZED_PARSERS.format(languages=", ".join(available_languages)))
-    return parsers, queries
+    global _store
+    store = _store
+    if store is None:
+        with _store_lock:
+            if _store is None:
+                _store = _LazyGrammarStore()
+                logger.info(ls.PARSERS_LAZY_READY)
+            store = _store
+    return store.parsers, store.queries

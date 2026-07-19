@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 from pydantic_ai import Tool
 
+from codebase_rag import constants as cs
 from codebase_rag.tools.file_editor import (
     EditResult,
     FileEditor,
@@ -70,8 +72,11 @@ class TestFileEditorInit:
         assert file_editor.dmp is not None
 
     def test_init_loads_parsers(self, file_editor: FileEditor) -> None:
+        # (H) parsers is a lazy Mapping view since #68; membership loads the
+        # (H) grammar on demand
         assert file_editor.parsers is not None
-        assert isinstance(file_editor.parsers, dict)
+        assert isinstance(file_editor.parsers, Mapping)
+        assert cs.SupportedLanguage.PYTHON in file_editor.parsers
 
 
 class TestEditResult:

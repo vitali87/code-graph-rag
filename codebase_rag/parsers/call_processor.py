@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -283,7 +284,7 @@ class CallProcessor:
         self,
         root_node: Node,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> tuple[list[Node], list[int]]:
         calls_query = queries[language].get(cs.QUERY_CALLS)
         if not calls_query:
@@ -424,7 +425,7 @@ class CallProcessor:
         file_path: Path,
         root_node: Node,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         func_class_captures_cache: dict[Path, dict] | None = None,
     ) -> None:
         # (H) Pre-pass: record which functions are bound to a class's callable
@@ -641,7 +642,7 @@ class CallProcessor:
         file_path: Path,
         root_node: Node,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         func_class_captures_cache: dict[Path, dict] | None = None,
     ) -> None:
         relative_path = cached_relative_path(file_path, self.repo_path)
@@ -848,7 +849,7 @@ class CallProcessor:
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
         call_name_cache: dict[int, str | None] | None = None,
@@ -1128,7 +1129,7 @@ class CallProcessor:
         class_qn: str,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
         call_name_cache: dict[int, str | None] | None = None,
@@ -1303,7 +1304,7 @@ class CallProcessor:
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
         call_name_cache: dict[int, str | None] | None = None,
@@ -1732,7 +1733,7 @@ class CallProcessor:
         caller_type: str,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         class_context: str | None = None,
         call_nodes: list[Node] | None = None,
         call_name_cache: dict[int, str | None] | None = None,

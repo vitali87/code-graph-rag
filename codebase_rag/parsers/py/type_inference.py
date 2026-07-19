@@ -19,7 +19,7 @@ from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from ..factory import ASTCacheProtocol
     from ..js_ts import JsTypeInferenceEngine
@@ -56,7 +56,7 @@ class PythonTypeInferenceEngine(
         repo_path: Path,
         project_name: str,
         ast_cache: ASTCacheProtocol,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,

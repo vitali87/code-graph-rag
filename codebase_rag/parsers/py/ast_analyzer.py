@@ -20,7 +20,7 @@ _PY_TRAVERSE_QUERY = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from ..factory import ASTCacheProtocol
@@ -53,7 +53,7 @@ else:
 
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
-    queries: dict[cs.SupportedLanguage, LanguageQueries]
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
     function_registry: FunctionRegistryTrieProtocol
