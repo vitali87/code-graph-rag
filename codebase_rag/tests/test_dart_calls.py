@@ -155,6 +155,8 @@ class A extends B {
     this.step();
     super.init();
     b..first()..second();
+    obj.field..chainCascade();
+    f()..brokenCascade();
     items[0].touch();
     f().chained();
     Widget.of(context);
@@ -179,9 +181,15 @@ class A extends B {
     assert "init" in calls
     assert "b.first" in calls
     assert "b.second" in calls
+    # (H) a cascade on a member chain keeps the full receiver; resolving it as
+    # (H) a bare name would risk binding an unrelated same-name function
+    # (H) (PR #804 review)
+    assert "obj.field.chainCascade" in calls
+    assert "brokenCascade" not in calls
     assert "Widget.of" in calls
-    # (H) index and call-result receivers have no static name
-    assert calls.count(None) >= 2
+    # (H) index and call-result receivers have no static name, and neither
+    # (H) does a cascade on a call result
+    assert calls.count(None) >= 3
 
     # (H) span helpers pass non-signature nodes through unchanged
     root = tree.root_node
