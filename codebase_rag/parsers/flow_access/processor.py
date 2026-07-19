@@ -219,17 +219,36 @@ def _arm_falls_into_next(arm: Node) -> bool:
 
 
 def _py_case_always_matches(arm: Node) -> bool:
-    # (H) An UNGUARDED wildcard (`case _:`) always matches: its case_pattern
-    # (H) has no named children (the `_` is anonymous) and no guard clause. A
-    # (H) guarded wildcard can fail its guard, so it never removes the
-    # (H) no-match path.
+    # (H) An UNGUARDED irrefutable pattern always matches; a guarded one can
+    # (H) fail its guard, so it never removes the no-match path.
     if arm.child_by_field_name(cs.TS_PY_FIELD_GUARD) is not None:
         return False
     pattern = next(
         (child for child in arm.named_children if child.type == cs.TS_PY_CASE_PATTERN),
         None,
     )
-    return pattern is not None and pattern.named_child_count == 0
+    return pattern is not None and _py_pattern_irrefutable(pattern)
+
+
+def _py_pattern_irrefutable(pattern: Node) -> bool:
+    # (H) Irrefutable case patterns: `_` (empty case_pattern), a bare CAPTURE
+    # (H) name (dotted_name with exactly one identifier; multi-part dotted
+    # (H) names are value patterns that compare), and `<irrefutable> as x`.
+    children = pattern.named_children
+    if not children:
+        return True
+    if len(children) != 1:
+        return False
+    child = children[0]
+    if child.type == cs.TS_PY_DOTTED_NAME:
+        return child.named_child_count == 1
+    if child.type == cs.TS_PY_AS_PATTERN:
+        inner = next(
+            (c for c in child.named_children if c.type == cs.TS_PY_CASE_PATTERN),
+            None,
+        )
+        return inner is not None and _py_pattern_irrefutable(inner)
+    return False
 
 
 def _switch_arm_is_default(arm: Node) -> bool:

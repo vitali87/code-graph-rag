@@ -52,6 +52,10 @@ TS_PY_CASE_CLAUSE = "case_clause"
 TS_PY_CASE_PATTERN = "case_pattern"
 TS_PY_FIELD_GUARD = "guard"
 FIELD_SUBJECT = "subject"
+# (H) A bare name in a case pattern parses as dotted_name with ONE identifier
+# (H) and is a CAPTURE (irrefutable); multi-part dotted names are value
+# (H) patterns that compare.
+TS_PY_DOTTED_NAME = "dotted_name"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"
