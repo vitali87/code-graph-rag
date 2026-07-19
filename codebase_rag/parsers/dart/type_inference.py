@@ -110,9 +110,7 @@ def _declared_type_name(node: Node) -> str | None:
     return None
 
 
-def _record_field_names(
-    id_list: Node, type_name: str, fields: dict[str, str]
-) -> None:
+def _record_field_names(id_list: Node, type_name: str, fields: dict[str, str]) -> None:
     # (H) only an entry's FIRST identifier is the field name; later
     # (H) identifiers belong to its initializer
     for entry in id_list.named_children:
