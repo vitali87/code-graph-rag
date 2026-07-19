@@ -105,6 +105,30 @@ def test_go_switch_arms_are_exclusive(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
 
 
+def test_go_explicit_fallthrough_carries_case_taint(tmp_path: Path) -> None:
+    # (H) Go's `fallthrough` keyword (legal only as an arm's last statement)
+    # (H) transfers control into the next case: the taint bound in case 1 must
+    # (H) reach the sink in case 2.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x int) {\n"
+            '\ts := "clean"\n'
+            "\tswitch x {\n"
+            "\tcase 1:\n"
+            '\t\ts = os.Getenv("SECRET")\n'
+            "\t\tfallthrough\n"
+            "\tcase 2:\n"
+            '\t\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "\t}\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
 def test_go_type_switch_arm_kill_does_not_leak(tmp_path: Path) -> None:
     files = {
         "main.go": (
