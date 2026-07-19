@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ... import constants as cs
 from .constants import IODirection, ResourceKind
-from .models import HandleConstructor, IOSink
+from .models import ArgHandleSink, HandleConstructor, IOSink
 
 # (H) Direct I/O sink calls, keyed by normalised (import-expanded) callee name.
 _PYTHON_SINKS: tuple[IOSink, ...] = (
@@ -227,6 +227,29 @@ _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
 
 _JAVA_SINKS: tuple[IOSink, ...] = (
     *_JAVA_SYSTEM_SINKS,
+    # (H) System properties are process-level configuration like env vars
+    # (H) (java.io.tmpdir/user.home reads are ubiquitous): modelled as ENV.
+    IOSink("System.getProperty", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink(
+        "java.lang.System.getProperty",
+        ResourceKind.ENV,
+        IODirection.READ,
+        target_arg=0,
+    ),
+    IOSink("System.setProperty", ResourceKind.ENV, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "java.lang.System.setProperty",
+        ResourceKind.ENV,
+        IODirection.WRITE,
+        target_arg=0,
+    ),
+    IOSink("System.clearProperty", ResourceKind.ENV, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "java.lang.System.clearProperty",
+        ResourceKind.ENV,
+        IODirection.WRITE,
+        target_arg=0,
+    ),
     *(
         IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
         for method, direction in _JAVA_FILES_METHODS
@@ -281,7 +304,36 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
     ("printf", ResourceKind.STDOUT, IODirection.WRITE, None),
     ("puts", ResourceKind.STDOUT, IODirection.WRITE, None),
     ("putchar", ResourceKind.STDOUT, IODirection.WRITE, None),
+    ("perror", ResourceKind.STDERR, IODirection.WRITE, None),
+    ("scanf", ResourceKind.STDIN, IODirection.READ, None),
+    ("gets", ResourceKind.STDIN, IODirection.READ, None),
 )
+
+# (H) The libc FILE* API passes the handle as an ARGUMENT (fprintf's stream is
+# (H) arg 0, fgets's arg 2, fread/fwrite's arg 3), unlike every method-shaped
+# (H) handle API. snprintf/sprintf write to a BUFFER, not a resource: excluded.
+_LIBC_ARG_HANDLE_METHODS: tuple[tuple[str, int, IODirection], ...] = (
+    ("fprintf", 0, IODirection.WRITE),
+    ("vfprintf", 0, IODirection.WRITE),
+    ("vfscanf", 0, IODirection.READ),
+    ("fputs", 1, IODirection.WRITE),
+    ("fputc", 1, IODirection.WRITE),
+    ("putc", 1, IODirection.WRITE),
+    ("fwrite", 3, IODirection.WRITE),
+    ("fgets", 2, IODirection.READ),
+    ("fgetc", 0, IODirection.READ),
+    ("getc", 0, IODirection.READ),
+    ("fread", 3, IODirection.READ),
+    ("fscanf", 0, IODirection.READ),
+    ("getline", 2, IODirection.READ),
+)
+
+# (H) Pre-bound libc stream globals: `fprintf(stderr, ...)` needs no fopen.
+LIBC_STD_STREAMS: dict[str, ResourceKind] = {
+    "stdin": ResourceKind.STDIN,
+    "stdout": ResourceKind.STDOUT,
+    "stderr": ResourceKind.STDERR,
+}
 
 # (H) Keyed under both the bare (C linkage / `using namespace std`) and `std::`-
 # (H) qualified forms; C++ has no use-alias import map to expand a short path.
@@ -300,6 +352,25 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.JAVA: _JAVA_SINKS,
     cs.SupportedLanguage.RUST: _RUST_SINKS,
     cs.SupportedLanguage.CPP: _CPP_SINKS,
+    # (H) C shares the libc catalog, bare names only (no std:: forms).
+    cs.SupportedLanguage.C: tuple(
+        IOSink(fn, kind, direction, target_arg=arg)
+        for fn, kind, direction, arg in _CPP_CALL_METHODS
+    ),
+}
+
+# (H) Call-shaped handle sinks per language (libc FILE* family); C++ gets both
+# (H) the bare and std:: spellings.
+IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {
+    cs.SupportedLanguage.C: {
+        fn: ArgHandleSink(fn, arg, direction)
+        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+    },
+    cs.SupportedLanguage.CPP: {
+        f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction)
+        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+        for prefix in _CPP_SINK_PREFIXES
+    },
 }
 
 # (H) Macro-call I/O sinks keyed by macro name (issue #714). Rust's stdout/stderr write
@@ -478,6 +549,18 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     cs.SupportedLanguage.GO: _GO_LEAN_HANDLE_CONSTRUCTORS,
     cs.SupportedLanguage.JAVA: _JAVA_LEAN_HANDLE_CONSTRUCTORS,
     cs.SupportedLanguage.RUST: _RUST_LEAN_HANDLE_CONSTRUCTORS,
+    # (H) libc FILE* binding: `FILE *f = fopen("x", "w")`; mode_arg 1 flips the
+    # (H) direction when methods do not (fopen "r" vs "w" is informational only;
+    # (H) the arg-handle sink's own direction decides each access).
+    cs.SupportedLanguage.C: (
+        HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
+        HandleConstructor("freopen", ResourceKind.FILE, target_arg=0),
+    ),
+    cs.SupportedLanguage.CPP: tuple(
+        HandleConstructor(f"{prefix}{fn}", ResourceKind.FILE, target_arg=0)
+        for fn in ("fopen", "freopen")
+        for prefix in _CPP_SINK_PREFIXES
+    ),
 }
 
 # (H) `new`-shaped handle constructors keyed by the written type name (Java
