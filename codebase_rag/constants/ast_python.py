@@ -45,6 +45,13 @@ TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
+# (H) Match statement: arms are exclusive; an UNGUARDED `case _` (empty
+# (H) case_pattern) always matches, removing the implicit no-match path.
+TS_PY_MATCH_STATEMENT = "match_statement"
+TS_PY_CASE_CLAUSE = "case_clause"
+TS_PY_CASE_PATTERN = "case_pattern"
+TS_PY_FIELD_GUARD = "guard"
+FIELD_SUBJECT = "subject"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"

@@ -218,6 +218,20 @@ def _arm_falls_into_next(arm: Node) -> bool:
     return last is not None and last.type == cs.TS_GO_FALLTHROUGH_STATEMENT
 
 
+def _py_case_always_matches(arm: Node) -> bool:
+    # (H) An UNGUARDED wildcard (`case _:`) always matches: its case_pattern
+    # (H) has no named children (the `_` is anonymous) and no guard clause. A
+    # (H) guarded wildcard can fail its guard, so it never removes the
+    # (H) no-match path.
+    if arm.child_by_field_name(cs.TS_PY_FIELD_GUARD) is not None:
+        return False
+    pattern = next(
+        (child for child in arm.named_children if child.type == cs.TS_PY_CASE_PATTERN),
+        None,
+    )
+    return pattern is not None and pattern.named_child_count == 0
+
+
 def _switch_arm_is_default(arm: Node) -> bool:
     # (H) C++ default is a case_statement without a `value` field; a Java
     # (H) default arm's switch_label has no named children (a case label
@@ -1475,6 +1489,8 @@ class FlowProcessor:
             return self._walk_loop(node, state, ctx)
         if node_type == cs.TS_PY_TRY_STATEMENT:
             return self._walk_try(node, state, ctx)
+        if node_type == cs.TS_PY_MATCH_STATEMENT:
+            return self._walk_py_match(node, state, ctx)
         if node_type == cs.TS_PY_ASSIGNMENT:
             self._apply_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_CALL:
@@ -1493,6 +1509,31 @@ class FlowProcessor:
         for child in node.children:
             state = self._walk_stmt(child, state, ctx)
         return state
+
+    def _walk_py_match(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+        # (H) match arms are EXCLUSIVE: each case_clause walks against a copy
+        # (H) of the post-subject state and the exits union (MAY join), same
+        # (H) semantics as the lean walk's switch family. The implicit
+        # (H) no-match path joins unless an UNGUARDED `case _` (empty
+        # (H) case_pattern, no guard) always matches.
+        subject = node.child_by_field_name(cs.FIELD_SUBJECT)
+        if subject is not None:
+            state = self._walk_stmt(subject, state, ctx)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return state
+        arm_exits: list[_TaintMap] = []
+        has_wildcard = False
+        for arm in body.named_children:
+            if arm.type != cs.TS_PY_CASE_CLAUSE:
+                continue
+            has_wildcard = has_wildcard or _py_case_always_matches(arm)
+            arm_exits.append(self._walk_stmt(arm, dict(state), ctx))
+        if not arm_exits:
+            return state
+        if not has_wildcard:
+            arm_exits.append(dict(state))
+        return self._merge(arm_exits)
 
     def _walk_if(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         # (H) The if-condition runs on all paths; process it in the incoming state.
