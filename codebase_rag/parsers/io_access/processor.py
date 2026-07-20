@@ -31,6 +31,7 @@ from .extract import (
     iter_token_tree_calls,
     literal_target,
     match_normalised,
+    positional_arg_node,
     registry_match,
     scope_seed_nodes,
     string_literal,
@@ -1369,6 +1370,18 @@ class IOAccessProcessor:
             return HandleBinding(
                 kind=kind, identity=self._literal_arg0(node, descriptor)
             )
+        if ctor.handle_arg is not None:
+            # (H) `new SqlCommand(sql, conn)`: the resource is the connection's, so
+            # (H) inherit the bound handle at handle_arg; fall back to <dynamic> when
+            # (H) that argument is not a handle we track.
+            inner = positional_arg_node(
+                node, ctor.handle_arg, descriptor.argument_wrapper_type
+            )
+            parent = self._resolve_handle_value(
+                inner, in_scope, import_map, descriptor, lean_handles
+            )
+            identity = parent.identity if parent is not None else DYNAMIC_TARGET
+            return HandleBinding(kind=ctor.kind, identity=identity)
         return HandleBinding(
             kind=ctor.kind,
             identity=self._ctor_identity(node, ctor, descriptor, lean_handles),

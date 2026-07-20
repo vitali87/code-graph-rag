@@ -111,6 +111,11 @@ class LanguageDescriptor:
     # (H) picker unwraps it to reach the string literal / nested handle. None for
     # (H) every language whose args are bare expressions.
     argument_wrapper_type: str | None = None
+    # (H) True when a declarator binds its initializer as the LAST unfielded named
+    # (H) child rather than a `value`/`right` field (C# `variable_declarator` is
+    # (H) `name = <expr>` with the expression unfielded). Lets the handle-binding
+    # (H) walk read the RHS. False for every language whose value is field-labelled.
+    declarator_value_is_last_child: bool = False
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -364,6 +369,9 @@ _CSHARP_DESCRIPTOR = LanguageDescriptor(
     new_expression_type=cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
     # (H) C# wraps every call argument in an `argument` node.
     argument_wrapper_type=cs.TS_CSHARP_ARGUMENT,
+    # (H) `var r = new StreamReader("x")` binds the initializer as the declarator's
+    # (H) last unfielded named child (no `value` field), so the handle walk reads it.
+    declarator_value_is_last_child=True,
 )
 
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
