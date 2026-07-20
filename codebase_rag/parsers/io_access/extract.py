@@ -310,16 +310,13 @@ def binding_targets_values(
 
 def _last_named_declarator_value(node: Node) -> Node | None:
     # (H) C# `variable_declarator` = `name = <expr>` with the initializer as an
-    # (H) unfielded child: its value is the last named child, unless the only named
-    # (H) child is the `name` identifier itself (an uninitialised declaration).
-    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
-    count = node.named_child_count
-    if not count:
+    # (H) unfielded child: its value is the last named child. An uninitialised
+    # (H) declaration has a single named child (the name identifier), so require at
+    # (H) least two -- robust even when the `name` field is absent under parser
+    # (H) error recovery (a lone child is never a real initializer).
+    if node.named_child_count < 2:
         return None
-    last = node.named_child(count - 1)
-    if last is None or last == name_node:
-        return None
-    return last
+    return node.named_child(node.named_child_count - 1)
 
 
 def keyword_value(args: Node, keyword: str) -> Node | None:
