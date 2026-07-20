@@ -105,6 +105,12 @@ class LanguageDescriptor:
     assignment_type: str | None = None
     augmented_assignment_type: str | None = None
     update_expression_type: str | None = None
+    # (H) Node type that WRAPS each call argument (C# `argument_list` holds
+    # (H) `argument` nodes, each wrapping the real expression), unlike Java/Go
+    # (H) where the argument IS the expression. When set, the positional-arg
+    # (H) picker unwraps it to reach the string literal / nested handle. None for
+    # (H) every language whose args are bare expressions.
+    argument_wrapper_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -312,6 +318,54 @@ _CPP_DESCRIPTOR = LanguageDescriptor(
     declarator_name_field=cs.FIELD_DECLARATOR,
 )
 
+_CSHARP_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_CSHARP_INVOCATION_EXPRESSION,
+    string_type=cs.TS_CSHARP_STRING_LITERAL,
+    string_content_type=cs.TS_CSHARP_STRING_LITERAL_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_CSHARP_METHOD_DECLARATION,
+            cs.TS_CSHARP_CONSTRUCTOR_DECLARATION,
+            cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+            cs.TS_CSHARP_LAMBDA_EXPRESSION,
+            cs.TS_CSHARP_CLASS_DECLARATION,
+            cs.TS_CSHARP_STRUCT_DECLARATION,
+        }
+    ),
+    # (H) C# sink heads (System.Console/Environment, System.IO.File) are BCL
+    # (H) effective globals never in import_map, so the catalog is not
+    # (H) import-gated. Shadowing an `argument`-wrapped sink head with a local
+    # (H) named `System` is pathological, so the shadow machinery is left inert
+    # (H) like C++/Rust: the fields below are wired to real C# nodes for
+    # (H) correctness but never actually suppress a real sink.
+    identifier_type=cs.TS_CSHARP_IDENTIFIER,
+    declarator_type=cs.TS_CSHARP_VARIABLE_DECLARATOR,
+    params_field=cs.TS_FIELD_PARAMETERS,
+    block_scope_type=cs.TS_CSHARP_BLOCK,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    # (H) C# locals are declare-at-point (in scope from their statement on), like
+    # (H) Java: source-order shadow collection, local visible in its own initializer.
+    hoisted_declarations=False,
+    decl_in_own_initializer=True,
+    declaration_statement_type=None,
+    macro_type=None,
+    # (H) Inert (no IO_MEMBER_READS for C#): env access is a call
+    # (H) (Environment.GetEnvironmentVariable). Wired with C#'s member_access /
+    # (H) element_access shapes for correctness.
+    member_expression_type=cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+    subscript_type=cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION,
+    object_field=cs.TS_CSHARP_FIELD_EXPRESSION,
+    property_field=cs.TS_CSHARP_FIELD_NAME,
+    subscript_index_field=cs.TS_FIELD_ARGUMENTS,
+    new_expression_type=cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+    # (H) C# wraps every call argument in an `argument` node.
+    argument_wrapper_type=cs.TS_CSHARP_ARGUMENT,
+)
+
 # (H) Non-Python languages with a direct-sink descriptor. Python keeps its own
 # (H) handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -326,4 +380,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     # (H) (call_expression, string_literal, init_declarator, compound_statement),
     # (H) so C reuses it verbatim.
     cs.SupportedLanguage.C: _CPP_DESCRIPTOR,
+    cs.SupportedLanguage.CSHARP: _CSHARP_DESCRIPTOR,
 }

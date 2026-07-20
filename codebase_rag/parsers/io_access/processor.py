@@ -1079,6 +1079,7 @@ class IOAccessProcessor:
             string_type=descriptor.string_type,
             content_type=descriptor.string_content_type,
             keyword_arg_type=descriptor.keyword_arg_type,
+            wrapper_type=descriptor.argument_wrapper_type,
         )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
@@ -1445,6 +1446,7 @@ class IOAccessProcessor:
             string_type=descriptor.string_type,
             content_type=descriptor.string_content_type,
             keyword_arg_type=descriptor.keyword_arg_type,
+            wrapper_type=descriptor.argument_wrapper_type,
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
@@ -1482,6 +1484,7 @@ class IOAccessProcessor:
             string_type=descriptor.string_type,
             content_type=descriptor.string_content_type,
             keyword_arg_type=descriptor.keyword_arg_type,
+            wrapper_type=descriptor.argument_wrapper_type,
         )
 
     @staticmethod

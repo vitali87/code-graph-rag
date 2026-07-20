@@ -314,6 +314,19 @@ def keyword_value(args: Node, keyword: str) -> Node | None:
     return None
 
 
+def _unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
+    # (H) C# wraps each call arg in an `argument` node; the real expression is its
+    # (H) sole named child (a `name_colon` for a named arg is unnamed). Unwrap so
+    # (H) the string reader sees the literal, not the wrapper. No-op elsewhere.
+    if (
+        wrapper_type is not None
+        and node.type == wrapper_type
+        and node.named_child_count
+    ):
+        return node.named_children[-1]
+    return node
+
+
 def literal_target(
     call_node: Node,
     arg_index: int | None,
@@ -322,6 +335,7 @@ def literal_target(
     string_type: str = cs.TS_PY_STRING,
     content_type: str = cs.TS_PY_STRING_CONTENT,
     keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT,
+    wrapper_type: str | None = None,
 ) -> str:
     if arg_index is None and arg_keyword is None:
         return DYNAMIC_TARGET
@@ -336,7 +350,11 @@ def literal_target(
         if c.type not in (keyword_arg_type, cs.TS_COMMENT)
     ]
     if arg_index is not None and arg_index < len(positional):
-        return string_literal(positional[arg_index], string_type, content_type)
+        return string_literal(
+            _unwrap_argument(positional[arg_index], wrapper_type),
+            string_type,
+            content_type,
+        )
     if arg_keyword is not None:
         return string_literal(
             keyword_value(args, arg_keyword), string_type, content_type

@@ -180,6 +180,14 @@ TS_CSHARP_ARGUMENT = "argument"
 # (H) a typed fallback where the `arguments` field lookup returns nothing.
 TS_CSHARP_ARGUMENT_LIST = "argument_list"
 
+# (H) String literals: `"x"` is a string_literal wrapping a string_literal_content
+# (H) token. Used by the I/O walk to read a sink's static path/key argument.
+TS_CSHARP_STRING_LITERAL = "string_literal"
+TS_CSHARP_STRING_LITERAL_CONTENT = "string_literal_content"
+# (H) `map[k]` subscript; inert in the I/O walk (C# env access is a call, not a
+# (H) member read) but wired into the descriptor for shape correctness.
+TS_CSHARP_ELEMENT_ACCESS_EXPRESSION = "element_access_expression"
+
 # (H) Nested scopes that own their own locals; the variable-type walk stops at
 # (H) these so a lambda/local-function local cannot leak into (or shadow) the
 # (H) enclosing method's type map.

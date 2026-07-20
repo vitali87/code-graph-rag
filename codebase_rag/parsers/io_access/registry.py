@@ -257,6 +257,85 @@ _JAVA_SINKS: tuple[IOSink, ...] = (
     ),
 )
 
+# (H) C# BCL direct-call I/O sinks (issue #102 follow-up: C# had full structural
+# (H) support but zero I/O modelling). call_name returns the dotted callee text from
+# (H) invocation_expression's `function` field, so each sink is keyed under BOTH the
+# (H) fully-qualified spelling (`System.Console.WriteLine`) and the using-imported
+# (H) short form (`Console.WriteLine`). System.* is a BCL effective global, never in
+# (H) import_map, so the catalog is not import-gated (sinks_require_import=False).
+_CSHARP_CONSOLE_PREFIXES: tuple[str, ...] = ("Console", "System.Console")
+_CSHARP_ENV_PREFIXES: tuple[str, ...] = ("Environment", "System.Environment")
+_CSHARP_FILE_PREFIXES: tuple[str, ...] = ("File", "System.IO.File", "IO.File")
+
+_CSHARP_STDOUT_METHODS: tuple[str, ...] = ("WriteLine", "Write")
+_CSHARP_STDIN_METHODS: tuple[str, ...] = ("ReadLine", "Read", "ReadKey")
+_CSHARP_FILE_READ_METHODS: tuple[str, ...] = (
+    "ReadAllText",
+    "ReadAllLines",
+    "ReadAllBytes",
+    "ReadLines",
+    "OpenText",
+)
+_CSHARP_FILE_WRITE_METHODS: tuple[str, ...] = (
+    "WriteAllText",
+    "WriteAllLines",
+    "WriteAllBytes",
+    "AppendAllText",
+    "AppendAllLines",
+)
+
+_CSHARP_SINKS: tuple[IOSink, ...] = (
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.STDOUT, IODirection.WRITE)
+        for prefix in _CSHARP_CONSOLE_PREFIXES
+        for method in _CSHARP_STDOUT_METHODS
+    ),
+    # (H) Console.Error.* / Console.Out.* target the standard streams explicitly.
+    *(
+        IOSink(f"{prefix}.Error.{method}", ResourceKind.STDERR, IODirection.WRITE)
+        for prefix in _CSHARP_CONSOLE_PREFIXES
+        for method in ("WriteLine", "Write")
+    ),
+    *(
+        IOSink(f"{prefix}.Out.{method}", ResourceKind.STDOUT, IODirection.WRITE)
+        for prefix in _CSHARP_CONSOLE_PREFIXES
+        for method in ("WriteLine", "Write")
+    ),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.STDIN, IODirection.READ)
+        for prefix in _CSHARP_CONSOLE_PREFIXES
+        for method in _CSHARP_STDIN_METHODS
+    ),
+    *(
+        IOSink(
+            f"{prefix}.GetEnvironmentVariable",
+            ResourceKind.ENV,
+            IODirection.READ,
+            target_arg=0,
+        )
+        for prefix in _CSHARP_ENV_PREFIXES
+    ),
+    *(
+        IOSink(
+            f"{prefix}.SetEnvironmentVariable",
+            ResourceKind.ENV,
+            IODirection.WRITE,
+            target_arg=0,
+        )
+        for prefix in _CSHARP_ENV_PREFIXES
+    ),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.FILE, IODirection.READ, target_arg=0)
+        for prefix in _CSHARP_FILE_PREFIXES
+        for method in _CSHARP_FILE_READ_METHODS
+    ),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.FILE, IODirection.WRITE, target_arg=0)
+        for prefix in _CSHARP_FILE_PREFIXES
+        for method in _CSHARP_FILE_WRITE_METHODS
+    ),
+)
+
 # (H) Rust direct-call I/O sinks (issue #714). call_name yields the callee's path text
 # (H) with `::` separators (`std::env::var`, `std::fs::write`); Rust code reaches these
 # (H) either fully-qualified or via `use std::fs;` + `fs::write(..)`, so each sink is
@@ -352,6 +431,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.JAVA: _JAVA_SINKS,
     cs.SupportedLanguage.RUST: _RUST_SINKS,
     cs.SupportedLanguage.CPP: _CPP_SINKS,
+    cs.SupportedLanguage.CSHARP: _CSHARP_SINKS,
     # (H) C shares the libc catalog, bare names only (no std:: forms).
     cs.SupportedLanguage.C: tuple(
         IOSink(fn, kind, direction, target_arg=arg)
