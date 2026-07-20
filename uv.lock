@@ -566,7 +566,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.410"
+version = "0.0.411"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -595,6 +595,7 @@ dependencies = [
 [package.optional-dependencies]
 ast-grep = [
     { name = "ast-grep-py" },
+    { name = "pyyaml" },
 ]
 milvus = [
     { name = "pymilvus", extra = ["milvus-lite"] },
@@ -612,6 +613,7 @@ test = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "testcontainers" },
 ]
 treesitter-full = [
@@ -681,6 +683,8 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "pyyaml", marker = "extra == 'ast-grep'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
     { name = "rich", specifier = ">=14.2.0" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },

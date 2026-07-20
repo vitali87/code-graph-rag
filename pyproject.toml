@@ -86,6 +86,7 @@ codebase_rag = [
     "docker-compose.yaml",
     "parsers/csharp_frontend/roslyn/*.cs",
     "parsers/csharp_frontend/roslyn/*.csproj",
+    "parsers/ast_grep_patterns/*.yaml",
 ]
 
 [project.optional-dependencies]
@@ -98,6 +99,7 @@ test = [
     "libclang>=18.1.1",
     "filelock>=3.12",
     "ast-grep-py>=0.44.0",
+    "pyyaml>=6.0",
 ]
 
 treesitter-full = [
@@ -128,6 +130,7 @@ milvus = [
 
 ast-grep = [
     "ast-grep-py>=0.44.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.ruff]
