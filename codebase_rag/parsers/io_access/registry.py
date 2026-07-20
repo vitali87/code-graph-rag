@@ -706,32 +706,24 @@ _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
 # (H) inherits (`new SqlCommand(sql, conn)` takes conn's DB from arg1). At most one
 # (H) is set; None/None means the identity is <dynamic> (HttpClient's URL is on the
 # (H) request method, not the client).
+_CSHARP_IO_PACKAGE = "System.IO"
+# (H) ADO.NET types live under Microsoft.Data.SqlClient (modern) and
+# (H) System.Data.SqlClient (legacy); both spellings are keyed.
+_CSHARP_SQL_PACKAGES = ("Microsoft.Data.SqlClient", "System.Data.SqlClient")
+
 _CSHARP_NEW_HANDLE_TYPES: tuple[
     tuple[str, tuple[str, ...], ResourceKind, int | None, int | None], ...
 ] = (
-    ("StreamReader", ("System.IO",), ResourceKind.FILE, 0, None),
-    ("StreamWriter", ("System.IO",), ResourceKind.FILE, 0, None),
-    ("FileStream", ("System.IO",), ResourceKind.FILE, 0, None),
+    ("StreamReader", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
+    ("StreamWriter", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
+    ("FileStream", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
     ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None, None),
-    # (H) ADO.NET connection strings appear under Microsoft.Data.SqlClient (modern)
-    # (H) and System.Data.SqlClient (legacy); the connection string is the identity.
-    (
-        "SqlConnection",
-        ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
-        ResourceKind.DATABASE,
-        0,
-        None,
-    ),
+    # (H) The DB connection string is the resource identity.
+    ("SqlConnection", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, 0, None),
     # (H) `new SqlCommand(sql, conn)` is a DATABASE handle whose resource is the
     # (H) connection (arg1), not the SQL text (arg0): inherit conn's identity when it
     # (H) is a bound handle, else <dynamic>.
-    (
-        "SqlCommand",
-        ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
-        ResourceKind.DATABASE,
-        None,
-        1,
-    ),
+    ("SqlCommand", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, None, 1),
 )
 
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
