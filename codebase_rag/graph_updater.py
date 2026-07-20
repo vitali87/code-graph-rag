@@ -21,6 +21,7 @@ from .language_spec import (
 )
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers.ast_grep_tier import AstGrepTier
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
@@ -568,6 +569,9 @@ class GraphUpdater:
             exclude_paths=self.exclude_paths,
             capture=self.capture,
         )
+        # (H) Fallback structural tier for languages with no tree-sitter
+        # (H) LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
+        self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
 
     def _run_cpp_frontend(self) -> None:
         # (H) Optional libclang C++ pre-pass when a compile_commands.json is
@@ -1684,6 +1688,10 @@ class GraphUpdater:
                 self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
+        elif self.ast_grep_tier.handles(filepath.suffix):
+            self.ast_grep_tier.process_file(
+                filepath, self.factory.structure_processor.structural_elements
+            )
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 

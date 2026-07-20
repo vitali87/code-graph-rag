@@ -1,0 +1,21 @@
+# ast-grep pattern config for Ruby (issue #414).
+# Ruby has no tree-sitter LanguageSpec in cgr, so the ast-grep tier extracts
+# structural nodes from these patterns. See README.md for the format.
+#
+# Convention: definition patterns capture the name as $NAME; import patterns
+# capture the imported path as $PATH. Patterns are tried in order; the first
+# pattern to match a given source line claims it (so put specific patterns,
+# like `def self.$NAME`, before general ones, like `def $NAME`).
+language: ruby
+ast_grep_id: ruby
+extensions:
+  - ".rb"
+functions:
+  - "def self.$NAME"
+  - "def $NAME"
+classes:
+  - "class $NAME"
+  - "module $NAME"
+imports:
+  - "require $PATH"
+  - "require_relative $PATH"
