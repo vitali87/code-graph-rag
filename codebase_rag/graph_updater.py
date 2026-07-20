@@ -1107,7 +1107,14 @@ class GraphUpdater:
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
-            module_map.setdefault(qn, self.repo_path / path)
+            # (H) Skip modules whose file was deleted this cycle: seeding a
+            # (H) deleted file's qn would make a same-basename ADD (delete
+            # (H) shapes.rs + add shapes.cpp) take the suffixed form, diverging
+            # (H) from a clean index that gives the survivor the bare qn.
+            abs_path = self.repo_path / path
+            if not abs_path.exists():
+                continue
+            module_map.setdefault(qn, abs_path)
 
     def _rehydrate_class_inheritance_from_graph(self) -> None:
         # (H) Incremental runs rebuild class_inheritance only from re-parsed files.

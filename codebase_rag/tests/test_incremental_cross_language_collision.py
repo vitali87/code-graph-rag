@@ -92,3 +92,35 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
         f"cross-language module qn collision on incremental add: {modules}"
     )
     assert modules["shapes.rs"] == "proj.shapes", modules
+
+
+@pytest.mark.usefixtures("_needs_rust_cpp")
+def test_incremental_delete_then_add_sibling_matches_clean_index(
+    temp_repo: Path,
+) -> None:
+    # (H) Deleting shapes.rs while adding shapes.cpp in the same cycle must give
+    # (H) shapes.cpp the bare qn a clean index would (proj.shapes), not the
+    # (H) suffixed form. The seed must not hand the disambiguator a qn owned by a
+    # (H) file that no longer exists on disk (Greptile #823 P1).
+    (temp_repo / "shapes.rs").write_text(_RS, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _index(store, temp_repo, force=False)
+    assert _shapes_modules(store) == {"shapes.rs": "proj.shapes"}
+
+    cache = temp_repo / cs.HASH_CACHE_FILENAME
+    future = cache.stat().st_mtime + 10
+    (temp_repo / "shapes.rs").unlink()
+    cpp = temp_repo / "shapes.cpp"
+    cpp.write_text(_CPP, encoding="utf-8")
+    os.utime(cpp, (future, future))
+
+    _index(store, temp_repo, force=False)
+
+    modules = _shapes_modules(store)
+    assert modules == {"shapes.cpp": "proj.shapes"}, modules
+
+    # (H) equivalence check: a clean index of the final tree agrees.
+    clean = _StatefulIngestor()
+    _index(clean, temp_repo, force=True)
+    assert _shapes_modules(clean) == modules
