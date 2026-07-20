@@ -340,6 +340,32 @@ multi-package fixtures whose cross-package edges are known by construction
 are correctly excluded. cgr resolves all of these; the eval stands as a
 regression guard for monorepo cross-package resolution.
 
+## Polyglot — cross-language ingestion integrity
+
+Every other eval indexes a single language (or a Python-dominant tree), so none
+checks what happens when cgr builds **one** graph over files from all 14
+supported languages at once — the mixed-language repo it is actually pointed at
+in the wild. This eval ingests a corpus spanning every `SupportedLanguage`, with
+a deliberate three-way basename collision (`shapes.rs` / `shapes.cpp` /
+`shapes.ts`), and grades cross-language integrity invariants that need no
+external oracle (`codebase_rag/tests/test_polyglot_eval.py`):
+
+1. every available language contributes at least one module and one definition
+   (no language silently dropped when mixed in),
+2. files that strip to the same module qn get **distinct** qns — the collision is
+   disambiguated, not overwritten under the `qualified_name` constraint (issue
+   #652 class),
+3. no `CALLS` / `INHERITS` / `OVERRIDES` / `IMPLEMENTS` / `INSTANTIATES` edge
+   crosses a language boundary (a Rust call resolving onto a Python node would be
+   cross-language qn bleed),
+4. the recorded graph is dangling/orphan free (the `create_and_run_updater`
+   audit), and the report is deterministic so the collision winner never churns.
+
+cgr satisfies all of these on a clean (full) build; the eval stands as a
+regression guard for polyglot ingestion. The collision winner on a full build is
+decided by sorted file order (`shapes.cpp` keeps the bare `…shapes`, `shapes.rs`
+and `shapes.ts` take the suffixed form).
+
 ## Static calls — function-level direct-call recall
 
 Grades cgr's `CALLS` graph at function granularity against an `ast` oracle that
