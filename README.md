@@ -718,6 +718,8 @@ claude mcp add --transport stdio code-graph-rag \
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
+| `structural_search` | Search code structurally by AST pattern using ast-grep syntax (not text/regex). Returns file paths, line and column numbers, and the matched code. Requires the 'ast-grep' extra to be installed. |
+| `structural_replace` | Rewrite code structurally by AST pattern using ast-grep syntax. Metavariables captured by the pattern are substituted into the rewrite. Defaults to dry_run (returns a diff); set dry_run=false to write changes. Requires the 'ast-grep' extra to be installed. |
 | `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
 <!-- /SECTION:mcp_tools -->
 
@@ -907,6 +909,8 @@ The agent has access to a suite of tools to understand and interact with the cod
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript') restricts the search. |
+| `structural_replace` | Rewrite code by AST pattern using ast-grep syntax. Give a 'pattern' to match and a 'rewrite' template; metavariables captured by the pattern ($A, $$$ARGS) are substituted into the rewrite. Defaults to dry_run=True, which returns a diff without touching files; call again with dry_run=false to apply. Optional 'language' restricts the rewrite to one language. |
 <!-- /SECTION:agentic_tools -->
 
 ### Intelligent and Safe File Editing

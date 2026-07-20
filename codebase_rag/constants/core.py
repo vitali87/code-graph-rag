@@ -14,6 +14,10 @@ ARG_REPLACEMENT_CODE = "replacement_code"
 ARG_FILE_PATH = "file_path"
 ARG_CONTENT = "content"
 ARG_COMMAND = "command"
+ARG_PATTERN = "pattern"
+ARG_REWRITE = "rewrite"
+ARG_LANGUAGE = "language"
+ARG_DRY_RUN = "dry_run"
 
 # (H) Qualified name separators
 SEPARATOR_DOT = "."

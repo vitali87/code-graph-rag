@@ -17,6 +17,8 @@ class MCPToolName(StrEnum):
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
     SEMANTIC_SEARCH = "semantic_search"
+    STRUCTURAL_SEARCH = "structural_search"
+    STRUCTURAL_REPLACE = "structural_replace"
     ASK_AGENT = "ask_agent"
 
 
@@ -65,6 +67,10 @@ class MCPParamName(StrEnum):
     DIRECTORY_PATH = "directory_path"
     TOP_K = "top_k"
     QUESTION = "question"
+    PATTERN = "pattern"
+    REWRITE = "rewrite"
+    LANGUAGE = "language"
+    DRY_RUN = "dry_run"
 
 
 # (H) MCP server constants

@@ -97,6 +97,7 @@ test = [
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
     "filelock>=3.12",
+    "ast-grep-py>=0.44.0",
 ]
 
 treesitter-full = [
@@ -123,6 +124,10 @@ semantic = [
 
 milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
+]
+
+ast-grep = [
+    "ast-grep-py>=0.44.0",
 ]
 
 [tool.ruff]
