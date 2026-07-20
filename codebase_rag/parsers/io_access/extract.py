@@ -298,9 +298,25 @@ def binding_targets_values(
     targets = []
     for name in node.children_by_field_name(cs.TS_FIELD_NAME):
         targets.extend(lean_binding_targets(name, descriptor))
-    return targets, lean_binding_values(
-        node.child_by_field_name(cs.FIELD_VALUE), descriptor
-    )
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        value is None
+        and descriptor.declarator_value_is_last_child
+        and node.type == descriptor.declarator_type
+    ):
+        value = _last_named_declarator_value(node)
+    return targets, lean_binding_values(value, descriptor)
+
+
+def _last_named_declarator_value(node: Node) -> Node | None:
+    # (H) C# `variable_declarator` = `name = <expr>` with the initializer as an
+    # (H) unfielded child: its value is the last named child. An uninitialised
+    # (H) declaration has a single named child (the name identifier), so require at
+    # (H) least two -- robust even when the `name` field is absent under parser
+    # (H) error recovery (a lone child is never a real initializer).
+    if node.named_child_count < 2:
+        return None
+    return node.named_child(node.named_child_count - 1)
 
 
 def keyword_value(args: Node, keyword: str) -> Node | None:
@@ -345,6 +361,26 @@ def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node 
     for child in args.named_children:
         if _wrapper_arg_name(child, wrapper_type) == keyword:
             return _unwrap_argument(child, wrapper_type)
+    return None
+
+
+def positional_arg_node(
+    call_node: Node, arg_index: int, wrapper_type: str | None
+) -> Node | None:
+    # (H) The unwrapped expression node at a positional argument index, excluding
+    # (H) comments and C# named-argument wrappers (so the index maps to a real
+    # (H) positional arg). Used to resolve a handle passed as an argument
+    # (H) (`new SqlCommand(sql, conn)` -> conn at index 1).
+    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args is None:
+        return None
+    positional = [
+        c
+        for c in args.named_children
+        if c.type != cs.TS_COMMENT and _wrapper_arg_name(c, wrapper_type) is None
+    ]
+    if arg_index < len(positional):
+        return _unwrap_argument(positional[arg_index], wrapper_type)
     return None
 
 

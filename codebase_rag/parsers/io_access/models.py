@@ -43,6 +43,10 @@ class HandleConstructor:
     kind: ResourceKind
     target_arg: int | None = None
     target_kw: str | None = None
+    # (H) Positional arg index of an ALREADY-BOUND handle that supplies this
+    # (H) handle's identity (C# `new SqlCommand(sql, conn)` inherits conn's DB
+    # (H) identity from arg1). None where the identity is a literal target_arg.
+    handle_arg: int | None = None
 
 
 @dataclass(frozen=True)
