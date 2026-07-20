@@ -528,6 +528,17 @@ _JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
             0,
             ("DriverManager", "java.sql.DriverManager"),
         ),
+        # (H) `HttpClient.newHttpClient()` (java.net.http, Java 11+) yields a
+        # (H) NETWORK client; the URL lives on the HttpRequest passed to send(),
+        # (H) not the client, so the client's resource identity is <dynamic>
+        # (H) (target_arg=None). The builder form `HttpClient.newBuilder().build()`
+        # (H) is a follow-up (the chained build() does not bind here).
+        (
+            "newHttpClient",
+            ResourceKind.NETWORK,
+            None,
+            ("HttpClient", "java.net.http.HttpClient"),
+        ),
     )
     for prefix in prefixes
 )
@@ -578,6 +589,11 @@ _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
     ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
     ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
     ("Socket", "java.net", ResourceKind.SOCKET),
+    # (H) `new URL("http://..")` is a NETWORK handle: the URL literal is the
+    # (H) resource identity, and a later `.openStream()` reads it. URL parsing
+    # (H) itself does no I/O, but construction emits no edge (only the handle
+    # (H) methods do), so keying it as a NETWORK handle is behaviourally exact.
+    ("URL", "java.net", ResourceKind.NETWORK),
 )
 
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
@@ -725,6 +741,24 @@ IO_LEAN_HANDLE_METHODS: dict[
             "executeUpdate": IODirection.WRITE,
             "executeBatch": IODirection.WRITE,
             "execute": IODirection.READ_WRITE,
+        },
+        # (H) URL.openStream() reads the resource; HttpClient.send/sendAsync
+        # (H) are verb-agnostic (the method rides on the HttpRequest), so
+        # (H) READ_WRITE is the honest "either" label, matching the DB execute()
+        # (H) and Python client.request() stance.
+        ResourceKind.NETWORK: {
+            "openStream": IODirection.READ,
+            # (H) URL.getContent() opens a connection and retrieves the resource.
+            "getContent": IODirection.READ,
+            "send": IODirection.READ_WRITE,
+            "sendAsync": IODirection.READ_WRITE,
+        },
+        # (H) `new Socket(host, port)` was already a registered SOCKET handle but
+        # (H) had no method table, so its reads/writes emitted nothing: a
+        # (H) java.net.Socket is used via get{Input,Output}Stream().
+        ResourceKind.SOCKET: {
+            "getInputStream": IODirection.READ,
+            "getOutputStream": IODirection.WRITE,
         },
     },
     cs.SupportedLanguage.RUST: {
