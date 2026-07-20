@@ -74,18 +74,21 @@ instead of locally, set `CGR_EMBEDDING_PROVIDER=openai`; see
 
 The interactive agent has access to these tools:
 
+<!-- SECTION:agentic_tools -->
 | Tool | Description |
-|------|-------------|
-| `query_graph` | Query the knowledge graph using natural language |
-| `read_file` | Read the content of text-based files |
-| `create_file` | Create a new file with content |
-| `replace_code` | Surgically replace specific code blocks |
-| `list_directory` | List directory contents |
-| `analyze_document` | Analyze documents (PDFs, images) |
-| `execute_shell` | Execute shell commands from allowlist |
-| `semantic_search` | Semantic function search by description |
-| `get_function_source` | Retrieve source code by node ID |
-| `get_code_snippet` | Retrieve source code by qualified name |
+|----|-----------|
+| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
+| `read_file` | Reads the content of text-based files. Images and PDFs the user references are attached inline; read them directly. |
+| `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
+| `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
+| `list_directory` | Lists the contents of a directory to explore the codebase. |
+| `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
+| `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
+| `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search. |
+| `structural_replace` | Rewrite code by AST pattern using ast-grep syntax. Give a 'pattern' to match and a 'rewrite' template; metavariables captured by the pattern ($A, $$$ARGS) are substituted into the rewrite. Defaults to dry_run=True, which returns a diff without touching files; call again with dry_run=false to apply. Optional 'language' restricts the rewrite to one language. |
+<!-- /SECTION:agentic_tools -->
 
 ## Intelligent File Editing
 

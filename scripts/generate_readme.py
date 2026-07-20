@@ -12,6 +12,8 @@ TARGET_FILES = (
     "README.md",
     "docs/architecture/language-support.md",
     "docs/guide/mcp-server.md",
+    "docs/guide/interactive-querying.md",
+    "docs/getting-started/installation.md",
 )
 
 SECTION_PATTERN = re.compile(
