@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codebase_rag import cli_help as ch
-from codebase_rag.readme_sections import format_cli_commands_table
+from codebase_rag.readme_sections import format_cli_commands_table, format_latest_news
 from scripts.generate_readme import TARGET_FILES, replace_sections, update_file
 
 
@@ -48,6 +48,29 @@ class TestDocsTargets:
             assert update_file(page, {"mcp_tools": "fresh"}) is False
         finally:
             page.chmod(0o644)
+
+
+class TestLatestNews:
+    def test_renders_top_n_bullets(self, tmp_path: Path) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "# News\n\n"
+            "- **A**: first.\n"
+            "- **B**: second.\n"
+            "- **C**: third.\n"
+            "- **D**: fourth.\n",
+            encoding="utf-8",
+        )
+        result = format_latest_news(news, limit=3)
+        assert result == "- **A**: first.\n- **B**: second.\n- **C**: third."
+
+    def test_takes_all_when_fewer_than_limit(self, tmp_path: Path) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text("- **A**: only one.\n", encoding="utf-8")
+        assert format_latest_news(news, limit=3) == "- **A**: only one."
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        assert format_latest_news(tmp_path / "nope.md") == ""
 
 
 def test_cli_command_table_has_one_markdown_row_per_command() -> None:

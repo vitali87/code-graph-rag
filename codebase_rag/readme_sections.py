@@ -229,6 +229,18 @@ def format_dependencies(deps: list[str]) -> str:
         _save_pypi_cache(cache)
 
 
+def format_latest_news(news_path: Path, limit: int = 3) -> str:
+    # (H) Render the top `limit` bullet entries from NEWS.md into the README's
+    # (H) "Latest News" section. NEWS.md is the single hand-curated source of
+    # (H) truth (newest first); the generator only syncs it into the README.
+    try:
+        content = news_path.read_text(encoding=ENCODING_UTF8)
+    except OSError:
+        return ""
+    bullets = [line for line in content.splitlines() if line.startswith("- ")]
+    return "\n".join(bullets[:limit])
+
+
 def generate_all_sections(project_root: Path) -> dict[str, str]:
     makefile_commands = extract_makefile_commands(project_root / "Makefile")
     node_schemas = extract_node_schemas()
@@ -245,4 +257,5 @@ def generate_all_sections(project_root: Path) -> dict[str, str]:
         "mcp_tools": format_mcp_tools_table(),
         "agentic_tools": format_agentic_tools_table(),
         "dependencies": format_dependencies(deps),
+        "latest_news": format_latest_news(project_root / "NEWS.md"),
     }
