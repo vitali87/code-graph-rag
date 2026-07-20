@@ -72,7 +72,7 @@ STRUCTURAL_SEARCH = (
     "Patterns use metavariables: $NAME matches one node, $$$NAME matches many "
     "(e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). "
     "Returns file:line:column and the matched code. "
-    "Optional 'language' (e.g. 'python', 'typescript') restricts the search."
+    "Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search."
 )
 
 STRUCTURAL_EDITOR = (
@@ -167,7 +167,7 @@ MCP_PARAM_REWRITE = (
     "ast-grep rewrite template; metavariables captured by the pattern are substituted"
 )
 MCP_PARAM_LANGUAGE = (
-    "Optional language to restrict to (e.g. 'python', 'typescript', 'go')"
+    "Optional language to restrict to (e.g. 'python', 'typescript', 'go', 'csharp')"
 )
 MCP_PARAM_DRY_RUN = "If true (default), return a diff without writing any files"
 

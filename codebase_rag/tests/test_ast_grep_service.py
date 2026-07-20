@@ -81,6 +81,18 @@ def test_no_matches_returns_empty(tmp_path: Path) -> None:
     assert svc.replace("print($A)", "log($A)", dry_run=True) == []
 
 
+def test_csharp_language_alias_is_accepted(tmp_path: Path) -> None:
+    # (H) callers naturally pass ast-grep's id "csharp"; the repo enum value is
+    # (H) "c_sharp". Both must select the C# grammar, or C# scans silently fail.
+    (tmp_path / "a.cs").write_text(
+        "class A { void M() { System.Console.WriteLine(1); } }\n"
+    )
+    svc = AstGrepService(str(tmp_path))
+    for lang in ("c_sharp", "csharp"):
+        res = svc.search("System.Console.WriteLine($A)", language=lang)
+        assert {m["file"] for m in res} == {"a.cs"}, lang
+
+
 def test_invalid_pattern_raises_value_error(tmp_path: Path) -> None:
     # (H) an empty / matcher-less pattern makes ast-grep raise RuntimeError; the
     # (H) service must convert that to a ValueError the tool layer reports, not

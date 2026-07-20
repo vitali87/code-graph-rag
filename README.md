@@ -909,7 +909,7 @@ The agent has access to a suite of tools to understand and interact with the cod
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
-| `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript') restricts the search. |
+| `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search. |
 | `structural_replace` | Rewrite code by AST pattern using ast-grep syntax. Give a 'pattern' to match and a 'rewrite' template; metavariables captured by the pattern ($A, $$$ARGS) are substituted into the rewrite. Defaults to dry_run=True, which returns a diff without touching files; call again with dry_run=false to apply. Optional 'language' restricts the rewrite to one language. |
 <!-- /SECTION:agentic_tools -->
 

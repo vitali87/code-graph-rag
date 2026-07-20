@@ -21,6 +21,10 @@ from ..utils.path_utils import should_skip_path
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
 
+# (H) ast-grep's own language ids (e.g. "csharp"), accepted alongside the repo's
+# (H) SupportedLanguage values (e.g. "c_sharp") so either spelling selects C#.
+_AST_GREP_LANG_IDS = frozenset(cs.AST_GREP_LANGUAGES.values())
+
 
 class AstGrepService:
     __slots__ = ("project_root",)
@@ -33,17 +37,21 @@ class AstGrepService:
             supported = cs.SupportedLanguage(language)
         except ValueError:
             supported = None
-        ast_grep_lang = (
-            cs.AST_GREP_LANGUAGES.get(supported) if supported is not None else None
-        )
-        if ast_grep_lang is None:
-            raise ValueError(
-                cs.AST_GREP_UNKNOWN_LANGUAGE.format(
-                    language=language,
-                    supported=", ".join(lang.value for lang in cs.AST_GREP_LANGUAGES),
-                )
+        if supported is not None:
+            ast_grep_lang = cs.AST_GREP_LANGUAGES.get(supported)
+            if ast_grep_lang is not None:
+                return ast_grep_lang
+        # (H) also accept ast-grep's own ids directly (e.g. "csharp" as well as
+        # (H) the repo's "c_sharp"), which is what callers and the tool
+        # (H) descriptions use.
+        if language in _AST_GREP_LANG_IDS:
+            return language
+        raise ValueError(
+            cs.AST_GREP_UNKNOWN_LANGUAGE.format(
+                language=language,
+                supported=", ".join(sorted(_AST_GREP_LANG_IDS)),
             )
-        return ast_grep_lang
+        )
 
     def _classify_file(
         self, abs_path: Path, wanted: str | None
