@@ -298,9 +298,28 @@ def binding_targets_values(
     targets = []
     for name in node.children_by_field_name(cs.TS_FIELD_NAME):
         targets.extend(lean_binding_targets(name, descriptor))
-    return targets, lean_binding_values(
-        node.child_by_field_name(cs.FIELD_VALUE), descriptor
-    )
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        value is None
+        and descriptor.declarator_value_is_last_child
+        and node.type == descriptor.declarator_type
+    ):
+        value = _last_named_declarator_value(node)
+    return targets, lean_binding_values(value, descriptor)
+
+
+def _last_named_declarator_value(node: Node) -> Node | None:
+    # (H) C# `variable_declarator` = `name = <expr>` with the initializer as an
+    # (H) unfielded child: its value is the last named child, unless the only named
+    # (H) child is the `name` identifier itself (an uninitialised declaration).
+    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+    count = node.named_child_count
+    if not count:
+        return None
+    last = node.named_child(count - 1)
+    if last is None or last == name_node:
+        return None
+    return last
 
 
 def keyword_value(args: Node, keyword: str) -> Node | None:

@@ -589,7 +589,12 @@ IO_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
 # (H) I/O touches the connection's database (issue #714). Method names are
 # (H) distinctive enough to share one kind-keyed table across languages.
 IO_HANDLE_DERIVES: dict[ResourceKind, frozenset[str]] = {
-    ResourceKind.DATABASE: frozenset({"cursor", "createStatement", "prepareStatement"}),
+    ResourceKind.DATABASE: frozenset(
+        # (H) C# ADO.NET `conn.CreateCommand()` yields a command whose I/O touches
+        # (H) the connection's database, exactly like Python `conn.cursor()` and
+        # (H) java.sql `conn.createStatement()`.
+        {"cursor", "createStatement", "prepareStatement", "CreateCommand"}
+    ),
 }
 
 # (H) Lean-walk handle constructors (issue #714): call-shaped calls whose return
@@ -692,11 +697,47 @@ _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
     ("URL", "java.net", ResourceKind.NETWORK),
 )
 
+# (H) C# `new`-shaped handle constructors (issue #102 follow-up). Keyed by the
+# (H) written type name under BOTH the simple form (`new StreamReader("x")` with a
+# (H) `using`) and each fully-qualified spelling (`new System.IO.StreamReader(..)`).
+# (H) target_arg=0 where the resource identity is the first constructor argument (a
+# (H) file path / DB connection string); None where it is not (HttpClient's URL
+# (H) lives on the request method, SqlCommand's DB comes from its connection).
+_CSHARP_NEW_HANDLE_TYPES: tuple[
+    tuple[str, tuple[str, ...], ResourceKind, int | None], ...
+] = (
+    ("StreamReader", ("System.IO",), ResourceKind.FILE, 0),
+    ("StreamWriter", ("System.IO",), ResourceKind.FILE, 0),
+    ("FileStream", ("System.IO",), ResourceKind.FILE, 0),
+    ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None),
+    # (H) ADO.NET connection strings appear under Microsoft.Data.SqlClient (modern)
+    # (H) and System.Data.SqlClient (legacy); the connection string is the identity.
+    (
+        "SqlConnection",
+        ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
+        ResourceKind.DATABASE,
+        0,
+    ),
+    # (H) `new SqlCommand(sql, conn)` is a DATABASE handle; its resource identity is
+    # (H) the connection's DB (arg1), not the SQL text (arg0), so leave it <dynamic>.
+    (
+        "SqlCommand",
+        ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
+        ResourceKind.DATABASE,
+        None,
+    ),
+)
+
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
     cs.SupportedLanguage.JAVA: {
         written: HandleConstructor(written, kind, target_arg=0)
         for name, package, kind in _JAVA_NEW_HANDLE_TYPES
         for written in (name, f"{package}.{name}")
+    },
+    cs.SupportedLanguage.CSHARP: {
+        written: HandleConstructor(written, kind, target_arg=arg)
+        for name, packages, kind, arg in _CSHARP_NEW_HANDLE_TYPES
+        for written in (name, *(f"{package}.{name}" for package in packages))
     },
 }
 
@@ -884,6 +925,50 @@ IO_LEAN_HANDLE_METHODS: dict[
             "getline": IODirection.READ,
             "write": IODirection.WRITE,
             "put": IODirection.WRITE,
+        },
+    },
+    # (H) C# handle methods (issue #102 follow-up). FILE = System.IO stream
+    # (H) reader/writer/FileStream; NETWORK = HttpClient (Get* read, Post/Put/
+    # (H) Patch/Delete write, Send verb-agnostic -> READ_WRITE); DATABASE = ADO.NET
+    # (H) DbCommand (ExecuteReader/ExecuteScalar read, ExecuteNonQuery write). The
+    # (H) *Async siblings are keyed too since C# I/O is overwhelmingly async.
+    cs.SupportedLanguage.CSHARP: {
+        ResourceKind.FILE: {
+            "Read": IODirection.READ,
+            "ReadAsync": IODirection.READ,
+            "ReadLine": IODirection.READ,
+            "ReadLineAsync": IODirection.READ,
+            "ReadToEnd": IODirection.READ,
+            "ReadToEndAsync": IODirection.READ,
+            "ReadBlock": IODirection.READ,
+            "ReadByte": IODirection.READ,
+            "Peek": IODirection.READ,
+            "Write": IODirection.WRITE,
+            "WriteAsync": IODirection.WRITE,
+            "WriteLine": IODirection.WRITE,
+            "WriteLineAsync": IODirection.WRITE,
+            "WriteByte": IODirection.WRITE,
+            "Flush": IODirection.WRITE,
+            "FlushAsync": IODirection.WRITE,
+        },
+        ResourceKind.NETWORK: {
+            "GetAsync": IODirection.READ,
+            "GetStringAsync": IODirection.READ,
+            "GetByteArrayAsync": IODirection.READ,
+            "GetStreamAsync": IODirection.READ,
+            "PostAsync": IODirection.WRITE,
+            "PutAsync": IODirection.WRITE,
+            "PatchAsync": IODirection.WRITE,
+            "DeleteAsync": IODirection.WRITE,
+            "SendAsync": IODirection.READ_WRITE,
+        },
+        ResourceKind.DATABASE: {
+            "ExecuteReader": IODirection.READ,
+            "ExecuteReaderAsync": IODirection.READ,
+            "ExecuteScalar": IODirection.READ,
+            "ExecuteScalarAsync": IODirection.READ,
+            "ExecuteNonQuery": IODirection.WRITE,
+            "ExecuteNonQueryAsync": IODirection.WRITE,
         },
     },
 }
