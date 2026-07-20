@@ -12,6 +12,7 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import logs as ls
+from .analyzers import FindingAnalyzer
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .language_spec import (
@@ -572,6 +573,11 @@ class GraphUpdater:
         # (H) Fallback structural tier for languages with no tree-sitter
         # (H) LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
         self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
+        # (H) Opt-in ast-grep finding analyzer (issue #413): Pattern/CodeSmell/
+        # (H) SecurityIssue nodes from categorized YAML rules, run as a post-pass.
+        self.finding_analyzer = FindingAnalyzer(
+            self._sink, self.repo_path, self.capture
+        )
 
     def _run_cpp_frontend(self) -> None:
         # (H) Optional libclang C++ pre-pass when a compile_commands.json is
@@ -1013,6 +1019,12 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
 
         self.factory.definition_processor.process_all_method_overrides()
+
+        # (H) ast-grep findings post-pass (opt-in FINDINGS group). Links to the
+        # (H) Modules the definition pass already emitted, so no dangling edges.
+        self.finding_analyzer.analyze(
+            self.factory.definition_processor.module_qn_to_file_path
+        )
 
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()

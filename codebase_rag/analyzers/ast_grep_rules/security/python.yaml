@@ -1,0 +1,49 @@
+# ast-grep security rules for Python (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: python
+extensions: [.py]
+rules:
+  - id: sqli_concat
+    message: "Possible SQL injection: query built with string concatenation"
+    rule:
+      pattern: "$OBJ.execute($A + $B)"
+  - id: sqli_fstring
+    message: "Possible SQL injection: execute() called with an f-string"
+    rule:
+      kind: call
+      all:
+        - has: { pattern: "execute", stopBy: end }
+        - has: { kind: string, regex: '^f', stopBy: end }
+  - id: hardcoded_secret
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: assignment
+      all:
+        - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { field: right, kind: string }
+  - id: eval_use
+    message: "eval() executes arbitrary code"
+    rule:
+      pattern: "eval($$$)"
+  - id: exec_use
+    message: "exec() executes arbitrary code"
+    rule:
+      pattern: "exec($$$)"
+  - id: os_system_concat
+    message: "Possible command injection: os.system() with concatenation"
+    rule:
+      pattern: "os.system($A + $B)"
+  - id: subprocess_shell
+    message: "subprocess called with shell=True enables command injection"
+    rule:
+      pattern: "subprocess.$M($$$)"
+      has: { regex: 'shell\s*=\s*True', stopBy: end }
+  - id: yaml_load
+    message: "yaml.load() without SafeLoader can execute arbitrary code"
+    rule:
+      pattern: "yaml.load($$$)"
+  - id: pickle_loads
+    message: "pickle.loads() on untrusted data executes arbitrary code"
+    rule:
+      pattern: "pickle.loads($$$)"

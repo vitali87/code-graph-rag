@@ -1,0 +1,33 @@
+# ast-grep code-smell rules for Python (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: python
+extensions: [.py]
+rules:
+  - id: bare_except
+    message: "Bare except swallows every exception"
+    rule:
+      kind: except_clause
+      regex: '^except\s*:'
+  - id: broad_except
+    message: "Broad except Exception catches too much"
+    rule:
+      kind: except_clause
+      regex: 'except\s+Exception'
+  - id: mutable_default_list
+    message: "Mutable default argument (list) is shared across calls"
+    rule:
+      kind: default_parameter
+      has: { field: value, kind: list }
+  - id: mutable_default_dict
+    message: "Mutable default argument (dict) is shared across calls"
+    rule:
+      kind: default_parameter
+      has: { field: value, kind: dictionary }
+  - id: wildcard_import
+    message: "Wildcard import pollutes the namespace"
+    rule:
+      pattern: "from $M import *"
+  - id: global_statement
+    message: "global statement couples the function to module state"
+    rule:
+      kind: global_statement

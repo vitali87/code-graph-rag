@@ -749,6 +749,18 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.RESOURCE,
         "{qualified_name: string, name: string, kind: string}",
     ),
+    NodeSchema(
+        NodeLabel.PATTERN,
+        "{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}",
+    ),
+    NodeSchema(
+        NodeLabel.CODE_SMELL,
+        "{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}",
+    ),
+    NodeSchema(
+        NodeLabel.SECURITY_ISSUE,
+        "{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}",
+    ),
 )
 
 
@@ -889,5 +901,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
         RelationshipType.FLOWS_TO,
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.IMPLEMENTS_PATTERN,
+        (NodeLabel.PATTERN,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_SMELL,
+        (NodeLabel.CODE_SMELL,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_VULNERABILITY,
+        (NodeLabel.SECURITY_ISSUE,),
     ),
 )
