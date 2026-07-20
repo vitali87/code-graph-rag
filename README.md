@@ -187,7 +187,3 @@ For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooti
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Fork History
-
-[![Fork History Chart](https://fork-history.site/svg?repos=vitali87/code-graph-rag)](https://fork-history.site/#vitali87/code-graph-rag)
