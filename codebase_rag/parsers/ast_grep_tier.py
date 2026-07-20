@@ -125,26 +125,54 @@ class AstGrepTier:
             (cs.NodeLabel.FUNCTION, config.functions),
             (cs.NodeLabel.CLASS, config.classes),
         ):
-            claimed: set[int] = set()
-            for pattern in patterns:
-                for node in self._find_all(root, pattern, file_path):
-                    name_node = node.get_match(_NAME_METAVAR)
-                    if name_node is None:
-                        continue
-                    line = node.range().start.line
-                    if line in claimed:
-                        continue
-                    claimed.add(line)
-                    self._emit_definition(
-                        label,
-                        name_node.text(),
-                        node,
-                        module_qn,
-                        relative_path,
-                        absolute_path,
-                    )
+            self._extract_definitions(
+                root,
+                label,
+                patterns,
+                file_path,
+                module_qn,
+                relative_path,
+                absolute_path,
+            )
+        self._extract_imports(root, config.imports, file_path, module_qn)
 
-        for pattern in config.imports:
+    def _extract_definitions(
+        self,
+        root: SgNode,
+        label: cs.NodeLabel,
+        patterns: tuple[str, ...],
+        file_path: Path,
+        module_qn: str,
+        relative_path: str,
+        absolute_path: str,
+    ) -> None:
+        claimed: set[int] = set()
+        for pattern in patterns:
+            for node in self._find_all(root, pattern, file_path):
+                name_node = node.get_match(_NAME_METAVAR)
+                if name_node is None:
+                    continue
+                line = node.range().start.line
+                if line in claimed:
+                    continue
+                claimed.add(line)
+                self._emit_definition(
+                    label,
+                    name_node.text(),
+                    node,
+                    module_qn,
+                    relative_path,
+                    absolute_path,
+                )
+
+    def _extract_imports(
+        self,
+        root: SgNode,
+        patterns: tuple[str, ...],
+        file_path: Path,
+        module_qn: str,
+    ) -> None:
+        for pattern in patterns:
             for node in self._find_all(root, pattern, file_path):
                 target_node = node.get_match(_PATH_METAVAR)
                 if target_node is not None:
@@ -180,13 +208,12 @@ class AstGrepTier:
         )
         parent_rel_path = relative_path.parent
         parent_container_qn = structural_elements.get(parent_rel_path)
-        parent = (
-            (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-            if parent_container_qn
-            else (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
-            if parent_rel_path != Path(".")
-            else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self._project_name)
-        )
+        if parent_container_qn:
+            parent = (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
+        elif parent_rel_path != Path("."):
+            parent = (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+        else:
+            parent = (cs.NodeLabel.PROJECT, cs.KEY_NAME, self._project_name)
         self._ingestor.ensure_relationship_batch(
             parent,
             cs.RelationshipType.CONTAINS_MODULE,
