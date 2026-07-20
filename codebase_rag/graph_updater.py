@@ -1087,6 +1087,28 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
+    def _seed_module_qns_from_graph(self) -> None:
+        # (H) Cross-language module-qn disambiguation (definition_processor.
+        # (H) _disambiguate_module_qn) only sees files processed in the current
+        # (H) run. On an incremental ADD of a file whose basename collides with an
+        # (H) already-indexed sibling of another language (shapes.rs already owns
+        # (H) proj.shapes, then shapes.cpp is added), the added file would re-claim
+        # (H) the bare qn and silently overwrite the existing module under the
+        # (H) qualified_name constraint. Seed the qn->file map from the graph
+        # (H) BEFORE processing so the disambiguator sees taken qns; a re-parsed
+        # (H) (changed) file still matches its own path and keeps its bare qn.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                continue
+            module_map.setdefault(qn, self.repo_path / path)
+
     def _rehydrate_class_inheritance_from_graph(self) -> None:
         # (H) Incremental runs rebuild class_inheritance only from re-parsed files.
         # (H) Restore the child->bases map for classes defined in files that were
@@ -1457,6 +1479,9 @@ class GraphUpdater:
 
         _touch_empty_json(cache_path)
         _touch_empty_json(dir_mtimes_path)
+
+        if not is_full_build:
+            self._seed_module_qns_from_graph()
 
         eligible_files = self._collect_eligible_files()
         new_hashes: FileHashCache = {}
