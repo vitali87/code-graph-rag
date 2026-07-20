@@ -237,7 +237,23 @@ def format_latest_news(news_path: Path, limit: int = 3) -> str:
         content = news_path.read_text(encoding=ENCODING_UTF8)
     except OSError:
         return ""
-    bullets = [line for line in content.splitlines() if line.startswith("- ")]
+    # (H) Group each "- " entry with its wrapped continuation lines; a blank line
+    # (H) closes the entry (Markdown list-item semantics), so trailing prose or a
+    # (H) header list elsewhere in the file is not swept into the news bullets.
+    bullets: list[str] = []
+    current: list[str] = []
+    for line in content.splitlines():
+        if line.startswith("- "):
+            if current:
+                bullets.append("\n".join(current))
+            current = [line]
+        elif current and line.strip():
+            current.append(line)
+        elif current:
+            bullets.append("\n".join(current))
+            current = []
+    if current:
+        bullets.append("\n".join(current))
     return "\n".join(bullets[:limit])
 
 

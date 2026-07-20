@@ -69,6 +69,27 @@ class TestLatestNews:
         news.write_text("- **A**: only one.\n", encoding="utf-8")
         assert format_latest_news(news, limit=3) == "- **A**: only one."
 
+    def test_joins_wrapped_continuation_lines(self, tmp_path: Path) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "- **A**: line one\n  wrapped line two.\n- **B**: second.\n",
+            encoding="utf-8",
+        )
+        assert (
+            format_latest_news(news, limit=1)
+            == "- **A**: line one\n  wrapped line two."
+        )
+
+    def test_blank_line_ends_bullet_and_drops_trailing_prose(
+        self, tmp_path: Path
+    ) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "# News\n\n- **A**: only entry.\n\nSee CHANGELOG for more.\n",
+            encoding="utf-8",
+        )
+        assert format_latest_news(news, limit=3) == "- **A**: only entry."
+
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         assert format_latest_news(tmp_path / "nope.md") == ""
 
