@@ -45,6 +45,23 @@ class AstGrepService:
             )
         return ast_grep_lang
 
+    def _classify_file(
+        self, abs_path: Path, wanted: str | None
+    ) -> tuple[str, str] | None:
+        # (H) (rel_posix, ast_grep_lang) if the file is one ast-grep can parse
+        # (H) and passes the ignore rules / language filter, else None.
+        lang = get_language_for_extension(abs_path.suffix)
+        if lang is None:
+            return None
+        ast_grep_lang = cs.AST_GREP_LANGUAGES.get(lang)
+        if ast_grep_lang is None:
+            return None
+        if wanted is not None and ast_grep_lang != wanted:
+            return None
+        if should_skip_path(abs_path, self.project_root, is_file=True):
+            return None
+        return abs_path.relative_to(self.project_root).as_posix(), ast_grep_lang
+
     def _iter_source_files(self, language: str | None) -> list[tuple[Path, str, str]]:
         # (H) (abs_path, rel_posix, ast_grep_lang) for every file ast-grep can
         # (H) parse, honouring the same ignore rules as graph ingestion.
@@ -59,18 +76,10 @@ class AstGrepService:
             ]
             for fname in filenames:
                 abs_path = dir_path / fname
-                lang = get_language_for_extension(abs_path.suffix)
-                if lang is None:
-                    continue
-                ast_grep_lang = cs.AST_GREP_LANGUAGES.get(lang)
-                if ast_grep_lang is None:
-                    continue
-                if wanted is not None and ast_grep_lang != wanted:
-                    continue
-                if should_skip_path(abs_path, self.project_root, is_file=True):
-                    continue
-                rel = abs_path.relative_to(self.project_root).as_posix()
-                out.append((abs_path, rel, ast_grep_lang))
+                classified = self._classify_file(abs_path, wanted)
+                if classified is not None:
+                    rel, ast_grep_lang = classified
+                    out.append((abs_path, rel, ast_grep_lang))
         out.sort(key=lambda item: item[1])
         return out
 
