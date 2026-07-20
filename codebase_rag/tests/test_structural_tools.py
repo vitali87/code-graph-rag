@@ -28,6 +28,14 @@ async def test_search_tool_formats_matches(tmp_path: Path) -> None:
     assert "print(x)" in out
 
 
+async def test_search_tool_reports_truncation(tmp_path: Path) -> None:
+    body = "".join(f"print({i})\n" for i in range(cs.AST_GREP_MAX_RESULTS + 5))
+    (tmp_path / "a.py").write_text(body)
+    tool = create_structural_search_tool(AstGrepService(str(tmp_path)))
+    out = await tool.function(pattern="print($A)")
+    assert cs.AST_GREP_TRUNCATED.format(limit=cs.AST_GREP_MAX_RESULTS) in out
+
+
 async def test_search_tool_no_match_message(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("x = 1\n")
     tool = create_structural_search_tool(AstGrepService(str(tmp_path)))

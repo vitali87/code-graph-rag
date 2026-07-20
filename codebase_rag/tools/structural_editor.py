@@ -3,6 +3,8 @@
 # (H) before any invocation actually touches disk.
 from __future__ import annotations
 
+import asyncio
+
 from pydantic_ai import Tool
 
 from .. import constants as cs
@@ -30,10 +32,19 @@ def create_structural_editor_tool(service: AstGrepService) -> Tool:
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:
-            changes = service.replace(
-                pattern, rewrite, language=language, dry_run=dry_run
+            # (H) offload to a thread: replace does blocking os.walk, file reads
+            # (H) and writes, and CPU-bound AST parsing, which would stall the
+            # (H) event loop.
+            changes = await asyncio.to_thread(
+                service.replace,
+                pattern,
+                rewrite,
+                language=language,
+                dry_run=dry_run,
             )
-        except ValueError as e:
+        # (H) catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
+        # (H) (RuntimeError and others); report it rather than crash the turn.
+        except Exception as e:
             return str(e)
         if not changes:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
