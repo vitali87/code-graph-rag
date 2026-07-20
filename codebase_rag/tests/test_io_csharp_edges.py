@@ -129,6 +129,38 @@ def test_csharp_using_imported_short_names_resolve(tmp_path: Path) -> None:
     assert _has(rels, "A.M", WRITES_TO, "resource::FILE::o.txt"), rels
 
 
+def test_csharp_reordered_named_args_resolve_correct_path(tmp_path: Path) -> None:
+    # (H) C# named args can be reordered, so the target must be matched by name,
+    # (H) not by positional index: here `path` is the 2nd argument.
+    files = {
+        "A.cs": (
+            "using System.IO;\n"
+            "class A {\n"
+            "  void Save(string data) {\n"
+            '    File.WriteAllText(contents: data, path: "out.txt");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "A.Save", WRITES_TO, "resource::FILE::out.txt"), rels
+
+
+def test_csharp_named_target_arg_resolves(tmp_path: Path) -> None:
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "class A {\n"
+            "  string Get() {\n"
+            '    return Environment.GetEnvironmentVariable(variable: "SECRET");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "A.Get", READS_FROM, "resource::ENV::SECRET"), rels
+
+
 def test_csharp_console_readline_reads_stdin(tmp_path: Path) -> None:
     files = {
         "A.cs": (

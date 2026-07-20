@@ -314,17 +314,38 @@ def keyword_value(args: Node, keyword: str) -> Node | None:
     return None
 
 
+def _wrapper_arg_name(node: Node, wrapper_type: str | None) -> str | None:
+    # (H) The parameter name of a C# named argument (`path: "x"` -> "path"), read
+    # (H) from the `argument` wrapper's `name` field; None for a positional arg.
+    if wrapper_type is None or node.type != wrapper_type:
+        return None
+    name = node.child_by_field_name(cs.TS_FIELD_NAME)
+    if name is not None and name.text is not None:
+        return name.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
 def _unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
     # (H) C# wraps each call arg in an `argument` node; the real expression is its
-    # (H) sole named child (a `name_colon` for a named arg is unnamed). Unwrap so
-    # (H) the string reader sees the literal, not the wrapper. No-op elsewhere.
+    # (H) last named child (a named arg's `name` identifier is an earlier named
+    # (H) child). Unwrap so the string reader sees the literal. No-op elsewhere.
     if (
         wrapper_type is not None
         and node.type == wrapper_type
         and node.named_child_count
     ):
-        return node.named_children[-1]
+        return node.named_child(node.named_child_count - 1) or node
     return node
+
+
+def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node | None:
+    # (H) Find a C# named argument (`variable: "X"`) by its parameter name and
+    # (H) return its value expression, so a reordered named arg resolves to the
+    # (H) right resource identity regardless of position.
+    for child in args.named_children:
+        if _wrapper_arg_name(child, wrapper_type) == keyword:
+            return _unwrap_argument(child, wrapper_type)
+    return None
 
 
 def literal_target(
@@ -342,12 +363,20 @@ def literal_target(
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return DYNAMIC_TARGET
-    # (H) Exclude keyword args and comment nodes (tree-sitter keeps comments as
-    # (H) named children) so the positional index maps to the real argument.
+    # (H) A C# named argument (`path: "x"`) is matched by name FIRST: named args
+    # (H) can be reordered, so they must not count toward the positional index.
+    if arg_keyword is not None and wrapper_type is not None:
+        named = _wrapper_keyword_value(args, arg_keyword, wrapper_type)
+        if named is not None:
+            return string_literal(named, string_type, content_type)
+    # (H) Exclude keyword args, comment nodes (tree-sitter keeps comments as named
+    # (H) children), and C# named-argument wrappers so the positional index maps
+    # (H) to the real positional argument.
     positional = [
         c
         for c in args.named_children
         if c.type not in (keyword_arg_type, cs.TS_COMMENT)
+        and _wrapper_arg_name(c, wrapper_type) is None
     ]
     if arg_index is not None and arg_index < len(positional):
         return string_literal(

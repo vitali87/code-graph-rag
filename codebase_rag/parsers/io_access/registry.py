@@ -306,12 +306,15 @@ _CSHARP_SINKS: tuple[IOSink, ...] = (
         for prefix in _CSHARP_CONSOLE_PREFIXES
         for method in _CSHARP_STDIN_METHODS
     ),
+    # (H) target_kw is the real BCL parameter name so a reordered named argument
+    # (H) (`GetEnvironmentVariable(variable: "X")`) resolves by name, not position.
     *(
         IOSink(
             f"{prefix}.GetEnvironmentVariable",
             ResourceKind.ENV,
             IODirection.READ,
             target_arg=0,
+            target_kw="variable",
         )
         for prefix in _CSHARP_ENV_PREFIXES
     ),
@@ -321,16 +324,29 @@ _CSHARP_SINKS: tuple[IOSink, ...] = (
             ResourceKind.ENV,
             IODirection.WRITE,
             target_arg=0,
+            target_kw="variable",
         )
         for prefix in _CSHARP_ENV_PREFIXES
     ),
     *(
-        IOSink(f"{prefix}.{method}", ResourceKind.FILE, IODirection.READ, target_arg=0)
+        IOSink(
+            f"{prefix}.{method}",
+            ResourceKind.FILE,
+            IODirection.READ,
+            target_arg=0,
+            target_kw="path",
+        )
         for prefix in _CSHARP_FILE_PREFIXES
         for method in _CSHARP_FILE_READ_METHODS
     ),
     *(
-        IOSink(f"{prefix}.{method}", ResourceKind.FILE, IODirection.WRITE, target_arg=0)
+        IOSink(
+            f"{prefix}.{method}",
+            ResourceKind.FILE,
+            IODirection.WRITE,
+            target_arg=0,
+            target_kw="path",
+        )
         for prefix in _CSHARP_FILE_PREFIXES
         for method in _CSHARP_FILE_WRITE_METHODS
     ),
