@@ -62,12 +62,23 @@ def test_cross_language_basename_collision_is_disambiguated(
     polyglot_corpus: Path,
 ) -> None:
     available = _available_languages()
-    if not {cs.SupportedLanguage.RUST, cs.SupportedLanguage.CPP} <= available:
-        pytest.skip("collision trio needs the rust and cpp parsers")
+    trio = {
+        cs.SupportedLanguage.RUST,
+        cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.TS,
+    }
+    if not trio <= available:
+        pytest.skip("collision trio needs the rust, cpp and typescript parsers")
     report = cgr_polyglot(polyglot_corpus, polyglot_corpus.name)
     # (H) shapes.rs / shapes.cpp / shapes.ts strip to the same module qn; each
     # (H) must end up with its OWN qn or one silently overwrites the others
     # (H) under the qualified_name uniqueness constraint (issue #652 class).
+    # (H) Assert all three files produced a module FIRST: cgr_polyglot keys its
+    # (H) path map by qn, so a real collapse would drop a path and a bare
+    # (H) uniqueness check could still pass on the survivors (Greptile #824 P1).
+    assert set(report.collision_qns) == {"shapes.rs", "shapes.cpp", "shapes.ts"}, (
+        f"a colliding-basename file lost its module: {report.collision_qns}"
+    )
     qns = list(report.collision_qns.values())
     assert len(qns) == len(set(qns)), (
         f"colliding basenames share a module qn: {report.collision_qns}"
