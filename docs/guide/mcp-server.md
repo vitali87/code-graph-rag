@@ -70,6 +70,8 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
+| `structural_search` | Search code structurally by AST pattern using ast-grep syntax (not text/regex). Returns file paths, line and column numbers, and the matched code. Requires the 'ast-grep' extra to be installed. |
+| `structural_replace` | Rewrite code structurally by AST pattern using ast-grep syntax. Metavariables captured by the pattern are substituted into the rewrite. Defaults to dry_run (returns a diff); set dry_run=false to write changes. Requires the 'ast-grep' extra to be installed. |
 | `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
 <!-- /SECTION:mcp_tools -->
 

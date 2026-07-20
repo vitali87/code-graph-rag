@@ -15,6 +15,8 @@ class AgenticToolName(StrEnum):
     SEMANTIC_SEARCH = "semantic_search"
     GET_FUNCTION_SOURCE = "get_function_source"
     GET_CODE_SNIPPET = "get_code_snippet"
+    STRUCTURAL_SEARCH = "structural_search"
+    STRUCTURAL_REPLACE = "structural_replace"
 
 
 CODEBASE_QUERY = (
@@ -63,6 +65,22 @@ FILE_EDITOR = (
     "Requires exact target code and replacement. "
     "Only modifies the specified block, leaving rest of file unchanged. "
     "True surgical patching."
+)
+
+STRUCTURAL_SEARCH = (
+    "Search code by AST pattern using ast-grep syntax (not text/regex). "
+    "Patterns use metavariables: $NAME matches one node, $$$NAME matches many "
+    "(e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). "
+    "Returns file:line:column and the matched code. "
+    "Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search."
+)
+
+STRUCTURAL_EDITOR = (
+    "Rewrite code by AST pattern using ast-grep syntax. Give a 'pattern' to match "
+    "and a 'rewrite' template; metavariables captured by the pattern ($A, $$$ARGS) "
+    "are substituted into the rewrite. Defaults to dry_run=True, which returns a "
+    "diff without touching files; call again with dry_run=false to apply. "
+    "Optional 'language' restricts the rewrite to one language."
 )
 
 # (H) MCP tool descriptions
@@ -141,6 +159,30 @@ MCP_PARAM_TOP_K = "Max number of results to return (optional, default: 5)"
 MCP_PARAM_QUESTION = (
     "A question about the codebase, architecture, functionality, or code relationships"
 )
+MCP_PARAM_PATTERN = (
+    "ast-grep AST pattern with metavariables ($NAME for one node, $$$NAME for many), "
+    "e.g. 'print($A)' or 'def $F($$$ARGS): $$$BODY'"
+)
+MCP_PARAM_REWRITE = (
+    "ast-grep rewrite template; metavariables captured by the pattern are substituted"
+)
+MCP_PARAM_LANGUAGE = (
+    "Optional language to restrict to (e.g. 'python', 'typescript', 'go', 'csharp')"
+)
+MCP_PARAM_DRY_RUN = "If true (default), return a diff without writing any files"
+
+MCP_STRUCTURAL_SEARCH = (
+    "Search code structurally by AST pattern using ast-grep syntax (not text/regex). "
+    "Returns file paths, line and column numbers, and the matched code. "
+    "Requires the 'ast-grep' extra to be installed."
+)
+
+MCP_STRUCTURAL_REPLACE = (
+    "Rewrite code structurally by AST pattern using ast-grep syntax. Metavariables "
+    "captured by the pattern are substituted into the rewrite. Defaults to dry_run "
+    "(returns a diff); set dry_run=false to write changes. "
+    "Requires the 'ast-grep' extra to be installed."
+)
 
 MCP_ASK_AGENT = (
     "Ask the Code Graph RAG agent a question about the codebase. "
@@ -162,6 +204,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.WRITE_FILE: MCP_WRITE_FILE,
     MCPToolName.LIST_DIRECTORY: MCP_LIST_DIRECTORY,
     MCPToolName.SEMANTIC_SEARCH: MCP_SEMANTIC_SEARCH,
+    MCPToolName.STRUCTURAL_SEARCH: MCP_STRUCTURAL_SEARCH,
+    MCPToolName.STRUCTURAL_REPLACE: MCP_STRUCTURAL_REPLACE,
     MCPToolName.ASK_AGENT: MCP_ASK_AGENT,
 }
 
@@ -175,4 +219,6 @@ AGENTIC_TOOLS: dict[AgenticToolName, str] = {
     AgenticToolName.SEMANTIC_SEARCH: SEMANTIC_SEARCH,
     AgenticToolName.GET_FUNCTION_SOURCE: GET_FUNCTION_SOURCE,
     AgenticToolName.GET_CODE_SNIPPET: CODE_RETRIEVAL,
+    AgenticToolName.STRUCTURAL_SEARCH: STRUCTURAL_SEARCH,
+    AgenticToolName.STRUCTURAL_REPLACE: STRUCTURAL_EDITOR,
 }

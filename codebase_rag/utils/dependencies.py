@@ -4,6 +4,7 @@ import importlib.util
 from collections.abc import Sequence
 
 from codebase_rag.constants import (
+    MODULE_AST_GREP,
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
     MODULE_TORCH,
@@ -37,6 +38,10 @@ def has_qdrant_client() -> bool:
 
 def has_pymilvus() -> bool:
     return _check_dependency(MODULE_PYMILVUS)
+
+
+def has_ast_grep() -> bool:
+    return _check_dependency(MODULE_AST_GREP)
 
 
 def has_vector_store_dependencies() -> bool:

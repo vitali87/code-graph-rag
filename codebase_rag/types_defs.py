@@ -34,6 +34,22 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
+class StructuralSearchMatch(TypedDict):
+    file: str
+    line: int
+    column: int
+    end_line: int
+    end_column: int
+    text: str
+
+
+class StructuralReplaceChange(TypedDict):
+    file: str
+    matches: int
+    diff: str
+    applied: bool
+
+
 class NodeBatchRow(TypedDict):
     id: PropertyValue
     props: PropertyDict
@@ -331,6 +347,7 @@ class ConfirmationToolNames(NamedTuple):
     replace_code: str
     create_file: str
     shell_command: str
+    structural_replace: str
 
 
 class ReplaceCodeArgs(TypedDict, total=False):
@@ -348,6 +365,13 @@ class ShellCommandArgs(TypedDict, total=False):
     command: str
 
 
+class StructuralReplaceArgs(TypedDict, total=False):
+    pattern: str
+    rewrite: str
+    language: str
+    dry_run: bool
+
+
 @dataclass
 class RawToolArgs:
     file_path: str = ""
@@ -355,9 +379,13 @@ class RawToolArgs:
     replacement_code: str = ""
     content: str = ""
     command: str = ""
+    pattern: str = ""
+    rewrite: str = ""
+    language: str = ""
+    dry_run: bool = True
 
 
-ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
+ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs | StructuralReplaceArgs
 
 
 class LanguageQueries(TypedDict):

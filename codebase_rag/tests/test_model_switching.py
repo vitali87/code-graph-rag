@@ -175,7 +175,10 @@ class TestModelOverrideInAgentLoop:
 
         mock_model = MagicMock()
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
 
         with (
@@ -211,7 +214,10 @@ class TestModelOverrideInAgentLoop:
         mock_agent.run = AsyncMock(return_value=mock_response)
 
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
 
         with (
@@ -273,7 +279,10 @@ class TestAgentLoopUserPromptOnResume:
             ]
         )
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
         ctx, log_evt, approvals, refresh, status = self._patches()
 
@@ -312,7 +321,10 @@ class TestAgentLoopUserPromptOnResume:
             ]
         )
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
         ctx, log_evt, approvals, refresh, status = self._patches()
 
@@ -337,7 +349,10 @@ class TestAgentLoopUserPromptOnResume:
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=self._make_response("Hello"))
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
         ctx, log_evt, approvals, refresh, status = self._patches()
 
@@ -372,7 +387,10 @@ class TestAgentLoopUserPromptOnResume:
             ]
         )
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
         ctx, log_evt, approvals, refresh, status = self._patches()
 
@@ -404,7 +422,10 @@ class TestAgentLoopUserPromptOnResume:
             ]
         )
         tool_names = ConfirmationToolNames(
-            replace_code="replace", create_file="create", shell_command="shell"
+            replace_code="replace",
+            create_file="create",
+            shell_command="shell",
+            structural_replace="structural_replace",
         )
 
         with (
