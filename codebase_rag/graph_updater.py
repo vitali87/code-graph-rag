@@ -1087,7 +1087,7 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
-    def _seed_module_qns_from_graph(self) -> None:
+    def _seed_module_qns_from_graph(self, eligible_paths: set[str]) -> None:
         # (H) Cross-language module-qn disambiguation (definition_processor.
         # (H) _disambiguate_module_qn) only sees files processed in the current
         # (H) run. On an incremental ADD of a file whose basename collides with an
@@ -1107,14 +1107,14 @@ class GraphUpdater:
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
-            # (H) Skip modules whose file was deleted this cycle: seeding a
-            # (H) deleted file's qn would make a same-basename ADD (delete
-            # (H) shapes.rs + add shapes.cpp) take the suffixed form, diverging
-            # (H) from a clean index that gives the survivor the bare qn.
-            abs_path = self.repo_path / path
-            if not abs_path.exists():
+            # (H) Only seed modules whose file survives this run (still eligible).
+            # (H) A file deleted OR newly excluded this cycle is gone from
+            # (H) eligible_paths, so a same-basename ADD (delete shapes.rs + add
+            # (H) shapes.cpp) takes the bare qn a clean index would give it,
+            # (H) instead of the suffixed form.
+            if path not in eligible_paths:
                 continue
-            module_map.setdefault(qn, abs_path)
+            module_map.setdefault(qn, self.repo_path / path)
 
     def _rehydrate_class_inheritance_from_graph(self) -> None:
         # (H) Incremental runs rebuild class_inheritance only from re-parsed files.
@@ -1487,10 +1487,10 @@ class GraphUpdater:
         _touch_empty_json(cache_path)
         _touch_empty_json(dir_mtimes_path)
 
-        if not is_full_build:
-            self._seed_module_qns_from_graph()
-
         eligible_files = self._collect_eligible_files()
+
+        if not is_full_build:
+            self._seed_module_qns_from_graph({key for _fp, key in eligible_files})
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
