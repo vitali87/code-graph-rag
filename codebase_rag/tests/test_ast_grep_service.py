@@ -79,3 +79,15 @@ def test_no_matches_returns_empty(tmp_path: Path) -> None:
     svc = AstGrepService(str(tmp_path))
     assert svc.search("print($A)") == []
     assert svc.replace("print($A)", "log($A)", dry_run=True) == []
+
+
+def test_invalid_pattern_raises_value_error(tmp_path: Path) -> None:
+    # (H) an empty / matcher-less pattern makes ast-grep raise RuntimeError; the
+    # (H) service must convert that to a ValueError the tool layer reports, not
+    # (H) let it crash the turn.
+    (tmp_path / "a.py").write_text("print(x)\n")
+    svc = AstGrepService(str(tmp_path))
+    with pytest.raises(ValueError):
+        svc.search("")
+    with pytest.raises(ValueError):
+        svc.replace("", "log($A)", dry_run=True)

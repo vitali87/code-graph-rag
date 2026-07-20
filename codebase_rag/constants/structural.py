@@ -55,6 +55,7 @@ AST_GREP_NO_MATCHES = "No structural matches for pattern: {pattern}"
 AST_GREP_UNKNOWN_LANGUAGE = (
     "Unknown or unsupported language '{language}'. Supported: {supported}"
 )
+AST_GREP_INVALID_PATTERN = "Invalid ast-grep pattern '{pattern}': {error}"
 AST_GREP_TRUNCATED = (
     "Result cap of {limit} reached; narrow the pattern or raise the limit for more."
 )

@@ -87,6 +87,18 @@ class AstGrepService:
 
         return SgRoot(source, ast_grep_lang).root()
 
+    @staticmethod
+    def _find_all(root: SgNode, pattern: str) -> list[SgNode]:
+        # (H) ast-grep raises RuntimeError for a matcher-less pattern (empty,
+        # (H) "$$$"); surface it as ValueError so the tool layer reports it
+        # (H) instead of crashing the turn.
+        try:
+            return root.find_all(pattern=pattern)
+        except RuntimeError as exc:
+            raise ValueError(
+                cs.AST_GREP_INVALID_PATTERN.format(pattern=pattern, error=exc)
+            ) from exc
+
     def search(
         self,
         pattern: str,
@@ -98,7 +110,7 @@ class AstGrepService:
             source = self._read(abs_path)
             if source is None:
                 continue
-            for match in self._root(source, ast_grep_lang).find_all(pattern=pattern):
+            for match in self._find_all(self._root(source, ast_grep_lang), pattern):
                 rng = match.range()
                 results.append(
                     StructuralSearchMatch(
@@ -143,7 +155,7 @@ class AstGrepService:
             if source is None:
                 continue
             root = self._root(source, ast_grep_lang)
-            matches = root.find_all(pattern=pattern)
+            matches = self._find_all(root, pattern)
             if not matches:
                 continue
             edits = [m.replace(self._interpolate(rewrite, m)) for m in matches]
