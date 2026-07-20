@@ -38,6 +38,7 @@ from ..io_access import (
     registry_match,
     scope_seed_nodes,
     string_literal,
+    unwrap_argument,
 )
 from .constants import (
     KEY_KIND,
@@ -1124,6 +1125,7 @@ class FlowProcessor:
                 string_type=jc.descriptor.string_type,
                 content_type=jc.descriptor.string_content_type,
                 keyword_arg_type=jc.descriptor.keyword_arg_type,
+                wrapper_type=jc.descriptor.argument_wrapper_type,
             )
             for _via, taint in args:
                 if taint is None:
@@ -1351,11 +1353,14 @@ class FlowProcessor:
             return []
         out: list[tuple[str, Taint | None]] = []
         # (H) Comments are named children; exclude them so arg positions stay correct.
+        # (H) C# wraps each arg in an `argument` node, so unwrap to the real
+        # (H) expression before reading its taint (no-op for the bare-arg grammars).
+        wrapper = jc.descriptor.argument_wrapper_type
         for index, child in enumerate(self._named_no_comments(args)):
             out.append(
                 (
                     VIA_ARG_FORMAT.format(index=index),
-                    self._js_expr_taint(child, tainted, jc),
+                    self._js_expr_taint(unwrap_argument(child, wrapper), tainted, jc),
                 )
             )
         return out
@@ -1434,6 +1439,7 @@ class FlowProcessor:
             string_type=jc.descriptor.string_type,
             content_type=jc.descriptor.string_content_type,
             keyword_arg_type=jc.descriptor.keyword_arg_type,
+            wrapper_type=jc.descriptor.argument_wrapper_type,
         )
         return HandleBinding(kind=sink.kind, identity=identity)
 
