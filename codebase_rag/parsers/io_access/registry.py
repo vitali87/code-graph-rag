@@ -748,6 +748,8 @@ IO_LEAN_HANDLE_METHODS: dict[
         # (H) and Python client.request() stance.
         ResourceKind.NETWORK: {
             "openStream": IODirection.READ,
+            # (H) URL.getContent() opens a connection and retrieves the resource.
+            "getContent": IODirection.READ,
             "send": IODirection.READ_WRITE,
             "sendAsync": IODirection.READ_WRITE,
         },

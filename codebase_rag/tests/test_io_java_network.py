@@ -74,8 +74,26 @@ def test_java_http_client_send_touches_network(tmp_path: Path) -> None:
         )
     }
     rels = _run(tmp_path, files)
-    assert _has(rels, "A.call", READS_FROM, "resource::NETWORK::<dynamic>") or _has(
-        rels, "A.call", WRITES_TO, "resource::NETWORK::<dynamic>"
+    # (H) send() is READ_WRITE, so both directions must be emitted.
+    assert _has(rels, "A.call", READS_FROM, "resource::NETWORK::<dynamic>"), rels
+    assert _has(rels, "A.call", WRITES_TO, "resource::NETWORK::<dynamic>"), rels
+
+
+def test_java_url_get_content_reads_network(tmp_path: Path) -> None:
+    files = {
+        "A.java": (
+            "import java.net.URL;\n"
+            "class A {\n"
+            "  Object grab() throws Exception {\n"
+            '    URL u = new URL("http://example.com/x");\n'
+            "    return u.getContent();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(
+        rels, "A.grab", READS_FROM, "resource::NETWORK::http://example.com/x"
     ), rels
 
 
