@@ -48,7 +48,13 @@ def test_every_available_language_is_represented(polyglot_corpus: Path) -> None:
     )
     # (H) each present language must also contribute at least one definition,
     # (H) not just an empty module node.
-    empty = [lang.value for lang in available if not report.defs_by_language.get(lang)]
+    # (H) sorted() so iteration order is deterministic across runs (StrEnum
+    # (H) members hash by string, whose order varies with hash randomization).
+    empty = [
+        lang.value
+        for lang in sorted(available)
+        if not report.defs_by_language.get(lang)
+    ]
     assert not empty, f"languages with no definitions: {sorted(empty)}"
 
 
