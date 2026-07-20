@@ -700,16 +700,19 @@ _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
 # (H) C# `new`-shaped handle constructors (issue #102 follow-up). Keyed by the
 # (H) written type name under BOTH the simple form (`new StreamReader("x")` with a
 # (H) `using`) and each fully-qualified spelling (`new System.IO.StreamReader(..)`).
-# (H) target_arg=0 where the resource identity is the first constructor argument (a
-# (H) file path / DB connection string); None where it is not (HttpClient's URL
-# (H) lives on the request method, SqlCommand's DB comes from its connection).
+# (H) Each row is (name, packages, kind, target_arg, handle_arg): target_arg is the
+# (H) literal-identity argument (a file path / DB connection string); handle_arg is
+# (H) the index of an already-bound handle argument whose identity this handle
+# (H) inherits (`new SqlCommand(sql, conn)` takes conn's DB from arg1). At most one
+# (H) is set; None/None means the identity is <dynamic> (HttpClient's URL is on the
+# (H) request method, not the client).
 _CSHARP_NEW_HANDLE_TYPES: tuple[
-    tuple[str, tuple[str, ...], ResourceKind, int | None], ...
+    tuple[str, tuple[str, ...], ResourceKind, int | None, int | None], ...
 ] = (
-    ("StreamReader", ("System.IO",), ResourceKind.FILE, 0),
-    ("StreamWriter", ("System.IO",), ResourceKind.FILE, 0),
-    ("FileStream", ("System.IO",), ResourceKind.FILE, 0),
-    ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None),
+    ("StreamReader", ("System.IO",), ResourceKind.FILE, 0, None),
+    ("StreamWriter", ("System.IO",), ResourceKind.FILE, 0, None),
+    ("FileStream", ("System.IO",), ResourceKind.FILE, 0, None),
+    ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None, None),
     # (H) ADO.NET connection strings appear under Microsoft.Data.SqlClient (modern)
     # (H) and System.Data.SqlClient (legacy); the connection string is the identity.
     (
@@ -717,14 +720,17 @@ _CSHARP_NEW_HANDLE_TYPES: tuple[
         ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
         ResourceKind.DATABASE,
         0,
+        None,
     ),
-    # (H) `new SqlCommand(sql, conn)` is a DATABASE handle; its resource identity is
-    # (H) the connection's DB (arg1), not the SQL text (arg0), so leave it <dynamic>.
+    # (H) `new SqlCommand(sql, conn)` is a DATABASE handle whose resource is the
+    # (H) connection (arg1), not the SQL text (arg0): inherit conn's identity when it
+    # (H) is a bound handle, else <dynamic>.
     (
         "SqlCommand",
         ("Microsoft.Data.SqlClient", "System.Data.SqlClient"),
         ResourceKind.DATABASE,
         None,
+        1,
     ),
 )
 
@@ -735,8 +741,10 @@ IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstruct
         for written in (name, f"{package}.{name}")
     },
     cs.SupportedLanguage.CSHARP: {
-        written: HandleConstructor(written, kind, target_arg=arg)
-        for name, packages, kind, arg in _CSHARP_NEW_HANDLE_TYPES
+        written: HandleConstructor(
+            written, kind, target_arg=target_arg, handle_arg=handle_arg
+        )
+        for name, packages, kind, target_arg, handle_arg in _CSHARP_NEW_HANDLE_TYPES
         for written in (name, *(f"{package}.{name}" for package in packages))
     },
 }

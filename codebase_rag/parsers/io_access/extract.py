@@ -364,6 +364,26 @@ def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node 
     return None
 
 
+def positional_arg_node(
+    call_node: Node, arg_index: int, wrapper_type: str | None
+) -> Node | None:
+    # (H) The unwrapped expression node at a positional argument index, excluding
+    # (H) comments and C# named-argument wrappers (so the index maps to a real
+    # (H) positional arg). Used to resolve a handle passed as an argument
+    # (H) (`new SqlCommand(sql, conn)` -> conn at index 1).
+    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args is None:
+        return None
+    positional = [
+        c
+        for c in args.named_children
+        if c.type != cs.TS_COMMENT and _wrapper_arg_name(c, wrapper_type) is None
+    ]
+    if arg_index < len(positional):
+        return _unwrap_argument(positional[arg_index], wrapper_type)
+    return None
+
+
 def literal_target(
     call_node: Node,
     arg_index: int | None,

@@ -164,10 +164,32 @@ def test_csharp_sqlcommand_execute_non_query_writes_database(tmp_path: Path) -> 
     ), rels
 
 
-def test_csharp_new_sqlcommand_reads_database(tmp_path: Path) -> None:
+def test_csharp_new_sqlcommand_inherits_connection_identity(tmp_path: Path) -> None:
     # (H) A command constructed directly (`new SqlCommand(sql, conn)`) is a DATABASE
-    # (H) handle; its resource identity comes from the connection (arg1), not the SQL
-    # (H) text, so it is <dynamic> here.
+    # (H) handle whose resource is the connection's, not the SQL text: when the
+    # (H) connection arg (arg1) is a locally-bound handle, the command inherits its
+    # (H) identity.
+    files = {
+        "A.cs": (
+            "using Microsoft.Data.SqlClient;\n"
+            "class A {\n"
+            "  void Query() {\n"
+            '    var conn = new SqlConnection("Server=.;Database=db");\n'
+            '    var cmd = new SqlCommand("SELECT 1", conn);\n'
+            "    cmd.ExecuteReader();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(
+        rels, "A.Query", READS_FROM, "resource::DATABASE::Server=.;Database=db"
+    ), rels
+
+
+def test_csharp_new_sqlcommand_unknown_connection_is_dynamic(tmp_path: Path) -> None:
+    # (H) When the connection arg is not a locally-bound handle (a parameter of
+    # (H) unknown origin), the command's resource identity is honestly <dynamic>.
     files = {
         "A.cs": (
             "using Microsoft.Data.SqlClient;\n"
