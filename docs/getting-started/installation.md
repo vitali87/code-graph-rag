@@ -92,10 +92,10 @@ This installs all dependencies and sets up pre-commit hooks automatically.
 ## Start Memgraph
 
 ```bash
-docker compose up -d
+cgr daemon up
 ```
 
-This starts the Memgraph database on port 7687 and Memgraph Lab on port 3000.
+This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000.
 
 ## Set Up Environment Variables
 

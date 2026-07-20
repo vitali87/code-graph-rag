@@ -113,8 +113,8 @@ You also need Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites,
 ## Quick Start
 
 ```bash
-# Start Memgraph
-docker compose up -d
+# Start the packaged Memgraph + Qdrant stack (no compose file needed)
+cgr daemon up
 
 # Parse a repository into the graph, then query it
 cgr start --repo-path /path/to/repo --update-graph --clean
