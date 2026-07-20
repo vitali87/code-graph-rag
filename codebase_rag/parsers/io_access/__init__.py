@@ -23,6 +23,7 @@ from .extract import (
     registry_match,
     scope_seed_nodes,
     string_literal,
+    unwrap_argument,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
@@ -67,4 +68,5 @@ __all__ = [
     "registry_match",
     "scope_seed_nodes",
     "string_literal",
+    "unwrap_argument",
 ]

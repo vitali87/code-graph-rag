@@ -341,7 +341,7 @@ def _wrapper_arg_name(node: Node, wrapper_type: str | None) -> str | None:
     return None
 
 
-def _unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
+def unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
     # (H) C# wraps each call arg in an `argument` node; the real expression is its
     # (H) last named child (a named arg's `name` identifier is an earlier named
     # (H) child). Unwrap so the string reader sees the literal. No-op elsewhere.
@@ -360,7 +360,7 @@ def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node 
     # (H) right resource identity regardless of position.
     for child in args.named_children:
         if _wrapper_arg_name(child, wrapper_type) == keyword:
-            return _unwrap_argument(child, wrapper_type)
+            return unwrap_argument(child, wrapper_type)
     return None
 
 
@@ -380,7 +380,7 @@ def positional_arg_node(
         if c.type != cs.TS_COMMENT and _wrapper_arg_name(c, wrapper_type) is None
     ]
     if arg_index < len(positional):
-        return _unwrap_argument(positional[arg_index], wrapper_type)
+        return unwrap_argument(positional[arg_index], wrapper_type)
     return None
 
 
@@ -416,7 +416,7 @@ def literal_target(
     ]
     if arg_index is not None and arg_index < len(positional):
         return string_literal(
-            _unwrap_argument(positional[arg_index], wrapper_type),
+            unwrap_argument(positional[arg_index], wrapper_type),
             string_type,
             content_type,
         )
