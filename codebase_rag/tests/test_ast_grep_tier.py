@@ -97,6 +97,14 @@ def test_ruby_imports_edges(tmp_path: Path) -> None:
     assert any(t.endswith("helper") for t in targets), targets
 
 
+def test_class_and_method_on_same_line_both_land(tmp_path: Path) -> None:
+    # (H) one-liner: class and def share a start line; per-label dedup must
+    # (H) keep both instead of the function claiming the line for the class too.
+    mock = _run(tmp_path, {"oneliner.rb": "class Boxed; def unwrap; end; end\n"})
+    assert "unwrap" in _node_names(mock, FUNCTION)
+    assert "Boxed" in _node_names(mock, CLASS)
+
+
 def test_shipped_ruby_config_loads() -> None:
     from codebase_rag.parsers.ast_grep_tier import load_pattern_configs
 

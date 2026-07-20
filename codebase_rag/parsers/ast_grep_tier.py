@@ -48,6 +48,8 @@ def load_pattern_configs() -> dict[str, _LangConfig]:
             raise ValueError(
                 f"{path.name}: 'extensions' and 'ast_grep_id' are required"
             )
+        if isinstance(extensions, str):
+            extensions = [ext.strip() for ext in extensions.split(",") if ext.strip()]
         config = _LangConfig(
             ast_grep_id=str(ast_grep_id),
             functions=tuple(data.get("functions") or ()),
@@ -84,6 +86,11 @@ class AstGrepTier:
             # (H) ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
             logger.warning("ast-grep-py unavailable; ast-grep language tier disabled")
             self._configs = {}
+        except Exception as exc:  # noqa: BLE001
+            # (H) a malformed shipped config must not crash GraphUpdater
+            # (H) construction; disable the tier and surface the reason.
+            logger.warning("ast-grep language tier disabled: %s", exc)
+            self._configs = {}
 
     def handles(self, suffix: str) -> bool:
         return suffix in self._configs
@@ -110,13 +117,15 @@ class AstGrepTier:
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
-        # (H) Functions then classes, deduped by start line so a specific pattern
-        # (H) (def self.$NAME) wins over a general one (def $NAME) on the same line.
-        claimed: set[int] = set()
+        # (H) Functions then classes; dedupe by start line PER label so a specific
+        # (H) pattern (def self.$NAME) wins over a general one (def $NAME) on the
+        # (H) same line, while a class and a function sharing a line (one-liners)
+        # (H) both still land.
         for label, patterns in (
             (cs.NodeLabel.FUNCTION, config.functions),
             (cs.NodeLabel.CLASS, config.classes),
         ):
+            claimed: set[int] = set()
             for pattern in patterns:
                 for node in self._find_all(root, pattern, file_path):
                     name_node = node.get_match(_NAME_METAVAR)

@@ -99,6 +99,7 @@ test = [
     "libclang>=18.1.1",
     "filelock>=3.12",
     "ast-grep-py>=0.44.0",
+    "pyyaml>=6.0",
 ]
 
 treesitter-full = [
