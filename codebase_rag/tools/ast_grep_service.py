@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from .. import constants as cs
+from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension
 from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
 from ..utils.path_utils import should_skip_path
@@ -27,10 +28,15 @@ _AST_GREP_LANG_IDS = frozenset(cs.AST_GREP_LANGUAGES.values())
 
 
 class AstGrepService:
-    __slots__ = ("project_root",)
+    __slots__ = ("project_root", "exclude_paths", "unignore_paths")
 
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
+        # (H) honour the same .gitignore/.cgrignore scope as graph ingestion, so
+        # (H) a rewrite never touches paths the repo excludes from indexing.
+        patterns = load_ignore_patterns(self.project_root)
+        self.exclude_paths = patterns.exclude
+        self.unignore_paths = patterns.unignore
 
     def _resolve_language(self, language: str) -> str:
         try:
@@ -66,7 +72,13 @@ class AstGrepService:
             return None
         if wanted is not None and ast_grep_lang != wanted:
             return None
-        if should_skip_path(abs_path, self.project_root, is_file=True):
+        if should_skip_path(
+            abs_path,
+            self.project_root,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+            is_file=True,
+        ):
             return None
         return abs_path.relative_to(self.project_root).as_posix(), ast_grep_lang
 
@@ -80,7 +92,13 @@ class AstGrepService:
             dirnames[:] = [
                 d
                 for d in dirnames
-                if not should_skip_path(dir_path / d, self.project_root, is_file=False)
+                if not should_skip_path(
+                    dir_path / d,
+                    self.project_root,
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                    is_file=False,
+                )
             ]
             for fname in filenames:
                 abs_path = dir_path / fname

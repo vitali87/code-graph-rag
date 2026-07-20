@@ -74,6 +74,20 @@ def test_replace_interpolates_multi_metavar(tmp_path: Path) -> None:
     assert "b)" in result
 
 
+def test_search_honors_cgrignore_excludes(tmp_path: Path) -> None:
+    # (H) the tool advertises the same ignore scope as graph ingestion, so a
+    # (H) .cgrignore exclude (not a built-in ignore dir) must be respected.
+    (tmp_path / "a.py").write_text("print(1)\n")
+    excluded = tmp_path / "custom_excluded"
+    excluded.mkdir()
+    (excluded / "b.py").write_text("print(2)\n")
+    (tmp_path / ".cgrignore").write_text("custom_excluded/\n")
+    svc = AstGrepService(str(tmp_path))
+    files = {m["file"] for m in svc.search("print($A)")}
+    assert "a.py" in files
+    assert "custom_excluded/b.py" not in files
+
+
 def test_no_matches_returns_empty(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("x = 1\n")
     svc = AstGrepService(str(tmp_path))
