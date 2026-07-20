@@ -62,9 +62,13 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 
 ## Latest News 🔥
 
-- **PHP Language Support**: Full PHP support added, covering classes, interfaces, traits, enums, namespaces, PHP 8 attributes, and call graph analysis. Contributed by [@rs-ipps](https://github.com/rs-ipps).
-- **C Language Support**: Full C support added, covering functions, structs, unions, enums, preprocessor includes, and call graph analysis. Contributed by [@dj0nes](https://github.com/dj0nes).
-- **Visualise any GitHub repo instantly!** Just change `github.com` to `gitcgr.com` in any repo URL, that's it, only 3 letters. Get an interactive graph of the entire codebase structure. Try it now: [gitcgr.com](https://gitcgr.com)
+<!-- SECTION:latest_news -->
+- **Structural Search & Replace**: Find and rewrite code by AST pattern with ast-grep, exposed as agent tools so you can match and transform structure across the whole codebase instead of relying on text or regex.
+- **Data-Flow Tracing**: New `FLOWS_TO` taint edges follow values through assignments, function calls, and I/O sinks, with coverage across C#, Java, C, and Go.
+- **C# and Dart Support**: Full C# (with Roslyn semantic analysis) and Dart/Flutter now join the graph, bringing the total to 14 supported languages.
+<!-- /SECTION:latest_news -->
+
+See [NEWS.md](NEWS.md) for the full history.
 
 ## What It Does
 
@@ -183,10 +187,6 @@ For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooti
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=vitali87/code-graph-rag&type=Date)](https://www.star-history.com/#vitali87/code-graph-rag&Date)
 
 ## Fork History
 
