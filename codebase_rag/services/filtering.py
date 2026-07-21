@@ -38,6 +38,9 @@ class FilteringIngestor:
     def flush_all(self) -> None:
         self._inner.flush_all()
 
+    def rel_enabled(self, rel_type: RelationshipType) -> bool:
+        return self._selection.rel_enabled(rel_type)
+
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:

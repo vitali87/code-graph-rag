@@ -158,6 +158,8 @@ class RelationshipType(StrEnum):
     READS_FROM = "READS_FROM"
     WRITES_TO = "WRITES_TO"
     FLOWS_TO = "FLOWS_TO"
+    EXPOSES = "EXPOSES"
+    RESOLVES_TO = "RESOLVES_TO"
     IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
     HAS_SMELL = "HAS_SMELL"
     HAS_VULNERABILITY = "HAS_VULNERABILITY"
@@ -214,6 +216,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.READS_FROM,
             RelationshipType.WRITES_TO,
             RelationshipType.FLOWS_TO,
+            RelationshipType.EXPOSES,
+            RelationshipType.RESOLVES_TO,
         }
     ),
     CaptureGroup.FINDINGS: frozenset(

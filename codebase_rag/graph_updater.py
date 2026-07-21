@@ -38,6 +38,7 @@ from .parsers.csharp_frontend import (
     find_csharp_project,
     run_csharp_frontend,
 )
+from .parsers.endpoints import link_endpoints
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -1042,9 +1043,25 @@ class GraphUpdater:
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
+        self._link_endpoint_resources()
+
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+    def _link_endpoint_resources(self) -> None:
+        # After flush_all so this run's Resource nodes are queryable; NETWORK
+        # resources of previously indexed projects join here too, which is
+        # what makes client-URL-to-endpoint edges cross-project (issue #425).
+        # The raw ingestor bypasses the capture filter, so gate explicitly.
+        if not self.capture.rel_enabled(cs.RelationshipType.RESOLVES_TO):
+            return
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        created = link_endpoints(self.ingestor)
+        if created:
+            logger.info("Resolved {} client request URLs to endpoints", created)
+            self.ingestor.flush_all()
 
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed

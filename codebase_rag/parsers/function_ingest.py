@@ -26,6 +26,7 @@ from ..types_defs import (
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .cpp import utils as cpp_utils
+from .endpoints import emit_endpoints
 from .dart import dart_definition_end_point, dart_return_type_name
 from .go import utils as go_utils
 from .lua import utils as lua_utils
@@ -731,6 +732,12 @@ class FunctionIngestMixin:
 
             logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
+            emit_endpoints(
+                self.ingestor,
+                cs.NodeLabel.METHOD,
+                method_qn,
+                props.get(cs.KEY_DECORATORS),
+            )
             self.function_registry[method_qn] = NodeType.METHOD
             self.simple_name_lookup[entry.method_name].add(method_qn)
             if entry.return_type:
@@ -1040,6 +1047,12 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        emit_endpoints(
+            self.ingestor,
+            cs.NodeLabel.FUNCTION,
+            resolution.qualified_name,
+            func_props.get(cs.KEY_DECORATORS),
+        )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
         if is_macro:
