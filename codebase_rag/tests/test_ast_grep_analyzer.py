@@ -224,18 +224,28 @@ def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
         "document.write(userInput);\n"
         'const password = "supersecretvalue123";\n'
     )
-    fixtures = {".py": py, ".js": js, ".ts": js, ".tsx": js}
-    rules = load_finding_rules()
-    for ext, src in fixtures.items():
-        f = tmp_path / f"probe{ext.replace('.', '')}{ext}"
-        f.write_text(src, encoding="utf-8")
+    # (H) Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
+    # (H) share the javascript grammar and rule set, so one fixture covers them.
+    by_grammar = {"python": py, "javascript": js, "typescript": js, "tsx": js}
+    for ext, lang in load_finding_rules().items():
+        # (H) A new language with rules but no fixture would silently skip firing
+        # (H) coverage; force a fixture mapping to exist for every loaded grammar.
+        assert lang.ast_grep_id in by_grammar, (
+            f"{ext}: no fixture for {lang.ast_grep_id}"
+        )
+        ids = [r.rule_id for r in lang.rules]
+        # (H) The set comparison below is only sound if ids are unique per ext; a
+        # (H) duplicate id could let one rule fire while its twin stays dead.
+        assert len(ids) == len(set(ids)), f"{ext} duplicate rule ids: {ids}"
+        stem = ext.replace(".", "")
+        f = tmp_path / f"probe{stem}{ext}"
+        f.write_text(by_grammar[lang.ast_grep_id], encoding="utf-8")
         ing = _FakeIngestor()
         FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
-            {f"probe{ext.replace('.', '')}": f}
+            {f"probe{stem}": f}
         )
         fired = {p[cs.KEY_NAME] for _label, p in ing.nodes}
-        expected = {r.rule_id for r in rules[ext].rules}
-        assert expected <= fired, f"{ext} dead rules: {sorted(expected - fired)}"
+        assert set(ids) <= fired, f"{ext} dead rules: {sorted(set(ids) - fired)}"
 
 
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
