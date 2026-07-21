@@ -59,6 +59,24 @@ class TestCleanWithoutUpdateGraph:
         assert result.exit_code == 0, result.output
         clear.assert_called_once()
 
+    def test_clean_alone_surfaces_vector_purge_failure(
+        self,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        # A silently failed purge would report a clean database while stale
+        # vectors keep resolving to unrelated nodes after the rebuild.
+        with patch(
+            "codebase_rag.cli.clear_all_embeddings",
+            side_effect=RuntimeError("purge failed"),
+        ):
+            result = runner.invoke(
+                app,
+                ["start", "--clean", "--repo-path", str(tmp_path)],
+            )
+
+        assert result.exit_code != 0
+
     def test_clean_alone_deletes_hash_cache(
         self,
         mock_memgraph_connect: MagicMock,

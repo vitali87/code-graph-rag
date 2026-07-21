@@ -576,6 +576,17 @@ class TestWipeDatabase:
 
         clear.assert_called_once()
 
+    async def test_wipe_database_reports_vector_purge_failure(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch(
+            "codebase_rag.mcp.tools.clear_all_embeddings",
+            side_effect=RuntimeError("purge failed"),
+        ):
+            result = await mcp_registry.wipe_database(confirm=True)
+
+        assert "purge failed" in result
+
     async def test_wipe_database_not_confirmed(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

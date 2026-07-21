@@ -461,3 +461,37 @@ def test_module_clear_all_embeddings_noop_without_backend() -> None:
 
     with patch("codebase_rag.vector_store._get_vector_store", return_value=None):
         vs.clear_all_embeddings()
+
+
+def test_clear_all_embeddings_qdrant_propagates_failure(
+    reset_global_client: None,
+) -> None:
+    # A swallowed purge failure would let clean report success while stale
+    # vectors keep resolving to unrelated nodes in the rebuilt graph.
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.delete_collection.side_effect = RuntimeError("qdrant down")
+    with (
+        patch(
+            "codebase_rag.vector_store.get_qdrant_client", return_value=mock_client
+        ),
+        pytest.raises(RuntimeError, match="qdrant down"),
+    ):
+        vs.QdrantVectorStore().clear_all_embeddings()
+
+
+def test_clear_all_embeddings_milvus_propagates_failure(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.drop_collection.side_effect = RuntimeError("milvus down")
+    with (
+        patch(
+            "codebase_rag.vector_store.get_milvus_client", return_value=mock_client
+        ),
+        pytest.raises(RuntimeError, match="milvus down"),
+    ):
+        vs.MilvusVectorStore().clear_all_embeddings()
