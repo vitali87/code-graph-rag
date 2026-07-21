@@ -48,7 +48,7 @@ from codebase_rag.types_defs import (
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
-from codebase_rag.vector_store import delete_project_embeddings
+from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 
 
 class MCPToolsRegistry:
@@ -482,6 +482,7 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 await asyncio.to_thread(self.ingestor.clean_database)
+                await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))

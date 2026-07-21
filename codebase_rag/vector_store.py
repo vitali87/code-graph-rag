@@ -81,6 +81,8 @@ class VectorStore(Protocol):
         self, project_name: str, node_ids: Sequence[int]
     ) -> None: ...
 
+    def clear_all_embeddings(self) -> None: ...
+
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]: ...
 
     def search_embeddings(
@@ -331,6 +333,27 @@ class QdrantVectorStore:
                 )
             )
 
+    def clear_all_embeddings(self) -> None:
+        # Vectors are keyed by Memgraph-internal node ids, which a clean
+        # rebuild reassigns; stale points crowd out live hits and can map
+        # onto unrelated nodes, so the whole collection must go.
+        try:
+            client = get_qdrant_client()
+            client.delete_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME
+            )
+            client.create_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+                ),
+            )
+            logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
+        except Exception as e:
+            logger.warning(
+                ls.VECTOR_STORE_CLEAR_FAILED.format(backend=self.backend, error=e)
+            )
+
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
         if not expected_ids:
             return set()
@@ -437,6 +460,17 @@ class MilvusVectorStore:
                 ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
                     backend=self.backend, project=project_name, error=e
                 )
+            )
+
+    def clear_all_embeddings(self) -> None:
+        try:
+            client = get_milvus_client()
+            client.drop_collection(settings.MILVUS_COLLECTION_NAME)
+            _ensure_milvus_collection(client)
+            logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
+        except Exception as e:
+            logger.warning(
+                ls.VECTOR_STORE_CLEAR_FAILED.format(backend=self.backend, error=e)
             )
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
@@ -553,6 +587,13 @@ def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> Non
     if vector_store is None:
         return
     vector_store.delete_project_embeddings(project_name, node_ids)
+
+
+def clear_all_embeddings() -> None:
+    vector_store = _get_vector_store()
+    if vector_store is None:
+        return
+    vector_store.clear_all_embeddings()
 
 
 def verify_stored_ids(expected_ids: set[int]) -> set[int]:
