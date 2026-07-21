@@ -25,9 +25,7 @@ from ..constants import KEY_QUALIFIED_NAME
 if TYPE_CHECKING:
     from . import QueryProtocol
 
-CYPHER_ALL_RESOURCE_QNS = (
-    "MATCH (r:Resource) RETURN r.qualified_name AS qualified_name"
-)
+CYPHER_ALL_RESOURCE_QNS = "MATCH (r:Resource) RETURN r.qualified_name AS qualified_name"
 CYPHER_ANCHORED_RESOURCE_QNS = (
     "MATCH (s)-[]->(r:Resource) WHERE NOT s:Resource "
     "RETURN DISTINCT r.qualified_name AS qualified_name "
