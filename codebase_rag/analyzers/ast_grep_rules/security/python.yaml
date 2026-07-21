@@ -5,9 +5,11 @@ ast_grep_id: python
 extensions: [.py]
 rules:
   - id: sqli_concat
-    message: "Possible SQL injection: query built with string concatenation"
+    message: "Possible SQL injection: query built with string concatenation or % formatting"
     rule:
-      pattern: "$OBJ.execute($A + $B)"
+      any:
+        - pattern: "$OBJ.execute($A + $B)"
+        - pattern: "$OBJ.execute($A % $B)"
   - id: sqli_fstring
     message: "Possible SQL injection: execute() called with an f-string"
     rule:

@@ -248,6 +248,68 @@ def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
         assert set(ids) <= fired, f"{ext} dead rules: {sorted(set(ids) - fired)}"
 
 
+def _fire(tmp_path: Path, name: str, src: str) -> list:
+    from codebase_rag.analyzers import FindingAnalyzer
+
+    f = tmp_path / name
+    f.write_text(src, encoding="utf-8")
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {name.split(".", maxsplit=1)[0]: f}
+    )
+    return [p for _label, p in ing.nodes]
+
+
+def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
+    # (H) `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
+    src = (
+        "a.innerHTML = x;\n"
+        "b.innerHTML += y;\n"
+        "c.outerHTML = z;\n"
+        "d.outerHTML += w;\n"
+        "e.textContent = safe;\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "x.js", src)
+        if p[cs.KEY_NAME] == "innerhtml_xss"
+    )
+    assert lines == [1, 2, 3, 4], lines
+
+
+def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
+    # (H) `execute("... %s" % params)` is the classic printf-style injection, as
+    # (H) dangerous as `+` concatenation; a parametrized query stays clean.
+    src = (
+        'db.execute("SELECT " + u)\n'
+        'db.execute("SELECT %s" % u)\n'
+        'db.execute("SELECT ?", (u,))\n'
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "dao.py", src)
+        if p[cs.KEY_NAME] == "sqli_concat"
+    )
+    assert lines == [1, 2], lines
+
+
+def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
+    # (H) Modern factories are usually `const createX = () => {}` (arrow) or a
+    # (H) function expression, not a `function` declaration; catch all three.
+    src = (
+        "function createA() { return {}; }\n"
+        "const createB = () => ({});\n"
+        "const makeC = function () { return {}; };\n"
+        "const other = () => ({});\n"
+    )
+    names = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "f.js", src)
+        if p[cs.KEY_NAME] == "factory_function"
+    )
+    assert names == [1, 2, 3], names
+
+
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
     # (H) two matches of one rule on a single line must not collapse into one
     # (H) node; the qualified_name has to distinguish them by column.

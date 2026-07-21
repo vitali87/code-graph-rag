@@ -3,9 +3,13 @@ ast_grep_id: javascript
 extensions: [.js, .jsx, .mjs, .cjs]
 rules:
   - id: innerhtml_xss
-    message: "Possible XSS: assignment to innerHTML"
+    message: "Possible XSS: assignment to innerHTML/outerHTML"
     rule:
-      pattern: "$EL.innerHTML = $X"
+      any:
+        - pattern: "$EL.innerHTML = $X"
+        - pattern: "$EL.innerHTML += $X"
+        - pattern: "$EL.outerHTML = $X"
+        - pattern: "$EL.outerHTML += $X"
   - id: eval_use
     message: "eval() executes arbitrary code"
     rule:
