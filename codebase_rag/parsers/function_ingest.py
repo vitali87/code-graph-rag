@@ -26,8 +26,8 @@ from ..types_defs import (
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .cpp import utils as cpp_utils
-from .endpoints import emit_endpoints
 from .dart import dart_definition_end_point, dart_return_type_name
+from .endpoints import emit_endpoints
 from .go import utils as go_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils

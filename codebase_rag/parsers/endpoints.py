@@ -9,7 +9,7 @@ those templates so cross-project request edges can resolve to handlers.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
 from .. import constants as cs
@@ -146,12 +146,15 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
         elif kind == ResourceKind.ENDPOINT.value:
             endpoints.append((qn, name))
 
+    # The live ingestor both queries and writes; QueryProtocol alone types
+    # the read side, so the single write goes through an ingestor view.
+    writer = cast("IngestorProtocol", ingestor)
     created = 0
     for network_qn, url in networks:
         for endpoint_qn, identity in endpoints:
             _, _, template = identity.partition(" ")
             if template and url_matches_template(url, template):
-                ingestor.ensure_relationship_batch(
+                writer.ensure_relationship_batch(
                     (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                     cs.RelationshipType.RESOLVES_TO,
                     (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),

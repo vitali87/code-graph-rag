@@ -55,9 +55,7 @@ class TestParseRouteDecorator:
         assert parse_route_decorator(decorator) == []
 
     def test_websocket_route(self) -> None:
-        assert parse_route_decorator('@app.websocket("/ws")') == [
-            ("WEBSOCKET", "/ws")
-        ]
+        assert parse_route_decorator('@app.websocket("/ws")') == [("WEBSOCKET", "/ws")]
 
 
 class TestUrlTemplateMatch:
@@ -76,9 +74,7 @@ class TestUrlTemplateMatch:
             ("http://svc/", "/", True),
         ],
     )
-    def test_url_matches_template(
-        self, url: str, template: str, matches: bool
-    ) -> None:
+    def test_url_matches_template(self, url: str, template: str, matches: bool) -> None:
         from codebase_rag.parsers.endpoints import url_matches_template
 
         assert url_matches_template(url, template) is matches
@@ -145,9 +141,21 @@ class TestLinkEndpoints:
 
         ingestor = MagicMock()
         ingestor.fetch_all.return_value = [
-            {"qualified_name": network_qn, "name": "http://user-service:8000/users/42", "kind": "NETWORK"},
-            {"qualified_name": endpoint_qn, "name": "GET /users/{id}", "kind": "ENDPOINT"},
-            {"qualified_name": other_endpoint_qn, "name": "POST /orders", "kind": "ENDPOINT"},
+            {
+                "qualified_name": network_qn,
+                "name": "http://user-service:8000/users/42",
+                "kind": "NETWORK",
+            },
+            {
+                "qualified_name": endpoint_qn,
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+            },
+            {
+                "qualified_name": other_endpoint_qn,
+                "name": "POST /orders",
+                "kind": "ENDPOINT",
+            },
         ]
 
         created = link_endpoints(ingestor)
@@ -166,8 +174,16 @@ class TestLinkEndpoints:
 
         ingestor = MagicMock()
         ingestor.fetch_all.return_value = [
-            {"qualified_name": "resource::NETWORK::<dynamic>", "name": "<dynamic>", "kind": "NETWORK"},
-            {"qualified_name": "resource::ENDPOINT::GET /users/{id}", "name": "GET /users/{id}", "kind": "ENDPOINT"},
+            {
+                "qualified_name": "resource::NETWORK::<dynamic>",
+                "name": "<dynamic>",
+                "kind": "NETWORK",
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+            },
         ]
 
         assert link_endpoints(ingestor) == 0

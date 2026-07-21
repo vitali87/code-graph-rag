@@ -23,21 +23,21 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-_CLIENT_SOURCE = '''import requests
+_CLIENT_SOURCE = """import requests
 
 
 def create_order(user_id):
     user = requests.get("http://user-service:8000/users/42")
     return {"user": user}
-'''
+"""
 
-_SERVER_SOURCE = '''app = object()
+_SERVER_SOURCE = """app = object()
 
 
 @app.get("/users/{id}")
 def get_user(id):
     return {"id": id}
-'''
+"""
 
 
 def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
