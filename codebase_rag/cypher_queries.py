@@ -117,13 +117,14 @@ CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE id(n) = $node_id
 RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS path
+       n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
 CYPHER_FIND_BY_QUALIFIED_NAME = """
 MATCH (n) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path, n.docstring AS docstring
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+       n.absolute_path AS absolute_path, n.docstring AS docstring
 LIMIT 1
 """
 

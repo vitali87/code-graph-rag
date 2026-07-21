@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -109,6 +110,14 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
         if not is_valid or file_path_obj is None:
             logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
             return None
+
+        # The recorded absolute_path is authoritative: a same-named file in
+        # the process CWD must not shadow the indexed node. The relative
+        # path covers repos moved since indexing and old graphs without the
+        # property (issue #425).
+        absolute_path = result.get("absolute_path")
+        if absolute_path and Path(absolute_path).is_file():
+            file_path_obj = Path(absolute_path)
 
         return extract_source_lines(file_path_obj, start_line, end_line)
 

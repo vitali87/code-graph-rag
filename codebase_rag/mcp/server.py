@@ -21,6 +21,7 @@ from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
 
 if TYPE_CHECKING:
@@ -86,7 +87,12 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         password=settings.MEMGRAPH_PASSWORD,
     )
 
-    cypher_generator = CypherGenerator()
+    # Scope Cypher generation to this server's project (named exactly as
+    # indexing names it) so queries don't bleed into other projects sharing
+    # the database (issue #425).
+    cypher_generator = CypherGenerator(
+        active_projects=[derive_project_name(project_root)]
+    )
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),

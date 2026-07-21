@@ -8,6 +8,9 @@ from loguru import logger
 from pydantic_ai import Tool
 
 from codebase_rag.services.llm import create_rag_orchestrator
+from codebase_rag.tests.integration.orchestrator_gate import (
+    orchestrator_reliably_tool_calls,
+)
 
 pytestmark = [pytest.mark.asyncio(loop_scope="module"), pytest.mark.integration]
 
@@ -132,6 +135,11 @@ def agent(tracking_tools: list[Tool]) -> Agent:
         pytest.skip(
             "Live orchestrator API key not resolved "
             "(unset or unresolved op:// reference); skipping live API integration."
+        )
+    if not orchestrator_reliably_tool_calls():
+        pytest.skip(
+            "Local Ollama orchestrators emit tool calls as text unreliably; "
+            "skipping live tool-calling assertions."
         )
     try:
         rag_agent, _ = create_rag_orchestrator(tracking_tools)
