@@ -50,11 +50,12 @@ rules:
     # var/const declarations. Ceiling: without entropy scoring, plain word/URL
     # literals still surface as review prompts; that residual is the known limit
     # of regex-only secret detection, not a defect.
-    # The string literal must be the ASSIGNED VALUE itself (a direct child of
-    # the right-hand expression_list), not merely present somewhere in the RHS.
-    # Dropping the old `stopBy: end` kills the false-positive class where the
-    # value is a function call carrying a long string argument, e.g.
-    # `token := getEnv("SOME_LONG_DEFAULT")`.
+    # The string literal must be the ASSIGNED VALUE itself, reached from the
+    # right-hand expression_list without crossing a call boundary
+    # (`stopBy: {kind: call_expression}`). This traverses through
+    # parenthesized_expression wrappers so `token := ("literal")` is caught,
+    # while killing the false-positive class where the value is a function call
+    # carrying a long string argument, e.g. `token := getEnv("SOME_LONG_DEFAULT")`.
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
       any:
@@ -65,6 +66,7 @@ rules:
                 field: right
                 kind: expression_list
                 has:
+                  stopBy: { kind: call_expression }
                   all:
                     - any:
                         - kind: interpreted_string_literal
@@ -81,6 +83,7 @@ rules:
                 field: right
                 kind: expression_list
                 has:
+                  stopBy: { kind: call_expression }
                   all:
                     - any:
                         - kind: interpreted_string_literal
@@ -96,6 +99,7 @@ rules:
             - has:
                 kind: expression_list
                 has:
+                  stopBy: { kind: call_expression }
                   all:
                     - any:
                         - kind: interpreted_string_literal
@@ -111,6 +115,7 @@ rules:
             - has:
                 kind: expression_list
                 has:
+                  stopBy: { kind: call_expression }
                   all:
                     - any:
                         - kind: interpreted_string_literal

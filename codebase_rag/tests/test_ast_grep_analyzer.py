@@ -560,11 +560,15 @@ def test_go_sqli_concat_requires_concat_inside_the_query_call(
     # (H) call, not merely present somewhere in the same expression. Line 4's
     # (H) `url.QueryEscape` is a net/url false friend (matches `^Query`) and the
     # (H) `+` belongs to a Header().Set call, not a database sink.
+    # (H) Line 5 wraps the concatenation in parentheses; because the `+` search
+    # (H) descends the anchored call's argument_list, the paren form stays a true
+    # (H) positive (recall preserved).
     src = (
         "package main\n"
         "func f(db D, c C, a, b, id string) {\n"
         '    db.Query("select * from t where x=" + id)\n'
         '    c.Header().Set("d", a + url.QueryEscape(b))\n'
+        '    db.Query(("select * from t where y=" + id))\n'
         "}\n"
     )
     lines = sorted(
@@ -572,7 +576,7 @@ def test_go_sqli_concat_requires_concat_inside_the_query_call(
         for p in _fire(tmp_path, "dao.go", src)
         if p[cs.KEY_NAME] == "sqli_concat"
     )
-    assert lines == [3], lines
+    assert lines == [3, 5], lines
 
 
 def test_go_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
@@ -580,13 +584,18 @@ def test_go_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
     # (H) call (e.g. `token := getEnv("SOME_LONG_DEFAULT")`) is NOT a hardcoded
     # (H) secret; the string literal must be the assigned value itself, not
     # (H) buried inside a call argument. Line 3 is a real literal secret.
+    # (H) Line 5 wraps the literal in parentheses; the value is still a constant
+    # (H) reached without crossing a call, so it stays a true positive. Line 4's
+    # (H) call-buried string must not fire.
     src = (
         "package main\n"
         "func f() {\n"
         '    token := "literalsecretvalue"\n'
         '    apikey := getEnv("SOME_LONG_DEFAULT")\n'
+        '    secret := ("anotherliteralvalue")\n'
         "    _ = token\n"
         "    _ = apikey\n"
+        "    _ = secret\n"
         "}\n"
     )
     lines = sorted(
@@ -594,7 +603,7 @@ def test_go_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
         for p in _fire(tmp_path, "cfg.go", src)
         if p[cs.KEY_NAME] == "hardcoded_secret"
     )
-    assert lines == [3], lines
+    assert lines == [3, 5], lines
 
 
 def test_multilang_security_rules_avoid_common_false_positives(
