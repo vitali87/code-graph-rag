@@ -511,7 +511,12 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "QDRANT_DB_PATH": str(temp_qdrant_path)},
+        env={
+            # An inherited QDRANT_URL would open a remote client and skip
+            # the local-path shutdown this test exists to exercise.
+            **{k: v for k, v in os.environ.items() if k != "QDRANT_URL"},
+            "QDRANT_DB_PATH": str(temp_qdrant_path),
+        },
         timeout=120,
     )
     assert result.returncode == 0
