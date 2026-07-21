@@ -1,0 +1,64 @@
+# ast-grep security rules for Rust (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: rust
+extensions: [.rs]
+rules:
+  - id: command_new
+    message: "Spawning an external process (Command::new) can enable command injection"
+    rule:
+      kind: call_expression
+      has:
+        kind: scoped_identifier
+        regex: 'Command\s*::\s*new'
+        stopBy: end
+  - id: unsafe_block
+    message: "unsafe block bypasses Rust memory-safety guarantees"
+    rule:
+      kind: unsafe_block
+  - id: hardcoded_secret
+    # Security rule: favour recall. Target name matches a credential keyword and
+    # the value is a non-trivial string literal (>=10 chars incl. quotes) that is
+    # not a format template (a {..} placeholder or a printf-style specifier).
+    # Covers both `let` bindings and reassignments. Identifier/word/URL-name
+    # literals still surface as review prompts; that residual is the known limit
+    # of regex-only secret detection, not a defect.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      any:
+        - kind: let_declaration
+          all:
+            - has: { field: pattern, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: value
+                all:
+                  - kind: string_literal
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: assignment_expression
+          all:
+            - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: right
+                all:
+                  - kind: string_literal
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+  - id: sql_format
+    message: "Possible SQL injection: query built with format! passed to execute"
+    rule:
+      kind: call_expression
+      all:
+        - has:
+            kind: field_expression
+            has: { field: field, regex: '^execute$' }
+        - has:
+            kind: macro_invocation
+            has: { field: macro, regex: '^format$' }
+            stopBy: end

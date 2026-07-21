@@ -1,0 +1,25 @@
+# ast-grep design-pattern rules for Scala (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: scala
+extensions: [.scala, .sc]
+rules:
+  - id: singleton_object
+    message: "Singleton: object declares a single shared instance"
+    rule:
+      kind: object_definition
+  - id: case_class
+    message: "Case class: immutable value type with generated equality"
+    rule:
+      kind: class_definition
+      regex: '^case\s+class'
+  - id: companion_factory
+    message: "Factory: apply method builds instances of the type"
+    rule:
+      kind: function_definition
+      has: { field: name, regex: '^apply$' }
+  - id: factory_method
+    message: "Factory method: name starts with make/create/build"
+    rule:
+      kind: function_definition
+      has: { field: name, regex: '^(make|create|build)' }

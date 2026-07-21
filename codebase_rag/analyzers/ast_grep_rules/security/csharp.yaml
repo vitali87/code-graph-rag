@@ -1,0 +1,68 @@
+# ast-grep security rules for C# (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: csharp
+extensions: [.cs]
+rules:
+  - id: process_start
+    message: "Process.Start can execute external commands; validate inputs"
+    rule:
+      pattern: "Process.Start($$$)"
+  - id: sql_injection
+    message: "Possible SQL injection: SqlCommand text built with concatenation or interpolation"
+    rule:
+      kind: object_creation_expression
+      all:
+        - has: { kind: identifier, regex: 'SqlCommand', stopBy: end }
+        - has:
+            stopBy: end
+            any:
+              - kind: binary_expression
+              - kind: interpolated_string_expression
+  - id: hardcoded_secret
+    # Security rule: favour recall. A credential-named field, property, or
+    # assignment target bound to a non-trivial (>=8 char) plain string literal.
+    # Name regex intentionally broadened beyond the literal api_key spelling to
+    # the idiomatic C# ApiKey/apiKey forms; still contains password|secret|
+    # api_key|token. Format templates ({..} placeholders, printf %s/%d) are the
+    # only value exclusions so URLs-with-credentials and SCREAMING_SNAKE shapes
+    # still surface. Identifier/word literals remain the known regex-only limit.
+    message: "Hardcoded secret assigned to a credential-named member"
+    rule:
+      any:
+        # field: private string password = "....";
+        - kind: variable_declarator
+          all:
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has:
+                kind: string_literal
+                all:
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        # property: public string ApiKey { get; set; } = "....";
+        - kind: property_declaration
+          all:
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has:
+                kind: string_literal
+                all:
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        # assignment: token = "....";
+        - kind: assignment_expression
+          all:
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has:
+                kind: string_literal
+                all:
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'

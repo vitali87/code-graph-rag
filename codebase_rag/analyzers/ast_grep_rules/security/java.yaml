@@ -1,0 +1,49 @@
+# ast-grep security rules for Java (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: java
+extensions: [.java]
+rules:
+  - id: runtime_exec
+    message: "Runtime.exec() can enable command injection"
+    rule:
+      kind: method_invocation
+      has: { field: name, regex: '^exec$' }
+  - id: process_builder
+    message: "ProcessBuilder spawns an external process; validate its input"
+    rule:
+      pattern: "new ProcessBuilder($$$)"
+  - id: sqli_concat
+    message: "Possible SQL injection: query built with string concatenation"
+    rule:
+      kind: method_invocation
+      all:
+        - has: { field: name, regex: '^(executeQuery|executeUpdate|execute)$' }
+        - has:
+            kind: binary_expression
+            has: { kind: string_literal, stopBy: end }
+            stopBy: end
+  - id: hardcoded_secret
+    # Security rule: favour recall. Any variable/field whose name matches a
+    # credential word and is bound to a non-trivial string literal (>=8 inner
+    # chars, i.e. >=10 including the surrounding quotes) surfaces as a review
+    # prompt. Format/message templates (a "{..}" placeholder or a printf
+    # %s/%d specifier) are excluded so only literal-looking secrets remain.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: variable_declarator
+      all:
+        - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+        - has:
+            field: value
+            all:
+              - kind: string_literal
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '\{[^{}]*\}'
+                    - regex: '%[sdrifeEgGxXoc(]'
+  - id: md5_digest
+    message: "Weak hash algorithm (MD5) requested"
+    rule:
+      pattern: 'MessageDigest.getInstance("MD5")'

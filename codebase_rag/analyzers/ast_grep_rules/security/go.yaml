@@ -1,0 +1,94 @@
+# ast-grep security rules for Go (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic and favour recall; treat findings as
+# review prompts.
+ast_grep_id: go
+extensions: [.go]
+rules:
+  - id: exec_command
+    message: "External command execution via os/exec.Command"
+    rule:
+      kind: call_expression
+      has:
+        field: function
+        kind: selector_expression
+        all:
+          - has: { field: operand, regex: '^exec$' }
+          - has: { field: field, regex: '^Command' }
+  - id: sqli_concat
+    message: "Possible SQL injection: Query/Exec argument built with string concatenation"
+    rule:
+      kind: call_expression
+      all:
+        - has:
+            kind: selector_expression
+            has: { field: field, regex: '^(Query|Exec)' }
+            stopBy: end
+        - has:
+            kind: binary_expression
+            has: { field: operator, regex: '\+' }
+            stopBy: end
+  - id: hardcoded_secret
+    # Security rule: favour recall. Value must be a non-trivial literal (>=8
+    # content chars) that is not a format/message template (a Sprintf {..}
+    # placeholder or a printf %s/%d specifier). Braces and % conversions are the
+    # only exclusions so real secrets that legitimately contain %, spaces, or
+    # URLs with embedded credentials are still caught. Covers :=, =, and
+    # var/const declarations. Ceiling: without entropy scoring, plain word/URL
+    # literals still surface as review prompts; that residual is the known limit
+    # of regex-only secret detection, not a defect.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      any:
+        - kind: short_var_declaration
+          all:
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has:
+                field: right
+                has:
+                  kind: interpreted_string_literal
+                  all:
+                    - regex: '^.{10,}$'
+                    - not:
+                        any:
+                          - regex: '\{[^{}]*\}'
+                          - regex: '%[sdrifeEgGxXoqvtbc]'
+                  stopBy: end
+        - kind: assignment_statement
+          all:
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has:
+                field: right
+                has:
+                  kind: interpreted_string_literal
+                  all:
+                    - regex: '^.{10,}$'
+                    - not:
+                        any:
+                          - regex: '\{[^{}]*\}'
+                          - regex: '%[sdrifeEgGxXoqvtbc]'
+                  stopBy: end
+        - kind: var_spec
+          all:
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has:
+                kind: interpreted_string_literal
+                all:
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoqvtbc]'
+                stopBy: end
+        - kind: const_spec
+          all:
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has:
+                kind: interpreted_string_literal
+                all:
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoqvtbc]'
+                stopBy: end

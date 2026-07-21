@@ -1,0 +1,41 @@
+# ast-grep security rules for Dart (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: dart
+extensions: [.dart]
+rules:
+  - id: process_exec
+    # Dart's ast-grep pattern parser does not resolve receiver.method() call
+    # patterns, so match the call_expression by its source text instead.
+    message: "Process.run/start may enable command injection"
+    rule:
+      kind: call_expression
+      regex: '^Process\.(run|start|runSync|startSync)\s*\('
+  - id: sqli_concat
+    # Possible SQL injection: a query string literal joined with another
+    # expression through the + operator.
+    message: "Possible SQL injection: query built with string concatenation"
+    rule:
+      kind: additive_expression
+      has:
+        kind: string_literal
+        regex: '(?i)(select|insert|update|delete)\s'
+        stopBy: end
+  - id: hardcoded_secret
+    # Security rule: favour recall. A field or local variable whose name matches
+    # a credential shape bound to a non-trivial (>=8 char incl. quotes) string
+    # literal. Both the class-field form (initialized_identifier) and the local
+    # form (initialized_variable_definition) are covered. Without entropy
+    # scoring, config-name-shaped literals still surface as review prompts; that
+    # residual is the known limit of regex-only secret detection, not a defect.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      any:
+        - kind: initialized_identifier
+          all:
+            - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { kind: string_literal, regex: '^.{10,}$' }
+        - kind: initialized_variable_definition
+          all:
+            - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { kind: string_literal, regex: '^.{10,}$' }

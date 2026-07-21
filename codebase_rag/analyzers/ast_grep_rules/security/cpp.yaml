@@ -1,0 +1,53 @@
+# ast-grep security rules for C++ (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: cpp
+extensions: [.cpp, .cc, .cxx, .hpp, .hh]
+rules:
+  - id: system_call
+    message: "Possible command injection: system() executes a shell command"
+    rule:
+      kind: call_expression
+      has: { field: function, regex: '^system$' }
+  - id: unsafe_string_function
+    message: "Unsafe C string function; can overflow the destination buffer"
+    rule:
+      kind: call_expression
+      has:
+        field: function
+        regex: '^(strcpy|strcat|sprintf|gets|scanf|strncpy)$'
+  - id: hardcoded_secret
+    # Security rule: favour recall. Value must be a non-trivial string literal
+    # (>=10 chars incl. quotes) that is not a format/message template (a
+    # printf %s/%d specifier or a {..} placeholder). Braces and % conversions
+    # are the only exclusions so real secrets that contain %, spaces, URLs with
+    # embedded credentials, or SCREAMING_SNAKE shapes are still caught. Without
+    # entropy scoring, identifier/word literals still surface as review prompts;
+    # that residual is the known limit of regex-only secret detection.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      any:
+        - kind: init_declarator
+          all:
+            - has: { field: declarator, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: value
+                all:
+                  - kind: string_literal
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: assignment_expression
+          all:
+            - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: right
+                all:
+                  - kind: string_literal
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'

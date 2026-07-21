@@ -1,0 +1,23 @@
+# ast-grep code-smell rules for C++ (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: cpp
+extensions: [.cpp, .cc, .cxx, .hpp, .hh]
+rules:
+  - id: using_namespace_std
+    message: "using namespace std pollutes the global namespace"
+    rule:
+      kind: using_declaration
+      regex: 'using\s+namespace\s+std'
+  - id: cout_debug_output
+    message: "Debug output via std::cout left in source"
+    rule:
+      kind: qualified_identifier
+      regex: '^std::cout$'
+  - id: raw_new
+    message: "Raw new expression; prefer smart pointers"
+    rule:
+      kind: new_expression
+  - id: c_array_buffer
+    message: "Fixed-size C array; prefer std::array or std::vector"
+    rule:
+      kind: array_declarator

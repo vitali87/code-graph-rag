@@ -1,0 +1,30 @@
+# ast-grep code-smell rules for Go (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: go
+extensions: [.go]
+rules:
+  - id: debug_print
+    message: "Leftover debug output: fmt.Print/Printf/Println call"
+    rule:
+      kind: call_expression
+      has:
+        field: function
+        kind: selector_expression
+        all:
+          - has: { field: operand, regex: '^fmt$' }
+          - has: { field: field, regex: '^Print' }
+  - id: panic_call
+    message: "panic() aborts the program; prefer returning an error"
+    rule:
+      kind: call_expression
+      has: { field: function, kind: identifier, regex: '^panic$' }
+  - id: ignored_error_shortvar
+    message: "Return value discarded with blank identifier in := declaration"
+    rule:
+      kind: short_var_declaration
+      has: { field: left, regex: '\b_\b' }
+  - id: ignored_error_assign
+    message: "Return value discarded with blank identifier in = assignment"
+    rule:
+      kind: assignment_statement
+      has: { field: left, regex: '\b_\b' }
