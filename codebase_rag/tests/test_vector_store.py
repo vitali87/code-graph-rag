@@ -472,11 +472,10 @@ def test_clear_all_embeddings_qdrant_propagates_failure(
 
     mock_client = MagicMock()
     mock_client.delete_collection.side_effect = RuntimeError("qdrant down")
-    with (
-        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
-        pytest.raises(RuntimeError, match="qdrant down"),
-    ):
-        vs.QdrantVectorStore().clear_all_embeddings()
+    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
+        store = vs.QdrantVectorStore()
+        with pytest.raises(RuntimeError, match="qdrant down"):
+            store.clear_all_embeddings()
 
 
 def test_clear_all_embeddings_milvus_propagates_failure(
@@ -486,8 +485,7 @@ def test_clear_all_embeddings_milvus_propagates_failure(
 
     mock_client = MagicMock()
     mock_client.drop_collection.side_effect = RuntimeError("milvus down")
-    with (
-        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
-        pytest.raises(RuntimeError, match="milvus down"),
-    ):
-        vs.MilvusVectorStore().clear_all_embeddings()
+    with patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client):
+        store = vs.MilvusVectorStore()
+        with pytest.raises(RuntimeError, match="milvus down"):
+            store.clear_all_embeddings()
