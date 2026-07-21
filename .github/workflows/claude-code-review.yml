@@ -64,7 +64,7 @@ jobs:
 
             **Style:**
             - Ruff compliant (linting and formatting)
-            - No inline comments unless prefixed with (H)
+            - Comments explain why/how, not what
             - Conventional commit message format
 
             Be constructive and reference specific lines. For first-time contributors, be extra welcoming.

@@ -77,9 +77,9 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    # (H) Slow runners (ubuntu/windows py3.13) can exceed 20 min on the full -n auto
-    # (H) suite and hit the cap as a spurious CANCELLED; 30 min absorbs the variance
-    # (H) while still bounding a genuine hang.
+    # Slow runners (ubuntu/windows py3.13) can exceed 20 min on the full -n auto
+    # suite and hit the cap as a spurious CANCELLED; 30 min absorbs the variance
+    # while still bounding a genuine hang.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -109,10 +109,10 @@ jobs:
         run: |
           uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
-      # (H) --no-sync is required: a bare `uv run` re-syncs to .python-version
-      # (H) (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
-      # (H) where interpreter discovery mismatches the venv) it silently rebuilds
-      # (H) the venv without the test extra and pytest loses the xdist -n flag.
+      # --no-sync is required: a bare `uv run` re-syncs to .python-version
+      # (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
+      # where interpreter discovery mismatches the venv) it silently rebuilds
+      # the venv without the test extra and pytest loses the xdist -n flag.
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
