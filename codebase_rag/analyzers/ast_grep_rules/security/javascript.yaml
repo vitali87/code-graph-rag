@@ -27,6 +27,5 @@ rules:
               - regex: '^.{10,}$'
               - not:
                   any:
-                    - regex: '[\s{}%]'
-                    - regex: '://'
-                    - regex: '^[''"][A-Z0-9]+(_[A-Z0-9]+)+[''"]$'
+                    - regex: '\{[^{}]*\}'
+                    - regex: '%[sdrifeEgGxXoc(]'
