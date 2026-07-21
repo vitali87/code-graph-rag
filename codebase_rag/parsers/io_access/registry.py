@@ -140,8 +140,9 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
 _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("console.log", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("console.info", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("console.warn", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("console.error", ResourceKind.STDOUT, IODirection.WRITE),
+    # Node writes warn/error to stderr (console.warn is an alias of console.error).
+    IOSink("console.warn", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("console.error", ResourceKind.STDERR, IODirection.WRITE),
     IOSink("fetch", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("axios.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("axios.head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
@@ -202,11 +203,11 @@ _JAVA_SYSTEM_SINKS: tuple[IOSink, ...] = (
     IOSink("System.out.printf", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.out.format", ResourceKind.STDOUT, IODirection.WRITE),
     IOSink("System.out.write", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("System.err.println", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("System.err.print", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("System.err.printf", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("System.err.format", ResourceKind.STDOUT, IODirection.WRITE),
-    IOSink("System.err.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("System.err.println", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("System.err.print", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("System.err.printf", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("System.err.format", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("System.err.write", ResourceKind.STDERR, IODirection.WRITE),
 )
 
 # java.nio.file.Files static sinks. Registered under BOTH the simple `Files.X`
@@ -471,9 +472,13 @@ IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {
 
 # Macro-call I/O sinks keyed by macro name (issue #714). Rust's stdout/stderr write
 # path is the `println!`/`print!`/`eprintln!`/`eprint!` macros, not calls; the target
-# is a format template, so the resource identity is always <dynamic> (STDOUT).
+# is a format template, so the resource identity is always <dynamic>.
 _RUST_MACRO_SINKS: dict[str, IOSink] = {
-    name: IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
+    name: IOSink(
+        name,
+        ResourceKind.STDERR if name.startswith("e") else ResourceKind.STDOUT,
+        IODirection.WRITE,
+    )
     for name in ("println", "print", "eprintln", "eprint")
 }
 
@@ -484,7 +489,11 @@ IO_MACRO_SINKS: dict[cs.SupportedLanguage, dict[str, IOSink]] = {
 # Stream-insertion I/O sinks keyed by the left-spine base of a `<<` chain
 # (`std::cout << x` writes STDOUT). Both the bare and std:: forms are keyed.
 _CPP_STREAM_SINKS: dict[str, IOSink] = {
-    f"{prefix}{name}": IOSink(name, ResourceKind.STDOUT, IODirection.WRITE)
+    f"{prefix}{name}": IOSink(
+        name,
+        ResourceKind.STDOUT if name in ("cout", "wcout") else ResourceKind.STDERR,
+        IODirection.WRITE,
+    )
     for name in ("cout", "cerr", "clog", "wcout", "wcerr", "wclog")
     for prefix in _CPP_SINK_PREFIXES
 }

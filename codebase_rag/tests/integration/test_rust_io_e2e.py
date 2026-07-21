@@ -58,14 +58,15 @@ fn leak(name: String) {
 def test_rust_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # std::env::var reads ENV::SECRET; println!/print!/eprintln!/eprint! macros
-    # write STDOUT; std::fs::write / create_dir / read_to_string are direct FILE
-    # write/read. First Rust increment of issue #714: direct calls plus print
-    # macros, no handles.
+    # std::env::var reads ENV::SECRET; println!/print! macros write STDOUT and
+    # eprintln!/eprint! write STDERR; std::fs::write / create_dir /
+    # read_to_string are direct FILE write/read. First Rust increment of issue
+    # #714: direct calls plus print macros, no handles.
     _build(memgraph_ingestor, tmp_path, _RUST_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
+    assert (_WRITES, "resource::STDERR::<dynamic>") in edges
     assert (_WRITES, "resource::FILE::out.txt") in edges
     assert (_WRITES, "resource::FILE::d") in edges
     assert (_READS, "resource::FILE::in.txt") in edges

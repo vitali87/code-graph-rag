@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 TARGET_FILES = (
     "README.md",
     "docs/architecture/language-support.md",
+    "docs/architecture/graph-schema.md",
     "docs/guide/mcp-server.md",
     "docs/guide/interactive-querying.md",
     "docs/getting-started/installation.md",

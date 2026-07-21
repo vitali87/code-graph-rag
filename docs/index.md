@@ -36,7 +36,7 @@ Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that a
 
 ```bash
 pip install code-graph-rag
-docker compose up -d
+cgr daemon up
 cgr start --repo-path ./my-project --update-graph --clean
 ```
 

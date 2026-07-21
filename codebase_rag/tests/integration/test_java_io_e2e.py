@@ -56,14 +56,16 @@ class App {
 def test_java_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # System.getenv reads ENV::SECRET (literal arg); System.out/err.print* write
-    # STDOUT (arg is an identifier -> <dynamic>); Files.writeString writes a FILE
-    # (its arg is a Path, so the path identity is <dynamic>). First Java increment
-    # of issue #714 -- direct, non-handle sinks only.
+    # System.getenv reads ENV::SECRET (literal arg); System.out.print* writes
+    # STDOUT and System.err.print* writes STDERR (arg is an identifier ->
+    # <dynamic>); Files.writeString writes a FILE (its arg is a Path, so the
+    # path identity is <dynamic>). First Java increment of issue #714 --
+    # direct, non-handle sinks only.
     _build(memgraph_ingestor, tmp_path, _JAVA_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
+    assert (_WRITES, "resource::STDERR::<dynamic>") in edges
     assert (_WRITES, "resource::FILE::<dynamic>") in edges
 
 

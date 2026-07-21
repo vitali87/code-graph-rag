@@ -14,7 +14,7 @@ A Tree-sitter based parsing system that analyses codebases and ingests data into
 
 - Uses Tree-sitter for robust, language-agnostic AST parsing
 - Extracts functions, classes, methods, modules, and their relationships
-- Supports 11 programming languages with a unified graph schema
+- Supports 13 programming languages with a unified graph schema (plus Scala in development)
 - Handles complex patterns like nested functions, class hierarchies, and cross-module calls
 
 ### 2. RAG System (`codebase_rag/`)

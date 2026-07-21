@@ -40,7 +40,7 @@ pre-commit autoupdate
 
 ```bash
 make lint          # Lint check
-make format        # Format check
+make format        # Apply formatting (ruff format writes files; CI uses ruff format --check)
 make typecheck     # Type check
 make test-parallel # Unit tests in parallel
 make test-integration  # Integration tests (requires Docker)

@@ -69,9 +69,14 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 ## Available Tools
 
 - **index_repository** - Build knowledge graph (clears previous repository data)
+- **update_repository** - Incrementally refresh the graph for changed files
+- **list_projects / delete_project / wipe_database** - Manage indexed projects
 - **query_code_graph** - Natural language queries
 - **get_code_snippet** - Retrieve code by name
 - **surgical_replace_code** - Precise code edits
+- **structural_search / structural_replace** - AST-pattern search and rewrite (registered when ast-grep support is available)
+- **semantic_search** - Embedding-based search (registered when the `semantic` extra and a vector store are available)
+- **ask_agent** - Delegate a question to the full agentic CLI loop
 - **read_file / write_file** - File operations
 - **list_directory** - Browse directories
 

@@ -43,4 +43,4 @@ cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-myl
 uv add tree-sitter@latest
 ```
 
-**Missing node types**: Manually adjust the configuration in `codebase_rag/language_config.py`.
+**Missing node types**: Manually adjust the configuration in `codebase_rag/language_spec.py`.

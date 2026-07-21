@@ -50,7 +50,7 @@ qualified name has the form `resource::<KIND>::<identity>`:
 |--------|------------|------------------------|-----------|
 | `FILE` | A file on disk | `open(...)` and its handle methods (`.read`, `.write`, …); `json.load` / `json.dump` | read + write |
 | `ENV` | An environment variable | `os.getenv(...)`, `os.environ.get(...)` | read |
-| `NETWORK` | A network endpoint / URL | `requests.get` / `.head`, `urllib.request.urlopen` (read); `requests.post` / `.put` / `.patch` / `.delete` (write) | read + write |
+| `NETWORK` | A network endpoint / URL | `requests.get` / `.head`, `urllib.request.urlopen`, `httpx.get` (read); `requests.post` / `.put` / `.patch` / `.delete`, `httpx.post` (write); `httpx.Client` / `AsyncClient` and `aiohttp.ClientSession` handle methods | read + write |
 | `DATABASE` | A database connection | `sqlite3.connect(...)` handle methods (`.execute`, `.fetchone`, `.commit`, …) | read + write |
 | `SOCKET` | A network socket | `socket.socket(...)` handle methods (`.recv`, `.send`, …) | read + write |
 | `STDOUT` | Standard output | `print(...)` | write |
@@ -59,8 +59,9 @@ qualified name has the form `resource::<KIND>::<identity>`:
 
 Example: `os.getenv("K")` refers to `resource::ENV::K`; `print(x)` refers to
 `resource::STDOUT::<dynamic>`. The registry is extended in
-`codebase_rag/parsers/io_access/registry.py`; `STDIN` and `STDERR` exist as
-resource kinds but are not emitted until a source or sink for them is added.
+`codebase_rag/parsers/io_access/registry.py`. The Python registry does not yet
+register `STDIN` or `STDERR` sources/sinks, but other languages emit them
+(for example C `scanf`, C++ `std::cerr`, Java `System.err`, C# `Console.Error`).
 
 ## READS_FROM and WRITES_TO
 
@@ -361,8 +362,9 @@ module is re-exported under its own name. A project that does
   tainted value at the caller's site.
 - Sources and sinks are direct I/O calls from the registry; there are no
   `Parameter` nodes and no SSA-level precision.
-- The source/sink registry is Python-only in this phase; other languages need
-  their own tables before they emit these edges.
+- The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
+  Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
+  flow edges until its table is added.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.

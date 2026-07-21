@@ -81,7 +81,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Description |
 |----------|-------------|
-| `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `ollama`, `minimax`) |
+| `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
 | `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `llama3.2`) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
@@ -95,7 +95,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Description |
 |----------|-------------|
-| `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `ollama`, `minimax`) |
+| `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
 | `CYPHER_MODEL` | Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |
@@ -115,8 +115,8 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `LAB_PORT` | `3000` | Memgraph Lab port |
 | `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
-| `CGR_CAPTURE_LOCAL_DEFINITIONS` | `false` | Capture classes/methods defined inside function bodies (function-local definitions). Off by default to keep the graph free of throwaway helpers and test mocks; enable for exhaustive structure capture. |
-| `LOCAL_MODEL_ENDPOINT` | `http://localhost:11434/v1` | Fallback endpoint for Ollama |
+| `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama
 

@@ -59,4 +59,4 @@ cgr start --repo-path ~/my-project
 
 ## Performance Note
 
-The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. Optimisation of this behaviour is a work in progress.
+The updater batches rapid saves with a debounce window and recalculates all CALLS relationships on every processed change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. Optimisation of this behaviour is a work in progress.
