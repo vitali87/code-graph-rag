@@ -444,7 +444,7 @@ class JavaVariableAnalyzerMixin:
         if not var_name or not module_qn:
             return None
 
-        cache_key = f"{module_qn}{cs.SEPARATOR_COLON}{var_name}"
+        cache_key = f"{module_qn}{cs.CHAR_COLON}{var_name}"
         if cache_key in self._lookup_cache:
             return self._lookup_cache[cache_key]
 

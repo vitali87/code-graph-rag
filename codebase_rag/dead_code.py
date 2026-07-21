@@ -242,6 +242,8 @@ def dead_code_from_graph(
         # so every name-scoped root rule sees the real leaf (kubernetes
         # pkg.apis.abac register.init@51 reported dead).
         leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+        path = str(props.get(cs.KEY_PATH, ""))
+        bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
@@ -253,11 +255,7 @@ def dead_code_from_graph(
             roots.add(qn)
         elif qn in protocol_stubs:
             roots.add(qn)
-        elif (
-            qn in method_qns
-            and _is_dunder(leaf)
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
-        ):
+        elif qn in method_qns and _is_dunder(leaf) and path.endswith(cs.EXT_PY):
             roots.add(qn)
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
         # invoked by the enum machinery by NAME, like dunders: roots, not
@@ -265,44 +263,30 @@ def dead_code_from_graph(
         elif (
             qn in method_qns
             and leaf in cs.PY_ENUM_HOOK_METHOD_NAMES
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
+            and path.endswith(cs.EXT_PY)
         ):
             roots.add(qn)
         elif (
             qn not in method_qns
             and leaf in cs.GO_ROOT_FUNCTION_NAMES
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
+            and path.endswith(cs.EXT_GO)
         ):
             roots.add(qn)
-        elif _is_rust_runtime_root(
-            leaf, qn in method_qns, str(props.get(cs.KEY_PATH, ""))
-        ):
+        elif _is_rust_runtime_root(leaf, qn in method_qns, path):
             roots.add(qn)
-        elif _is_cpp_operator_root(leaf, str(props.get(cs.KEY_PATH, ""))):
+        elif _is_cpp_operator_root(leaf, path):
             roots.add(qn)
-        elif _is_java_serialization_root(
-            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
-            qn in method_qns,
-            str(props.get(cs.KEY_PATH, "")),
-        ):
+        elif _is_java_serialization_root(bare_leaf, qn in method_qns, path):
             roots.add(qn)
-        elif _is_csharp_attribute_root(props, str(props.get(cs.KEY_PATH, ""))):
+        elif _is_csharp_attribute_root(props, path):
             roots.add(qn)
-        elif _is_csharp_dispose_root(
-            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
-            qn in method_qns,
-            str(props.get(cs.KEY_PATH, "")),
-        ):
+        elif _is_csharp_dispose_root(bare_leaf, qn in method_qns, path):
             roots.add(qn)
-        elif _is_csharp_operator_or_finalizer_root(
-            leaf, str(props.get(cs.KEY_PATH, ""))
-        ):
+        elif _is_csharp_operator_or_finalizer_root(leaf, path):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and _matches_test_path(
-            str(props.get(cs.KEY_PATH, "")), config.test_patterns
-        ):
+        elif config.include_tests and _matches_test_path(path, config.test_patterns):
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
