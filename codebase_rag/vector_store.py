@@ -336,21 +336,18 @@ class QdrantVectorStore:
     def clear_all_embeddings(self) -> None:
         # Vectors are keyed by Memgraph-internal node ids, which a clean
         # rebuild reassigns; stale points crowd out live hits and can map
-        # onto unrelated nodes, so the whole collection must go.
-        try:
-            client = get_qdrant_client()
-            client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
-            client.create_collection(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
-                ),
-            )
-            logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
-        except Exception as e:
-            logger.warning(
-                ls.VECTOR_STORE_CLEAR_FAILED.format(backend=self.backend, error=e)
-            )
+        # onto unrelated nodes, so the whole collection must go. Failures
+        # propagate: a swallowed error would let clean report success while
+        # the stale points survive.
+        client = get_qdrant_client()
+        client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
+        client.create_collection(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+            ),
+        )
+        logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
         if not expected_ids:
@@ -461,15 +458,11 @@ class MilvusVectorStore:
             )
 
     def clear_all_embeddings(self) -> None:
-        try:
-            client = get_milvus_client()
-            client.drop_collection(settings.MILVUS_COLLECTION_NAME)
-            _ensure_milvus_collection(client)
-            logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
-        except Exception as e:
-            logger.warning(
-                ls.VECTOR_STORE_CLEAR_FAILED.format(backend=self.backend, error=e)
-            )
+        # Failures propagate; see QdrantVectorStore.clear_all_embeddings.
+        client = get_milvus_client()
+        client.drop_collection(settings.MILVUS_COLLECTION_NAME)
+        _ensure_milvus_collection(client)
+        logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
         if not expected_ids:
