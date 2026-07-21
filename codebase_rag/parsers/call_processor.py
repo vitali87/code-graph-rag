@@ -51,8 +51,8 @@ from .utils import (
 
 
 class _CallableFlowArg(NamedTuple):
-    # One call-site argument that may carry a callable: bound either to a concrete
-    # function (source_concrete) or to a parameter of the caller (source_caller +
+    # One call-site argument that may carry a callable: bound to a concrete
+    # function (source_concrete) or to a caller parameter (source_caller +
     # source_param), keyed to the callee parameter by position or keyword.
     callee_qn: str
     position: int
@@ -65,8 +65,8 @@ class _CallableFlowArg(NamedTuple):
 class _FactoryCall(NamedTuple):
     # A call `x(args)` where x was bound by `x = factory(...)`. Each returned
     # closure of factory receives args, so a callback argument flows into that
-    # closure's callable parameter (positional index or keyword name). Resolved
-    # in finalize once every function's returned callables are known.
+    # closure's callable parameter. Resolved in finalize once every function's
+    # returned callables are known.
     scope_qn: str
     factory_qn: str
     positional: tuple[str, ...]
@@ -90,7 +90,7 @@ _TYPED_LANGUAGES = frozenset(
 )
 
 # C and C++ share the function_definition/declarator shape, so the callee
-# name lives in a nested declarator (no `name` field). Both need the libclang
+# name lives in a nested declarator (no `name` field), needing the libclang
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
@@ -106,14 +106,14 @@ _PY_SCOPE_BOUNDARY_TYPES = frozenset(
 )
 _PY_SEQUENCE_LITERAL_TYPES = frozenset({cs.TS_PY_LIST, cs.TS_PY_SET, cs.TS_PY_TUPLE})
 # Dispatch-table literals whose values may name handler functions: Python dict
-# and JS/TS object (key/value pairs), and Python list/set/tuple and JS/TS array
+# and JS/TS object (key/value pairs), Python list/set/tuple and JS/TS array
 # (positional elements). All use the `pair`/named-child shapes handled below.
 _DICT_LIKE_COLLECTION_TYPES = frozenset({cs.TS_PY_DICTIONARY, cs.TS_OBJECT})
 _SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_ARRAY})
 # Python nodes that transparently wrap first-class values one level down:
 # sequence literals, a bare multi-value return (expression_list), and
-# parentheses. Dict pairs and ternaries need field-aware handling and are
-# matched separately in _expand_py_first_class_values.
+# parentheses. Dict pairs and ternaries need field-aware handling, matched
+# separately in _expand_py_first_class_values.
 _PY_VALUE_WRAPPER_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset(
     {cs.TS_PY_EXPRESSION_LIST, cs.TS_PARENTHESIZED_EXPRESSION}
 )
@@ -136,8 +136,8 @@ _FLOW_ARG_REF_TYPES = frozenset(
 # Qualified-name prefix marking a resolved callee as a builtin rather than a
 # first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
-# C/C++ expression nodes whose call name is a synthesized operator_* --
-# the ones whose operand type may direct (or suppress) the binding.
+# C/C++ expression nodes whose call name is a synthesized operator_*, the
+# ones whose operand type may direct or suppress the binding.
 _CPP_OPERATOR_EXPRESSION_TYPES = frozenset(
     {
         cs.TS_CPP_BINARY_EXPRESSION,
@@ -147,15 +147,13 @@ _CPP_OPERATOR_EXPRESSION_TYPES = frozenset(
 )
 # Transparent wrappers a bound arrow may sit behind in its declarator:
 # parens and TS casts (`const f = ((x) => ...) as T`). Climbed when
-# recovering the arrow's binding name so the wrapped form is not treated
-# as anonymous.
+# recovering the arrow's binding name so it is not treated as anonymous.
 _TS_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
 # Assignment node type -> RHS field, per language family: Python `assignment`
 # and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
 # `right`; a JS/TS `variable_declarator` (const cb = handler) carries it in
-# `value`. Go binds a func value the same way (`var preExecHookFn = preExecHook`,
-# `hook := preExecHook`, `x = fn`); its RHS sits behind an expression_list,
-# unwrapped in the walker.
+# `value`. Go binds a func value the same way; its RHS sits behind an
+# expression_list, unwrapped in the walker.
 _ASSIGNMENT_RHS_FIELDS = {
     cs.TS_PY_ASSIGNMENT: cs.TS_FIELD_RIGHT,
     cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
@@ -182,16 +180,16 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 )
 # Inline function values in an object literal (`{ onSuccess: () => {} }`): the
 # JS/TS definition pass registers these as their own nodes named by the key
-# (scope.onSuccess), so a passed object of callbacks (useMutation/useQuery) must
-# reference each or every TanStack-style callback reports as dead.
+# (scope.onSuccess), so a passed object of callbacks must reference each or
+# every TanStack-style callback reports as dead.
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
 
 
 def _scope_qn_candidates(scope_qn: str) -> list[str]:
     # The scope itself plus its duplicate-variant-stripped form (`useStore@27`
     # -> `useStore`): the def pass registers nested/anon members under the
-    # NATURAL qn while the caller may carry the variant suffix. Registry-guarded
-    # at every use, so a scope without a twin adds nothing.
+    # NATURAL qn while the caller may carry the variant suffix. Registry-guarded,
+    # so a scope without a twin adds nothing.
     last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
     if cs.DUP_QN_MARKER not in last:
         return [scope_qn]
@@ -259,7 +257,7 @@ class CallProcessor:
         # Return-value / factory tracing: functions each function may return
         # (nested closures), and call sites `x = factory(...); x(cb)` where cb
         # flows into the returned closure's callable parameter. Resolved to a
-        # fixpoint in finalize, so factory and call site may be in any file order.
+        # fixpoint in finalize, so factory and call site may be in any order.
         self._returned_callables: dict[str, set[str]] = {}
         self._factory_calls: list[_FactoryCall] = []
         selection = capture if capture is not None else ALL_ENABLED
@@ -322,11 +320,11 @@ class CallProcessor:
         # Calls inside a function's BODY belong to that function, not the
         # module; only genuine top-level calls are module-attributed. The body
         # (not the whole node) is the boundary so def-time calls in the
-        # signature -- default args like `def f(x=make_default())` and
-        # decorators -- run at module load and stay module-attributed. A node
+        # signature (default args like `def f(x=make_default())` and
+        # decorators) run at module load and stay module-attributed. A node
         # with no body is not a real function scope (e.g. a file-scope
-        # declaration `int x = top();` that the grammar captures as a
-        # function); its calls run at load time, so it excludes nothing.
+        # declaration `int x = top();` captured as a function); its calls run
+        # at load time, so it excludes nothing.
         nested_starts: set[int] = set()
         for func_node in func_nodes:
             body = func_node.child_by_field_name(cs.FIELD_BODY)
@@ -343,7 +341,7 @@ class CallProcessor:
         # A bare decorator `@task` / `@pkg.deco` (no call parens) is not a
         # `call` node, so the normal call pass misses it even though applying
         # it runs `task(func)` at module load. A call decorator `@deco(...)`
-        # IS a call node and is already captured, so skip it here.
+        # IS already captured, so skip it here.
         named = decorator_node.named_children
         if not named:
             return None
@@ -353,9 +351,9 @@ class CallProcessor:
         return None
 
     def _runs_at_module_load(self, node: Node) -> bool:
-        # A definition runs at module load only when it is at module or
-        # class-body scope; nested inside a function body it runs at that
-        # function's call time, so its decorator is not a module-load call.
+        # A definition runs at module load only at module or class-body scope;
+        # nested inside a function body it runs at that function's call time,
+        # so its decorator is not a module-load call.
         ancestor = node.parent
         while ancestor is not None:
             if ancestor.type == cs.TS_PY_FUNCTION_DEFINITION:
@@ -439,11 +437,11 @@ class CallProcessor:
     ) -> None:
         # Pre-pass: record which functions are bound to a class's callable
         # fields (FQNSpec(get_name=_python_get_name, ...)). Runs before call
-        # resolution so a field invocation can resolve regardless of which
-        # file the construction site lives in. Bindings are recorded PENDING
+        # resolution so a field invocation resolves regardless of which file
+        # the construction site lives in. Bindings are recorded PENDING
         # (keyword name or positional index) and resolved by
         # finalize_field_bindings after every file's ctor metadata (param
-        # order + param->attribute renames) has been collected.
+        # order + param->attribute renames) is collected.
         if language != cs.SupportedLanguage.PYTHON:
             return
         try:
@@ -490,15 +488,15 @@ class CallProcessor:
         self._resolver.finalize_field_bindings()
 
     def _collect_ctor_field_metadata(self, root_node: Node, module_qn: str) -> None:
-        # For every class defined in this file, record the ordered ctor param
-        # names (__init__ params, or annotated class-body fields for
+        # For every class in this file, record the ordered ctor param names
+        # (__init__ params, or annotated class-body fields for
         # NamedTuple/dataclass classes without __init__) and the
         # param -> attribute renames from `self.attr = param` statements.
         # The stack carries each node's ENCLOSING class qn so a nested class
         # (Inner inside Outer) resolves to module.Outer.Inner: a bare
-        # resolve_function_call("Inner", module_qn) would look for
-        # module.Inner and miss it. A class inside a FUNCTION is skipped (its
-        # qn is caller-scoped), so nested-in-method classes never reach here.
+        # resolve_function_call("Inner", module_qn) would miss it. A class
+        # inside a FUNCTION is skipped (qn is caller-scoped), so
+        # nested-in-method classes never reach here.
         resolver = self._resolver
         registry = resolver.function_registry
         stack: list[tuple[Node, str | None]] = [
@@ -603,8 +601,8 @@ class CallProcessor:
             node = stack.pop()
             # A `self.x = param` inside a nested helper (def later():
             # self.cb = handler) is that helper's store, not a constructor
-            # rename; descending into it would let it override the real
-            # __init__ store (one attr per param), so stop at nested scopes.
+            # rename; descending would let it override the real __init__
+            # store, so stop at nested scopes.
             if node.type in _PY_SCOPE_BOUNDARY_TYPES:
                 continue
             if node.type == cs.TS_PY_ASSIGNMENT:
@@ -723,10 +721,10 @@ class CallProcessor:
                     # A Python class body executes at import time, so a
                     # dispatch table stored as a class ATTRIBUTE (django's
                     # backend `data_types = {"CharField": _get_varchar_...}`)
-                    # is module-load wiring like a module-level table; the
-                    # scan descends through classes and still stops at
-                    # function scopes. ponytail: decorated classes stay
-                    # boundaries (decorated_definition also wraps functions).
+                    # is module-load wiring like a module-level table; the scan
+                    # descends through classes but still stops at function
+                    # scopes. ponytail: decorated classes stay boundaries
+                    # (decorated_definition also wraps functions).
                     collection_boundaries = collection_boundaries - frozenset(
                         queries[language][cs.QUERY_CONFIG].class_node_types
                     )
@@ -740,8 +738,8 @@ class CallProcessor:
                 )
                 # A module-scope first-class assignment (registry_handler =
                 # handle_event, module.exports.run = run) references its target
-                # even in a file with no call expressions, so scan before the
-                # no-calls early return.
+                # even in a file with no calls, so scan before the no-calls
+                # early return.
                 self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
@@ -753,7 +751,7 @@ class CallProcessor:
             if language == cs.SupportedLanguage.GO:
                 # A module-scope Go func map/slice (var funcMap = map[...]{...})
                 # keeps its function entries reachable; scan before the no-calls
-                # early return so a file that only defines funcs and a table counts.
+                # early return so a file defining only funcs and a table counts.
                 self._ingest_go_composite_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
@@ -803,7 +801,7 @@ class CallProcessor:
                 cs.SupportedLanguage.CPP,
             ):
                 # A file with no call expressions has nothing further to
-                # process -- except in C#, where a class can still READ
+                # process, except in C#, where a class can still READ
                 # properties (`return Size;`), and C++, where a ctor's
                 # member initializer list (`: buffer(g, 0)`) runs base
                 # ctors without any call_expression node; both passes run
@@ -825,10 +823,9 @@ class CallProcessor:
                 # JS/TS: exclude only calls owned by ATTRIBUTABLE functions, so a
                 # call nested purely in anonymous scopes (`create((set) => ({
                 # inc: () => set((state) => ...) }))`, zustand's store shape) is
-                # processed at module scope instead of by nobody -- an anon arrow
+                # processed at module scope instead of by nobody: an anon arrow
                 # gets no caller pass, and a call inside a NAMED function is
-                # still excluded here because that function's flat filter owns
-                # it (no double-processing).
+                # still excluded because that function's flat filter owns it.
                 exclusion_nodes = (
                     self._attributable_func_nodes(sorted_func_nodes, language)
                     if language in _JS_TS_LANGUAGES
@@ -878,8 +875,8 @@ class CallProcessor:
         # Rust only: calls inside a NAMED nested `fn` (which gets its own caller
         # node) must be owned by that nested fn, not double-counted onto the
         # enclosing free function. Anonymous closures (not attributable) stay
-        # excluded from this set so their calls still bubble up. Other languages
-        # keep the flat _filter_calls_in_node behavior their flow-tracing relies on.
+        # excluded so their calls still bubble up. Other languages keep the flat
+        # _filter_calls_in_node behavior their flow-tracing relies on.
         owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
         for func_node in func_nodes:
             if has_classes and self._is_method(func_node, lang_config):
@@ -888,8 +885,8 @@ class CallProcessor:
             if language in _C_FAMILY_LANGUAGES:
                 # A macro-invocation artifact the ingest pass declined to
                 # register (no class bears its name) must not become a call
-                # attribution target either; mirror ingest's decision via
-                # the recorded locations so the two passes never diverge.
+                # target either; mirror ingest's decision via the recorded
+                # locations so the two passes never diverge.
                 if (
                     language == cs.SupportedLanguage.CPP
                     and cpp_utils.is_macro_invocation_artifact(func_node)
@@ -909,7 +906,7 @@ class CallProcessor:
                 # A function expression bound to a variable or table field
                 # (`local f = function()`, `M.f = function()`) has no name field;
                 # the definition pass names it after its assignment target, so
-                # recover the same name here or the whole body would be skipped.
+                # recover the same name here or the whole body is skipped.
                 func_name = lua_utils.extract_assigned_name(
                     func_node,
                     accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
@@ -918,10 +915,10 @@ class CallProcessor:
                 # A nameless JS/TS function expression that a NAMED pass
                 # registered (`exports.f = function`, `x: function`) has a
                 # real node; its body's calls belong to that node, not the
-                # module, so adopt the record's simple name and fall
-                # through (the recorded-caller branch below reuses the
-                # registered qn). A GENERATED record (anonymous callback,
-                # IIFE) keeps the historical bubble-to-module attribution.
+                # module, so adopt the record's simple name and fall through
+                # (the recorded-caller branch below reuses the registered qn).
+                # A GENERATED record (anonymous callback, IIFE) keeps the
+                # historical bubble-to-module attribution.
                 if (
                     language not in _JS_TS_LANGUAGES
                     or (recorded := self._recorded_caller(func_node, module_qn)) is None
@@ -936,9 +933,8 @@ class CallProcessor:
             # qns, and every divergence is a phantom caller (issue #652).
             if loc := self._recorded_caller(func_node, module_qn):
                 # Same ownership rule as the unrecorded path: a Rust named
-                # nested fn owns its body's calls, so the enclosing
-                # function's slice must exclude it rather than take the
-                # whole byte range.
+                # nested fn owns its body's calls, so the enclosing function's
+                # slice must exclude it rather than take the whole byte range.
                 if all_call_nodes is None or call_starts is None:
                     filtered = None
                 elif language == cs.SupportedLanguage.RUST:
@@ -964,8 +960,8 @@ class CallProcessor:
             # An out-of-line C++ method definition (`Ret Class::method() {...}`
             # at namespace/file scope) is bound by the definition pass to its
             # class node (qn `class_qn.method`). Attribute its body's calls to
-            # that method node, not a phantom module-rooted free-function qn,
-            # so the CALLS edges join to a real node.
+            # that method node, not a phantom module-rooted qn, so the CALLS
+            # edges join to a real node.
             if language == cs.SupportedLanguage.CPP and (
                 bound := self._cpp_out_of_class_method_caller(
                     func_node, func_name, module_qn
@@ -992,8 +988,8 @@ class CallProcessor:
             # A Go receiver method (`func (t T) m()`) is declared at file scope
             # but the definition pass binds it to its receiver type's node
             # (qn `module.T.m`). Attribute its body's calls to that method node,
-            # not the receiver-dropping `module.m` that _build_nested_qualified_name
-            # would produce, so the CALLS edges join to a real node.
+            # not the receiver-dropping `module.m`, so the CALLS edges join to
+            # a real node.
             if language == cs.SupportedLanguage.GO and (
                 bound := self._go_receiver_method_caller(
                     func_node, func_name, module_qn
@@ -1021,7 +1017,7 @@ class CallProcessor:
             # pass via build_qualified_name (qn `module.ns.fn`); _build_nested...
             # ignores namespace_definition ancestors and would drop the namespace
             # (`module.fn`), dangling the CALLS source. Use the same builder so
-            # caller and node qns agree.
+            # the qns agree.
             func_qn = (
                 cpp_utils.build_qualified_name(func_node, module_qn, func_name)
                 if language == cs.SupportedLanguage.CPP
@@ -1056,9 +1052,9 @@ class CallProcessor:
     ) -> tuple[str, str] | None:
         # Resolve a Go receiver method to its (method_qn, container_qn),
         # mirroring the definition pass's receiver-type binding. The receiver
-        # type resolves to its node qn (same-file or sibling-file in the
-        # package), and the registry check ensures the method node exists
-        # before overriding the default attribution.
+        # type resolves to its node qn (same or sibling file in the package),
+        # and the registry check ensures the method node exists before
+        # overriding the default attribution.
         if not go_utils.is_receiver_method(func_node):
             return None
         receiver_type = go_utils.extract_receiver_type_name(func_node)
@@ -1089,8 +1085,8 @@ class CallProcessor:
         # class_qn), mirroring the definition pass's class binding. The leaf
         # class name resolves the class across files (header-declared classes);
         # `endswith(normalized)` guards against a leaf collision binding to the
-        # wrong class, and the registry membership check ensures the method node
-        # actually exists before overriding the default attribution.
+        # wrong class, and the registry check ensures the method node exists
+        # before overriding the default attribution.
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return None
         # The definition pass already bound this exact definition (keyed by
@@ -1120,9 +1116,9 @@ class CallProcessor:
         # Use the same bare-type extraction as the definition pass
         # (rs_utils.extract_impl_target), which strips generic arguments
         # (`Chars<'a>` -> `Chars`). _get_node_name returns the full generic
-        # text, so a call inside a generic impl block was attributed to a
-        # caller qn bearing the generics (crate.lib.Chars<'a>.go) that matches
-        # no registered node, silently dropping the CALLS edge.
+        # text, so a call inside a generic impl block was attributed to a caller
+        # qn bearing the generics (crate.lib.Chars<'a>.go) matching no
+        # registered node, silently dropping the CALLS edge.
         return rs_utils.extract_impl_target(class_node)
 
     def _get_class_name_for_node(
@@ -1169,8 +1165,8 @@ class CallProcessor:
             # The body byte-range slice also captures functions of a NESTED
             # class (Outer body contains Inner.run); those belong to the
             # nested class and are processed when it is iterated, so skip any
-            # whose nearest enclosing class is not this one (else run would
-            # also emit as the phantom Outer.run).
+            # whose nearest enclosing class is not this one (else run also
+            # emits as the phantom Outer.run).
             if not self._method_in_class_body(method_node, body_node, lang_config):
                 continue
             if language in _C_FAMILY_LANGUAGES:
@@ -1264,9 +1260,9 @@ class CallProcessor:
     ) -> bool:
         # True when method_node's nearest enclosing class is the one whose
         # body is class_body: walk up, and the first class ancestor's body
-        # must be this body (compared by byte span). A method with no
-        # enclosing class (out-of-class C++ definition captured elsewhere)
-        # returns True so existing handling is unaffected.
+        # must be this body (compared by byte span). A method with no enclosing
+        # class (out-of-class C++ definition captured elsewhere) returns True
+        # so existing handling is unaffected.
         current = method_node.parent
         while current is not None:
             if current.type in lang_config.class_node_types:
@@ -1340,8 +1336,7 @@ class CallProcessor:
             # (qn `module.ns.Class` / `module.Outer.Inner`); the bare
             # `module.class_name` join drops those ancestors, dangling every
             # inline method's CALLS source off a phantom node. Use the SAME
-            # builders the definition pass uses so the class qn (and thus
-            # method caller qns) agree.
+            # builders the definition pass uses so the qns agree.
             if language == cs.SupportedLanguage.CPP:
                 class_qn = cpp_utils.build_qualified_name(
                     class_node, module_qn, class_name
@@ -1398,7 +1393,7 @@ class CallProcessor:
     def _cpp_operator_operand_name(self, call_node: Node) -> str | None:
         # The receiver-analog operand of an operator expression: the LEFT
         # side of a binary op, the sole argument of a unary/update op. Only
-        # a bare identifier is returned -- anything more complex stays with
+        # a bare identifier is returned; anything more complex stays with
         # the legacy paths.
         field = (
             cs.FIELD_LEFT
@@ -1438,8 +1433,8 @@ class CallProcessor:
         # captured as the bare identifier node; its text is the callee name. A
         # macro tokenizes `server.run()` into loose tokens (`server . run ( )`),
         # dropping the field_expression, so reconstruct any `<recv>.method`
-        # receiver chain from the preceding sibling tokens -- else the bare method
-        # mis-resolves (`server.run()` in tokio::select! -> the same-module free
+        # receiver chain from the preceding sibling tokens; else the bare method
+        # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
             return self._macro_call_name(call_node)
@@ -1469,10 +1464,10 @@ class CallProcessor:
                 case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
                     # Rust member call `a.b.method()`: use the full dotted receiver
                     # chain as the call name so the resolver can map the receiver to
-                    # its inferred type (`self.shutdown.is_shutdown`,
-                    # `cmd.apply`). A chain containing a call (`x.f().g`) is left to
-                    # the chained-call path; a paren-free chain still ends at the
-                    # bare-method trie fallback when the receiver type is unknown.
+                    # its inferred type (`self.shutdown.is_shutdown`, `cmd.apply`). A
+                    # chain containing a call (`x.f().g`) is left to the chained-call
+                    # path; a paren-free chain ends at the bare-method trie fallback
+                    # when the receiver type is unknown.
                     if (text := func_child.text) is not None:
                         return text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
@@ -1482,9 +1477,9 @@ class CallProcessor:
                         # Prepend a simple-identifier receiver (`obj->m`/`obj.m`
                         # -> `obj.m`) so the resolver can map obj to its type and
                         # bind the correct class method; a `.`-joined two-part name
-                        # still falls back to the bare method-name trie when the
-                        # receiver type is unknown. Complex receivers (chains,
-                        # calls, `this`) keep the bare method name, as before.
+                        # falls back to the bare method-name trie when the receiver
+                        # type is unknown. Complex receivers (chains, calls, `this`)
+                        # keep the bare method name.
                         arg = func_child.child_by_field_name(cs.TS_FIELD_ARGUMENT)
                         if (
                             arg is not None
@@ -1498,9 +1493,9 @@ class CallProcessor:
                         # bare identifier: emit the chain form so the resolver can
                         # type the factory's return and bind the method on it. A
                         # template/qualified callee (`Reader<T>(...)`,
-                        # `detail::Reader<T>(...)`) is a CONSTRUCTOR TEMPORARY --
-                        # the callee names the receiver's class directly. Deeper
-                        # receiver chains keep the bare method-name trie fallback.
+                        # `detail::Reader<T>(...)`) is a CONSTRUCTOR TEMPORARY: the
+                        # callee names the receiver's class directly. Deeper receiver
+                        # chains keep the bare method-name trie fallback.
                         if (
                             arg is not None
                             and arg.type == cs.TS_CPP_CALL_EXPRESSION
@@ -1525,9 +1520,9 @@ class CallProcessor:
                     # Bare generic call `Handle<TException>(...)`: the callee
                     # name is the identifier without its type arguments
                     # (methods register generic-free). Leaving the `<...>` on
-                    # yielded no call name at all, so the call site vanished
-                    # from the graph (Polly's parameterless HandleInner
-                    # overload delegating to its Func sibling).
+                    # yielded no call name, so the call site vanished from the
+                    # graph (Polly's parameterless HandleInner overload
+                    # delegating to its Func sibling).
                     if func_child.text is not None:
                         full = func_child.text.decode(cs.ENCODING_UTF8)
                         return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
@@ -1536,7 +1531,7 @@ class CallProcessor:
                 ):
                     # C# member call `recv.Method(...)`: emit the `recv.Method`
                     # chain so the resolver can type `recv` and bind the method on
-                    # it; a receiver whose type is unknown falls back to the bare
+                    # it; an unknown-type receiver falls back to the bare
                     # method-name trie. `name` is the method, `expression` the
                     # receiver.
                     name_node = func_child.child_by_field_name(cs.FIELD_NAME)
@@ -1594,11 +1589,11 @@ class CallProcessor:
         match call_node.type:
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # JS/TS `new Foo(...)` names the class via the `constructor` field
-                # (there is no `function` field). Returning the constructor name
-                # routes construction through the normal resolve loop: a first-party
-                # class gets INSTANTIATES (+ CALLS to its constructor), and an inline
-                # callback argument (a Promise executor, `new CancelablePromise(cb)`)
-                # is referenced so it is not reported as dead.
+                # (no `function` field). Returning the constructor name routes
+                # construction through the normal resolve loop: a first-party class
+                # gets INSTANTIATES (+ CALLS to its constructor), and an inline
+                # callback argument (`new CancelablePromise(cb)`) is referenced so
+                # it is not reported as dead.
                 ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
                 if ctor is not None and ctor.text is not None:
                     return ctor.text.decode(cs.ENCODING_UTF8)
@@ -1644,7 +1639,7 @@ class CallProcessor:
             # Scala infix operator call (`a ~> b`, `xs map f`): the callee is the
             # `operator` field's method name. tree-sitter has no `function` field
             # here, so it is unreachable above. Gated to Scala since the node type
-            # string is Scala-specific but the guard keeps other languages inert.
+            # string is Scala-specific and the guard keeps other languages inert.
             # Infix is unambiguously a method call; a bare `field_expression`
             # (`obj.done` with no parens) is deliberately NOT named here because
             # Scala's uniform access makes a nullary call and a `val` read
@@ -1656,7 +1651,7 @@ class CallProcessor:
                     return operator_node.text.decode(cs.ENCODING_UTF8)
             # Rust `square!(3)`: the callee lives in the `macro` field (no
             # `function`/`name` field), so the invocation was captured as a
-            # call but dropped nameless here -- unresolvable even now that
+            # call but dropped nameless here; unresolvable even now that
             # macro_rules! definitions register as Function nodes.
             case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
                 macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
@@ -1671,12 +1666,12 @@ class CallProcessor:
 
     def _csharp_target_typed_new_name(self, creation_node: Node) -> str | None:
         # The target type of a bare `new()` is named by the enclosing
-        # declaration: a local/field `T x = new()` (the initializer hangs
-        # directly off the variable_declarator), a property initializer
-        # `public T P { get; } = new()`, or a return position (`return
-        # new();` / `=> new()`) typed by the enclosing member. Any other
-        # position (an argument, an operand) needs overload resolution
-        # tree-sitter cannot do: bail rather than guess.
+        # declaration: a local/field `T x = new()` (initializer hangs directly
+        # off the variable_declarator), a property initializer
+        # `public T P { get; } = new()`, or a return position (`return new();`
+        # / `=> new()`) typed by the enclosing member. Any other position (an
+        # argument, an operand) needs overload resolution tree-sitter cannot
+        # do: bail rather than guess.
         node = creation_node.parent
         while node is not None and node.type in (
             cs.TS_CSHARP_VARIABLE_DECLARATOR,
@@ -1712,8 +1707,8 @@ class CallProcessor:
         # A return position is typed by the nearest enclosing callable:
         # methods and local functions name it in `returns`, a property or
         # indexer (or their accessor bodies) in `type`. A lambda/anonymous
-        # method carries no syntactic return type, so a `new()` returned
-        # from one is unresolvable.
+        # method carries no syntactic return type, so a `new()` returned from
+        # one is unresolvable.
         ancestor = node.parent
         while ancestor is not None:
             if ancestor.type in (
@@ -1828,10 +1823,10 @@ class CallProcessor:
             )
 
         # Same need as the Python pass above, C# shape: a property getter
-        # access is a member_access_expression (usually in RECEIVER
-        # position), never an invocation, so callers that only READ a
-        # property emit no edge to it and dead-code flags it (Polly's
-        # Context.WrappedDictionary, ResiliencePipeline<T>.Pipeline).
+        # access is a member_access_expression (usually in RECEIVER position),
+        # never an invocation, so callers that only READ a property emit no
+        # edge to it and dead-code flags it (Polly's Context.WrappedDictionary,
+        # ResiliencePipeline<T>.Pipeline).
         if language == cs.SupportedLanguage.CSHARP and (
             csharp_prop_names := self._resolver.function_registry.property_names()
         ):
@@ -1888,11 +1883,11 @@ class CallProcessor:
                 caller_qn,
             )
         # A function handed back bare (`return defaultUsageFunc`) is a first-class
-        # value invoked by whoever receives it, never by a visible call -- Go leans
+        # value invoked by whoever receives it, never by a visible call; Go leans
         # on this for factories/getters (cobra's getUsageFunc), Python on returned
         # bound methods (django GEOSCoordSeq `return self._get_point_2d`).
         # Reference it so the returned function is reachable. These languages share
-        # the `return_statement` node type and the emit path resolves bare names
+        # the `return_statement` node type, and the emit path resolves bare names
         # and self-attributes alike.
         if language in _JS_TS_LANGUAGES or language in (
             cs.SupportedLanguage.GO,
@@ -1983,9 +1978,9 @@ class CallProcessor:
             or is_cpp
         )
         # C# gets the argument-REFERENCE half only (a method group passed as
-        # a delegate argument keeps its target reachable -- Polly's
-        # EmptyHandler family, 16 dead-code false flags) without the
-        # interprocedural callable-param flow, which is untuned for C#.
+        # a delegate argument keeps its target reachable, Polly's EmptyHandler
+        # family, 16 dead-code false flags) without the interprocedural
+        # callable-param flow, which is untuned for C#.
         is_arg_ref_lang = is_flow_lang or language == cs.SupportedLanguage.CSHARP
         # A method-group pass is not an invocation: C# records it as
         # REFERENCES everywhere (CALLS here put 282 phantom edges into the
@@ -2009,7 +2004,7 @@ class CallProcessor:
                 if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
             # An inline function ARGUMENT is handed to the callee regardless of
-            # whether the callee resolves -- an external/param callee
+            # whether the callee resolves: an external/param callee
             # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
             # cast-wrapped one (`;(set as NamedSet)((state) => reducer(...))`)
             # still consumes it. Reference each inline arg from this scope, BEFORE
@@ -2051,13 +2046,13 @@ class CallProcessor:
             if is_cpp:
                 # A C++ member call through a template-parameter receiver has no
                 # concrete type, so precise resolution fails and the external-receiver
-                # guard drops the edge entirely, orphaning every structural interface
+                # guard drops the edge, orphaning every structural interface
                 # implementer (json_sax_* visitors dispatched via `sax->start_object()`).
                 # Fan such a call out to the method on every class defining it. Runs
                 # before the primary resolution/continue below so it fires even when
                 # that edge is dropped; a concretely-typed receiver is skipped inside
-                # the resolver. sorted(): the target label is a StrEnum whose set
-                # iteration order is hash-randomized, so sort for deterministic output.
+                # the resolver. sorted(): the target label is a hash-randomized
+                # StrEnum, so sort for deterministic output.
                 for target_type, target_qn in sorted(
                     resolver.cpp_dispatch_targets(
                         call_name, call_var_types, cpp_template_params
@@ -2082,9 +2077,9 @@ class CallProcessor:
             if cpp_operand_type_qn is not None:
                 # The operand's type is KNOWN: the operator binds to that
                 # type's own overload or, when it has none, to nothing at
-                # all (a builtin enum/int operation) -- never rebound by
-                # bare name to an unrelated class's overload set. Only an
-                # untyped operand falls through to the legacy paths below.
+                # all (a builtin enum/int operation), never rebound by bare
+                # name to an unrelated class's overload set. Only an untyped
+                # operand falls through to the legacy paths below.
                 callee_info = resolver.cpp_operator_for_type(
                     call_name, cpp_operand_type_qn
                 )
@@ -2166,16 +2161,15 @@ class CallProcessor:
             if not callee_info and language == cs.SupportedLanguage.CPP:
                 # `using appender = basic_appender<char>; appender(out)`:
                 # the alias is no registered node, so the bare call resolves
-                # to nothing and the constructed class's ctor stays
-                # edge-free. The cross-file typedef/using map covers
-                # file/namespace-scope aliases; a BODY-local alias is
-                # exactly what that collector skips, so it comes from the
-                # caller-scoped map (_resolve_class_name then follows any
-                # further alias chain). Binding the callee to the class
-                # drops into the class branch below, which emits
-                # INSTANTIATES + ctor CALLS like any construction. Gated on
-                # alias-map membership so genuinely unknown names keep
-                # their unresolved handling.
+                # to nothing and the constructed class's ctor stays edge-free.
+                # The cross-file typedef/using map covers file/namespace-scope
+                # aliases; a BODY-local alias is what that collector skips, so
+                # it comes from the caller-scoped map (_resolve_class_name then
+                # follows any further alias chain). Binding the callee to the
+                # class drops into the class branch below, emitting INSTANTIATES
+                # + ctor CALLS like any construction. Gated on alias-map
+                # membership so genuinely unknown names keep their unresolved
+                # handling.
                 if cpp_local_aliases is None:
                     cpp_local_aliases = (
                         CppTypeInferenceEngine().collect_local_type_aliases(caller_node)
@@ -2270,8 +2264,8 @@ class CallProcessor:
                     # grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
                     # runtime dispatcher), so the call chain cannot be followed into
                     # it. A first-party function handed to it as an argument is still
-                    # wired to be invoked, so record it as referenced from this scope
-                    # to keep it reachable, across every flow-traced language.
+                    # invoked, so record it as referenced from this scope to keep it
+                    # reachable, across every flow-traced language.
                     self._ingest_argument_function_references(
                         call_node,
                         caller_spec,
@@ -2327,9 +2321,9 @@ class CallProcessor:
                 # Functions are first-class values: a first-party callee may STORE
                 # a passed callback for later dynamic dispatch (config objects,
                 # codecs, registries), which callable-param flow cannot trace, or
-                # the callee may even be a same-named misbind of an external
-                # method. Record the pass itself as a REFERENCES edge from the
-                # passing scope so the callback is never reported dead.
+                # the callee may be a same-named misbind of an external method.
+                # Record the pass itself as a REFERENCES edge from the passing
+                # scope so the callback is never reported dead.
                 self._ingest_argument_function_references(
                     call_node,
                     caller_spec,
@@ -2368,13 +2362,13 @@ class CallProcessor:
                 # self.M()/cls.M() statically targets the enclosing class's own or
                 # inherited M and dynamically dispatches to every concrete subclass
                 # override, so emit an edge to each in ADDITION to the resolved edge
-                # below; otherwise the base (or an override) reached only through the
-                # self-call looks like dead code. Anchor on the enclosing class, not
-                # the resolved callee: when M is abstract with several overrides the
-                # trie resolves the call to an arbitrary sibling override, so
-                # anchoring there would miss the base and the other overrides. The
-                # self/cls receiver excludes super().M() and Base.M() (not virtual
-                # dispatch). Skip self.attr.M() (a call on a member, not on self).
+                # below; otherwise a base (or override) reached only through the
+                # self-call looks dead. Anchor on the enclosing class, not the
+                # resolved callee: when M is abstract with several overrides the trie
+                # resolves the call to an arbitrary sibling, so anchoring there would
+                # miss the base and the others. The self/cls receiver excludes
+                # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
+                # (a call on a member, not on self).
                 _, _, self_method = call_name.partition(cs.SEPARATOR_DOT)
                 if cs.SEPARATOR_DOT not in self_method:
                     for target_type, target_qn in resolver.self_dispatch_targets(
@@ -2411,12 +2405,12 @@ class CallProcessor:
                 )
                 and callee_type != class_label
             ):
-                # `new X(...)` where X resolves to a non-class -- a Java interface
+                # `new X(...)` where X resolves to a non-class: a Java interface
                 # or annotation implemented by an anonymous class (`new
                 # Comparator<T>(){ ... }`), or a C# type the resolver could not bind
                 # to a first-party class. There is no first-party constructor to
                 # call, and a bare CALLS edge to a non-callable node (Interface) is
-                # not a valid relationship, so drop the edge rather than emit it.
+                # not valid, so drop the edge rather than emit it.
                 continue
 
             if callee_type == class_label:
@@ -2448,16 +2442,14 @@ class CallProcessor:
                     # A Java/C#/C++/Dart constructor is a method named like its
                     # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
                     # runs one, so redirect a CALLS edge to every declared
-                    # constructor (overload selection is unneeded for
-                    # reachability). C#, C++, and Dart default constructors use
-                    # the same class-simple-name convention, so
-                    # java_constructor_targets selects them too (a Dart NAMED
-                    # constructor is invoked by its own name and resolves as an
-                    # ordinary method). C++ additionally redirects to the
-                    # destructor: the constructed object's `~X` runs at end
-                    # of lifetime with no call node of its own. sorted():
-                    # the target label is a hash-randomized StrEnum, so
-                    # sort for deterministic output.
+                    # constructor (overload selection unneeded for reachability).
+                    # C#, C++, and Dart default constructors use the same
+                    # class-simple-name convention, so java_constructor_targets
+                    # selects them too (a Dart NAMED constructor is invoked by its
+                    # own name and resolves as an ordinary method). C++ additionally
+                    # redirects to the destructor: the object's `~X` runs at end of
+                    # lifetime with no call node of its own. sorted(): the target
+                    # label is a hash-randomized StrEnum, so sort for determinism.
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
@@ -2503,8 +2495,7 @@ class CallProcessor:
                 # function; same-package same-name siblings are mutually-exclusive
                 # build-tag variants (gin's `validate`), so emit an edge to each so
                 # no build variant is reported dead. sorted(): the target label is a
-                # StrEnum whose set iteration order is hash-randomized, so sort for
-                # deterministic output (mirrors cpp_dispatch_targets).
+                # hash-randomized StrEnum, so sort for deterministic output.
                 for sibling_type, sibling_qn in sorted(
                     resolver.go_package_sibling_targets(callee_qn)
                 ):
@@ -2551,7 +2542,7 @@ class CallProcessor:
                 # statically undecidable; the call resolves to the import, so the
                 # mutually-exclusive local def looks dead. When the name was bound
                 # by a CONDITIONAL import and the CURRENT module also defines it,
-                # fan the call out to the local twin too -- mirrors the Go
+                # fan the call out to the local twin too, mirroring the Go
                 # build-variant fan-out. An UNCONDITIONAL import shadowing a local
                 # def is plain shadowing: the local stays dead, so no edge.
                 local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{call_name}"
@@ -2696,7 +2687,7 @@ class CallProcessor:
         # Resolve the implied <operand>.__dunder__ call; resolution only succeeds
         # for a first-party class that defines the dunder, so builtin containers
         # (dict/list) yield no edge. Restrict to simple attribute/name operands.
-        # Returns whether an edge was emitted (truthiness tries __bool__ then __len__).
+        # Returns whether an edge was emitted.
         if operand is None or not (operand_text := safe_decode_text(operand)):
             return False
         if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
@@ -2738,9 +2729,9 @@ class CallProcessor:
             node = stack.pop()
             # Continue THROUGH an unowned anonymous arrow (zustand's curried
             # middleware body `(config) => (set, get, api) => { api.setState =
-            # ... }`): it gets no caller pass of its own, so its assignments
-            # would otherwise be scanned by nobody and the stored functions
-            # report dead. Named nested scopes still own their own pass.
+            # ... }`): it gets no caller pass, so its assignments would else be
+            # scanned by nobody and the stored functions report dead. Named
+            # nested scopes still own their own pass.
             if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
@@ -2758,7 +2749,7 @@ class CallProcessor:
                     if value is None:
                         continue
                     # `export const persist = persistImpl as unknown as Persist`
-                    # wraps the aliased impl in TS casts -- and devtools' shape
+                    # wraps the aliased impl in TS casts, and devtools' shape
                     # interleaves parens (`api.setState = ((s, r) => {...}) as
                     # SetState`); peel both so the bare name/arrow underneath is
                     # what we reference.
@@ -2768,10 +2759,10 @@ class CallProcessor:
                     value = self._peel_bound_callable(value, peel_parens=True)
                     # A bare-name RHS names a callable; an inline arrow/function-expr
                     # RHS (`OpenAPI.TOKEN = async () => {}`) stores an anonymous
-                    # function on the target for later invocation --
+                    # function on the target for later invocation, and
                     # _emit_callback_edge references it by position. A named
                     # arrow-const RHS is registered by its name, so the by-position
-                    # lookup simply finds nothing.
+                    # lookup finds nothing.
                     # A LOGICAL DEFAULT RHS (`done = done || function (err,
                     # str) {...}`, express's render) hides the stored function
                     # one level down; scan the binary operands too.
@@ -2794,10 +2785,10 @@ class CallProcessor:
                     # A Python TERNARY / BOOLEAN-DEFAULT RHS (`get_response =
                     # self._async if is_async else self._sync`, django's
                     # BaseHandler; `f = handler or fallback`) binds one of its
-                    # RESULT operands as the value; each result operand naming
-                    # a callable is a possible referent. A ternary's condition
-                    # is only truthiness-tested, never bound, so it is excluded;
-                    # both boolean operands are possible results.
+                    # RESULT operands; each result operand naming a callable is a
+                    # possible referent. A ternary's condition is only
+                    # truthiness-tested, never bound, so it is excluded; both
+                    # boolean operands are possible results.
                     if value.type in (
                         cs.TS_PY_CONDITIONAL_EXPRESSION,
                         cs.TS_PY_BOOLEAN_OPERATOR,
@@ -2904,16 +2895,16 @@ class CallProcessor:
     ) -> None:
         # `<Card />` renders the Card component: the framework invokes it
         # through the element, never by a call the graph can see, so the JSX
-        # usage references the component. Uppercase names only -- lowercase
+        # usage references the component. Uppercase names only; lowercase
         # tags are HTML elements and must not misbind to same-named locals.
         # The walk stops at nested scope boundaries (each nested function's
-        # own pass covers its JSX), but continues THROUGH jsx elements so
+        # own pass covers its JSX) but continues THROUGH jsx elements so
         # nested markup is covered by the scope that renders it.
         # Resolve and emit directly rather than via _emit_callback_edge: a
         # class component resolves to a CLASS node whose reference must point
         # at the class itself, but that helper redirects CLASS -> __init__
-        # (Python construction semantics) and drops the edge when __init__ is
-        # absent, as it always is for a JS/TS class.
+        # and drops the edge when __init__ is absent, as it always is for a
+        # JS/TS class.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         registry = self._resolver.function_registry
@@ -2923,7 +2914,7 @@ class CallProcessor:
             # Stop at a nested scope that gets its OWN caller pass (a named
             # function/arrow, a class), but continue THROUGH an anonymous arrow
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
-            # callers, so their JSX -- rendered on behalf of this scope -- would
+            # callers, so their JSX, rendered on behalf of this scope, would
             # otherwise be scanned by nobody and report as dead.
             if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
@@ -2974,15 +2965,15 @@ class CallProcessor:
     ) -> None:
         # A function handed back via `return` (a useEffect cleanup
         # `return () => unsubscribe()`, a factory `return handler`) is invoked by
-        # whoever receives it, never by a call the graph can see. Reference it from
-        # the returning scope. Walk continues through anonymous arrows (the effect
+        # whoever receives it, never by a visible call. Reference it from the
+        # returning scope. Walk continues through anonymous arrows (the effect
         # callback is anonymous, so its `return` bubbles here) but stops at named
         # nested functions, which own their returns.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         # An expression-bodied arrow (`const persistImpl = (config) =>
         # (set, get, api) => {...}`, zustand's curried middleware shape) has NO
-        # return_statement -- its body IS the implicit return. Reference the inner
+        # return_statement; its body IS the implicit return. Reference the inner
         # function directly, both on the caller itself and on any unowned anon
         # arrow the walk continues through (deeper currying bubbles here too).
         self._emit_expression_body_return(
@@ -3021,11 +3012,11 @@ class CallProcessor:
     def _expand_py_first_class_values(self, value: Node) -> list[Node]:
         # Peel Python container literals and result-position conditional
         # operands so a function stored in a tuple/list/set, a dict VALUE,
-        # a bare return-tuple (expression_list), or a ternary/boolean-
-        # default branch is treated like a bare first-class value; nesting
-        # expands recursively. A ternary's condition is only truthiness-
-        # tested, never bound, so it stays excluded. Any other node comes
-        # back unchanged, so non-Python shapes are unaffected.
+        # a bare return-tuple (expression_list), or a ternary/boolean-default
+        # branch is treated like a bare first-class value; nesting expands
+        # recursively. A ternary's condition is only truthiness-tested, never
+        # bound, so it stays excluded. Any other node comes back unchanged, so
+        # non-Python shapes are unaffected.
         out: list[Node] = []
         stack = [value]
         while stack:
@@ -3042,10 +3033,10 @@ class CallProcessor:
                         stack.append(pair_value)
             elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
                 # tree-sitter-python exposes NO field names on
-                # conditional_expression (child_by_field_name returns None
-                # for every operand), so the result operands are positional:
-                # [body, condition, alternative]. A shape that is not
-                # exactly three named operands falls back to all of them,
+                # conditional_expression (child_by_field_name returns None for
+                # every operand), so the result operands are positional:
+                # [body, condition, alternative]. A shape that is not exactly
+                # three named operands falls back to all of them,
                 # over-referencing rather than dropping a branch.
                 operands = list(node.named_children)
                 if len(operands) == 3:
@@ -3094,11 +3085,11 @@ class CallProcessor:
         # call site is not statically resolvable. Treat each such reference as a call
         # from the enclosing scope so the handler is reachable. The walk stops at
         # nested function/class boundaries, so a table built inside a nested scope
-        # is attributed to that scope's own pass, not this one -- EXCEPT an unowned
-        # JS/TS arrow (a Promise executor, a `.forEach` callback), which gets no
-        # caller pass of its own; its calls bubble to this scope, so its object
-        # tables (a `defineProperty` getter descriptor) must be scanned here too or
-        # the callbacks inside it are orphaned and report as dead.
+        # is attributed to that scope's own pass, EXCEPT an unowned JS/TS arrow (a
+        # Promise executor, a `.forEach` callback), which gets no caller pass; its
+        # calls bubble to this scope, so its object tables (a `defineProperty`
+        # getter descriptor) must be scanned here too or the callbacks inside are
+        # orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self.ingestor.ensure_relationship_batch
         stack: list[Node] = list(caller_node.children)
@@ -3110,10 +3101,10 @@ class CallProcessor:
                 for pair in node.named_children:
                     # An object-literal SHORTHAND METHOD (`return { then(x)
                     # {...}, catch(x) {...} }`, persist's thenable) is a stored
-                    # callable exactly like a pair value, but it is a
-                    # method_definition node, not a pair -- reference it by name
-                    # so it is not dead unless the repo never calls it AND never
-                    # hands the object out (it cannot know the consumer).
+                    # callable like a pair value, but it is a method_definition
+                    # node, not a pair; reference it by name so it is not dead
+                    # unless the repo never calls it AND never hands the object
+                    # out (it cannot know the consumer).
                     if pair.type == cs.TS_METHOD_DEFINITION:
                         self._emit_shorthand_method_ref(
                             pair, caller_spec, module_qn, ensure_rel
@@ -3165,13 +3156,13 @@ class CallProcessor:
         module_qn: str,
     ) -> None:
         # `return {args};` (nlohmann's exception factories) constructs the
-        # caller's DECLARED return type through a bare initializer_list --
-        # no call node exists, so the constructed class's ctor gets no edge
-        # and reports dead even when its only factory is alive. Emit
-        # INSTANTIATES to the class and CALLS to its ctors, exactly like an
-        # explicit construction. A lambda body is skipped: its returns are
-        # not the caller's. Revive-only: nothing is emitted unless the
-        # return type resolves to a registered first-party class.
+        # caller's DECLARED return type through a bare initializer_list; no
+        # call node exists, so the constructed class's ctor gets no edge and
+        # reports dead even when its only factory is alive. Emit INSTANTIATES
+        # to the class and CALLS to its ctors, like an explicit construction.
+        # A lambda body is skipped: its returns are not the caller's.
+        # Revive-only: nothing is emitted unless the return type resolves to a
+        # registered first-party class.
         has_braced_return = False
         stack: list[Node] = list(caller_node.children)
         while stack:
@@ -3213,13 +3204,13 @@ class CallProcessor:
         # (`: buffer(g, 0)`) and delegated ctors (`: widget(0)`) with no
         # call_expression node, so a base ctor only ever reached through
         # derived member-init had zero incoming CALLS and reported dead
-        # (fmt buffer.buffer). Each initializer whose head name resolves to
-        # a registered class emits CALLS to that class's ctors; a member
-        # FIELD initializer resolves to no class and emits nothing (a field
-        # named exactly like a registered class still emits, which is the
-        # common field-shadows-its-own-type case where the ctor does run).
-        # The list is a DIRECT child of function_definition, so a nested
-        # lambda's or local class's initializers never leak in here.
+        # (fmt buffer.buffer). Each initializer whose head name resolves to a
+        # registered class emits CALLS to that class's ctors; a member FIELD
+        # initializer resolves to no class and emits nothing (a field named
+        # exactly like a registered class still emits, the common
+        # field-shadows-its-own-type case where the ctor does run). The list
+        # is a DIRECT child of function_definition, so a nested lambda's or
+        # local class's initializers never leak in.
         for init_list in caller_node.children:
             if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
                 continue
@@ -3240,8 +3231,7 @@ class CallProcessor:
     ) -> None:
         # Construction runs a ctor now and the dtor at end of lifetime;
         # neither has a call node, so both get the redirect. sorted(): the
-        # target label is a hash-randomized StrEnum, so sort for
-        # deterministic output.
+        # target label is a hash-randomized StrEnum, so sort for determinism.
         registry = self._resolver.function_registry
         targets = self._resolver.java_constructor_targets(
             class_qn
@@ -3289,8 +3279,8 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
     ) -> None:
-        # A Go function placed as a value in a composite literal -- a func map
-        # (`map[string]any{"rpad": rpad}`) or a func slice (`[]Handler{a, b}`) -- is
+        # A Go function placed as a value in a composite literal, a func map
+        # (`map[string]any{"rpad": rpad}`) or a func slice (`[]Handler{a, b}`), is
         # a dispatch table invoked later by key, never by a visible call, so its
         # entries look dead. Reference each from the enclosing scope. Go's literal
         # shape differs from the JS/Py pair form: composite_literal > literal_value >
@@ -3343,8 +3333,8 @@ class CallProcessor:
         node = self._peel_bound_callable(node)
         # Only a bare name / attribute / member-expression in value position names
         # a function; a call, comprehension or literal is not a reference to a
-        # callable itself. Reuses the flow-arg ref types (identifier, Python
-        # attribute, Go selector, JS/TS member expression).
+        # callable. Reuses the flow-arg ref types (identifier, Python attribute,
+        # Go selector, JS/TS member expression).
         if node.type not in _FLOW_ARG_REF_TYPES:
             return
         self._emit_callback_edge(
@@ -3426,8 +3416,8 @@ class CallProcessor:
         # definition pass under {enclosing_scope}.<name>. An identifier key names it
         # by the key (scope.onSuccess); a string-literal key ({'onSuccess': ...})
         # has no property name, so it registers as scope.anonymous_<row>_<col> from
-        # the value's position. Reference every candidate that is actually
-        # registered (variants cover same-name duplicates in one scope).
+        # the value's position. Reference every candidate actually registered
+        # (variants cover same-name duplicates in one scope).
         registry = self._resolver.function_registry
         scope_qn = caller_spec[2]
         candidates = {
@@ -3450,9 +3440,9 @@ class CallProcessor:
                     f"{scope_qn}{cs.SEPARATOR_DOT}{pair_path}{cs.SEPARATOR_DOT}{key}"
                 )
         # A NAMED function expression value (`get: function getrouter() {...}`,
-        # express) registers by its OWN name -- neither the key nor the
-        # position form matches it; try the name under the scope and
-        # module-flat (where the def pass puts it).
+        # express) registers by its OWN name; neither the key nor the position
+        # form matches it, so try the name under the scope and module-flat
+        # (where the def pass puts it).
         name_node = value.child_by_field_name(cs.FIELD_NAME)
         if name_node is not None and (own := safe_decode_text(name_node)):
             candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{own}")
@@ -3604,7 +3594,7 @@ class CallProcessor:
             f"{arg_node.start_point[0]}_{arg_node.start_point[1]}"
         ]
         # A NAMED function expression argument (`this.on('mount', function
-        # onmount(parent) {...})`, express) registers by its own NAME -- the
+        # onmount(parent) {...})`, express) registers by its own NAME; the
         # position form never matches it, so try the name too, both under the
         # caller scope and module-flat (where the def pass puts it).
         name_node = arg_node.child_by_field_name(cs.FIELD_NAME)
@@ -3850,7 +3840,7 @@ class CallProcessor:
         for child in args_node.named_children:
             # C# wraps every argument expression in an `argument` node (which
             # may carry a ref/out modifier or a name: colon); unwrap to the
-            # expression itself -- its LAST named child -- so downstream
+            # expression itself, its LAST named child, so downstream
             # reference-type checks see the identifier, not the wrapper.
             if child.type == cs.TS_CSHARP_ARGUMENT and child.named_children:
                 child = child.named_children[-1]
@@ -3906,8 +3896,8 @@ class CallProcessor:
             # group; reference the whole overload family (the delegate
             # type that selects one overload is invisible to syntax, and
             # the trie's lexicographic pick can even land on a sibling
-            # class -- Polly's EmptyAction). Falls through when the
-            # enclosing type has no such member.
+            # class, Polly's EmptyAction). Falls through when the enclosing
+            # type has no such member.
             if cs.SEPARATOR_DOT not in arg_text:
                 engine = self._resolver.type_inference.csharp_type_inference
                 # An in-scope LOCAL FUNCTION shadows any same-name member
@@ -4079,7 +4069,7 @@ class CallProcessor:
 
         ensure_rel = self.ingestor.ensure_relationship_batch
         # A nested closure a function returns is reachable whenever that function
-        # is reached (it is created and handed back as the return value). Nested
+        # is reached (created and handed back as the return value). Nested
         # functions are no longer roots, so this producer edge keeps a genuinely
         # used closure (a returned decorator/formatter) live without reviving the
         # closures of an unreachable outer function.
@@ -4225,9 +4215,9 @@ class CallProcessor:
         # callee may invoke (external framework) or store for later dynamic
         # dispatch (first-party plumbing); either way the passing scope holds a
         # live reference, so emit an edge to keep the callback reachable.
-        # External/builtin callees keep the historical CALLS edge; first-party
-        # callees record the pass as REFERENCES (the precise invocation edge, if
-        # any, comes from callable-param flow).
+        # External/builtin callees keep the CALLS edge; first-party callees
+        # record the pass as REFERENCES (the precise invocation edge, if any,
+        # comes from callable-param flow).
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
             # A container-literal or conditional argument
@@ -4388,8 +4378,8 @@ class CallProcessor:
         # Accessing an @property getter invokes the getter method at runtime, but
         # tree-sitter sees a plain attribute, not a call. Resolve attribute
         # accesses whose tail names a known property and emit a CALLS edge to the
-        # getter (skipping the attribute that is itself a call's function, which
-        # the call path above already resolves).
+        # getter (skipping the attribute that is itself a call's function, already
+        # resolved by the call path above).
         resolver = self._resolver
         resolve_func = resolver.resolve_function_call
         registry = resolver.function_registry
@@ -4476,11 +4466,11 @@ class CallProcessor:
         # declaration in the scopes the READ WALK descends into (locals
         # incl. untyped `var x = 3`, parameters, and a simple lambda's
         # bare implicit_parameter). A declaration shadows a same-name
-        # property only for reads INSIDE its declaring scope -- a lambda
+        # property only for reads INSIDE its declaring scope: a lambda
         # param or a sibling block's local must not suppress an outer
         # read, while an in-lambda shadowed read must not fabricate a
         # property reference. The two walks skip the SAME nested
-        # function/class scopes (each of those has its own pass).
+        # function/class scopes (each has its own pass).
         def scope_span(decl: Node) -> tuple[int, int]:
             anc = decl.parent
             while anc is not None and anc != caller_node:
@@ -4644,11 +4634,11 @@ class CallProcessor:
                     if name_node.text is not None:
                         path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
                 # A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has
-                # no `name` field -- the name lives on the parent declarator -- so it
+                # no `name` field (the name lives on the parent declarator), so it
                 # would be dropped, flattening a nested callee's qn (request.encodePair
                 # instead of request.getQueryString.encodePair). Recover the binding
-                # name the definition pass used so caller and node qns agree; else the
-                # callee's own inline-arg/object callbacks never match and report dead.
+                # name the definition pass used so the qns agree; else the callee's
+                # own inline-arg/object callbacks never match and report dead.
                 elif lang_config.language in _JS_TS_LANGUAGES and (
                     binding := self._js_ts_arrow_binding_name(current)
                 ):
@@ -4669,11 +4659,11 @@ class CallProcessor:
         # name for the two named forms whose value IS the arrow: a module/local
         # `const f = () => ...` (variable_declarator) and a class field
         # `helper = () => ...` (public_field_definition). The body's calls then
-        # attribute to the same qn the definition pass registered. Anonymous /
-        # destructured arrows stay unnamed (skipped), as before.
+        # attribute to the qn the definition pass registered. Anonymous /
+        # destructured arrows stay unnamed (skipped).
         if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return None
-        # The arrow may be bound THROUGH transparent wrappers -- parens and TS
+        # The arrow may be bound THROUGH transparent wrappers: parens and TS
         # casts (`export const createStore = ((s) => ...) as CreateStore`,
         # zustand's public-API shape). The def pass unwraps these when naming the
         # function, so the call pass must climb them too or the arrow looks
@@ -4705,12 +4695,12 @@ class CallProcessor:
         # The func nodes that will get their own caller node: named functions
         # plus arrows/function-expressions bound to a name. An anonymous arrow
         # passed directly as an argument (`hooks.tap(name, (x) => {...})`) has
-        # neither, so it is skipped by the call loop. Its calls must therefore
-        # NOT be excluded from the enclosing named scope by _calls_owned_by;
-        # otherwise they attribute to nothing and drop (webpack is saturated
-        # with this callback pattern). Returning only attributable nodes as the
-        # exclusion set lets an anonymous arrow's calls bubble up to the nearest
-        # named function/method, matching where the oracle attributes them.
+        # neither, so the call loop skips it. Its calls must therefore NOT be
+        # excluded from the enclosing named scope by _calls_owned_by; otherwise
+        # they attribute to nothing and drop (webpack is saturated with this
+        # callback pattern). Returning only attributable nodes as the exclusion
+        # set lets an anonymous arrow's calls bubble up to the nearest named
+        # function/method, matching where the oracle attributes them.
         if language == cs.SupportedLanguage.RUST:
             # A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,
             # so the call loop skips it (no caller node); like JS/TS anon arrows its
@@ -4728,7 +4718,7 @@ class CallProcessor:
 
     def _is_unowned_js_scope(self, node: Node) -> bool:
         # An anonymous arrow/function-expression that gets no caller node of its
-        # own (no name, no binding name) -- a `.map()`/`cell`/forwardRef callback.
+        # own (no name, no binding name): a `.map()`/`cell`/forwardRef callback.
         # Its calls bubble up to the enclosing named scope (_attributable_func_nodes),
         # and so must its JSX references: the enclosing JSX walk continues through it.
         if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):

@@ -73,7 +73,7 @@ TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
-# let the call extractor synthesize the implied <operand>.__dunder__ call.
+# let the call extractor synthesise the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
 PY_BUILTIN_LEN = "len"
 PY_BUILTIN_GETATTR = "getattr"
@@ -84,7 +84,7 @@ PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
 # Operands with these characters are not simple attribute/name chains (calls,
-# nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
+# nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
 # Optional annotation handling: X | None names a single concrete class.
 PY_UNION_SEPARATOR = "|"
@@ -92,7 +92,6 @@ PY_NONE = "None"
 # `-> Self` names the enclosing class, not a class called Self.
 PY_ANNOTATION_SELF = "Self"
 
-# Python keyword identifiers
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"
 # Visibility by naming convention: a leading underscore marks a private
@@ -107,33 +106,27 @@ DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 
-# Eager builtins that invoke a callable argument synchronously within the
-# caller's own stack frame; a function passed to one is invoked there, so the
-# trace attributes the call to the enclosing function (no Python frame exists
-# for the builtin). Lazy higher-order builtins (map/filter) are excluded:
-# they defer invocation until the result is consumed, which may be elsewhere.
+# Eager builtins that invoke a callable argument synchronously in the caller's
+# stack frame, so the trace attributes the call to the enclosing function (no
+# Python frame exists for the builtin). Lazy higher-order builtins (map/filter)
+# are excluded: they defer invocation until the result is consumed, elsewhere.
 HIGHER_ORDER_BUILTINS: frozenset[str] = frozenset({"sorted", "min", "max", "reduce"})
 
-# Python attribute prefixes
 PY_SELF_PREFIX = "self."
 PY_CLS_PREFIX = "cls."
 
-# Python type inference patterns
 PY_VAR_PATTERN_ALL = "all_"
 PY_VAR_SUFFIX_PLURAL = "s"
 PY_CLASS_REPOSITORY = "Repository"
 PY_MODELS_BASE_PATH = ".models.base."
 PY_METHOD_CREATE = "create"
 
-# Type inference scoring
 PY_SCORE_EXACT_MATCH = 100
 PY_SCORE_SUFFIX_MATCH = 90
 PY_SCORE_CONTAINS_BASE = 80
 
-# Type inference defaults
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
-# Recursion guard attributes
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
 GUARD_INHERITED_METHOD = "_inherited_method_guard"

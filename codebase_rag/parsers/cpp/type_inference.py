@@ -7,13 +7,13 @@ from ..utils import safe_decode_text
 
 
 class CppTypeInferenceEngine:
-    # Maps local variable / parameter names to their bare C++ type name within a
-    # function or method body, so the resolver can bind a member-dispatch call
-    # (`obj->method()` / `obj.method()`) to the method node on the receiver's
-    # class instead of guessing by the bare method name. Bare names only: the
-    # resolver turns a name into a class qn via the same _resolve_class_name path
-    # the definition pass uses, so pointer/reference/const/template wrappers are
-    # stripped here down to the underlying type identifier.
+    # Maps local variable / parameter names to their bare C++ type name in a
+    # function body, so the resolver binds a member-dispatch call
+    # (`obj->method()` / `obj.method()`) to the method on the receiver's class
+    # instead of guessing by bare method name. Bare names only: the resolver
+    # turns a name into a class qn via _resolve_class_name, so
+    # pointer/reference/const/template wrappers are stripped to the underlying
+    # type identifier.
     __slots__ = ()
 
     def build_local_variable_type_map(
@@ -26,11 +26,11 @@ class CppTypeInferenceEngine:
             self._collect_body_declarations(body, decls)
         # The map is keyed by name only, with no knowledge of a call's lexical
         # position, so it cannot tell an outer `Zeta z` from an inner-block
-        # `Alpha z` that shadows it. Rather than pick a write order that is wrong
-        # for one of the two scopes, decline to infer any name declared with more
-        # than one type: such a call falls back to name-only resolution instead of
-        # getting a confidently wrong typed edge. (Same flat-map limitation the Go
-        # engine carries; true scoping would need positional call resolution.)
+        # `Alpha z` that shadows it. Rather than pick a write order wrong for
+        # one scope, decline to infer any name declared with more than one type:
+        # such a call falls back to name-only resolution instead of a
+        # confidently wrong typed edge. (Same flat-map limitation the Go engine
+        # carries; true scoping would need positional call resolution.)
         var_types: dict[str, str] = {}
         conflicting: set[str] = set()
         for name, type_name in decls:
@@ -47,16 +47,16 @@ class CppTypeInferenceEngine:
     def collect_type_aliases(
         self, root_node: Node, aliases: dict[str, str], conflicts: set[str]
     ) -> None:
-        # Map each C++ `typedef X Y;` / `using Y = X;` alias name to its underlying
-        # bare type name, so a field/local declared with the alias resolves to the
-        # aliased class. Collected across all files into one map (an alias in a
-        # header is used in a .cc), keyed by bare name like the flat type maps.
-        # Aliases to a primitive/template-arg-only type reduce to no bare name and
-        # are skipped (never a first-party method-call receiver).
+        # Map each C++ `typedef X Y;` / `using Y = X;` alias to its underlying
+        # bare type name, so a field/local declared with the alias resolves to
+        # the aliased class. Collected across all files into one map (a header
+        # alias is used in a .cc), keyed by bare name. Aliases to a
+        # primitive/template-arg-only type reduce to no bare name and are
+        # skipped (never a first-party method-call receiver).
         for child in root_node.children:
-            # An alias inside a function/method/lambda body is local to that body
-            # and can never type a cross-file field/local, so skip the body (this
-            # also avoids traversing the bulk of the AST -- statements/exprs).
+            # An alias inside a function/method/lambda body is local to it and
+            # can never type a cross-file field/local, so skip the body (this
+            # also avoids traversing the bulk of the AST).
             if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
                 continue
             match child.type:
@@ -77,11 +77,11 @@ class CppTypeInferenceEngine:
         # skips, so construction-site resolution collects them per caller.
         # Each entry carries the declaration's end byte and the enclosing
         # block's end byte: C++ name lookup is declaration-ordered AND
-        # lexically scoped, so a call before the alias or after its
-        # block/lambda closes must not bind to it. Same-name entries from
-        # different blocks all survive -- disjoint windows never compete
-        # for one call, and among overlapping windows the binder picks the
-        # latest declaration, which is exactly C++ shadowing.
+        # lexically scoped, so a call before the alias or after its block
+        # closes must not bind to it. Same-name entries from different blocks
+        # all survive; disjoint windows never compete for one call, and among
+        # overlapping windows the binder picks the latest declaration, which is
+        # exactly C++ shadowing.
         aliases: dict[str, list[tuple[str, int, int]]] = {}
         stack = [(child, caller_node.end_byte) for child in caller_node.children]
         while stack:
@@ -92,10 +92,10 @@ class CppTypeInferenceEngine:
                 case cs.CppNodeType.ALIAS_DECLARATION:
                     pair = self._using_pair(node)
                 case _:
-                    # blocks and lambdas narrow visibility to their span;
-                    # so does a local class/struct body, whose member
-                    # aliases never escape it (only member functions,
-                    # which sit inside the same span, can use them).
+                    # blocks and lambdas narrow visibility to their span, as
+                    # does a local class/struct body, whose member aliases
+                    # never escape it (only its member functions, in the same
+                    # span, can use them).
                     if (
                         node.type == cs.CppNodeType.COMPOUND_STATEMENT
                         or node.type in cs.CPP_COMPOUND_TYPES
@@ -118,11 +118,10 @@ class CppTypeInferenceEngine:
         conflicts: set[str],
     ) -> None:
         # Bare alias names can collide across scopes/files (two namespaces each
-        # `using It = ...;` for a different type). Rather than keep whichever was
-        # seen first (a confidently-wrong typed edge for the other), drop a name
-        # seen with conflicting underlying types so its receivers fall back to
-        # name-only resolution. Mirrors build_local_variable_type_map's
-        # drop-on-conflict.
+        # `using It = ...;` for a different type). Rather than keep whichever
+        # was seen first, drop a name seen with conflicting underlying types so
+        # its receivers fall back to name-only resolution. Mirrors
+        # build_local_variable_type_map's drop-on-conflict.
         if pair is None:
             return
         alias, underlying = pair
@@ -142,9 +141,9 @@ class CppTypeInferenceEngine:
             return None
         underlying = self._bare_type_name(type_node)
         # A plain `typedef X Y;` declarator is a bare type_identifier (the new
-        # type name); pointer/array/function typedefs wrap it, so fall back to the
-        # declarator-unwrap used for variables. Only the bare-name form types a
-        # class receiver, so the unwrap returning None for the rest is fine.
+        # type name); pointer/array/function typedefs wrap it, so fall back to
+        # the variable declarator-unwrap. Only the bare-name form types a class
+        # receiver, so the unwrap returning None for the rest is fine.
         alias = (
             safe_decode_text(declarator)
             if declarator.type == cs.CppNodeType.TYPE_IDENTIFIER
@@ -170,13 +169,13 @@ class CppTypeInferenceEngine:
         return None
 
     def collect_template_param_names(self, caller_node: Node) -> frozenset[str]:
-        # Names of the template type parameters in scope at a function/method
-        # (`template<typename SAX>` -> {"SAX"}), gathered from the function's own
-        # template_declaration wrapper and every enclosing class/struct template. A
-        # call receiver typed to one of these has NO concrete type at this site
-        # (`SAX* sax`), so the resolver fans it out to all implementers instead of
-        # treating it as an external type. Concrete external types (`std::string`) are
-        # NOT in this set, so they still suppress the fan-out.
+        # Names of the template type parameters in scope at a function
+        # (`template<typename SAX>` -> {"SAX"}), from the function's own
+        # template_declaration wrapper and every enclosing class/struct
+        # template. A receiver typed to one of these has NO concrete type here
+        # (`SAX* sax`), so the resolver fans it out to all implementers.
+        # Concrete external types (`std::string`) are NOT in this set, so they
+        # still suppress the fan-out.
         names: set[str] = set()
         node: Node | None = caller_node
         while node is not None:
@@ -189,14 +188,14 @@ class CppTypeInferenceEngine:
 
     def _collect_type_param_names(self, param_list: Node, names: set[str]) -> None:
         # One name per parameter declaration. An optional param (`typename SAX =
-        # Real`) carries its DEFAULT type as a sibling child -- collecting every
-        # descendant type_identifier would wrongly pull the concrete default `Real`
-        # into the template-param set and fan a real `Real r; r.work()` out. Take the
-        # `name` field when present (optional params), else the declaration's own
-        # type_identifier (`typename T`, `typename... Ts`). Only genuine TYPE-param
-        # declarations are read: a value param (`int N`, `MyEnum E`) or a
-        # template-template param names a concrete type, not a stand-in a receiver
-        # could be instantiated as, so it must never enter the set.
+        # Real`) carries its DEFAULT type as a sibling child, so collecting every
+        # descendant type_identifier would wrongly pull the default `Real` into
+        # the set and fan a real `Real r; r.work()` out. Take the `name` field
+        # when present, else the declaration's own type_identifier (`typename T`,
+        # `typename... Ts`). Only genuine TYPE-param declarations are read: a
+        # value param (`int N`) or template-template param names a concrete type,
+        # not a stand-in a receiver could be instantiated as, so it never enters
+        # the set.
         for decl in param_list.named_children:
             if decl.type not in cs.CPP_TYPE_PARAMETER_DECL_TYPES:
                 continue
@@ -212,10 +211,10 @@ class CppTypeInferenceEngine:
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map each data member of a C++ class to its bare type name, so a member
-        # call `field_.method()` inside the class's methods can resolve via the
-        # field's type. Fields live in the class body (often a header) separate from
-        # out-of-line method bodies, so this is captured once at class ingestion and
-        # looked up by the enclosing class qn at call resolution.
+        # call `field_.method()` in the class's methods resolves via the field's
+        # type. Fields live in the class body (often a header) separate from
+        # out-of-line method bodies, so this is captured once at ingestion and
+        # looked up by enclosing class qn at call resolution.
         field_types: dict[str, str] = {}
         if body := class_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_fields(body, field_types)
@@ -225,8 +224,8 @@ class CppTypeInferenceEngine:
         for child in node.children:
             # A nested type / function / lambda opens its own member scope; its
             # declarations are not this class's fields. Preprocessor blocks
-            # (`#ifdef ... #endif`) are transparent, so recurse through them to
-            # reach fields declared conditionally.
+            # (`#ifdef ... #endif`) are transparent, so recurse to reach fields
+            # declared conditionally.
             if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
                 continue
             if child.type == cs.CppNodeType.FIELD_DECLARATION:
@@ -276,8 +275,8 @@ class CppTypeInferenceEngine:
     ) -> None:
         for child in node.children:
             # A lambda / nested function / local class body opens its own scope;
-            # its declarations are not locals of the enclosing function, so descend
-            # no further or an inner `x` would be attributed to the outer `x`.
+            # its declarations are not locals of the enclosing function, so stop
+            # here or an inner `x` would be attributed to the outer `x`.
             if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
                 continue
             if child.type == cs.CppNodeType.DECLARATION:
@@ -336,9 +335,9 @@ class CppTypeInferenceEngine:
                 current = inner
                 continue
             # `reference_declarator` (`T& x`) holds its identifier as a positional
-            # child, not under the `declarator` field that pointer/init declarators
-            # expose, so the field-based unwrap stalls; descend into the first
-            # named declarator-bearing child instead.
+            # child, not under the `declarator` field pointer/init declarators
+            # expose, so the field unwrap stalls; descend into the first named
+            # declarator-bearing child instead.
             current = self._first_declarator_child(current)
         return None
 

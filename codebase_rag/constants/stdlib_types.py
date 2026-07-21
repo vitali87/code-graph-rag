@@ -20,8 +20,8 @@ JS_BUILTIN_TYPES: frozenset[str] = frozenset(
 
 # JavaScript built-in function patterns
 # JS/TS runtime global classes usable as `extends` bases with no import.
-# A base matching one of these that resolves to no first-party class is
-# positively external (builtin.<Name>), not an unresolvable guess.
+# A base matching one that resolves to no first-party class is positively
+# external (builtin.<Name>), not an unresolvable guess.
 JS_GLOBAL_CLASS_NAMES: frozenset[str] = frozenset(
     {
         "Error",
@@ -106,10 +106,10 @@ JS_FUNCTION_PROTOTYPE_SUFFIXES: dict[str, str] = {
     JS_SUFFIX_CALL: JS_METHOD_CALL,
     JS_SUFFIX_APPLY: JS_METHOD_APPLY,
 }
-# `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; when such a
-# call sits in a value position (`onError: handleError.bind(toast)`) the `.bind`
-# resolves to the Function.prototype builtin, so `fn` itself must be referenced
-# separately or it reports as dead.
+# `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; in a value
+# position (`onError: handleError.bind(toast)`) the `.bind` resolves to the
+# Function.prototype builtin, so `fn` must be referenced separately or it
+# reports as dead.
 JS_FUNCTION_PROTOTYPE_METHODS = frozenset(
     {JS_METHOD_BIND, JS_METHOD_CALL, JS_METHOD_APPLY}
 )
@@ -225,10 +225,9 @@ JAVA_WRAPPER_TYPES = frozenset(
 )
 
 # java.lang types Java code names WITHOUT an import (the implicit java.lang
-# import). A bare `extends`/`implements` base matching one of these that
-# resolves to no first-party type is positively external
-# (java.lang.<Name>), not an unresolvable guess; mirrors the JS global
-# class rule (JS_GLOBAL_CLASS_NAMES -> builtin.<Name>).
+# import). A bare `extends`/`implements` base matching one that resolves to
+# no first-party type is positively external (java.lang.<Name>); mirrors the
+# JS global class rule (JS_GLOBAL_CLASS_NAMES -> builtin.<Name>).
 JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
     {
         "Byte",
@@ -285,9 +284,9 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
 )
 
 # C# base class library / framework roots. A qualified name under one of
-# these namespaces (`System.Collections.Generic.List`, `System.Linq.Enumerable`)
-# is external stdlib, not first-party code, so stdlib extraction folds the
-# trailing PascalCase type into its namespace path.
+# these namespaces (`System.Collections.Generic.List`) is external stdlib,
+# not first-party code, so stdlib extraction folds the trailing PascalCase
+# type into its namespace path.
 CSHARP_STDLIB_PREFIXES = (
     "System.",
     "Microsoft.",
@@ -297,9 +296,9 @@ CSHARP_STDLIB_PREFIXES = (
 
 # Recognized BCL types. ONLY a name in this set folds into its namespace
 # (`System.Collections.Generic.List` -> `System.Collections.Generic`); every
-# other PascalCase leaf is treated as a namespace and kept whole, because C#
-# namespaces are PascalCase too and a case heuristic would misfold them
-# (`Microsoft.Extensions.Logging`, `System.Text.Json`).
+# other PascalCase leaf is kept whole as a namespace, because C# namespaces
+# are PascalCase too and a case heuristic would misfold them
+# (`Microsoft.Extensions.Logging`).
 CSHARP_STDLIB_CLASSES = frozenset(
     {
         # System primitives / core types
@@ -352,9 +351,9 @@ CSHARP_STDLIB_CLASSES = frozenset(
         "IAsyncDisposable",
         "IComparable",
         "IEquatable",
-        # Other ubiquitous BCL types (curated common set -- a complete list
-        # is unbounded; the tail stays as full type paths rather than risk a
-        # case heuristic that would misfold PascalCase namespaces).
+        # Other ubiquitous BCL types (curated common set; a complete list
+        # is unbounded, so the tail stays as full type paths rather than risk
+        # a case heuristic that would misfold PascalCase namespaces).
         "Math",
         "MathF",
         "Random",

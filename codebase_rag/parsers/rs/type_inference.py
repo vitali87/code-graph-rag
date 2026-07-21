@@ -9,11 +9,11 @@ from .utils import tuple_group_inner
 
 class RustTypeInferenceEngine:
     # Maps local names (parameters, `let` bindings, enum-match variant bindings)
-    # to their bare Rust type name within a function/method body, so the resolver
-    # can bind a receiver-dispatch call (`cmd.apply()`) to the method on the type
-    # instead of guessing via the ambiguous name-only trie fallback. Directly
-    # knowable types only; call-return bindings (`let x = T::new()`) are collected
-    # separately and typed by the unified engine (which has the return-type map).
+    # to their bare Rust type within a function/method body, so the resolver binds
+    # a receiver-dispatch call (`cmd.apply()`) to the method on the type instead of
+    # the ambiguous name-only trie fallback. Directly knowable types only;
+    # call-return bindings (`let x = T::new()`) are typed separately by the unified
+    # engine (which has the return-type map).
     __slots__ = ()
 
     def build_local_variable_type_map(
@@ -26,9 +26,9 @@ class RustTypeInferenceEngine:
         return var_types
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
-        # Map a Rust struct's field names to their bare type names
-        # (`struct Handler { shutdown: Shutdown }` -> {"shutdown": "Shutdown"}),
-        # so a field-hop receiver (`self.shutdown.is_shutdown()`) resolves.
+        # Map a struct's field names to their bare type names (`struct Handler
+        # { shutdown: Shutdown }` -> {"shutdown": "Shutdown"}), so a field-hop
+        # receiver (`self.shutdown.is_shutdown()`) resolves.
         fields: dict[str, str] = {}
         field_list = class_node.child_by_field_name(cs.FIELD_BODY)
         if field_list is None or field_list.type != cs.TS_RS_FIELD_DECLARATION_LIST:
@@ -48,11 +48,11 @@ class RustTypeInferenceEngine:
 
     def build_field_guard_inner_map(self, class_node: Node) -> dict[str, str]:
         # For struct fields whose type is a guard container (`state: Mutex<State>`),
-        # record field -> inner type (`state` -> State). The field map itself keeps
-        # the WRAPPER (`Mutex`), so a direct `self.state.is_poisoned()` resolves
-        # against the wrapper (correct); the inner is applied ONLY when a chain
-        # reaches a lock/read/borrow guard accessor. Guard containers do not
-        # deref-coerce, so this is the only sound place to unwrap.
+        # record field -> inner type (`state` -> State). The field map keeps the
+        # WRAPPER (`Mutex`), so a direct `self.state.is_poisoned()` resolves against
+        # it (correct); the inner applies ONLY when a chain reaches a lock/read/borrow
+        # guard accessor. Guard containers do not deref-coerce, so this is the only
+        # sound place to unwrap.
         inners: dict[str, str] = {}
         field_list = class_node.child_by_field_name(cs.FIELD_BODY)
         if field_list is None or field_list.type != cs.TS_RS_FIELD_DECLARATION_LIST:
@@ -71,8 +71,8 @@ class RustTypeInferenceEngine:
 
     def _guard_inner_type(self, type_node: Node) -> str | None:
         # `Mutex<State>` / `Arc<Mutex<State>>` -> State; None for a non-guard type.
-        # A guard wrapped in a deref pointer (`Arc<Mutex<T>>`) still unwraps to the
-        # guard's inner, so peel deref pointers first.
+        # A guard wrapped in a deref pointer (`Arc<Mutex<T>>`) still unwraps to its
+        # inner, so peel deref pointers first.
         if type_node.type != cs.TS_GENERIC_TYPE:
             return None
         outer = type_node.child_by_field_name(cs.FIELD_TYPE)
@@ -101,7 +101,7 @@ class RustTypeInferenceEngine:
         # bound name with the callee chain segments (base type first, then method
         # hops: `['Command', 'from_frame']`). The unified engine walks the segments
         # through the return-type map to type `x`. Only type-rooted associated-call
-        # chains are collected; anything else stays unresolved.
+        # chains are collected.
         bindings: list[tuple[str, list[str]]] = []
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_call_bindings(body, bindings)
@@ -126,9 +126,9 @@ class RustTypeInferenceEngine:
     def _collect_bindings(self, node: Node, var_types: dict[str, str]) -> None:
         # Only `let` bindings go in the flat map. Match-variant bindings are NOT
         # flattened here: a shared name across arms (or a nested match rebinding a
-        # param) would clobber the flat entry with the wrong (last) type. They are
-        # supplied per-arm-scoped via collect_match_arm_bindings and overlaid by the
-        # resolver at each call's position instead.
+        # param) would clobber the entry with the wrong (last) type. They come
+        # per-arm-scoped via collect_match_arm_bindings, overlaid by the resolver at
+        # each call's position.
         if node.type == cs.TS_RS_LET_DECLARATION:
             self._collect_let_binding(node, var_types)
         for child in node.children:
@@ -157,8 +157,7 @@ class RustTypeInferenceEngine:
     def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
         # `Variant(x)`: bind x to the variant's payload type. Rust's newtype idiom
         # (`Command::Get(Get)`) names the variant after the wrapped type, so the
-        # variant name IS the payload type. Only single-field patterns bind (a
-        # multi-field variant has no single payload type).
+        # variant name IS the payload type. Only single-field patterns bind.
         variant = pattern.child_by_field_name(cs.FIELD_TYPE)
         if variant is None:
             return None
@@ -175,8 +174,8 @@ class RustTypeInferenceEngine:
     ) -> list[tuple[int, int, str, str]]:
         # Per-arm scoped match-variant bindings: (arm_start_byte, arm_end_byte,
         # binding_name, variant_type). Lets the resolver overlay the binding whose
-        # arm range contains a call, so each `cmd.apply()` in a distinct arm
-        # resolves to its OWN variant type instead of the flat map's last-arm one.
+        # arm range contains a call, so each `cmd.apply()` in a distinct arm resolves
+        # to its OWN variant type, not the flat map's last-arm one.
         bindings: list[tuple[int, int, str, str]] = []
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -185,8 +184,8 @@ class RustTypeInferenceEngine:
             # Extract only THIS arm's own pattern bindings, not descendants: a
             # nested `match` lives in the arm's value/body and is a separate
             # match_arm (collected in its own iteration with its own range).
-            # Scanning all descendants would scope a nested arm's binding to the
-            # whole outer arm, mis-overlaying outer-scope calls.
+            # Scanning descendants would scope a nested arm's binding to the outer
+            # arm, mis-overlaying outer-scope calls.
             arm_pattern = arm.child_by_field_name(cs.TS_FIELD_PATTERN)
             if arm_pattern is None:
                 continue
@@ -218,8 +217,8 @@ class RustTypeInferenceEngine:
         value_expr = self._unwrap_try(value)
         if segments := self._callee_chain_segments(value_expr):
             # A single bare identifier is a move or fn-pointer binding
-            # (`let f = make;`), not a call: `f` holds the function itself,
-            # not a value of its return type. Only an invoked base counts.
+            # (`let f = make;`), not a call: `f` holds the function, not a value of
+            # its return type. Only an invoked base counts.
             if len(segments) == 1 and value_expr.type not in cs.RS_CALL_OR_GENERIC_FN:
                 return
             bindings.append((name, segments))
@@ -228,9 +227,9 @@ class RustTypeInferenceEngine:
         # Flatten a Rust value expression into ordered chain segments, base first:
         # `Type::assoc().m()` -> ['Type','assoc','m']; `self.shared.state.lock()
         # .unwrap()` -> ['self','shared','state','lock','unwrap']. Method calls and
-        # field accesses are both segments (the resolver disambiguates each hop as
-        # field/method/identity). Base must be an identifier, `self`, or a scoped
-        # `Type::assoc` path; anything else (index, literal) yields None.
+        # field accesses are both segments (the resolver disambiguates each hop).
+        # Base must be an identifier, `self`, or a scoped `Type::assoc` path;
+        # anything else (index, literal) yields None.
         node = self._unwrap_try(node)
         if node.type in cs.RS_CALL_OR_GENERIC_FN:
             # generic_function is turbofish (`f::<T>()`); descend to its callee.

@@ -1,10 +1,10 @@
-# L2 module-call attribution: does cgr attribute the right calls to the
-# module? The L3 trace records the innermost function frame as the caller and
-# drops <module> frames, so it is structurally blind to module-level call
-# attribution. This eval fills that gap with an AST oracle that models
-# import-time execution. Both sides are compared as (module_file,
-# callee_simple_name) name-edges, restricted to first-party callees and
-# excluding dunders, since cgr only emits first-party CALLS.
+# L2 module-call attribution: does cgr attribute the right calls to the module?
+# The L3 trace records the innermost function frame as caller and drops
+# <module> frames, so it is blind to module-level attribution. This eval fills
+# that gap with an AST oracle modelling import-time execution. Both sides are
+# compared as (module_file, callee_simple_name) name-edges, restricted to
+# first-party callees and excluding dunders, since cgr only emits first-party
+# CALLS.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -48,13 +48,12 @@ def _has_future_annotations(tree: ast.Module) -> bool:
 
 
 class _ModuleCallVisitor(ast.NodeVisitor):
-    # Collect callee names of calls that execute at module-load time. A
-    # function's decorators, argument defaults, and (unless postponed)
-    # annotations run in the enclosing scope, so they are visited at the
-    # current depth; only its body is function scope. Class bodies execute at
-    # definition time, so they stay at the enclosing depth. Lambda bodies and
-    # generator expressions are deferred (run when called/consumed), so their
-    # calls are not import-time and are entered as a nested (function) scope.
+    # Collect callee names of calls that execute at module-load time.
+    # Decorators, argument defaults, and (unless postponed) annotations run in
+    # the enclosing scope, so visit them at the current depth; only the body is
+    # function scope. Class bodies execute at definition time and stay at the
+    # enclosing depth. Lambda bodies and generator expressions are deferred (run
+    # when called/consumed), so their calls enter a nested (function) scope.
     def __init__(self, count_annotations: bool) -> None:
         self.names: set[str] = set()
         self._func_depth = 0
@@ -125,8 +124,8 @@ class _ModuleCallVisitor(ast.NodeVisitor):
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
         # the outermost iterable is evaluated eagerly when the generator is
-        # created (enclosing scope); the element, conditions, and any further
-        # iterables are lazy (run during consumption).
+        # created; the element, conditions, and further iterables are lazy (run
+        # during consumption).
         if node.generators:
             self.visit(node.generators[0].iter)
         self._func_depth += 1
@@ -185,10 +184,9 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
     method_label = cs.NodeLabel.METHOD.value
     edges: set[NameEdge] = set()
     for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
-        # A module-scope construction `X()` is an INSTANTIATES edge to the
-        # class node (callee is the class name directly); a function/method
-        # call is a CALLS edge. The oracle records both as a bare callee name,
-        # so credit both kinds of module-caller edge.
+        # A module-scope construction `X()` is an INSTANTIATES edge to the class
+        # node (callee is the class name); a function/method call is a CALLS
+        # edge. The oracle records both as a bare callee name, so credit both.
         if rel_type not in (_CALLS, _INSTANTIATES) or from_label != module_label:
             continue
         path = module_paths.get(str(from_val))

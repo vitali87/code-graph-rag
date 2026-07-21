@@ -46,7 +46,6 @@ OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
-# HTTP status codes
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
@@ -74,8 +73,8 @@ class VectorStoreBackend(StrEnum):
 
 
 # Batches between torch.mps.empty_cache() calls: dropping the Metal
-# allocator cache every batch costs ~21% throughput (measured on an M-series
-# UniXcoder run), so release it periodically just to bound growth.
+# allocator cache every batch costs ~21% throughput (M-series UniXcoder
+# run), so release it periodically to bound growth.
 EMBEDDING_MPS_CACHE_DROP_INTERVAL = 64
 
 

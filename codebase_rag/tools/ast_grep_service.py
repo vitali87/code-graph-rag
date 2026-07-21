@@ -47,9 +47,8 @@ class AstGrepService:
             ast_grep_lang = cs.AST_GREP_LANGUAGES.get(supported)
             if ast_grep_lang is not None:
                 return ast_grep_lang
-        # also accept ast-grep's own ids directly (e.g. "csharp" as well as
-        # the repo's "c_sharp"), which is what callers and the tool
-        # descriptions use.
+        # also accept ast-grep's own ids directly (e.g. "csharp" as well as the
+        # repo's "c_sharp"), which callers and the tool descriptions use.
         if language in _AST_GREP_LANG_IDS:
             return language
         raise ValueError(
@@ -124,9 +123,9 @@ class AstGrepService:
 
     @staticmethod
     def _find_all(root: SgNode, pattern: str) -> list[SgNode]:
-        # ast-grep raises RuntimeError for a matcher-less pattern (empty,
-        # "$$$"); surface it as ValueError so the tool layer reports it
-        # instead of crashing the turn.
+        # ast-grep raises RuntimeError for a matcher-less pattern (empty, "$$$");
+        # surface it as ValueError so the tool layer reports it instead of
+        # crashing the turn.
         try:
             return root.find_all(pattern=pattern)
         except RuntimeError as exc:

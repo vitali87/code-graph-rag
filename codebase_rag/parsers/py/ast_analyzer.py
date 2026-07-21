@@ -226,7 +226,7 @@ class PythonAstAnalyzerMixin(_AstBase):
 
     def _find_class_node(self, class_qn: str) -> Node | None:
         # Locate a class definition node from its qualified name so cross-class
-        # attribute/property types can be read when resolving chained calls.
+        # attribute/property types resolve when handling chained calls.
         module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
         if not module_qn:
             return None
@@ -251,17 +251,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _find_callable_ast_node(self, qn: str) -> Node | None:
-        # Dispatch on the registry label: a FUNCTION qn is module.func (the
-        # module is everything before the LAST dot), anything else keeps the
-        # method-shaped module.Class.method lookup.
+        # Dispatch on the registry label: a FUNCTION qn is module.func (module is
+        # everything before the LAST dot); anything else keeps the method-shaped
+        # module.Class.method lookup.
         if self.function_registry.get(qn) == NodeType.FUNCTION:
             return self._find_function_ast_node(qn)
         return self._find_method_ast_node(qn)
 
     def _find_function_ast_node(self, fn_qn: str) -> Node | None:
-        # Top-level function definition for `mod.func`. Nested and method
-        # definitions carry longer qns, so anything under a class or function
-        # ancestor is skipped.
+        # Top-level function definition for `mod.func`. Nested and method defs
+        # carry longer qns, so anything under a class or function ancestor is
+        # skipped.
         module_qn, _, fn_name = fn_qn.rpartition(cs.SEPARATOR_DOT)
         file_path = self.module_qn_to_file_path.get(module_qn)
         if not file_path or not (entry := self.ast_cache.load(file_path)):
@@ -345,9 +345,9 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _analyze_method_return_statements(
         self, method_node: Node, method_qn: str, module_qn: str | None = None
     ) -> str | None:
-        # module_qn defaults to the method-shaped derivation (mod.Class.meth ->
-        # mod); free-function callers pass their own (mod.func -> mod), which
-        # the [-2] split cannot express.
+        # module_qn defaults to the method-shaped derivation (mod.Class.meth -> mod);
+        # free-function callers pass their own (mod.func -> mod), which the [-2]
+        # split cannot express.
         if module_qn is None:
             module_qn = cs.SEPARATOR_DOT.join(method_qn.split(cs.SEPARATOR_DOT)[:-2])
         if annotated := self._annotated_return_type(method_node, method_qn, module_qn):
@@ -377,10 +377,10 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _annotated_return_type(
         self, method_node: Node, method_qn: str, module_qn: str
     ) -> str | None:
-        # A declared `-> Widget` (or `-> Widget | None`, or the quoted
-        # forward-ref form) is the cheapest and most reliable return-type
-        # source; only a simple or dotted name is trusted, generics and
-        # multi-type unions fall through to body inference.
+        # A declared `-> Widget` (or `-> Widget | None`, or the quoted forward-ref
+        # form) is the cheapest, most reliable return-type source; only a simple or
+        # dotted name is trusted, generics and multi-type unions fall through to
+        # body inference.
         type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None or type_node.text is None:
             return None
@@ -396,9 +396,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not all(part.isidentifier() for part in candidate.split(cs.SEPARATOR_DOT)):
             return None
         if candidate == cs.PY_ANNOTATION_SELF:
-            # `-> Self` names the enclosing class (the method qn minus its
-            # leaf, kept fully qualified so cross-module receivers resolve);
-            # a free function has none.
+            # `-> Self` names the enclosing class (the method qn minus its leaf,
+            # kept fully qualified so cross-module receivers resolve); a free
+            # function has none.
             qn_parts = method_qn.split(cs.SEPARATOR_DOT)
             if len(qn_parts) < 3:
                 return None

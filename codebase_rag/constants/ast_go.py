@@ -1,16 +1,15 @@
 # Go tree-sitter node types.
 
-# Tree-sitter Go node types
 TS_GO_TYPE_DECLARATION = "type_declaration"
 TS_GO_TYPE_SPEC = "type_spec"
 TS_GO_TYPE_ALIAS = "type_alias"
 TS_GO_STRUCT_TYPE = "struct_type"
 TS_GO_SELECTOR_EXPRESSION = "selector_expression"
 TS_GO_TYPE_ASSERTION_EXPRESSION = "type_assertion_expression"
-# A Go source file whose name ends in `_test.go` is compiled only under `go test`;
-# its file segment in a module qn ends with this suffix. Such a file may declare an
-# EXTERNAL test package (`package p_test`) that shares a directory with `package p`
-# but is a distinct package, so it must be excluded from same-directory fan-out.
+# A Go source file ending in `_test.go` is compiled only under `go test`; its
+# module-qn file segment ends with this suffix. It may declare an EXTERNAL test
+# package (`package p_test`) that shares a directory with `package p` but is
+# distinct, so it must be excluded from same-directory fan-out.
 GO_TEST_FILE_SUFFIX = "_test"
 TS_GO_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_GO_FIELD_DECLARATION = "field_declaration"
@@ -51,9 +50,9 @@ TS_GO_DEFAULT_CASE = "default_case"
 TS_GO_FALLTHROUGH_STATEMENT = "fallthrough_statement"
 TS_GO_STATEMENT_LIST = "statement_list"
 TS_GO_BLOCK = "block"
-# Go wraps a block's statements in a single `statement_list` node (unlike JS/Java,
-# whose block children are the statements directly); the source-order I/O walk
-# unwraps it so per-statement shadowing sees the real statement boundaries.
+# Go wraps a block's statements in a single `statement_list` node (unlike JS/Java);
+# the source-order I/O walk unwraps it so per-statement shadowing sees the real
+# statement boundaries.
 TS_GO_STATEMENT_LIST = "statement_list"
 TS_GO_INTERPRETED_STRING = "interpreted_string_literal"
 TS_GO_INTERPRETED_STRING_CONTENT = "interpreted_string_literal_content"
@@ -75,8 +74,8 @@ TS_GO_POINTER_TYPE = "pointer_type"
 # external package's type stays TYPED (and drops) instead of trie-guessed.
 TS_GO_QUALIFIED_TYPE = "qualified_type"
 # Go composite types a method may return; a chained call lands on the CONTAINER,
-# not its element, so return-type inference must not unwrap these to an element
-# name (a `[]Command` return must not resolve `.Run()` to `Command.Run`).
+# not its element, so return-type inference must not unwrap these (a `[]Command`
+# return must not resolve `.Run()` to `Command.Run`).
 TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )

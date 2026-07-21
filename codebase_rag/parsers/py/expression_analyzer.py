@@ -83,11 +83,10 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
     def _attribute_constructor_type(self, method_call_text: str) -> str | None:
         # alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
-        # genai.Client, models.Helper), not a method call: the variable's type is
-        # the dotted class itself. Without this the receiver stays untyped, the
-        # known-external suppression cannot fire, and a later member call on it
-        # (df.apply) rebinds by bare name to an unrelated first-party method.
-        # Mirrors the bare `ClassName(...)` uppercase heuristic.
+        # genai.Client), not a method call: the variable's type is the dotted class
+        # itself. Without this the receiver stays untyped, known-external suppression
+        # cannot fire, and a later member call (df.apply) rebinds by bare name to an
+        # unrelated first-party method. Mirrors the bare `ClassName(...)` heuristic.
         simple_name = method_call_text.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if simple_name and simple_name[0].isupper():
             return method_call_text
@@ -136,8 +135,8 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and (callee := safe_decode_text(func_node))
             ):
                 # `r = make_widget()`: type the local from the free-function
-                # factory's return so the later `r.run()` does not depend on
-                # the bare-name trie fallback.
+                # factory's return so the later `r.run()` does not fall back to
+                # the bare-name trie.
                 return self._infer_free_function_return_type(callee, module_qn)
 
         return None
@@ -177,9 +176,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         self, callee: str, module_qn: str
     ) -> str | None:
         # Resolve a bare callee in the caller's scope only (same module, then
-        # imports) -- Python scoping admits nothing else for a bare name, and a
-        # global simple-name fallback would rebind common names. A CLASS callee
-        # is a constructor: the returned type is the class itself.
+        # imports); Python scoping admits nothing else for a bare name, and a global
+        # simple-name fallback would rebind common names. A CLASS callee is a
+        # constructor: the returned type is the class itself.
         local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{callee}"
         candidates = [local_qn]
         if imported := self.import_processor.import_mapping.get(module_qn, {}).get(

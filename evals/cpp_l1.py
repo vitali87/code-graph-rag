@@ -53,8 +53,8 @@ def main(
 
     # The compile_commands.json defines the gradeable universe: the oracle only
     # sees files its compiled TUs reach, so scope cgr to those files before
-    # scoring. Without this, cgr's whole-tree index (bundled test deps,
-    # uncompiled sources) is graded as false positives against a partial oracle.
+    # scoring. Otherwise cgr's whole-tree index (bundled test deps, uncompiled
+    # sources) is graded as false positives against a partial oracle.
     cgr = restrict_to_files(cgr, {key.file for key in oracle.nodes})
     logger.success(ls.CPP_CGR_SCOPED.format(count=len(cgr.nodes)))
 

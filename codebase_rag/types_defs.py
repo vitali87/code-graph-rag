@@ -557,13 +557,13 @@ class DeferredParentLink(NamedTuple):
     fallback_qn: str | None = None
     # Span key of the parent's NODE when the guess qn cannot carry the
     # registered identity (a C# overload registers signature-suffixed, so
-    # the parameterless sibling exactly shadows the guess); the resolver
-    # prefers the location recorded for this span over the qn match.
+    # the parameterless sibling shadows the guess); the resolver prefers
+    # this span's recorded location over the qn match.
     parent_span: tuple[str, int, int] | None = None
 
 
 # (module_qn, 1-based start line, 0-based start column) of a function
-# node; the full span identifies the function even on shared lines.
+# node; the span identifies the function even on shared lines.
 type FunctionSpanKey = tuple[str, int, int]
 
 
@@ -584,8 +584,8 @@ class FunctionLocation(NamedTuple):
     container_qn: str | None
     # False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
     # lets an unnamed JS/TS function expression adopt a NAMED record (the
-    # node a named pass registered for `exports.f = function`), while a
-    # generated record keeps the historical bubble-to-module attribution.
+    # node registered for `exports.f = function`), while a generated record
+    # keeps the historical bubble-to-module attribution.
     is_named: bool = True
 
 
@@ -853,8 +853,8 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         ),
     ),
     RelationshipSchema(
-        # A method-body anonymous-class override is registered as a Function node,
-        # so it can be the source of an OVERRIDES edge onto the base Method.
+        # A method-body anonymous-class override is a Function node, so it
+        # can source an OVERRIDES edge onto the base Method.
         (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),

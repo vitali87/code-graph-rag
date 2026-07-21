@@ -1,11 +1,10 @@
 # Inheritance eval. Grades cgr's resolved INHERITS (subclass_qn -> base_qn)
-# and OVERRIDES (subclass_qn, base_qn, method) against an ast oracle. The L1
-# structure eval only checks INHERITS by the base's simple name; this checks
-# that cgr resolves the base to the correct first-party class and that method
-# overrides are attributed to the right base. The oracle resolves a base only
-# via same-module definitions and `from <first-party> import <Base>`, and
-# skips attribute/ambiguous/external bases (counted, never silently dropped),
-# so it stays independent of cgr's resolver and never invents an edge.
+# and OVERRIDES (subclass_qn, base_qn, method) against an ast oracle. Unlike
+# the L1 check (INHERITS by simple name), this verifies cgr resolves the base
+# to the correct first-party class and attributes overrides to the right base.
+# The oracle resolves bases only via same-module definitions and `from
+# <first-party> import <Base>`, skipping attribute/ambiguous/external bases
+# (counted, never dropped), so it stays independent of cgr.
 import ast
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -49,8 +48,8 @@ class OracleResult(NamedTuple):
     # subclass is outside it (e.g. a class nested in a function) are not graded.
     top_classes: frozenset[str]
     # Subclasses eligible for OVERRIDES grading: top-level and single-base, so
-    # override attribution is unambiguous. Multi-base (mixin/MRO) classes are
-    # excluded on both sides rather than guessed at.
+    # attribution is unambiguous. Multi-base (mixin/MRO) classes are excluded on
+    # both sides rather than guessed at.
     override_scope: frozenset[str]
 
 
@@ -155,9 +154,9 @@ def oracle_inheritance(target: Path, project: str) -> OracleResult:
                 continue
             resolved_bases.append(base_qn)
             inherits.add((info.qn, base_qn))
-        # Grade overrides only for unambiguous single first-party-base classes;
-        # with multiple bases the MRO decides which base a method overrides, a
-        # call this ast oracle does not model.
+        # Grade overrides only for single first-party-base classes; with
+        # multiple bases the MRO decides which base a method overrides, which
+        # this ast oracle does not model.
         if len(resolved_bases) == 1:
             override_scope.add(info.qn)
             base_qn = resolved_bases[0]
@@ -204,10 +203,10 @@ def _override_repr(edge: OverrideEdge) -> str:
 
 
 def score_inheritance(cgr: CgrResult, oracle: OracleResult) -> ScoreResult:
-    # Restrict cgr to the oracle's gradeable universe: subclasses the oracle
-    # understands (top-level) for INHERITS, and single-base subclasses for
-    # OVERRIDES. This drops nested-class and multi-base-MRO edges the oracle
-    # cannot adjudicate, rather than scoring cgr against an incomplete oracle.
+    # Restrict cgr to the oracle's gradeable universe: top-level subclasses for
+    # INHERITS, single-base subclasses for OVERRIDES. This drops nested-class
+    # and multi-base-MRO edges the oracle cannot adjudicate, rather than scoring
+    # cgr against an incomplete oracle.
     cgr_inh = {e for e in cgr.inherits if e[0] in oracle.top_classes}
     cgr_ovr = {e for e in cgr.overrides if e[0] in oracle.override_scope}
     oracle_inh = oracle.inherits

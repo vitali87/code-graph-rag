@@ -200,7 +200,7 @@ def index_extension_method(
 def build_field_type_map(class_node: Node) -> dict[str, str]:
     # {field-or-property name: type name} for members declared directly on
     # this class body, recorded at ingestion so a receiver typed to a field
-    # (`_w.M()`) resolves -- including a field inherited from a base class in
+    # (`_w.M()`) resolves, including a field inherited from a base class in
     # another file, reached by walking class_inheritance over these maps.
     body = class_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:

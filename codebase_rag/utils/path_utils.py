@@ -110,8 +110,8 @@ def should_skip_path(
 
 def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
     # `bin` is a build-output ignore (dotnet's <proj>/bin, repo-root bin/)
-    # EXCEPT directly under src/: Cargo's standard multi-binary layout puts
-    # first-party binaries in src/bin/, and build systems never emit there.
+    # EXCEPT directly under src/: Cargo's multi-binary layout puts
+    # first-party binaries in src/bin/, where build systems never emit.
     for index, part in enumerate(dir_parts):
         if part not in cs.IGNORE_PATTERNS:
             continue

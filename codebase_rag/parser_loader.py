@@ -88,7 +88,7 @@ def _try_import_language(
 ) -> LanguageLoader:
     # AttributeError covers a pip package too old to export the requested
     # grammar variant (tree_sitter_typescript without language_tsx); fall
-    # back rather than crash parser init for every language.
+    # back rather than crash parser init.
     try:
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
@@ -118,10 +118,9 @@ def _language_imports() -> list[LanguageImport]:
             cs.SupportedLanguage.TS,
         ),
         # Same pip package ships both grammar variants; .tsx needs the tsx
-        # one or JSX parses as an ERROR forest. The submodule fallback name
-        # is TSX on purpose: no grammars/tree-sitter-tsx exists, so a
-        # too-old pip package leaves TSX unavailable instead of silently
-        # binding the wrong (typescript) grammar.
+        # one or JSX parses as an ERROR forest. The submodule name is TSX on
+        # purpose: no grammars/tree-sitter-tsx exists, so a too-old pip
+        # package leaves TSX unavailable, not bound to the wrong grammar.
         LanguageImport(
             cs.SupportedLanguage.TSX,
             cs.TreeSitterModule.TS,
@@ -379,8 +378,8 @@ def _process_language(
         logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
         return True
     except Exception as e:
-        # query compilation can fail AFTER the parser insert; drop the
-        # orphan so the store never exposes a parser without its queries
+        # query compilation can fail AFTER the parser insert; drop the orphan
+        # so the store never exposes a parser without its queries
         parsers.pop(lang_name, None)
         logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
         return False
@@ -440,8 +439,8 @@ class _LazyGrammarStore:
 
     def _ensure(self, lang_name: object) -> bool:
         # the lock-free fast path must see BOTH twin entries: the loader
-        # writes the parser before the queries, so a lone parser entry is a
-        # mid-load (or failed-load) state, not a completed language
+        # writes the parser before the queries, so a lone parser entry means
+        # mid-load or failed-load, not a completed language
         if lang_name in self._parser_data and lang_name in self._query_data:
             return True
         with self._lock:
@@ -473,8 +472,8 @@ _store_lock = threading.Lock()
 
 
 def _reset_parser_cache() -> None:
-    # Test hook: discard every cached grammar so laziness itself can be
-    # observed from a clean slate.
+    # Test hook: discard every cached grammar so laziness can be observed
+    # from a clean slate.
     global _store
     with _store_lock:
         _store = None

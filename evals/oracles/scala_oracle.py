@@ -23,9 +23,9 @@ def scala_available() -> bool:
 
 def _run_scala_oracle_payload(target: Path) -> OraclePayload:
     # scala-cli compiles Oracle.scala (fetching scalameta on first run) and
-    # prints one JSON payload to stdout; its own build/download chatter goes to
-    # stderr. cwd is pinned to the oracle dir so the .scala-build cache lands
-    # there (gitignored) rather than wherever the eval was invoked from.
+    # prints one JSON payload to stdout; build/download chatter goes to stderr.
+    # cwd is pinned to the oracle dir so the .scala-build cache lands there
+    # (gitignored) rather than wherever the eval was invoked from.
     scala_cli = shutil.which(ec.SCALA_CLI_BIN)
     if scala_cli is None:
         return OraclePayload(nodes=[], edges=[], name_edges=[])
@@ -36,9 +36,9 @@ def _run_scala_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         check=True,
     )
-    # capture_output hides scala-cli's stderr; if stdout is not the expected
-    # JSON (a compile error, a changed launcher banner) surface both streams
-    # instead of a bare JSONDecodeError with no context.
+    # capture_output hides scala-cli's stderr; if stdout is not the expected JSON
+    # (a compile error, a changed launcher banner) surface both streams instead
+    # of a bare JSONDecodeError with no context.
     try:
         payload: OraclePayload = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError as exc:
@@ -55,12 +55,12 @@ def run_scala_oracle(target: Path) -> GraphData:
 def run_scala_call_oracle(
     target: Path,
 ) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
-    # File-level Scala call sites restricted to first-party callees (a callee
-    # whose simple name is a declared def), with the declared-name universe and
-    # the set of cleanly-parsed files so the cgr side is held to the same files
-    # and names. scalameta silently skips files it cannot parse (e.g. Scala 3
-    # syntax), so grading only covered files keeps those out of both sides.
-    # Mirrors run_cpp_call_oracle.
+    # File-level Scala call sites restricted to first-party callees (simple name
+    # is a declared def), with the declared-name universe and the set of
+    # cleanly-parsed files so the cgr side is held to the same files and names.
+    # scalameta silently skips files it cannot parse (e.g. Scala 3 syntax), so
+    # grading only covered files keeps those out of both sides. Mirrors
+    # run_cpp_call_oracle.
     payload = _run_scala_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

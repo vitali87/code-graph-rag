@@ -333,8 +333,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
     ) -> None:
         # Instance attributes are assigned in __init__ (self.x = T()), so a method
         # that only reads self.x has no local assignment to infer from. Scan the
-        # enclosing class's __init__ and seed the attribute types, letting any
-        # reassignment in the calling method itself take precedence (setdefault).
+        # enclosing class's __init__ and seed the attribute types, letting a
+        # reassignment in the calling method win (setdefault).
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
         init_node = self._find_init_method_node(class_node)
@@ -342,7 +342,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         init_types: dict[str, str] = {}
         # Seed __init__ parameter types first so self.x = param flows the
-        # parameter annotation onto the attribute.
+        # annotation onto the attribute.
         self._infer_parameter_types(init_node, init_types, module_qn)
         self._analyze_self_assignments(init_node, init_types, module_qn)
         for attr, attr_type in init_types.items():
@@ -364,8 +364,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_property_return_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # self.prop where prop is an @property has the property's declared return
-        # type, so a chained call self.prop.method() can resolve against the
+        # self.prop where prop is an @property carries the property's declared
+        # return type, so a chained self.prop.method() resolves against the
         # returned class rather than an ambiguous same-named method elsewhere.
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
@@ -409,9 +409,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_class_annotation_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # A class-level annotation (_handler: LanguageHandler) declares the type of
-        # an instance attribute even when it is assigned from a factory call whose
-        # return type cannot be inferred, so seed self.<name> from the annotation.
+        # A class-level annotation (_handler: LanguageHandler) declares an instance
+        # attribute's type even when it is assigned from a factory call whose return
+        # type cannot be inferred, so seed self.<name> from the annotation.
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
         self._collect_class_annotation_types(class_node, local_var_types)
@@ -450,8 +450,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
     ) -> None:
         # A chained reference a.b.c needs the type of a.b (member b on a's class).
         # Each pass: (1) propagate local aliases (x = ref) from the referent's type,
-        # then (2) for every typed ref, seed ref.member -> member type (full QN), so
-        # deeper chains and aliases resolve on the next pass until a fixpoint.
+        # (2) for every typed ref, seed ref.member -> member type (full QN), so
+        # deeper chains and aliases resolve next pass until a fixpoint.
         aliases = aliases or {}
         for _ in range(max_depth):
             added = False
@@ -477,8 +477,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
 
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:
         # Record local-variable aliases (resolver = self._resolver) where the rhs is
-        # a plain name/attribute reference, so its type can be propagated. Skip
-        # nested scopes and any rhs that is a call/subscript/other expression.
+        # a plain name/attribute reference, so its type propagates. Skip nested
+        # scopes and any rhs that is a call/subscript/other expression.
         aliases: dict[str, str] = {}
         boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
         stack: list[ASTNode] = list(caller_node.children)

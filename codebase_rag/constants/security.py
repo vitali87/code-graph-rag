@@ -56,7 +56,7 @@ SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 
-# Dangerous commands - absolutely blocked
+# Dangerous commands, absolutely blocked
 SHELL_DANGEROUS_COMMANDS = frozenset(
     {
         "dd",
@@ -131,7 +131,6 @@ SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"base64\s+-d.*\|", "base64 decode pipe execution"),
 )
 
-# Build system directory regex pattern dynamically
 _SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
 
 # Dangerous patterns for individual segments (per-command patterns)

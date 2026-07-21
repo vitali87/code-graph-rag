@@ -33,8 +33,8 @@ def _node_deps_ready(oracle_dir: Path) -> bool:
 
 def ensure_node_deps(oracle_dir: Path) -> None:
     # The marker (written only after npm exits 0) is the completion signal;
-    # node_modules existing is not, because npm creates it before populating
-    # it and a concurrent pytest-xdist worker would run the oracle against a
+    # node_modules is not, because npm creates it before populating it and a
+    # concurrent pytest-xdist worker would run the oracle against a
     # half-installed tree. The mkdir lock is atomic on every platform.
     # ponytail: a stale lock (installer killed mid-run) is waited out for
     # TRIES*POLL seconds and then skipped, letting the node run surface the

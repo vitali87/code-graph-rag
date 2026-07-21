@@ -190,16 +190,14 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
-    # HYBRID degrades to pure tree-sitter when libclang or a
-    # compile_commands.json is missing, so it is safe as the default and
-    # strictly better (macros, includes, expansion calls) with one.
+    # HYBRID degrades to pure tree-sitter when libclang or compile_commands.json
+    # is missing, so it is a safe default and strictly better (macros, includes,
+    # expansion calls) with one.
     CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
-    # Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter
-    # because HYBRID needs a dotnet SDK + a restorable .csproj/.sln; when
-    # either is missing it degrades to tree-sitter, so it is safe to enable
-    # but not to assume. HYBRID augments (base-vs-interface, overload and
-    # extension binding, partial-class identity); tree-sitter stays the
-    # standalone-correct backbone.
+    # Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter because
+    # HYBRID needs a dotnet SDK + a restorable .csproj/.sln and degrades without
+    # them. HYBRID augments (base-vs-interface, overload and extension binding,
+    # partial-class identity); tree-sitter stays the standalone-correct backbone.
     CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
@@ -331,9 +329,8 @@ class AppConfig(BaseSettings):
     MCP_HTTP_HOST: str = "127.0.0.1"
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
-    # Bearer token required by the HTTP MCP endpoint; unset means
-    # loopback-only operation (serve_http refuses a non-loopback bind
-    # without it).
+    # Bearer token for the HTTP MCP endpoint; unset means loopback-only
+    # (serve_http refuses a non-loopback bind without it).
     MCP_HTTP_AUTH_TOKEN: str | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
@@ -453,13 +450,11 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
 
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # Merged exclude/unignore set for indexing: root .gitignore (gitignored
-    # paths are build artifacts / generated output whose symbols pollute the
-    # graph and the dead-code report) plus .cgrignore, which stays the
-    # authoritative cgr-specific channel. The runtime skip check gives
-    # excludes precedence over unignores, so a negation can only override a
-    # .gitignore exclude by CANCELLING the exact same pattern string here at
-    # load time (`!generated/` drops `generated/`). .cgrignore excludes are
-    # never cancelled by .gitignore negations.
+    # paths are build artifacts and generated output that pollute the graph and
+    # dead-code report) plus .cgrignore, the authoritative cgr channel. The skip
+    # check gives excludes precedence, so a negation overrides a .gitignore
+    # exclude only by CANCELLING the exact pattern (`!generated/` drops
+    # `generated/`); .cgrignore excludes are never cancelled.
     # ponytail: root .gitignore only, exact-string cancellation only; a
     # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
     # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is

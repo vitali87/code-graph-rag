@@ -36,10 +36,9 @@ def follow_reexports(
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
-    # module (pkg.sym), not the symbol's real definition (pkg.mod.sym), so a
-    # qn that is not itself registered may be a re-export. Follow the module's
-    # own import map one hop at a time until a registered symbol is reached,
-    # guarding against cycles.
+    # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
+    # qn may be a re-export. Follow the module's import map one hop at a time
+    # until a registered symbol is reached, guarding against cycles.
     seen: set[str] = set()
     current = qn
     while (
@@ -74,11 +73,10 @@ def record_cpp_definition_span(
     label: str,
     qualified_name: str,
 ) -> None:
-    # Record the full line span of a C/C++ definition the tree-sitter pass
-    # ingested, keyed by relative path: the hybrid C++ frontend attributes
-    # each macro use to the tightest enclosing tree-sitter span after
-    # Pass 2 (macro cursors are TU-level, and libclang's own spans carry
-    # wrong-scheme qns wherever macros hide namespaces).
+    # Record the full line span of a tree-sitter-ingested C/C++ definition,
+    # keyed by relative path: the hybrid C++ frontend attributes each macro use
+    # to the tightest enclosing span after Pass 2, since macro cursors are
+    # TU-level and libclang qns use the wrong scheme where macros hide namespaces.
     if language not in _CPP_SPAN_LANGUAGES or file_path is None:
         return
     rel = cached_relative_path(file_path, repo_path).as_posix()
@@ -94,9 +92,9 @@ _QUERY_LAST: tuple[tuple[Language, str], Query] | None = None
 
 
 def get_cached_query(language_obj: Language, query_text: str) -> Query:
-    # Key by the Language itself, never id(): Language hashes by grammar
-    # pointer, so wrappers dedupe, and the dict pins the key so a GC'd
-    # wrapper's address can't be reused to serve a wrong-grammar Query.
+    # Key by the Language itself, never id(): Language hashes by grammar pointer,
+    # so wrappers dedupe, and the dict pins the key so a GC'd wrapper's address
+    # can't be reused to serve a wrong-grammar Query.
     global _QUERY_LAST
     key = (language_obj, query_text)
     if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
@@ -114,11 +112,10 @@ class FunctionCapturesResult(NamedTuple):
 
 
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
-    # tree-sitter v0.25 captures() returns nodes in non-deterministic order
-    # across invocations; sort by (start_byte, end_byte) for reproducibility.
-    # start_byte alone leaves nested same-start captures (the outer
-    # `Greeter().greet()` chain and its inner `Greeter()` call) in raw order,
-    # which flips between runs and swaps their emitted edges.
+    # tree-sitter v0.25 captures() returns nodes in non-deterministic order;
+    # sort by (start_byte, end_byte) for reproducibility. start_byte alone leaves
+    # nested same-start captures (the outer `Greeter().greet()` chain and its
+    # inner `Greeter()` call) in raw order, flipping between runs.
     raw = cursor.captures(node)
     result: dict[str, list[ASTNode]] = {}
     for name, nodes in raw.items():
@@ -308,10 +305,10 @@ _GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
 
 
 class _CallableScanConfig(NamedTuple):
-    # Node types that let the invoked-parameter scan work per language: the call
-    # node whose `function` field names the callee, the identifier node for a bare
-    # callee, the nested closure scopes that capture an enclosing parameter, and
-    # the class-like scopes that are not closures (skipped, never descended).
+    # Node types the invoked-parameter scan needs per language: the call node
+    # naming the callee via its `function` field, the identifier for a bare
+    # callee, the closure scopes that capture an enclosing parameter, and the
+    # class-like scopes that are skipped and never descended.
     call_type: str
     identifier_type: str
     closure_types: frozenset[str]
@@ -395,10 +392,10 @@ def _cpp_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[s
 
 def _cpp_scope_bound_names(scope_node: Node) -> set[str]:
     # A C++ lambda's own parameters shadow a same-named captured parameter of the
-    # enclosing function, so they must be subtracted before scanning the lambda
-    # body -- otherwise the lambda invoking its own `cb` looks like an invocation
-    # of the outer `cb`. The lambda's parameters hang off its `declarator` (an
-    # abstract_function_declarator whose `parameters` list mirrors a function's).
+    # enclosing function, so subtract them before scanning the lambda body.
+    # Otherwise the lambda invoking its own `cb` looks like an invocation of the
+    # outer `cb`. The parameters hang off the lambda's `declarator`, an
+    # abstract_function_declarator whose `parameters` list mirrors a function's.
     declarator = scope_node.child_by_field_name(cs.FIELD_DECLARATOR)
     return set(_cpp_declarator_param_names(declarator))
 
@@ -474,9 +471,8 @@ def _js_ts_scope_bound_names(scope_node: Node) -> set[str]:
 def js_ts_parameter_names(func_node: Node) -> list[str]:
     # Ordered parameter names. TypeScript wraps each in required_parameter /
     # optional_parameter (name under the `pattern` field); JavaScript uses a bare
-    # identifier. A single-parameter arrow without parens has no formal_parameters
-    # list -- its parameter is on the `parameter` field. Destructuring patterns
-    # bind no single callable name and are skipped.
+    # identifier. A single-parameter arrow without parens keeps its parameter on
+    # the `parameter` field. Destructuring patterns bind no callable name, skipped.
     names: list[str] = []
     params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is not None:
@@ -509,10 +505,10 @@ def _scan_invoked_parameters(
 ) -> None:
     # Mark a candidate parameter invoked when it is called by bare name in this
     # lexical scope. Descend into nested closures that CAPTURE a candidate (do not
-    # rebind it) so `outer(cb) { inner() { cb() } }` still attributes cb to outer
-    # -- the closure form used by decorator/formatter factories. A nested scope's
-    # own bound names are removed first so a shadowing local cannot masquerade as
-    # the captured outer parameter. Class-like scopes are skipped entirely.
+    # rebind it) so `outer(cb) { inner() { cb() } }` still attributes cb to outer,
+    # the closure form decorator/formatter factories use. A nested scope's own
+    # bound names are removed first so a shadowing local cannot masquerade as the
+    # captured outer parameter. Class-like scopes are skipped entirely.
     if not candidates:
         return
     stack: list[Node] = [scope_node]
@@ -567,7 +563,7 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
             if child_type in _PY_SCOPE_BOUNDARIES:
                 # A nested def/class NAME binds here, but its body has its own
                 # scope; record the name and do not descend. A decorated_definition
-                # has no `name` field of its own -- the name is on the inner
+                # has no `name` field of its own, since the name is on the inner
                 # function/class definition it wraps.
                 named = child
                 if child_type == cs.TS_PY_DECORATED_DEFINITION:
@@ -621,9 +617,9 @@ def python_parameter_names(func_node: Node) -> list[str]:
 def callable_parameter_indices(
     func_node: Node, language: cs.SupportedLanguage | None
 ) -> dict[str, int]:
-    # Maps each parameter that is invoked as a call inside the function body
-    # to its positional index in the call-site argument list (self/cls
-    # dropped so the index lines up with how bound methods are invoked).
+    # Maps each parameter invoked as a call inside the function body to its
+    # positional index in the call-site argument list (self/cls dropped so the
+    # index lines up with how bound methods are invoked).
     if language == cs.SupportedLanguage.PYTHON:
         names = python_parameter_names(func_node)
         invoke = _python_invoked_parameter_names
@@ -714,18 +710,17 @@ def ingest_method(
     skip_cpp_artifact_check: bool = False,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
-    # @line dedup suffix) so a caller can wire further edges to the exact node --
+    # @line dedup suffix) so a caller can wire further edges to the exact node,
     # e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
     # None only when the method has no resolvable name and nothing was registered.
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
-        # Inside an intact class body a macro invocation parsed as a
-        # type-less member (`FMT_CATCH(...) {}`) can never be a ctor of
-        # another class, so the shape check alone is decisive here.
-        # skip_cpp_artifact_check: the orphan-ctor flush has already run
-        # the class-registry tiebreak (a zero-param orphan ctor SHARES the
-        # artifact shape and must not be re-dropped here).
+        # Inside an intact class body a macro invocation parsed as a type-less
+        # member (`FMT_CATCH(...) {}`) can never be a ctor of another class, so
+        # the shape check alone is decisive here. skip_cpp_artifact_check: the
+        # orphan-ctor flush already ran the class-registry tiebreak (a zero-param
+        # orphan ctor SHARES the artifact shape and must not be re-dropped here).
         if not skip_cpp_artifact_check and cpp_utils.is_macro_invocation_artifact(
             method_node
         ):
@@ -852,11 +847,10 @@ def ingest_method(
         )
         return method_qn
 
-    # The DEFINES_METHOD parent is matched in the graph by LABEL +
-    # qualified_name, so it must carry the container's real node label. Callers
-    # pass Class by default, but a trait/interface (Interface) or enum (Enum)
-    # container would then never match, dropping the containment edge. Prefer
-    # the label the container was actually registered with.
+    # The DEFINES_METHOD parent is matched by LABEL + qualified_name, so it must
+    # carry the container's real node label. Callers pass Class by default, but a
+    # trait/interface (Interface) or enum (Enum) container would then never match
+    # and drop the containment edge. Prefer the label it was registered with.
     container_label = container_type
     registered = function_registry.get(container_qn)
     if registered is not None and registered != NodeType.METHOD:
@@ -924,16 +918,15 @@ def ingest_exported_function(
     function_qn = f"{module_qn}.{function_name}"
     # The definition pass already ingests an exported function / const-arrow at
     # its natural qn. Re-registering here would collide and mint a spurious
-    # `qn@line` duplicate node, onto which call resolution then binds (mangling
-    # the callee qn). If the natural qn already exists, the node is done.
+    # `qn@line` duplicate that call resolution then binds to (mangling the callee
+    # qn). If the natural qn already exists, the node is done.
     if function_qn in function_registry:
         return None
     # Same for a nested export (TS namespace / module block): the main pass
     # already ingested it under its nested qn (e.g. lib.geo.helper), so a
-    # module-level re-ingest would mint a phantom duplicate node plus a
-    # spurious Module-DEFINES edge. Walk ancestors instead of matching
-    # simple names so a top-level export may share a name with an
-    # unrelated method elsewhere in the module.
+    # module-level re-ingest would mint a phantom duplicate plus a spurious
+    # Module-DEFINES edge. Walk ancestors rather than matching simple names, since
+    # a top-level export may share a name with an unrelated method in the module.
     current = function_node.parent
     while current is not None:
         if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):

@@ -1,12 +1,12 @@
 # Static CALLS eval. Function-level call recall against an ast oracle that
-# resolves only the calls a reader can resolve without type inference: a bare
+# resolves only calls a reader can resolve without type inference: a bare
 # name call (foo()) whose target is a first-party function reached via a
-# `from ... import foo` or a same-module top-level def. Each becomes a
-# (caller_qn, callee_qn) edge. Method / attribute / dynamic calls need cgr's
-# type inference and are out of scope, so only RECALL is graded: every
+# `from ... import foo` or a same-module top-level def, each becoming a
+# (caller_qn, callee_qn) edge. Method / attribute / dynamic calls need type
+# inference and are out of scope, so only RECALL is graded: every
 # statically-certain call must appear in cgr's CALLS graph (cgr resolving more
-# than the oracle is expected, not a false positive). Independent of cgr's
-# resolver -- it uses ast import resolution, not the function-registry trie.
+# is expected, not a false positive). Independent of cgr's resolver; it uses
+# ast import resolution, not the function-registry trie.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -64,9 +64,9 @@ def _enclosing_function(
 
 
 def _decorator_calls(tree: ast.Module) -> set[ast.Call]:
-    # Calls that live inside a decorator expression (@deco(...)). These are
-    # decorator applications, not calls the decorated function makes, so cgr
-    # emits no CALLS edge for them and the oracle must exclude them.
+    # Calls inside a decorator expression (@deco(...)) are decorator
+    # applications, not calls the decorated function makes, so cgr emits no
+    # CALLS edge and the oracle must exclude them.
     calls: set[ast.Call] = set()
     for node in ast.walk(tree):
         if isinstance(node, _SCOPE_NODES):
@@ -151,8 +151,7 @@ def _edge_repr(edge: CallEdge) -> str:
 
 def score_static_calls(cgr: set[CallEdge], oracle: set[CallEdge]) -> ScoreResult:
     # Recall only: hits are oracle edges cgr also has. cgr's extra edges
-    # (method / type-inferred calls) are expected, not false positives, so
-    # precision is not graded here.
+    # (method / type-inferred calls) are expected, so precision is not graded.
     hits = oracle & cgr
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}

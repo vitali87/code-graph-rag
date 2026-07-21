@@ -121,7 +121,7 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         target_kw="url",
     ),
     # aiohttp.request(method, url): the HTTP verb is arg 0 and the url arg 1, so
-    # direction is unknown without reading the verb -- READ_WRITE is the honest
+    # direction is unknown without reading the verb; READ_WRITE is the honest
     # "either" label (same stance as DB execute()).
     IOSink(
         "aiohttp.request",
@@ -212,8 +212,8 @@ _JAVA_SYSTEM_SINKS: tuple[IOSink, ...] = (
 # java.nio.file.Files static sinks. Registered under BOTH the simple `Files.X`
 # (bare call, Files not in import_map) and the fully-qualified
 # `java.nio.file.Files.X` key: with `import java.nio.file.Files` the call
-# normalises to the FQN, and a fully-qualified call carries the FQN in its text --
-# so both the imported and the qualified-call cases resolve.
+# normalises to the FQN, and a fully-qualified call carries the FQN in its text, so
+# both the imported and the qualified-call cases resolve.
 _JAVA_FILES_PREFIXES: tuple[str, ...] = ("Files", "java.nio.file.Files")
 
 _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
@@ -228,7 +228,7 @@ _JAVA_FILES_METHODS: tuple[tuple[str, IODirection], ...] = (
 _JAVA_SINKS: tuple[IOSink, ...] = (
     *_JAVA_SYSTEM_SINKS,
     # System properties are process-level configuration like env vars
-    # (java.io.tmpdir/user.home reads are ubiquitous): modelled as ENV.
+    # (java.io.tmpdir/user.home reads are ubiquitous), modelled as ENV.
     IOSink("System.getProperty", ResourceKind.ENV, IODirection.READ, target_arg=0),
     IOSink(
         "java.lang.System.getProperty",
@@ -359,7 +359,7 @@ _CSHARP_SINKS: tuple[IOSink, ...] = (
 # `::` path is not shadowable by a local, so no import-gating needed). Rust has no
 # keyword args -> path/key is positional arg 0. File handles (`File::open`,
 # `BufReader`) and the print macros (handled separately) are follow-ups here.
-# C++/Rust `std` namespace prefix; C++ sinks key both the bare (C linkage /
+# C++/Rust `std` namespace prefix; C++ sinks key both the bare (C linkage or
 # `using namespace std`) and qualified spellings.
 _STD_PREFIX = "std::"
 _CPP_SINK_PREFIXES: tuple[str, ...] = ("", _STD_PREFIX)
@@ -404,9 +404,9 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
     ("gets", ResourceKind.STDIN, IODirection.READ, None),
 )
 
-# The libc FILE* API passes the handle as an ARGUMENT (fprintf's stream is
-# arg 0, fgets's arg 2, fread/fwrite's arg 3), unlike every method-shaped
-# handle API. snprintf/sprintf write to a BUFFER, not a resource: excluded.
+# The libc FILE* API passes the handle as an ARGUMENT (fprintf's stream is arg 0,
+# fgets's arg 2, fread/fwrite's arg 3), unlike every method-shaped handle API.
+# snprintf/sprintf write to a BUFFER, not a resource: excluded.
 _LIBC_ARG_HANDLE_METHODS: tuple[tuple[str, int, IODirection], ...] = (
     ("fprintf", 0, IODirection.WRITE),
     ("vfprintf", 0, IODirection.WRITE),
@@ -430,7 +430,7 @@ LIBC_STD_STREAMS: dict[str, ResourceKind] = {
     "stderr": ResourceKind.STDERR,
 }
 
-# Keyed under both the bare (C linkage / `using namespace std`) and `std::`-
+# Keyed under both the bare (C linkage or `using namespace std`) and `std::`-
 # qualified forms; C++ has no use-alias import map to expand a short path.
 _CPP_SINKS: tuple[IOSink, ...] = tuple(
     IOSink(f"{prefix}{fn}", kind, direction, target_arg=arg)
@@ -507,8 +507,8 @@ IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]
     cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
 }
 
-# Calls whose result is a resource handle; later method calls on the bound
-# variable are attributed to the same resource.
+# Calls whose result is a resource handle; later method calls on the bound variable
+# are attributed to the same resource.
 _PYTHON_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
     HandleConstructor("open", ResourceKind.FILE, target_arg=0, target_kw="file"),
     HandleConstructor(
@@ -516,12 +516,12 @@ _PYTHON_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
     ),
     HandleConstructor("socket.socket", ResourceKind.SOCKET),
     # A pathlib.Path is a FILE handle: read_text/write_text on the bound var
-    # attribute to the path literal passed to Path(...). Non-I/O methods
-    # (.exists, .parent) simply aren't in IO_HANDLE_METHODS, so no false edge.
+    # attribute to the path literal passed to Path(...). Non-I/O methods (.exists,
+    # .parent) are not in IO_HANDLE_METHODS, so no false edge.
     HandleConstructor("pathlib.Path", ResourceKind.FILE, target_arg=0),
     # httpx/aiohttp client objects are NETWORK handles; later client.get/post
-    # resolve through cross-scope handle resolution (the URL is on the method
-    # call, not the constructor, so the resource identity is <dynamic>).
+    # resolve through cross-scope handle resolution (the URL is on the method call,
+    # not the constructor, so the resource identity is <dynamic>).
     HandleConstructor("httpx.Client", ResourceKind.NETWORK),
     HandleConstructor("httpx.AsyncClient", ResourceKind.NETWORK),
     HandleConstructor("aiohttp.ClientSession", ResourceKind.NETWORK),
@@ -542,10 +542,10 @@ IO_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
         "iterdir": IODirection.READ,
         "glob": IODirection.READ,
         "rglob": IODirection.READ,
-        # Path.open() returns a nested file handle we don't chain; its direction
-        # depends on the mode arg the handle-method path can't inspect, so default
-        # to READ like the top-level open() sink does with no mode (a false WRITE
-        # on the common read case would be worse than a coarse READ).
+        # Path.open() returns a nested file handle we do not chain; its direction
+        # depends on the mode arg the handle-method path cannot inspect, so default
+        # to READ like the top-level open() sink does with no mode (a false WRITE on
+        # the common read case would be worse than a coarse READ).
         "open": IODirection.READ,
         "write": IODirection.WRITE,
         "writelines": IODirection.WRITE,
@@ -606,8 +606,8 @@ _JS_TS_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
     HandleConstructor("fs.createWriteStream", ResourceKind.FILE, target_arg=0),
 )
 
-# os.Open / os.Create are ALSO direct sinks (the construction touches the
-# path); os.OpenFile is a handle only, because its direction depends on flags.
+# os.Open / os.Create are ALSO direct sinks (the construction touches the path);
+# os.OpenFile is a handle only, because its direction depends on flags.
 _GO_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
     HandleConstructor("os.Open", ResourceKind.FILE, target_arg=0),
     HandleConstructor("os.Create", ResourceKind.FILE, target_arg=0),
@@ -629,11 +629,11 @@ _JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
             0,
             ("DriverManager", "java.sql.DriverManager"),
         ),
-        # `HttpClient.newHttpClient()` (java.net.http, Java 11+) yields a
-        # NETWORK client; the URL lives on the HttpRequest passed to send(),
-        # not the client, so the client's resource identity is <dynamic>
-        # (target_arg=None). The builder form `HttpClient.newBuilder().build()`
-        # is a follow-up (the chained build() does not bind here).
+        # `HttpClient.newHttpClient()` (java.net.http, Java 11+) yields a NETWORK
+        # client; the URL lives on the HttpRequest passed to send(), not the client,
+        # so the client's resource identity is <dynamic> (target_arg=None). The
+        # builder form `HttpClient.newBuilder().build()` is a follow-up (the chained
+        # build() does not bind here).
         (
             "newHttpClient",
             ResourceKind.NETWORK,
@@ -661,9 +661,9 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     cs.SupportedLanguage.GO: _GO_LEAN_HANDLE_CONSTRUCTORS,
     cs.SupportedLanguage.JAVA: _JAVA_LEAN_HANDLE_CONSTRUCTORS,
     cs.SupportedLanguage.RUST: _RUST_LEAN_HANDLE_CONSTRUCTORS,
-    # libc FILE* binding: `FILE *f = fopen("x", "w")`; mode_arg 1 flips the
-    # direction when methods do not (fopen "r" vs "w" is informational only;
-    # the arg-handle sink's own direction decides each access).
+    # libc FILE* binding: `FILE *f = fopen("x", "w")`; mode_arg 1 flips the direction
+    # when methods do not (fopen "r" vs "w" is informational only; the arg-handle
+    # sink's own direction decides each access).
     cs.SupportedLanguage.C: (
         HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
         HandleConstructor("freopen", ResourceKind.FILE, target_arg=0),
@@ -676,10 +676,10 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
 }
 
 # `new`-shaped handle constructors keyed by the written type name (Java
-# `new FileWriter("x")`). PrintWriter appears here for its filename overload;
-# its writer-wrapping overload resolves via IO_NEW_HANDLE_WRAPPERS first.
-# Each Java new-type is keyed under BOTH its simple and fully qualified
-# written form (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
+# `new FileWriter("x")`). PrintWriter appears here for its filename overload; its
+# writer-wrapping overload resolves via IO_NEW_HANDLE_WRAPPERS first. Each Java
+# new-type is keyed under BOTH its simple and fully qualified written form
+# (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
 _JAVA_IO_PACKAGE = "java.io"
 
 _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
@@ -690,10 +690,10 @@ _JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
     ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
     ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
     ("Socket", "java.net", ResourceKind.SOCKET),
-    # `new URL("http://..")` is a NETWORK handle: the URL literal is the
-    # resource identity, and a later `.openStream()` reads it. URL parsing
-    # itself does no I/O, but construction emits no edge (only the handle
-    # methods do), so keying it as a NETWORK handle is behaviourally exact.
+    # `new URL("http://..")` is a NETWORK handle: the URL literal is the resource
+    # identity, and a later `.openStream()` reads it. URL parsing itself does no
+    # I/O, but construction emits no edge (only the handle methods do), so keying it
+    # as a NETWORK handle is behaviourally exact.
     ("URL", "java.net", ResourceKind.NETWORK),
 )
 
@@ -721,8 +721,8 @@ _CSHARP_NEW_HANDLE_TYPES: tuple[
     # The DB connection string is the resource identity.
     ("SqlConnection", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, 0, None),
     # `new SqlCommand(sql, conn)` is a DATABASE handle whose resource is the
-    # connection (arg1), not the SQL text (arg0): inherit conn's identity when it
-    # is a bound handle, else <dynamic>.
+    # connection (arg1), not the SQL text (arg0): inherit conn's identity when it is
+    # a bound handle, else <dynamic>.
     ("SqlCommand", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, None, 1),
 )
 
@@ -741,9 +741,9 @@ IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstruct
     },
 }
 
-# `new`-shaped WRAPPER types: the resource identity comes from arg0, which is
-# either a nested handle constructor (`new BufferedReader(new FileReader(p))`)
-# or an already-bound handle variable.
+# `new`-shaped WRAPPER types: the resource identity comes from arg0, either a
+# nested handle constructor (`new BufferedReader(new FileReader(p))`) or an
+# already-bound handle variable.
 _JAVA_NEW_WRAPPER_TYPES: tuple[tuple[str, str], ...] = (
     ("BufferedReader", _JAVA_IO_PACKAGE),
     ("BufferedWriter", _JAVA_IO_PACKAGE),
@@ -764,7 +764,7 @@ IO_NEW_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, frozenset[str]] = {
 }
 
 # Call-shaped wrapper constructors (`BufReader::new(f)`, `bufio.NewReader(f)`),
-# keyed like sinks; the value is unused (membership only, dict for the shared
+# keyed like sinks; the value is unused (membership only, a dict for the shared
 # shadow-aware resolution).
 IO_CALL_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, dict[str, str]] = {
     cs.SupportedLanguage.RUST: {
@@ -776,8 +776,8 @@ IO_CALL_HANDLE_WRAPPERS: dict[cs.SupportedLanguage, dict[str, str]] = {
     },
 }
 
-# Type-declaration constructors (C++ `std::ifstream in("x")`): a declaration
-# whose written type is one of these binds a FILE handle on its declarator.
+# Type-declaration constructors (C++ `std::ifstream in("x")`): a declaration whose
+# written type is one of these binds a FILE handle on its declarator.
 IO_TYPE_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, ResourceKind]] = {
     cs.SupportedLanguage.CPP: {
         f"{prefix}{name}": ResourceKind.FILE
@@ -799,10 +799,9 @@ IO_IDENTITY_UNWRAP_CALLS: dict[cs.SupportedLanguage, frozenset[str]] = {
     ),
 }
 
-# `new File("x")` is not a handle itself, but it designates the resource: in
-# a constructor's target position it carries the identity literal, and under
-# a wrapper (`new Scanner(new File("x"))`) it resolves to a handle of the
-# mapped kind.
+# `new File("x")` is not a handle itself, but it designates the resource: in a
+# constructor's target position it carries the identity literal, and under a wrapper
+# (`new Scanner(new File("x"))`) it resolves to a handle of the mapped kind.
 IO_IDENTITY_UNWRAP_NEW_TYPES: dict[cs.SupportedLanguage, dict[str, ResourceKind]] = {
     cs.SupportedLanguage.JAVA: {
         "File": ResourceKind.FILE,
@@ -819,9 +818,9 @@ _JS_TS_LEAN_HANDLE_METHODS: dict[ResourceKind, dict[str, IODirection]] = {
     },
 }
 
-# Per-language, per-kind handle methods for the lean walk and the direction
-# each implies (Python keeps IO_HANDLE_METHODS above). READ_WRITE entries
-# (java.sql execute) are refined by the SQL first-keyword heuristic.
+# Per-language, per-kind handle methods for the lean walk and the direction each
+# implies (Python keeps IO_HANDLE_METHODS above). READ_WRITE entries (java.sql
+# execute) are refined by the SQL first-keyword heuristic.
 IO_LEAN_HANDLE_METHODS: dict[
     cs.SupportedLanguage, dict[ResourceKind, dict[str, IODirection]]
 ] = {
@@ -879,10 +878,10 @@ IO_LEAN_HANDLE_METHODS: dict[
             "executeBatch": IODirection.WRITE,
             "execute": IODirection.READ_WRITE,
         },
-        # URL.openStream() reads the resource; HttpClient.send/sendAsync
-        # are verb-agnostic (the method rides on the HttpRequest), so
-        # READ_WRITE is the honest "either" label, matching the DB execute()
-        # and Python client.request() stance.
+        # URL.openStream() reads the resource; HttpClient.send/sendAsync are
+        # verb-agnostic (the method rides on the HttpRequest), so READ_WRITE is the
+        # honest "either" label, matching the DB execute() and Python
+        # client.request() stance.
         ResourceKind.NETWORK: {
             "openStream": IODirection.READ,
             # URL.getContent() opens a connection and retrieves the resource.
@@ -890,9 +889,9 @@ IO_LEAN_HANDLE_METHODS: dict[
             "send": IODirection.READ_WRITE,
             "sendAsync": IODirection.READ_WRITE,
         },
-        # `new Socket(host, port)` was already a registered SOCKET handle but
-        # had no method table, so its reads/writes emitted nothing: a
-        # java.net.Socket is used via get{Input,Output}Stream().
+        # `new Socket(host, port)` was already a registered SOCKET handle but had no
+        # method table, so its reads/writes emitted nothing: a java.net.Socket is
+        # used via get{Input,Output}Stream().
         ResourceKind.SOCKET: {
             "getInputStream": IODirection.READ,
             "getOutputStream": IODirection.WRITE,

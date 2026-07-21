@@ -1,8 +1,8 @@
 # Multi-language retrieval (JavaScript). Mirrors ts_retrieval.py for .js/.jsx:
-# cgr's JS CALLS edges (reduced to (caller_file, callee_simple_name)) are graded
-# against call sites the TypeScript compiler API (tsc) extracts from the same
-# files, over the same first-party name universe. tsc parses JS syntactically
-# and is independent of cgr's tree-sitter JS frontend, so this measures cgr's
+# cgr's JS CALLS edges ((caller_file, callee_simple_name)) are graded against
+# call sites the TypeScript compiler API (tsc) extracts from the same files,
+# over the same first-party name universe. tsc parses JS syntactically and is
+# independent of cgr's tree-sitter JS frontend, so this measures cgr's
 # cross-file JS call resolution against ground truth.
 from pathlib import Path
 from typing import Annotated

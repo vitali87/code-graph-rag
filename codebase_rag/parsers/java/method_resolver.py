@@ -28,7 +28,7 @@ def _java_signature_arity(qn_or_member: str) -> int | None:
     # Top-level parameter count of a signatured Java method name
     # (`resolve(A,B,Map<K, V>)` -> 3, `create()` -> 0); None if unsignatured.
     # Generic commas (`Map<K, V>`) are nested, so only depth-0 commas separate
-    # parameters. Used to pick the arity-matching overload for a call.
+    # parameters. Picks the arity-matching overload for a call.
     open_idx = qn_or_member.find(cs.CHAR_PAREN_OPEN)
     if open_idx < 0:
         return None
@@ -50,7 +50,7 @@ def _java_signature_arity(qn_or_member: str) -> int | None:
 def _java_param_type_names(qn: str) -> list[str]:
     # Simple parameter type names from a signatured method qn
     # (`isX(Class<?>,String)` -> ['Class', 'String']): generics and package/scope
-    # stripped so they compare with inferred argument type simple names.
+    # stripped so they compare with inferred argument-type simple names.
     open_idx = qn.find(cs.CHAR_PAREN_OPEN)
     close_idx = qn.rfind(cs.CHAR_PAREN_CLOSE)
     if open_idx < 0 or close_idx <= open_idx:
@@ -82,8 +82,8 @@ def _java_param_type_names(qn: str) -> list[str]:
 
 def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> bool:
     # True when every KNOWN argument type equals the candidate's parameter type at
-    # that position (simple names). Unknown args (None) are wildcards. Used to pick
-    # the right same-arity overload (isX(String) vs isX(Class) for a String arg).
+    # that position (simple names). Unknown args (None) are wildcards. Picks the
+    # right same-arity overload (isX(String) vs isX(Class) for a String arg).
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
         return False
@@ -96,7 +96,7 @@ def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> b
 def _callable_visible_to_caller(
     entity_type: str, qn: str, caller_qn: str | None
 ) -> bool:
-    # A Java FUNCTION entry is a method declared inside another method's body -- i.e.
+    # A Java FUNCTION entry is a method declared inside another method's body, i.e.
     # an anonymous/local class method, only visible lexically. The unqualified
     # module-wide fallback must not let a call OUTSIDE that anon bind to it (M.use()
     # -> an anon-local helper() elsewhere). Accept a FUNCTION only when the caller is
@@ -117,8 +117,8 @@ def _pick_overload(
 ) -> tuple[str, str] | None:
     # Choose among same-name candidates: prefer an argument-TYPE match (resolves
     # same-arity overloads like isX(String) vs isX(Class)), then an argument-COUNT
-    # match, then the first. A type match implies an arity match (equal param/arg
-    # counts), so it is the most specific.
+    # match, then the first. A type match implies an arity match, so it is the most
+    # specific.
     if not matches:
         return None
     if len(matches) > 1 and any(at is not None for at in arg_types):
@@ -188,10 +188,10 @@ class JavaMethodResolverMixin:
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # Check for 'this' reference - inside a method-body anonymous class `this`
-        # is the anon (its base type), which the lexical named-class walk misses;
-        # prefer that, then the lexical containing class (precise in multi-class
-        # files); fall back to the first class under the module otherwise.
+        # 'this' reference: inside a method-body anonymous class `this` is the anon
+        # (its base type), which the lexical named-class walk misses; prefer that,
+        # then the lexical containing class (precise in multi-class files); fall back
+        # to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
             if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
                 return anon_base
@@ -208,8 +208,8 @@ class JavaMethodResolverMixin:
                 None,
             )
 
-        # Check for 'super' reference - resolve the lexical class then its parent when
-        # available; otherwise fall back to the first class under the module with a parent.
+        # 'super' reference: resolve the lexical class then its parent when
+        # available; otherwise the first class under the module with a parent.
         if object_ref == cs.JAVA_KEYWORD_SUPER:
             if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
                 parent_qn := self._find_parent_class(lexical)
@@ -245,9 +245,9 @@ class JavaMethodResolverMixin:
         ):
             return nested_qn
 
-        # An unqualified class-name receiver for a static call (`T.make()`)
-        # defined in a sibling file: imports and the current module were checked
-        # above, so the remaining unqualified case is a same-package class.
+        # An unqualified class-name receiver for a static call (`T.make()`) defined in
+        # a sibling file: imports and the current module were checked above, so the
+        # remaining unqualified case is a same-package class.
         if sibling_class_qn := self._resolve_sibling_class_qn(object_ref, module_qn):
             return sibling_class_qn
 
@@ -277,8 +277,8 @@ class JavaMethodResolverMixin:
     ) -> str | None:
         # If `context_node` sits inside a method-body anonymous class
         # (`new Base(){ ... }`) before any named class, return the anon's base type
-        # qn -- an unqualified call inside the anon is `this.m()`, dispatched on the
-        # anon (i.e. its base), not the enclosing named class. None otherwise.
+        # qn: an unqualified call inside the anon is `this.m()`, dispatched on the
+        # anon (its base), not the enclosing named class. None otherwise.
         if context_node is None:
             return None
         named = (
@@ -340,12 +340,12 @@ class JavaMethodResolverMixin:
         return parent_classes[0] if parent_classes else None
 
     def _resolve_sibling_class_qn(self, class_name: str, module_qn: str) -> str | None:
-        # Resolve a bare class name to a registered Class/Interface in a SIBLING
-        # file of the same package (directory), so an unqualified same-package
-        # reference resolves without an import. A bare receiver with no import
-        # is only valid for the current package in Java, so a class in another
-        # package is NOT a match -- linking it would be a wrong cross-package
-        # edge; leave the receiver unresolved instead.
+        # Resolve a bare class name to a registered Class/Interface in a SIBLING file
+        # of the same package (directory), so an unqualified same-package reference
+        # resolves without an import. A bare receiver with no import is only valid for
+        # the current package in Java, so a class in another package is NOT a match:
+        # linking it would be a wrong cross-package edge, so leave the receiver
+        # unresolved instead.
         if not (candidate_modules := self._fqn_to_module_qn.get(class_name)):
             return None
         if not (current_file := self.module_qn_to_file_path.get(module_qn)):
@@ -646,7 +646,7 @@ class JavaMethodResolverMixin:
     ) -> tuple[str | None, ...]:
         # Infer the simple type of each argument so same-arity overloads can be told
         # apart (isX(String) vs isX(Class)). Only identifier arguments whose type is
-        # known (local var or field) are resolved; everything else is None (unknown),
+        # known (local var or field) resolve; everything else is None (unknown),
         # which _overload_matches_arg_types treats as a wildcard.
         args_node = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not args_node:
@@ -694,7 +694,7 @@ class JavaMethodResolverMixin:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
             # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
             # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
-            # so bind against the anon's base type FIRST -- `_lexical_class_qn` only
+            # so bind against the anon's base type FIRST: `_lexical_class_qn` only
             # sees the enclosing NAMED class and would mis-bind an inherited call to
             # a same-named method there. Then the enclosing class hierarchy; the bare
             # module-wide scan is the last resort (it ignores lexical scope).

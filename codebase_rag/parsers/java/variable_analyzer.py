@@ -400,8 +400,8 @@ class JavaVariableAnalyzerMixin:
             return None
 
         # A nested receiver (`obj.address.zipCode`) has a field_access as its object;
-        # recurse to infer that inner type before looking up the outer field, so
-        # multi-level field access resolves rather than failing on a non-variable name.
+        # recurse to infer that inner type before the outer field, so multi-level
+        # access resolves instead of failing on a non-variable name.
         if object_node.type == cs.TS_FIELD_ACCESS:
             object_type = self._infer_java_field_access_type(object_node, module_qn)
         elif object_name := safe_decode_text(object_node):
@@ -419,8 +419,8 @@ class JavaVariableAnalyzerMixin:
         self, object_name: str, field_access_node: ASTNode, module_qn: str
     ) -> str | None:
         # `this`/`super` are receiver keywords, not variables: resolve them to the
-        # containing class (or its superclass) so nested chains rooted at them
-        # (e.g. `var c = this.address.city`) infer a type instead of failing.
+        # containing class or its superclass so nested chains rooted at them
+        # (e.g. `var c = this.address.city`) infer a type.
         if object_name in (cs.JAVA_KEYWORD_THIS, cs.JAVA_KEYWORD_SUPER):
             if not (class_node := self._find_containing_java_class(field_access_node)):
                 return None
@@ -429,8 +429,8 @@ class JavaVariableAnalyzerMixin:
             if object_name == cs.JAVA_KEYWORD_THIS:
                 return class_name
             # `super`: return the fully-qualified parent from class_inheritance so a
-            # nested superclass (`Outer.Base`) resolves; the relative name from the
-            # AST would be treated as an absolute class key by the field lookup.
+            # nested superclass (`Outer.Base`) resolves; the AST's relative name
+            # would be treated as an absolute class key by the field lookup.
             if class_name:
                 own_qn = self._resolve_java_type_name(class_name, module_qn)
                 if cs.SEPARATOR_DOT not in own_qn:
@@ -486,9 +486,9 @@ class JavaVariableAnalyzerMixin:
             else f"{module_qn}{cs.SEPARATOR_DOT}{resolved}"
         )
 
-        # Walk the inheritance chain using authoritative qualified parents from
-        # class_inheritance: a field accessed on a subclass may be declared on a
-        # superclass, including a nested one like `Outer.Base`. Seen-guarded.
+        # Walk the inheritance chain via qualified parents from class_inheritance:
+        # a field accessed on a subclass may be declared on a superclass, including
+        # a nested one like `Outer.Base`. Seen-guarded.
         seen: set[str] = set()
         while class_qn and class_qn not in seen:
             seen.add(class_qn)
@@ -504,9 +504,9 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _locate_class(self, class_qn: str) -> tuple[ASTNode, list[str], str] | None:
-        # The file module is the longest registered prefix of the class qn; the
-        # remaining segments are the (possibly nested) class path within that file,
-        # so `proj.pkg.Outer.Base` resolves to file `proj.pkg` + path [Outer, Base].
+        # The file module is the longest registered prefix of the class qn; the rest
+        # are the (possibly nested) class path within it, so `proj.pkg.Outer.Base`
+        # resolves to file `proj.pkg` + path [Outer, Base].
         parts = class_qn.split(cs.SEPARATOR_DOT)
         for split in range(len(parts) - 1, 0, -1):
             module_candidate = cs.SEPARATOR_DOT.join(parts[:split])

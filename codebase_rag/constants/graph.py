@@ -51,12 +51,10 @@ KEY_SNIPPET = "snippet"
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
-# Protobuf file names
 PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 
-# Protobuf oneof field names
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
 ONEOF_FOLDER = "folder"
@@ -173,9 +171,9 @@ class CaptureGroup(StrEnum):
     FINDINGS = "findings"
 
 
-# Each relationship type belongs to exactly one capture group. The guard
-# below enforces total coverage, so a newly added RelationshipType cannot
-# silently escape the capture model.
+# Each relationship type belongs to exactly one capture group. The guard below
+# enforces total coverage, so a new RelationshipType cannot silently escape the
+# capture model.
 CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     CaptureGroup.STRUCTURE: frozenset(
         {
@@ -227,8 +225,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
-# owning group has at least one enabled relationship. Labels owned by no
-# group are always captured.
+# owning group has an enabled relationship. Labels owned by no group are always
+# captured.
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
     CaptureGroup.FINDINGS: frozenset(
@@ -301,7 +299,6 @@ SCHEMA_OPTIONAL_SUFFIX = "?"
 
 NODE_PROJECT = NodeLabel.PROJECT
 
-# Property keys
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_MODIFIERS = "modifiers"
@@ -312,7 +309,6 @@ KEY_IS_EXPORTED = "is_exported"
 # never by first-party code, so dead-code reachability roots it.
 KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
-# Cypher queries
 CYPHER_DEFAULT_LIMIT = 50
 
 _CYPHER_EMBEDDING_BASE = """
@@ -348,7 +344,7 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
 
-# Queries for orphan pruning — returns all paths stored in the graph
+# Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
@@ -376,7 +372,7 @@ CYPHER_ALL_DEFINITION_QNS = (
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
 # deferred import verification must count modules in UNCHANGED files as
-# real targets, or editing one file would drop cross-file IMPORTS edges.
+# targets, or editing one file would drop cross-file IMPORTS edges.
 CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "

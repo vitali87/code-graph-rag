@@ -1,8 +1,8 @@
 # C# tree-sitter node types and field names (tree-sitter-c-sharp).
 
-# Compilation unit is the file root. It is a FQN scope so a file-scoped
-# namespace (a SIBLING of the declarations it governs, not their ancestor)
-# can be folded into every type's qn via _csharp_get_name. See that resolver.
+# Compilation unit is the file root, and a FQN scope so a file-scoped namespace
+# (a SIBLING of its declarations, not their ancestor) folds into every type's qn
+# via _csharp_get_name.
 TS_CSHARP_COMPILATION_UNIT = "compilation_unit"
 
 # Namespace forms: block `namespace N { ... }` nests declarations under a
@@ -43,11 +43,10 @@ TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
-# The scopes a local function can be declared in (and therefore be
-# call-visible from): a method/constructor body or an enclosing local
-# function. Used to pin each local function to its HOST so bare-name
-# resolution honors C# scoping (a local fn in one overload's body is not
-# in scope in a sibling overload).
+# The scopes a local function can be declared in (and be call-visible from):
+# a method/constructor body or an enclosing local function. Pins each local
+# function to its HOST so bare-name resolution honors C# scoping (a local fn in
+# one overload's body is not in scope in a sibling overload).
 CSHARP_LOCAL_FN_HOST_TYPES = frozenset(
     {
         TS_CSHARP_METHOD_DECLARATION,
@@ -85,11 +84,10 @@ CSHARP_MEMBER_ONLY_TYPES = frozenset(
     }
 )
 
-# Base spec: `class C : Base, IShape` / `interface I : IOther` /
-# `enum E : byte`. A single base_list lumps the base class and interfaces
-# together (unlike Java's separate superclass/super_interfaces clauses), so
-# the split is heuristic. base_list is unique to C# among the grammars, so
-# its presence identifies a C# type node without a language argument.
+# Base spec: `class C : Base, IShape` / `enum E : byte`. A single base_list
+# lumps the base class and interfaces together (unlike Java's separate
+# clauses), so the split is heuristic. base_list is unique to C# among the
+# grammars, so its presence identifies a C# type node without a language arg.
 TS_CSHARP_BASE_LIST = "base_list"
 # A base type may be a bare `identifier`, a `generic_name` (`List<int>` ->
 # strip type args to the identifier), a `qualified_name` (`System.Exception`),
@@ -148,11 +146,10 @@ TS_CSHARP_PARAMETER = "parameter"
 TS_CSHARP_ARRAY_TYPE = "array_type"
 TS_CSHARP_PARAMETER_LIST = "parameter_list"
 
-# Local/field declarations for type inference. A local is a
-# variable_declaration (type field + variable_declarator[s]); `var` makes the
-# type field an implicit_type, so the type is inferred from the initializer.
-# A field_declaration wraps a variable_declaration; a property_declaration
-# exposes `type` and `name` fields directly.
+# Local/field declarations for type inference. A local is a variable_declaration
+# (type field + variable_declarator[s]); `var` makes the type field an
+# implicit_type, inferred from the initializer. A field_declaration wraps a
+# variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"

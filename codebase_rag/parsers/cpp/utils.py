@@ -280,21 +280,21 @@ def _enclosing_class_name(node: Node) -> str | None:
 
 
 def _has_named_parameter(declarator: Node) -> bool:
-    # A macro invocation's "parameters" are expressions -- `(...)`, bare
-    # identifiers (parsed as type-only declarations), or call shapes -- so
-    # none of them ever carries a NAMED declarator. A real definition's
-    # `int fd` / `const S& s` does. One named parameter is proof of a
-    # genuine declaration even when recovery orphaned it from its class.
+    # A macro invocation's "parameters" are expressions (`(...)`, bare
+    # identifiers parsed as type-only declarations, or call shapes), so none
+    # carries a NAMED declarator. A real definition's `int fd` / `const S& s`
+    # does. One named parameter is proof of a genuine declaration even when
+    # recovery orphaned it from its class.
     params = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return False
 
     def declares_identifier(node: Node) -> bool:
-        # Follow only the declarator-field spine (plus the two wrapper
-        # nodes that hold their declarator as a bare child): identifiers
-        # reachable ONLY off that path are array bounds (`int[MAX_SIZE]`)
-        # or an inner fn-ptr's parameter names (`void (*)(int x)`), not
-        # names of THIS parameter.
+        # Follow only the declarator-field spine (plus the two wrapper nodes
+        # holding their declarator as a bare child): identifiers reachable
+        # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
+        # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
+        # parameter.
         if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
             return True
         inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
@@ -322,15 +322,15 @@ def _has_named_parameter(declarator: Node) -> bool:
 
 
 def is_recovery_artifact_shape(func_node: Node) -> bool:
-    # `FMT_CATCH(...) {}` -- a macro invocation followed by a block -- parses
-    # as a TYPE-LESS function_definition (or declaration, when member-init
-    # recovery sweeps it into a class body) named after the macro. Valid C++
-    # only omits the return type on a constructor, whose plain-identifier
-    # declarator repeats the enclosing class name; every OTHER type-less
-    # plain-identifier definition shares one shape with two meanings: a
-    # macro invocation, or a real definition the recovery orphaned from its
-    # class / stripped of its type. The registered-class tiebreak and the
-    # named-parameter evidence (see is_macro_invocation_artifact) decide.
+    # `FMT_CATCH(...) {}` (a macro invocation followed by a block) parses as a
+    # TYPE-LESS function_definition (or declaration, when member-init recovery
+    # sweeps it into a class body) named after the macro. Valid C++ only omits
+    # the return type on a constructor, whose plain-identifier declarator
+    # repeats the enclosing class name; every OTHER type-less plain-identifier
+    # definition shares one shape with two meanings: a macro invocation, or a
+    # real definition recovery orphaned from its class or stripped of its type.
+    # The registered-class tiebreak and named-parameter evidence (see
+    # is_macro_invocation_artifact) decide.
     if func_node.type not in (
         cs.CppNodeType.FUNCTION_DEFINITION,
         cs.CppNodeType.DECLARATION,
@@ -353,10 +353,10 @@ def has_named_parameter(func_node: Node) -> bool:
 
 
 def is_macro_invocation_artifact(func_node: Node) -> bool:
-    # A macro invocation's "parameters" are expressions, so the artifact
-    # shape WITH a named parameter is proof of a genuine (recovery-mangled)
-    # definition; without one, only a registered class bearing the name
-    # (an orphaned zero-param ctor) saves the node from being dropped.
+    # A macro invocation's "parameters" are expressions, so the artifact shape
+    # WITH a named parameter is proof of a genuine (recovery-mangled)
+    # definition; without one, only a registered class bearing the name (an
+    # orphaned zero-param ctor) saves the node from being dropped.
     return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
 
 
@@ -406,7 +406,7 @@ def _get_inner_function_node(node: Node) -> Node:
 def _scope_segment_name(scope: Node) -> str | None:
     # The name of one scope segment of a qualified return type. A namespace or
     # plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
-    # must reduce to its `type_identifier` -- the raw text carries `<T>` template
+    # must reduce to its `type_identifier`: the raw text carries `<T>` template
     # arguments that no registry class QN holds, so it would never suffix-match.
     if scope.type == cs.CppNodeType.TEMPLATE_TYPE:
         name = scope.child_by_field_name(cs.FIELD_NAME)
@@ -418,11 +418,11 @@ def _return_type_path(type_node: Node) -> str | None:
     # Reduce a return-type node to a dotted namespace-qualified class path:
     # `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
     # `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
-    # collecting each `scope` namespace, and unwrap a template_type
-    # (`parser<J, A>`) to its `type_identifier`. A primitive/auto/other return
-    # type has no class name and yields None so a chained hop off it stays
-    # unresolved. The qualified path disambiguates a factory-returned class from
-    # a same-named factory method (nlohmann's basic_json has both).
+    # collecting each `scope` namespace, and unwrap a template_type to its
+    # `type_identifier`. A primitive/auto/other return type has no class name
+    # and yields None so a chained hop off it stays unresolved. The qualified
+    # path disambiguates a factory-returned class from a same-named factory
+    # method (nlohmann's basic_json has both).
     parts: list[str] = []
     current: Node | None = type_node
     while current is not None:

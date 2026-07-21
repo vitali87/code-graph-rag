@@ -154,14 +154,13 @@ class DartTypeInferenceEngine:
         # Two typable shapes: a DECLARED type (`Greeter t = ...` puts a
         # type_identifier before the name) and a CONSTRUCTION initializer
         # (`var b = Greeter('x')` / `final n = Greeter.named('y')`: the
-        # initializer's base identifier, UpperCamelCase by Dart
-        # convention, names the constructed class; a lowercase base is an
-        # ordinary call whose return type is unknown, so the local stays
-        # untyped). The FIRST variable's name and initializer are direct
-        # children; each ADDITIONAL variable of a multi-declaration
-        # (`var a = X(), b = Y();`) nests as an initialized_identifier
-        # carrying the same name-plus-initializer shape, with a declared
-        # type (if any) shared by every binding.
+        # initializer's UpperCamelCase base identifier names the constructed
+        # class; a lowercase base is an ordinary call of unknown return type,
+        # so the local stays untyped). The FIRST variable's name and
+        # initializer are direct children; each ADDITIONAL variable of a
+        # multi-declaration (`var a = X(), b = Y();`) nests as an
+        # initialized_identifier of the same shape, with any declared type
+        # shared by every binding.
         declared_type = _declared_type_name(node)
         _record_binding(node.named_children, declared_type, types, conflicts)
         for part in node.named_children:

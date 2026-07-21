@@ -1,9 +1,9 @@
 # Cross-project (monorepo) eval. Every other eval runs on a single top-level
-# package, so none checks that cgr resolves references that cross top-level
-# package boundaries -- the monorepo case cgr is built for. This extracts
-# cgr's CALLS and IMPORTS edges whose endpoints live in different top-level
-# packages and grades them, on synthetic multi-package fixtures whose cross
-# edges are known by construction.
+# package, so none checks that cgr resolves references crossing top-level
+# package boundaries, the monorepo case cgr is built for. This extracts cgr's
+# CALLS and IMPORTS edges whose endpoints live in different top-level packages
+# and grades them on synthetic fixtures whose cross edges are known by
+# construction.
 from pathlib import Path
 
 from codebase_rag import constants as cs

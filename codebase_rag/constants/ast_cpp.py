@@ -81,8 +81,8 @@ CPP_KEYWORD_STRUCT = "struct"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 # A C/C++ class/struct/union tag with no body is a forward declaration
-# (`class Widget;`); it must not become its own node, or it collides with the
-# real definition's qn and fragments one class into several same-named nodes.
+# (`class Widget;`); making it its own node collides with the real
+# definition's qn and fragments the class into same-named nodes.
 CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
     {"class_specifier", "struct_specifier", "union_specifier"}
 )
@@ -160,8 +160,8 @@ TS_CPP_UNARY_EXPRESSION = "unary_expression"
 TS_CPP_UPDATE_EXPRESSION = "update_expression"
 TS_CPP_FUNCTION_DECLARATOR = "function_declarator"
 # Substring shared by C++ declarator node types (pointer_declarator,
-# reference_declarator, parenthesized_declarator, ...), used to unwrap a
-# parameter declarator down to its bound identifier.
+# reference_declarator, ...), used to unwrap a parameter declarator down
+# to its bound identifier.
 CPP_DECLARATOR_SUFFIX = "declarator"
 
 FIELD_OPERATOR = "operator"
@@ -198,8 +198,7 @@ TS_CPP_FOR_RANGE_LOOP = "for_range_loop"
 TS_CPP_SWITCH_STATEMENT = "switch_statement"
 TS_CPP_CASE_STATEMENT = "case_statement"
 # field_expression = `obj.field` (argument/field); subscript_expression =
-# `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
-# correctness / future value-level sinks.
+# `arr[i]` (argument/indices). Inert for C++ I/O, wired for shape correctness.
 CPP_FIELD_ARGUMENT = "argument"
 CPP_FIELD_FIELD = "field"
 CPP_FIELD_INDICES = "indices"
@@ -207,9 +206,9 @@ CPP_FIELD_INDICES = "indices"
 # Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
 CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)
-# Node types that open their own variable scope; C++ local-variable inference must
-# not descend into them, or a name declared inside a lambda / nested function /
-# local class body would be attributed to the enclosing function's scope.
+# Node types that open their own variable scope; local-variable inference must
+# not descend, or a name in a lambda / nested function / local class body gets
+# attributed to the enclosing function's scope.
 CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
     (
         TS_CPP_FUNCTION_DEFINITION,

@@ -161,9 +161,9 @@ def score_span(
     cgr: GraphData, oracle: GraphData, kinds: tuple[cs.NodeLabel, ...]
 ) -> ScoreResult:
     # Grade node SPANS (end_line) only on nodes both sides identify by
-    # (kind, file, start), so an end_line disagreement is not masked by, nor
-    # conflated with, a node-identity miss. Restricted to the shared key set,
-    # fp and fn each count one end_line mismatch (precision == recall).
+    # (kind, file, start), so an end_line disagreement is not masked by nor
+    # conflated with a node-identity miss. On the shared key set, fp and fn each
+    # count one end_line mismatch (precision == recall).
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
     cgr_all: set[_SpanKey] = set()

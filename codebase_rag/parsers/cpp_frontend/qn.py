@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 def _eligible_rel_files(repo_path: Path) -> list[str]:
     # Reproduce GraphUpdater._collect_eligible_files' ordering exactly: an
     # os.walk with dirnames AND filenames sorted, top-down. The module-qn
-    # disambiguation below depends on this order (the file processed LATER in
-    # a basename collision is the one that gets its extension appended), so it
-    # must match cgr's tree-sitter pass to produce identical qualified names.
+    # disambiguation below depends on this order (the file processed LATER in a
+    # basename collision gets its extension appended), so it must match cgr's
+    # tree-sitter pass to produce identical qualified names.
     repo_str = str(repo_path)
     repo_prefix_len = len(repo_str) + 1
     rels: list[str] = []
@@ -91,8 +91,8 @@ class CppQnResolver:
         return self._module_qn.get(rel)
 
     def module_qn_for_rel(self, rel: str) -> str | None:
-        # Map lookup only -- for callers that already paid rel_path's
-        # filesystem resolution and must not pay it twice.
+        # Map lookup only, for callers that already paid rel_path's filesystem
+        # resolution and must not pay it twice.
         return self._module_qn.get(rel)
 
     def _namespace_chain(self, cursor: Cursor) -> list[str]:

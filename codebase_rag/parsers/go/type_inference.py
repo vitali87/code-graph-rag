@@ -8,12 +8,12 @@ from .utils import type_identifier_text
 
 
 class GoTypeInferenceEngine:
-    # Maps local variable / parameter / receiver names to their bare Go type
-    # name within a function or method body, so the resolver can bind a
-    # receiver-dispatch call (`d.method()`) to the method node on the type.
-    # Bare names only: the resolver turns a name into a class qn via the same
-    # _resolve_class_name path the definition pass uses, so pointer/generic
-    # wrappers are stripped here down to the underlying type identifier.
+    # Maps local variable / parameter / receiver names to their bare Go type name
+    # within a function or method body, so the resolver can bind a receiver-dispatch
+    # call (`d.method()`) to the method node on the type. Bare names only: the
+    # resolver turns a name into a class qn via the same _resolve_class_name path the
+    # definition pass uses, so pointer/generic wrappers are stripped here down to the
+    # underlying type identifier.
     __slots__ = ()
 
     def build_local_variable_type_map(
@@ -28,8 +28,8 @@ class GoTypeInferenceEngine:
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map a Go struct's field names to their bare type names (a `type_spec`:
-        # `type Engine struct { trees methodTrees }` -> {"trees": "methodTrees"}).
-        # Lets the resolver type a field-hop receiver (`engine.trees.get()`), so a
+        # `type Engine struct { trees methodTrees }` -> {"trees": "methodTrees"}), so
+        # the resolver can type a field-hop receiver (`engine.trees.get()`) and a
         # local bound from such a call (`root := engine.trees.get(m)`) gets the
         # return type. Non-struct type_specs (aliases, interfaces) yield {}.
         fields: dict[str, str] = {}
@@ -106,9 +106,9 @@ class GoTypeInferenceEngine:
     def _collect_short_var_declaration(
         self, node: Node, var_types: dict[str, str]
     ) -> None:
-        # `x := T{}` / `x := &T{}`: pair each left name with the type inferred
-        # from the value at the same position; non-literal initializers (calls)
-        # are left unresolved rather than guessed.
+        # `x := T{}` / `x := &T{}`: pair each left name with the type inferred from
+        # the value at the same position; non-literal initialisers (calls) are left
+        # unresolved rather than guessed.
         left = node.child_by_field_name(cs.FIELD_LEFT)
         right = node.child_by_field_name(cs.FIELD_RIGHT)
         if left is None or right is None:
@@ -126,10 +126,10 @@ class GoTypeInferenceEngine:
     ) -> list[tuple[str, list[str]]]:
         # `x := recv.m(...)` / `x := e.field.m(...)` / `x := f(...)`: pair the bound
         # name with the callee selector segments (`e.trees.get` -> ['e','trees',
-        # 'get']). The unified engine resolves the segments to the call's return
-        # type (needs field + method-return maps this stateless engine lacks) and
-        # types `x`. Only clean identifier-dotted callees are collected; anything
-        # with an index/paren/generic in the callee is skipped (stays unresolved).
+        # 'get']). The unified engine resolves the segments to the call's return type
+        # (needs field + method-return maps this stateless engine lacks) and types
+        # `x`. Only clean identifier-dotted callees are collected; any index/paren/
+        # generic in the callee is skipped and stays unresolved.
         bindings: list[tuple[str, list[str]]] = []
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is not None:
@@ -162,9 +162,9 @@ class GoTypeInferenceEngine:
                 bindings.append((name, segments))
 
     def _callee_segments(self, call: Node) -> list[str] | None:
-        # The callee selector of a call, split into identifier segments. A
-        # plain function is one segment; `e.trees.get` is three. Returns None for
-        # any non-identifier part (index/paren/generic) so callers stay unresolved.
+        # The callee selector of a call, split into identifier segments. A plain
+        # function is one segment; `e.trees.get` is three. Returns None for any
+        # non-identifier part (index/paren/generic) so callers stay unresolved.
         func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is None:
             return None

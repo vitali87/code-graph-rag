@@ -45,7 +45,7 @@ def _import_deps_for_module(tree: ast.Module, rel: str, project: str) -> set[Imp
         elif isinstance(node, ast.ImportFrom):
             base_parts = _from_base_parts(node, pkg_parts)
             if not base_parts:
-                # A relative import that escapes the package root resolves to
+                # A relative import escaping the package root resolves to
                 # nothing the repo defines; skip rather than guess.
                 continue
             top = base_parts[0]

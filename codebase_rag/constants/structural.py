@@ -27,13 +27,13 @@ AST_GREP_LANGUAGES: dict[SupportedLanguage, str] = {
 }
 
 # Metavariable tokens in a rewrite template. ast-grep's node.replace() does
-# NOT interpolate metavars, so the service does it: $$$NAME (multi) and
-# $NAME (single). One combined pattern, matched left-to-right in a single
-# pass so text inserted for one metavar is never re-scanned for another.
+# NOT interpolate metavars, so the service does it: $$$NAME (multi),
+# $NAME (single). One pattern matched left-to-right in a single pass, so
+# text inserted for one metavar is never re-scanned for another.
 AST_GREP_METAVAR_RE = re.compile(r"\$\$\$([A-Z_][A-Z0-9_]*)|\$([A-Z_][A-Z0-9_]*)")
 
-# Cap on matches returned by a single structural search, so an over-broad
-# pattern cannot flood the agent context. Truncation is reported, not silent.
+# Cap on matches from a single structural search, so an over-broad pattern
+# cannot flood the agent context. Truncation is reported, not silent.
 AST_GREP_MAX_RESULTS = 200
 
 # Result dict keys (StructuralSearchMatch / StructuralReplaceChange).
