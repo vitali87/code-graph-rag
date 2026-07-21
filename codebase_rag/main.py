@@ -606,6 +606,8 @@ def _record_and_print_turn_usage(
     session.total_input_tokens += turn_input
     session.total_output_tokens += turn_output
     session.total_cost_usd += turn_cost
+    if not turn_priced:
+        session.cost_incomplete = True
     line = cs.UI_TURN_USAGE_TOKENS.format(
         ti=turn_input,
         to=turn_output,
@@ -613,7 +615,12 @@ def _record_and_print_turn_usage(
         so=session.total_output_tokens,
     )
     if turn_priced:
-        line += cs.UI_TURN_USAGE_COST.format(tc=turn_cost, sc=session.total_cost_usd)
+        template = (
+            cs.UI_TURN_USAGE_COST_PARTIAL
+            if session.cost_incomplete
+            else cs.UI_TURN_USAGE_COST
+        )
+        line += template.format(tc=turn_cost, sc=session.total_cost_usd)
     app_context.console.print(dim(line))
 
 

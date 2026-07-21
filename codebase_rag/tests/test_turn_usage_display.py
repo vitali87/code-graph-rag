@@ -55,6 +55,20 @@ def test_priced_turn_shows_cost_segment() -> None:
     assert "$0.0105" in buffer.getvalue()
 
 
+def test_session_total_marked_partial_after_an_unpriced_turn() -> None:
+    # priced -> unpriced -> priced: the final session total omits the unpriced
+    # turn, so it must be shown as a partial floor, not a definitive total.
+    _, buffer = _fresh_session()
+    main._record_and_print_turn_usage(1000, 500, Decimal("0.01"), turn_priced=True)
+    main._record_and_print_turn_usage(200, 100, Decimal(0), turn_priced=False)
+    buffer.truncate(0)
+    buffer.seek(0)
+    main._record_and_print_turn_usage(300, 150, Decimal("0.003"), turn_priced=True)
+    out = buffer.getvalue()
+    assert "partial" in out
+    assert "$0.0130+" in out
+
+
 def test_price_current_run_none_when_no_config(monkeypatch) -> None:
     class _Boom:
         @property

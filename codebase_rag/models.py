@@ -26,6 +26,8 @@ class SessionState:
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cost_usd: Decimal = field(default_factory=lambda: Decimal(0))
+    # Set once any turn cannot be priced, so the session total is a floor.
+    cost_incomplete: bool = False
 
     def reset_cancelled(self) -> None:
         self.cancelled = False
