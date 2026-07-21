@@ -100,6 +100,9 @@ _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 _ARG_REF_ONLY_LANGUAGES = frozenset(
     {cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.DART}
 )
+_DART_VALUE_WRAPPER_TYPES = frozenset(
+    {cs.TS_DART_LIST_LITERAL, cs.TS_DART_SET_OR_MAP_LITERAL, cs.TS_DART_ARGUMENT}
+)
 
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
@@ -3015,7 +3018,9 @@ class CallProcessor:
                         )
             stack.extend(node.children)
 
-    def _expand_py_first_class_values(self, value: Node) -> list[Node]:
+    def _expand_py_first_class_values(
+        self, value: Node, language: cs.SupportedLanguage | None = None
+    ) -> list[Node]:
         # Peel Python container literals and result-position conditional
         # operands so a function stored in a tuple/list/set, a dict VALUE,
         # a bare return-tuple (expression_list), or a ternary/boolean-default
@@ -3023,11 +3028,14 @@ class CallProcessor:
         # recursively. A ternary's condition is only truthiness-tested, never
         # bound, so it stays excluded. Any other node comes back unchanged, so
         # non-Python shapes are unaffected.
+        is_dart = language == cs.SupportedLanguage.DART
         out: list[Node] = []
         stack = [value]
         while stack:
             node = stack.pop()
-            if node.type in _PY_VALUE_WRAPPER_TYPES:
+            if node.type in _PY_VALUE_WRAPPER_TYPES or (
+                is_dart and node.type in _DART_VALUE_WRAPPER_TYPES
+            ):
                 stack.extend(reversed(node.named_children))
             elif node.type == cs.TS_PY_DICTIONARY:
                 for pair in reversed(node.named_children):
@@ -3046,7 +3054,14 @@ class CallProcessor:
                 # over-referencing rather than dropping a branch.
                 operands = list(node.named_children)
                 if len(operands) == 3:
-                    operands = [operands[0], operands[2]]
+                    # Dart orders [condition, consequence, alternative];
+                    # Python orders [body, condition, alternative]. Pick the
+                    # two result operands, never the truthiness-tested one.
+                    operands = (
+                        [operands[1], operands[2]]
+                        if is_dart
+                        else [operands[0], operands[2]]
+                    )
                 stack.extend(reversed(operands))
             elif node.type == cs.TS_PY_BOOLEAN_OPERATOR:
                 right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -4274,7 +4289,7 @@ class CallProcessor:
             # `... if single else local_setter_noop`, its SQLCompiler) hides
             # the passed functions one level down; each expanded value is a
             # first-class reference exactly like a bare-name argument.
-            for value_node in self._expand_py_first_class_values(arg_node):
+            for value_node in self._expand_py_first_class_values(arg_node, language):
                 self._emit_callback_edge(
                     caller_spec,
                     value_node,
