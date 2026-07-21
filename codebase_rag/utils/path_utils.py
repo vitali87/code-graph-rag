@@ -1,5 +1,6 @@
 import hashlib
 import re
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -136,3 +137,39 @@ def should_skip_rel_file(
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+def project_roots_from_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> dict[str, str | None]:
+    """Build {project_name: root_path} from CYPHER_LIST_PROJECTS rows."""
+    roots: dict[str, str | None] = {}
+    for row in rows:
+        name = row.get("name")
+        if not isinstance(name, str):
+            continue
+        root = row.get("root_path")
+        roots[name] = root if isinstance(root, str) else None
+    return roots
+
+
+def absolute_path_within_project_root(
+    qualified_name: str, absolute_path: str, roots: dict[str, str | None]
+) -> bool:
+    """A stored absolute path may only be read from inside its own project's
+    indexed root; projects with no recorded root (legacy graphs) stay
+    readable (issue #425). Project names may contain dots, so the owning
+    project is the longest known name prefixing the qualified name. The
+    resolve() calls are load-bearing: containment is checked lexically, so
+    an unresolved ``..`` segment or symlink would escape the root."""
+    matches = [name for name in roots if qualified_name.startswith(name + ".")]
+    if not matches:
+        return True
+    owner = matches[0]
+    for name in matches[1:]:
+        if len(name) > len(owner):
+            owner = name
+    root = roots[owner]
+    if root is None:
+        return True
+    return Path(absolute_path).resolve().is_relative_to(Path(root).resolve())

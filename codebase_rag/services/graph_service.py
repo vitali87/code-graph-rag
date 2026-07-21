@@ -57,6 +57,7 @@ from ..types_defs import (
     RelBatchRow,
     ResultRow,
 )
+from ..utils.path_utils import project_roots_from_rows
 
 
 def _apply_memory_limit(query: str, mb: int) -> str:
@@ -270,6 +271,9 @@ class MemgraphIngestor:
     def list_projects(self) -> list[str]:
         result = self.fetch_all(CYPHER_LIST_PROJECTS)
         return [str(r[KEY_NAME]) for r in result]
+
+    def list_project_roots(self) -> dict[str, str | None]:
+        return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))

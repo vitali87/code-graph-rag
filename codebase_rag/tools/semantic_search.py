@@ -12,10 +12,15 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    CYPHER_LIST_PROJECTS,
     build_nodes_by_ids_query,
 )
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
+from ..utils.path_utils import (
+    absolute_path_within_project_root,
+    project_roots_from_rows,
+)
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
@@ -23,7 +28,10 @@ if TYPE_CHECKING:
 
 
 def semantic_code_search(
-    ingestor: QueryProtocol, query: str, top_k: int = 5
+    ingestor: QueryProtocol,
+    query: str,
+    top_k: int = 5,
+    project: str | None = None,
 ) -> list[SemanticSearchResult]:
     if not has_semantic_dependencies():
         logger.warning(ex.SEMANTIC_EXTRA)
@@ -35,7 +43,9 @@ def semantic_code_search(
 
         query_embedding = embed_code(query)
 
-        search_results = search_embeddings(query_embedding, top_k=top_k)
+        search_results = search_embeddings(
+            query_embedding, top_k=top_k, project=project
+        )
 
         if not search_results:
             logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
@@ -81,7 +91,23 @@ def semantic_code_search(
         return []
 
 
-def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | None:
+def _resolve_project_roots(
+    ingestor: QueryProtocol,
+    roots_cache: dict[str, dict[str, str | None]] | None,
+) -> dict[str, str | None]:
+    if roots_cache is not None and "roots" in roots_cache:
+        return roots_cache["roots"]
+    roots = project_roots_from_rows(ingestor.fetch_all(CYPHER_LIST_PROJECTS))
+    if roots_cache is not None:
+        roots_cache["roots"] = roots
+    return roots
+
+
+def get_function_source_code(
+    ingestor: QueryProtocol,
+    node_id: int,
+    roots_cache: dict[str, dict[str, str | None]] | None = None,
+) -> str | None:
     try:
         from ..utils.source_extraction import (
             extract_source_lines,
@@ -113,6 +139,12 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
         # path covers repos moved since indexing and old graphs without the
         # property (issue #425).
         absolute_path = result.get("absolute_path")
+        if absolute_path and not absolute_path_within_project_root(
+            str(result.get("qualified_name", "")),
+            absolute_path,
+            _resolve_project_roots(ingestor, roots_cache),
+        ):
+            absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
 
@@ -124,10 +156,14 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
 
 
 def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
-    async def semantic_search_functions(query: str, top_k: int = 5) -> str:
+    async def semantic_search_functions(
+        query: str, top_k: int = 5, project: str | None = None
+    ) -> str:
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
-        results = await asyncio.to_thread(semantic_code_search, ingestor, query, top_k)
+        results = await asyncio.to_thread(
+            semantic_code_search, ingestor, query, top_k, project
+        )
 
         if not results:
             return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)
@@ -152,11 +188,15 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
 
 
 def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
+    # ponytail: tool-lifetime roots cache; a project indexed after the first
+    # lookup is treated as unknown (permissive) until a new tool instance.
+    roots_cache: dict[str, dict[str, str | None]] = {}
+
     async def get_function_source_by_id(node_id: int) -> str:
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = await asyncio.to_thread(
-            get_function_source_code, ingestor, node_id
+            get_function_source_code, ingestor, node_id, roots_cache
         )
 
         if source_code is None:

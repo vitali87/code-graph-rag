@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Protocol, cast
 
@@ -14,6 +14,39 @@ from .utils.dependencies import has_pymilvus, has_qdrant_client
 
 _RETRIEVE_BATCH_SIZE = 1000
 _MILVUS_VECTOR_FIELD = "embedding"
+_PROJECT_OVERFETCH = 4
+_PROJECT_MAX_FETCH = 1024
+
+
+def _filter_by_project(
+    scored: Sequence[tuple[int, float, Any]], project: str, top_k: int
+) -> list[tuple[int, float]]:
+    prefix = project + "."
+    matching = [
+        (node_id, score)
+        for node_id, score, qualified_name in scored
+        if isinstance(qualified_name, str) and qualified_name.startswith(prefix)
+    ]
+    return matching[:top_k]
+
+
+def _search_project_scoped(
+    run_query: Callable[[int], Sequence[tuple[int, float, Any]]],
+    top_k: int,
+    project: str,
+) -> list[tuple[int, float]]:
+    # ponytail: client-side prefix filter with a widening window, capped at
+    # _PROJECT_MAX_FETCH; switch to an indexed payload/expr filter if a
+    # project's matches routinely sit past the cap.
+    fetch_k = top_k * _PROJECT_OVERFETCH
+    while True:
+        hits = run_query(fetch_k)
+        filtered = _filter_by_project(hits, project, top_k)
+        exhausted = len(hits) < fetch_k or fetch_k >= _PROJECT_MAX_FETCH
+        if len(filtered) >= top_k or exhausted:
+            return filtered
+        fetch_k = min(fetch_k * _PROJECT_OVERFETCH, _PROJECT_MAX_FETCH)
+
 
 _CLIENT: Any | None = None
 _CLIENT_BACKEND: VectorStoreBackend | None = None
@@ -51,7 +84,10 @@ class VectorStore(Protocol):
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]: ...
 
     def search_embeddings(
-        self, query_embedding: list[float], top_k: int | None = None
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+        project: str | None = None,
     ) -> list[tuple[int, float]]: ...
 
 
@@ -312,21 +348,36 @@ class QdrantVectorStore:
         return found_ids
 
     def search_embeddings(
-        self, query_embedding: list[float], top_k: int | None = None
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+        project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.QDRANT_TOP_K
         try:
             client = get_qdrant_client()
-            result = client.query_points(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                query=query_embedding,
-                limit=effective_top_k,
-            )
-            return [
-                (hit.payload[PAYLOAD_NODE_ID], hit.score)
-                for hit in result.points
-                if hit.payload is not None
-            ]
+
+            def run_query(limit: int) -> list[tuple[int, float, Any]]:
+                result = client.query_points(
+                    collection_name=settings.QDRANT_COLLECTION_NAME,
+                    query=query_embedding,
+                    limit=limit,
+                )
+                return [
+                    (
+                        hit.payload[PAYLOAD_NODE_ID],
+                        hit.score,
+                        hit.payload.get(PAYLOAD_QUALIFIED_NAME),
+                    )
+                    for hit in result.points
+                    if hit.payload is not None
+                ]
+
+            if project is None:
+                return [
+                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+                ]
+            return _search_project_scoped(run_query, effective_top_k, project)
         except Exception as e:
             logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
             return []
@@ -407,30 +458,55 @@ class MilvusVectorStore:
         return found_ids
 
     def search_embeddings(
-        self, query_embedding: list[float], top_k: int | None = None
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+        project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.MILVUS_TOP_K
+        output_fields = (
+            [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME] if project else [PAYLOAD_NODE_ID]
+        )
         try:
             client = get_milvus_client()
-            result = client.search(
-                collection_name=settings.MILVUS_COLLECTION_NAME,
-                data=[query_embedding],
-                anns_field=_MILVUS_VECTOR_FIELD,
-                limit=effective_top_k,
-                output_fields=[PAYLOAD_NODE_ID],
-            )
-            if not result:
-                return []
-            return [
-                (node_id, _normalize_milvus_score(float(hit.get("distance", 0.0))))
-                for hit in result[0]
-                if isinstance(
-                    node_id := _milvus_hit_node_id(cast(dict[str, Any], hit)), int
+
+            def run_query(limit: int) -> list[tuple[int, float, Any]]:
+                result = client.search(
+                    collection_name=settings.MILVUS_COLLECTION_NAME,
+                    data=[query_embedding],
+                    anns_field=_MILVUS_VECTOR_FIELD,
+                    limit=limit,
+                    output_fields=output_fields,
                 )
-            ]
+                if not result:
+                    return []
+                return [
+                    (
+                        node_id,
+                        _normalize_milvus_score(float(hit.get("distance", 0.0))),
+                        _milvus_hit_qualified_name(cast(dict[str, Any], hit)),
+                    )
+                    for hit in result[0]
+                    if isinstance(
+                        node_id := _milvus_hit_node_id(cast(dict[str, Any], hit)), int
+                    )
+                ]
+
+            if project is None:
+                return [
+                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+                ]
+            return _search_project_scoped(run_query, effective_top_k, project)
         except Exception as e:
             logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
             return []
+
+
+def _milvus_hit_qualified_name(hit: dict[str, Any]) -> str | None:
+    entity = hit.get("entity")
+    if isinstance(entity, dict) and isinstance(entity.get(PAYLOAD_QUALIFIED_NAME), str):
+        return entity[PAYLOAD_QUALIFIED_NAME]
+    return None
 
 
 def _milvus_hit_node_id(hit: dict[str, Any]) -> int | None:
@@ -487,9 +563,11 @@ def verify_stored_ids(expected_ids: set[int]) -> set[int]:
 
 
 def search_embeddings(
-    query_embedding: list[float], top_k: int | None = None
+    query_embedding: list[float],
+    top_k: int | None = None,
+    project: str | None = None,
 ) -> list[tuple[int, float]]:
     vector_store = _get_vector_store()
     if vector_store is None:
         return []
-    return vector_store.search_embeddings(query_embedding, top_k=top_k)
+    return vector_store.search_embeddings(query_embedding, top_k=top_k, project=project)

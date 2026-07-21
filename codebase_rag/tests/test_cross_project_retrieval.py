@@ -18,6 +18,7 @@ import pytest
 from codebase_rag.cypher_queries import (
     CYPHER_FIND_BY_QUALIFIED_NAME,
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    CYPHER_LIST_PROJECTS,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools.code_retrieval import CodeRetriever
@@ -262,3 +263,189 @@ class TestMcpServerProjectScope:
         assert cypher_cls.call_args.kwargs.get("active_projects") == [
             derive_project_name(repo)
         ]
+
+
+class TestBoundedAbsolutePathReads:
+    """A recorded absolute_path is only honored inside its project's indexed
+    root; unknown roots (legacy graphs) keep the permissive behavior."""
+
+    def _ingestor(self, target: Path, roots: dict[str, str | None]) -> MagicMock:
+        node_rows = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(target),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        roots_rows = [{"name": name, "root_path": root} for name, root in roots.items()]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
+        return ingestor
+
+    @pytest.mark.asyncio
+    async def test_rejects_absolute_path_outside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(
+            outside, {"user-service": str(tmp_path / "user-service")}
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
+
+        assert result.found is False
+
+    @pytest.mark.asyncio
+    async def test_allows_absolute_path_inside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(
+            target, {"user-service": str(tmp_path / "user-service")}
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
+
+        assert result.found is True
+        assert result.source_code == _SOURCE
+
+    @pytest.mark.asyncio
+    async def test_allows_absolute_path_when_project_root_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(target, {})
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
+
+        assert result.found is True
+
+    def test_function_source_rejects_path_outside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        node_rows = [
+            {
+                "qualified_name": "user-service.src.handlers.get_user",
+                "path": "definitely/not/here/handlers.py",
+                "absolute_path": str(outside),
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ]
+        roots_rows = [
+            {"name": "user-service", "root_path": str(tmp_path / "user-service")}
+        ]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
+
+        assert get_function_source_code(ingestor, node_id=1) is None
+
+
+class TestDottedProjectNames:
+    def test_dotted_project_name_still_bounds_reads(self, tmp_path: Path) -> None:
+        # A custom project name may contain dots; the containment check must
+        # match the longest known project prefix, not the first qn segment.
+        from codebase_rag.utils.path_utils import absolute_path_within_project_root
+
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        roots = {"my.service": str(tmp_path / "my.service")}
+
+        assert (
+            absolute_path_within_project_root(
+                "my.service.handlers.get_user", str(outside), roots
+            )
+            is False
+        )
+
+    def test_longest_project_prefix_wins(self, tmp_path: Path) -> None:
+        from codebase_rag.utils.path_utils import absolute_path_within_project_root
+
+        inside = tmp_path / "svc-v2" / "handlers.py"
+        inside.parent.mkdir(parents=True)
+        inside.write_text(_SOURCE, encoding="utf-8")
+
+        roots = {
+            "svc": str(tmp_path / "svc"),
+            "svc.v2": str(tmp_path / "svc-v2"),
+        }
+
+        assert (
+            absolute_path_within_project_root(
+                "svc.v2.handlers.get_user", str(inside), roots
+            )
+            is True
+        )
+
+
+class TestRootsCaching:
+    @pytest.mark.asyncio
+    async def test_roots_fetched_once_per_retriever(self, tmp_path: Path) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        node_rows = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(target),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        roots_rows = [
+            {"name": "user-service", "root_path": str(tmp_path / "user-service")}
+        ]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        for _ in range(3):
+            result = await retriever.find_code_snippet(
+                "user-service.src.handlers.get_user"
+            )
+            assert result.found is True
+
+        roots_calls = [
+            c
+            for c in ingestor.fetch_all.call_args_list
+            if c.args[0] == CYPHER_LIST_PROJECTS
+        ]
+        assert len(roots_calls) == 1

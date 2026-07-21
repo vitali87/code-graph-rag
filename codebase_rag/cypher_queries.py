@@ -23,7 +23,9 @@ CYPHER_AUDIT_MISSING_REQUIRED = (
 CYPHER_AUDIT_IS_NULL = "n.{prop} IS NULL"
 CYPHER_AUDIT_OR = " OR "
 
-CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
+CYPHER_LIST_PROJECTS = (
+    "MATCH (p:Project) RETURN p.name AS name, p.root_path AS root_path ORDER BY p.name"
+)
 
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})

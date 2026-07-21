@@ -47,7 +47,8 @@ CODE_RETRIEVAL = (
 
 SEMANTIC_SEARCH = (
     "Performs a semantic search for functions based on a natural language query "
-    "describing their purpose, returning a list of potential matches with similarity scores."
+    "describing their purpose, returning a list of potential matches with similarity scores. "
+    "Pass a project name to restrict matches to a single indexed project."
 )
 
 GET_FUNCTION_SOURCE = (
