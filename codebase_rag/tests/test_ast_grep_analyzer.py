@@ -174,6 +174,36 @@ def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
     assert len(set(qns)) == 2, qns
 
 
+def test_hardcoded_secret_ignores_empty_and_format_templates(tmp_path: Path) -> None:
+    # (H) empty strings and format/message templates (an f-string/.format {..}
+    # (H) placeholder or a printf %s/%d specifier) are not secrets. Real secret
+    # (H) literals that legitimately contain %, spaces, embedded-credential URLs
+    # (H) or SCREAMING_SNAKE shapes MUST still be caught (a security rule favours
+    # (H) recall). Lines 4-6 are the three false-negative shapes Greptile flagged.
+    from codebase_rag.analyzers import FindingAnalyzer
+
+    src = tmp_path / "s.py"
+    src.write_text(
+        'token = ""\n'
+        'TOKEN_COUNT_FAILED = "Context token count failed: {error}"\n'
+        'LOG_SECRET = "processed %s rows in %d ms"\n'
+        'db_password = "postgres://admin:hardcoded-secret@db/prod"\n'
+        'API_KEY = "sk-abcd1234efgh5678"\n'
+        'GEN_TOKEN = "A1B2_C3D4_E5F6G7"\n',
+        encoding="utf-8",
+    )
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {"proj.s": src}
+    )
+    secrets = sorted(
+        p[cs.KEY_START_LINE]
+        for label, p in ing.nodes
+        if label == SECURITY_ISSUE and p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert secrets == [4, 5, 6], secrets
+
+
 def test_tsx_files_get_findings(tmp_path: Path) -> None:
     from codebase_rag.analyzers import FindingAnalyzer
     from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules

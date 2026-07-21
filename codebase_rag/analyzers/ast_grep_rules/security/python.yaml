@@ -16,12 +16,28 @@ rules:
         - has: { pattern: "execute", stopBy: end }
         - has: { kind: string, regex: '^f', stopBy: end }
   - id: hardcoded_secret
+    # Security rule: favour recall. Value must be a non-trivial literal (>=8
+    # chars) that is not a format/message template (an f-string/.format {..}
+    # placeholder or a printf %s/%d specifier). Braces and % conversions are the
+    # only exclusions so real secrets that legitimately contain %, spaces, URLs
+    # with embedded credentials, or SCREAMING_SNAKE shapes are still caught.
+    # Ceiling: without entropy scoring, identifier/word/URL-name literals (e.g.
+    # "OPENAI_API_KEY", "cl100k_base") still surface as review prompts; that
+    # residual is the known limit of regex-only secret detection, not a defect.
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
       kind: assignment
       all:
         - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
-        - has: { field: right, kind: string }
+        - has:
+            field: right
+            all:
+              - kind: string
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '\{[^{}]*\}'
+                    - regex: '%[sdrifeEgGxXoc(]'
   - id: eval_use
     message: "eval() executes arbitrary code"
     rule:
