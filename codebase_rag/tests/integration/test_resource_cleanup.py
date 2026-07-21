@@ -110,9 +110,7 @@ class TestPruneUnanchoredResources:
 
         assert _remaining(memgraph_ingestor) == ["url"]
 
-    def test_empty_graph_is_noop(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_empty_graph_is_noop(self, memgraph_ingestor: MemgraphIngestor) -> None:
         prune_unanchored_resources(memgraph_ingestor)
 
         assert _remaining(memgraph_ingestor) == []
