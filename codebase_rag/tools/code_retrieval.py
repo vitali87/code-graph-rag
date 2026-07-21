@@ -12,6 +12,7 @@ from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..utils.path_utils import absolute_path_within_project_root
 from . import tool_descriptions as td
 
 
@@ -64,6 +65,12 @@ class CodeRetriever:
             # relative join covers repos moved since indexing and old graphs
             # without the property (issue #425).
             absolute_path_str = res.get("absolute_path")
+            if absolute_path_str:
+                roots = await asyncio.to_thread(self.ingestor.list_project_roots)
+                if not absolute_path_within_project_root(
+                    qualified_name, absolute_path_str, roots
+                ):
+                    absolute_path_str = None
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:

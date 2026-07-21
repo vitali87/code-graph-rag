@@ -16,6 +16,7 @@ from ..cypher_queries import (
 )
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
+from ..utils.path_utils import absolute_path_within_project_root
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
@@ -116,6 +117,12 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
         # path covers repos moved since indexing and old graphs without the
         # property (issue #425).
         absolute_path = result.get("absolute_path")
+        if absolute_path and not absolute_path_within_project_root(
+            str(result.get("qualified_name", "")),
+            absolute_path,
+            ingestor.list_project_roots(),
+        ):
+            absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
 

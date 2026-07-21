@@ -40,6 +40,7 @@ class TestFindSnippetAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -74,6 +75,7 @@ class TestFindSnippetAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -102,6 +104,7 @@ class TestFindSnippetAcrossProjects:
         (current_repo / "src" / "handlers.py").write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -127,6 +130,7 @@ class TestFindSnippetAcrossProjects:
         current_repo.mkdir()
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -159,6 +163,7 @@ class TestFunctionSourceAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "qualified_name": "user-service.handlers.get_user",
@@ -191,6 +196,7 @@ class TestFunctionSourceAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "qualified_name": "user-service.src.handlers.get_user",
@@ -272,6 +278,7 @@ class TestBoundedAbsolutePathReads:
         self, target: Path, roots: dict[str, str | None]
     ) -> MagicMock:
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -355,6 +362,7 @@ class TestBoundedAbsolutePathReads:
         outside.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
+        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "qualified_name": "user-service.src.handlers.get_user",

@@ -26,6 +26,8 @@ class QueryProtocol(Protocol):
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None: ...
 
+    def list_project_roots(self) -> dict[str, str | None]: ...
+
 
 from .filtering import FilteringIngestor  # noqa: E402
 

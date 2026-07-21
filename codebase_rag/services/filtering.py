@@ -48,3 +48,8 @@ class FilteringIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         if isinstance(self._inner, QueryProtocol):
             self._inner.execute_write(query, params)
+
+    def list_project_roots(self) -> dict[str, str | None]:
+        if isinstance(self._inner, QueryProtocol):
+            return self._inner.list_project_roots()
+        return {}

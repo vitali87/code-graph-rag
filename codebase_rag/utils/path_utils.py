@@ -136,3 +136,15 @@ def should_skip_rel_file(
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+def absolute_path_within_project_root(
+    qualified_name: str, absolute_path: str, roots: dict[str, str | None]
+) -> bool:
+    """A stored absolute path may only be read from inside its own project's
+    indexed root; projects with no recorded root (legacy graphs) stay
+    readable (issue #425)."""
+    root = roots.get(qualified_name.split(".", 1)[0])
+    if root is None:
+        return True
+    return Path(absolute_path).resolve().is_relative_to(Path(root).resolve())
