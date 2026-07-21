@@ -47,6 +47,7 @@ from codebase_rag.types_defs import (
     QueryResultDict,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
+from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import delete_project_embeddings
 
 
@@ -487,7 +488,9 @@ class MCPToolsRegistry:
             return cs.MCP_WIPE_ERROR.format(error=e)
 
     def _index_repository_sync(self) -> str:
-        project_name = Path(self.project_root).resolve().name
+        # Same collision-resistant derivation as the CLI: a bare directory
+        # name would let two repos named alike delete each other's graphs.
+        project_name = derive_project_name(Path(self.project_root))
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
@@ -519,7 +522,7 @@ class MCPToolsRegistry:
             return cs.MCP_INDEX_ERROR.format(error=e)
 
     def _update_repository_sync(self) -> str:
-        project_name = Path(self.project_root).resolve().name
+        project_name = derive_project_name(Path(self.project_root))
 
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
