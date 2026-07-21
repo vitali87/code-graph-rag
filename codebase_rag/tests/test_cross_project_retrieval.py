@@ -262,3 +262,110 @@ class TestMcpServerProjectScope:
         assert cypher_cls.call_args.kwargs.get("active_projects") == [
             derive_project_name(repo)
         ]
+
+
+class TestBoundedAbsolutePathReads:
+    """A recorded absolute_path is only honored inside its project's indexed
+    root; unknown roots (legacy graphs) keep the permissive behavior."""
+
+    def _ingestor(
+        self, target: Path, roots: dict[str, str | None]
+    ) -> MagicMock:
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(target),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        ingestor.list_project_roots.return_value = roots
+        return ingestor
+
+    @pytest.mark.asyncio
+    async def test_rejects_absolute_path_outside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(
+            outside, {"user-service": str(tmp_path / "user-service")}
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet(
+            "user-service.src.handlers.get_user"
+        )
+
+        assert result.found is False
+
+    @pytest.mark.asyncio
+    async def test_allows_absolute_path_inside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(
+            target, {"user-service": str(tmp_path / "user-service")}
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet(
+            "user-service.src.handlers.get_user"
+        )
+
+        assert result.found is True
+        assert result.source_code == _SOURCE
+
+    @pytest.mark.asyncio
+    async def test_allows_absolute_path_when_project_root_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = self._ingestor(target, {})
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet(
+            "user-service.src.handlers.get_user"
+        )
+
+        assert result.found is True
+
+    def test_function_source_rejects_path_outside_recorded_root(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "user-service.src.handlers.get_user",
+                "path": "definitely/not/here/handlers.py",
+                "absolute_path": str(outside),
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ]
+        ingestor.list_project_roots.return_value = {
+            "user-service": str(tmp_path / "user-service")
+        }
+
+        assert get_function_source_code(ingestor, node_id=1) is None
