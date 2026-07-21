@@ -243,7 +243,6 @@ def dead_code_from_graph(
         # pkg.apis.abac register.init@51 reported dead).
         leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
         path = str(props.get(cs.KEY_PATH, ""))
-        bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
@@ -276,11 +275,15 @@ def dead_code_from_graph(
             roots.add(qn)
         elif _is_cpp_operator_root(leaf, path):
             roots.add(qn)
-        elif _is_java_serialization_root(bare_leaf, qn in method_qns, path):
+        elif _is_java_serialization_root(
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
+        ):
             roots.add(qn)
         elif _is_csharp_attribute_root(props, path):
             roots.add(qn)
-        elif _is_csharp_dispose_root(bare_leaf, qn in method_qns, path):
+        elif _is_csharp_dispose_root(
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
+        ):
             roots.add(qn)
         elif _is_csharp_operator_or_finalizer_root(leaf, path):
             roots.add(qn)
