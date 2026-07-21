@@ -14,5 +14,15 @@ rules:
   - id: factory_function
     message: "Factory function: name starts with create/make/build"
     rule:
-      kind: function_declaration
-      has: { field: name, regex: '^(create|make|build)' }
+      any:
+        - kind: function_declaration
+          has: { field: name, regex: '^(create|make|build)' }
+        - kind: variable_declarator
+          all:
+            - has: { field: name, regex: '^(create|make|build)' }
+            - has:
+                field: value
+                any:
+                  - kind: arrow_function
+                  - kind: function_expression
+                  - kind: generator_function

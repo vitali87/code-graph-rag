@@ -5,9 +5,15 @@ ast_grep_id: python
 extensions: [.py]
 rules:
   - id: sqli_concat
-    message: "Possible SQL injection: query built with string concatenation"
+    message: "Possible SQL injection: query built with string concatenation or % formatting"
     rule:
-      pattern: "$OBJ.execute($A + $B)"
+      any:
+        - pattern: "$OBJ.execute($A + $B)"
+        # (%) matches only when a string literal is present, so a numeric modulo
+        # like execute(index % shard_count) is not mistaken for query formatting.
+        - all:
+            - pattern: "$OBJ.execute($A % $B)"
+            - has: { kind: string, stopBy: end }
   - id: sqli_fstring
     message: "Possible SQL injection: execute() called with an f-string"
     rule:
