@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -18,6 +19,10 @@ def test_query_failure_keeps_cache_and_sync(
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
     cache_path = temp_repo / cs.HASH_CACHE_FILENAME
     cache_path.write_text(json.dumps({"m.py": "stale"}), encoding="utf-8")
+    # Backdate the cache so the mtime fast path cannot skip the source file
+    # before the hash comparison sees the stale entry.
+    stale_time = cache_path.stat().st_mtime - 60
+    os.utime(cache_path, (stale_time, stale_time))
 
     count_queries: list[str] = []
 
