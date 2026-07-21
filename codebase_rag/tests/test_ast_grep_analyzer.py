@@ -626,6 +626,59 @@ def test_lua_global_assignment_ignores_field_writes(tmp_path: Path) -> None:
     assert lines == [4, 5], lines
 
 
+def test_go_sqli_concat_requires_concat_inside_the_query_call(
+    tmp_path: Path,
+) -> None:
+    # Dogfood FP: the concatenation must be an ARGUMENT of the Query/Exec
+    # call, not merely present somewhere in the same expression. Line 4's
+    # `url.QueryEscape` is a net/url false friend (matches `^Query`) and the
+    # `+` belongs to a Header().Set call, not a database sink.
+    # Line 5 wraps the concatenation in parentheses; because the `+` search
+    # descends the anchored call's argument_list, the paren form stays a true
+    # positive (recall preserved).
+    src = (
+        "package main\n"
+        "func f(db D, c C, a, b, id string) {\n"
+        '    db.Query("select * from t where x=" + id)\n'
+        '    c.Header().Set("d", a + url.QueryEscape(b))\n'
+        '    db.Query(("select * from t where y=" + id))\n'
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "dao.go", src)
+        if p[cs.KEY_NAME] == "sqli_concat"
+    )
+    assert lines == [3, 5], lines
+
+
+def test_go_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
+    # Dogfood FP class: a credential-named var whose value is a function
+    # call (e.g. `token := getEnv("SOME_LONG_DEFAULT")`) is NOT a hardcoded
+    # secret; the string literal must be the assigned value itself, not
+    # buried inside a call argument. Line 3 is a real literal secret.
+    # Line 5 wraps the literal in parentheses; the value is still a constant
+    # reached without crossing a call, so it stays a true positive. Line 4's
+    # call-buried string must not fire.
+    src = (
+        "package main\n"
+        "func f() {\n"
+        '    token := "literalsecretvalue"\n'
+        '    apikey := getEnv("SOME_LONG_DEFAULT")\n'
+        '    secret := ("anotherliteralvalue")\n'
+        "    _ = token\n"
+        "    _ = apikey\n"
+        "    _ = secret\n"
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "cfg.go", src)
+        if p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert lines == [3, 5], lines
+
+
 def test_multilang_security_rules_avoid_common_false_positives(
     tmp_path: Path,
 ) -> None:
