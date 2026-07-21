@@ -1,8 +1,7 @@
-# Covers PHP containment-edge validation: cgr's DEFINES (file module ->
-# every named type and top-level function) and DEFINES_METHOD (class/
-# interface/trait/enum -> method) edges are graded against the independent
-# php-parser oracle, joined on (kind, file, line). Exercises an interface,
-# a trait, an enum with a method, a class, and a free function.
+# Grades cgr's DEFINES (file module -> named types and top-level functions)
+# and DEFINES_METHOD (class/interface/trait/enum -> method) edges against the
+# independent php-parser oracle, joined on (kind, file, line). Exercises an
+# interface, a trait, an enum with a method, a class, and a free function.
 from __future__ import annotations
 
 from pathlib import Path

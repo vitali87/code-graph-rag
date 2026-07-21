@@ -43,7 +43,7 @@ def test_double_curried_inner_arrows_are_referenced(
 ) -> None:
     # Three-deep currying `(a) => (b) => (c) => {...}`: the middle arrow is
     # anonymous (no caller pass of its own), so the innermost must be referenced
-    # too -- the walk bubbles both to the nearest named scope.
+    # too; the walk bubbles both to the nearest named scope.
     root = temp_repo / "zcurry2"
     root.mkdir(parents=True)
     (root / "mw.ts").write_text(

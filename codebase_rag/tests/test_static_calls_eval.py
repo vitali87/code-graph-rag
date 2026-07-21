@@ -52,8 +52,7 @@ def test_decorator_application_is_not_a_call_edge(tmp_path: Path) -> None:
 
 def test_oracle_attributes_method_nested_call_to_full_qn(tmp_path: Path) -> None:
     # A call inside a function nested in a method belongs to that nested
-    # function's full qn (Class.method.nested). The oracle records it there;
-    # the eval then checks cgr emits the same caller qn (see the recall test).
+    # function's full qn (Class.method.nested); cgr must emit the same caller qn.
     src = tmp_path / "proj"
     src.mkdir(parents=True, exist_ok=True)
     (src / "__init__.py").write_text("", encoding="utf-8")

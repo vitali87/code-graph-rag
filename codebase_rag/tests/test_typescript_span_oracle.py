@@ -1,9 +1,8 @@
-# Covers TypeScript node SPAN (end_line) validation: cgr's end_line for each
-# node is graded against the TS-compiler-API oracle (which emits each node's
-# full-span end line), joined on (kind, file, start). Exercises a class with a
-# multi-line method signature, an interface, an enum, a type alias, a
-# namespace, and a multi-line arrow function so spans are not trivially single
-# line.
+# TypeScript node SPAN (end_line) validation: cgr's end_line for each node is
+# graded against the TS-compiler-API oracle, joined on (kind, file, start).
+# Exercises a class with a multi-line method signature, an interface, an enum,
+# a type alias, a namespace, and a multi-line arrow so spans are not trivially
+# single line.
 from __future__ import annotations
 
 from pathlib import Path

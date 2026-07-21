@@ -1,8 +1,7 @@
-# Covers Rust node SPAN (end_line) validation: cgr's end_line for each node is
-# graded against the syn oracle (which emits the whole-node span end), joined
-# on (kind, file, start) endpoints. Exercises doc comments, multi-line
-# attributes, a multi-line signature, a where-clause, and a multi-line closure
-# so the span is not trivially the start line.
+# Covers Rust node SPAN (end_line) validation: cgr's end_line is graded against
+# the syn oracle (which emits the whole-node span end), joined on (kind, file,
+# start). Exercises doc comments, multi-line attributes, a signature, a
+# where-clause, and a closure so the span is not trivially the start line.
 from __future__ import annotations
 
 from pathlib import Path

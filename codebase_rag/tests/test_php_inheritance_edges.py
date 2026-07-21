@@ -41,11 +41,8 @@ def test_php_inheritance_and_implements_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "php_inh.lib"
 
-    # class extends -> INHERITS.
     assert (f"{base}.Circle", f"{base}.Base") in inherits, inherits
-    # class implements -> IMPLEMENTS to each interface.
     assert (f"{base}.Circle", f"{base}.Shape") in implements, implements
     assert (f"{base}.Circle", f"{base}.Drawable") in implements, implements
-    # interface extends -> INHERITS to each superinterface.
     assert (f"{base}.Big", f"{base}.Shape") in inherits, inherits
     assert (f"{base}.Big", f"{base}.Drawable") in inherits, inherits

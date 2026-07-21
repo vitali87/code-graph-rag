@@ -1,8 +1,7 @@
-# Covers TypeScript containment-edge validation: cgr's DEFINES (file module
-# -> every named type, even nested) and DEFINES_METHOD (class/namespace ->
-# method) edges are graded against the independent TypeScript-compiler-API
-# oracle, joined on (kind, file, line). Exercises a class method, a top-level
-# function, and a namespace (class + function as methods of the namespace).
+# TypeScript containment-edge validation: cgr's DEFINES (file module ->
+# every named type) and DEFINES_METHOD (class/namespace -> method) edges are
+# graded against the TypeScript-compiler-API oracle, joined on (kind, file,
+# line). Exercises a class method, a top-level function, and a namespace.
 from __future__ import annotations
 
 from pathlib import Path

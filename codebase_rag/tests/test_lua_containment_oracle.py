@@ -1,7 +1,7 @@
 # Covers Lua containment-edge validation. Lua has no classes/methods, so the
-# only containment edge is DEFINES: the file module DEFINES top-level
-# functions, and a function DEFINES the functions nested in its body. Graded
-# against the independent luaparse oracle, joined on (kind, file, line).
+# only containment edge is DEFINES: the module DEFINES top-level functions,
+# and a function DEFINES those nested in its body. Graded against the
+# luaparse oracle, joined on (kind, file, line).
 from __future__ import annotations
 
 from pathlib import Path

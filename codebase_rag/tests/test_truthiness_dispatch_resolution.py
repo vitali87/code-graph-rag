@@ -1,7 +1,6 @@
 # L3 finding from the evals/ harness: `if self.function_registry:` tests an object
-# for truthiness, which at runtime calls __bool__ if defined else __len__. cgr only
-# extracted explicit calls, missing FunctionRegistryTrie.__len__. These edges are
-# emitted only when the tested operand is a first-party object defining the dunder.
+# for truthiness, which calls __bool__ if defined else __len__. cgr extracted only
+# explicit calls, missing these dunder edges when the operand is a first-party object.
 from __future__ import annotations
 
 from pathlib import Path

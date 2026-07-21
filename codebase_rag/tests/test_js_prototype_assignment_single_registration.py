@@ -1,8 +1,8 @@
 # `View.prototype.lookup = function lookup(...) {...}` registers TWO nodes for
 # one method (the prototype path's `View.lookup` and the fn-expr's own-name
-# module-flat `view.lookup`). A call binds one twin and the other reports dead.
-# Per the duplicate-QN design (keep both nodes, CALLS-to-both), a dotted call
-# that binds either twin must also edge the same-module same-name member twin.
+# `view.lookup`); one twin binds, the other reports dead. Per the duplicate-QN
+# design (keep both nodes, CALLS-to-both), a dotted call binding either twin
+# must also edge the same-module same-name member twin.
 from __future__ import annotations
 
 from pathlib import Path

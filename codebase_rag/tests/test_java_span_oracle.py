@@ -1,8 +1,7 @@
-# Covers Java node SPAN (end_line) validation: cgr's end_line for each node is
-# graded against the JDK Compiler Tree API oracle (which emits each node's
-# source end position), joined on (kind, file, start). Exercises a class with a
-# multi-line method signature, an interface, an enum, and a nested class so
-# spans are not trivially single line.
+# Covers Java node SPAN (end_line) validation: cgr's end_line is graded against
+# the JDK Compiler Tree API oracle (each node's source end position), joined on
+# (kind, file, start). Exercises a multi-line method signature, an interface, an
+# enum, and a nested class so spans are not trivially single line.
 from __future__ import annotations
 
 from pathlib import Path

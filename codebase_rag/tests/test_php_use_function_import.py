@@ -62,10 +62,10 @@ def test_use_function_import_call_resolves_across_namespace_path_mismatch(
 
 
 def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
-    # On an incremental re-index the same module_qn is parsed again;
-    # parse_imports resets import_mapping[module_qn] but must also drop the
-    # module's php_function_imports, or a `use function` removed from the file
-    # lingers and keeps (wrongly) exempting that name from external suppression.
+    # On incremental re-index the same module_qn is parsed again; parse_imports
+    # resets import_mapping[module_qn] but must also drop the module's
+    # php_function_imports, or a `use function` removed from the file lingers
+    # and keeps wrongly exempting that name from external suppression.
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PHP not in parsers:
         pytest.skip("php tree-sitter grammar not installed")
