@@ -27,7 +27,6 @@ from ..constants import (
     KEY_NAME,
     KEY_PROJECT_NAME,
     KEY_PROPS,
-    KEY_ROOT_PATH,
     KEY_TO_VAL,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -47,6 +46,7 @@ from ..cypher_queries import (
     build_merge_relationship_query,
     wrap_with_unwind,
 )
+from ..utils.path_utils import project_roots_from_rows
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -273,13 +273,7 @@ class MemgraphIngestor:
         return [str(r[KEY_NAME]) for r in result]
 
     def list_project_roots(self) -> dict[str, str | None]:
-        result = self.fetch_all(CYPHER_LIST_PROJECTS)
-        return {
-            str(r[KEY_NAME]): (
-                str(root) if (root := r.get(KEY_ROOT_PATH)) is not None else None
-            )
-            for r in result
-        }
+        return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))

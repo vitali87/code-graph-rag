@@ -18,6 +18,7 @@ import pytest
 from codebase_rag.cypher_queries import (
     CYPHER_FIND_BY_QUALIFIED_NAME,
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    CYPHER_LIST_PROJECTS,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools.code_retrieval import CodeRetriever
@@ -40,7 +41,6 @@ class TestFindSnippetAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -75,7 +75,6 @@ class TestFindSnippetAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -104,7 +103,6 @@ class TestFindSnippetAcrossProjects:
         (current_repo / "src" / "handlers.py").write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -130,7 +128,6 @@ class TestFindSnippetAcrossProjects:
         current_repo.mkdir()
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
@@ -163,7 +160,6 @@ class TestFunctionSourceAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "qualified_name": "user-service.handlers.get_user",
@@ -196,7 +192,6 @@ class TestFunctionSourceAcrossProjects:
         target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
         ingestor.fetch_all.return_value = [
             {
                 "qualified_name": "user-service.src.handlers.get_user",
@@ -277,9 +272,7 @@ class TestBoundedAbsolutePathReads:
     def _ingestor(
         self, target: Path, roots: dict[str, str | None]
     ) -> MagicMock:
-        ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
-        ingestor.fetch_all.return_value = [
+        node_rows = [
             {
                 "name": "get_user",
                 "path": "src/handlers.py",
@@ -289,7 +282,13 @@ class TestBoundedAbsolutePathReads:
                 "docstring": None,
             }
         ]
-        ingestor.list_project_roots.return_value = roots
+        roots_rows = [
+            {"name": name, "root_path": root} for name, root in roots.items()
+        ]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
         return ingestor
 
     @pytest.mark.asyncio
@@ -361,9 +360,7 @@ class TestBoundedAbsolutePathReads:
         outside.parent.mkdir(parents=True)
         outside.write_text(_SOURCE, encoding="utf-8")
 
-        ingestor = MagicMock()
-        ingestor.list_project_roots.return_value = {}
-        ingestor.fetch_all.return_value = [
+        node_rows = [
             {
                 "qualified_name": "user-service.src.handlers.get_user",
                 "path": "definitely/not/here/handlers.py",
@@ -372,8 +369,12 @@ class TestBoundedAbsolutePathReads:
                 "end_line": 2,
             }
         ]
-        ingestor.list_project_roots.return_value = {
-            "user-service": str(tmp_path / "user-service")
-        }
+        roots_rows = [
+            {"name": "user-service", "root_path": str(tmp_path / "user-service")}
+        ]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
 
         assert get_function_source_code(ingestor, node_id=1) is None

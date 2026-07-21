@@ -1,5 +1,6 @@
 import hashlib
 import re
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -136,6 +137,20 @@ def should_skip_rel_file(
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+def project_roots_from_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> dict[str, str | None]:
+    """Build {project_name: root_path} from CYPHER_LIST_PROJECTS rows."""
+    roots: dict[str, str | None] = {}
+    for row in rows:
+        name = row.get("name")
+        if not isinstance(name, str):
+            continue
+        root = row.get("root_path")
+        roots[name] = root if isinstance(root, str) else None
+    return roots
 
 
 def absolute_path_within_project_root(

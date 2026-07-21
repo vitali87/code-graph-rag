@@ -9,10 +9,13 @@ from pydantic_ai import Tool
 from .. import logs as ls
 from .. import tool_errors as te
 from ..constants import ENCODING_UTF8
-from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
+from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
-from ..utils.path_utils import absolute_path_within_project_root
+from ..utils.path_utils import (
+    absolute_path_within_project_root,
+    project_roots_from_rows,
+)
 from . import tool_descriptions as td
 
 
@@ -66,7 +69,11 @@ class CodeRetriever:
             # without the property (issue #425).
             absolute_path_str = res.get("absolute_path")
             if absolute_path_str:
-                roots = await asyncio.to_thread(self.ingestor.list_project_roots)
+                roots = project_roots_from_rows(
+                    await asyncio.to_thread(
+                        self.ingestor.fetch_all, CYPHER_LIST_PROJECTS
+                    )
+                )
                 if not absolute_path_within_project_root(
                     qualified_name, absolute_path_str, roots
                 ):

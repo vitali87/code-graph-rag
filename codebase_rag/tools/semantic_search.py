@@ -12,11 +12,15 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    CYPHER_LIST_PROJECTS,
     build_nodes_by_ids_query,
 )
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
-from ..utils.path_utils import absolute_path_within_project_root
+from ..utils.path_utils import (
+    absolute_path_within_project_root,
+    project_roots_from_rows,
+)
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
@@ -120,7 +124,7 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
         if absolute_path and not absolute_path_within_project_root(
             str(result.get("qualified_name", "")),
             absolute_path,
-            ingestor.list_project_roots(),
+            project_roots_from_rows(ingestor.fetch_all(CYPHER_LIST_PROJECTS)),
         ):
             absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
