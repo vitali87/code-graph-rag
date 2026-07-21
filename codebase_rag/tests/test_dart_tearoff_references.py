@@ -92,3 +92,43 @@ def test_receiver_call_tearoff_is_referenced(tmp_path: Path) -> None:
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Watcher.attach", REFERENCES, ".Watcher.update"), rels
+
+
+def test_conditional_tearoff_references_both_branches(tmp_path: Path) -> None:
+    # `onUpdate: isRight ? _handleRightDrag : _handleLeftDrag` hands one of
+    # two methods over; both are live. Dart's conditional_expression orders
+    # operands [condition, consequence, alternative], unlike Python's
+    # [body, condition, alternative], so index-based expansion must not
+    # reference the condition.
+    files = {
+        "app.dart": (
+            "class Selector {\n"
+            "  void goRight() {}\n"
+            "  void goLeft() {}\n"
+            "  bool isRight() => true;\n"
+            "  void build(bool flag) {\n"
+            "    render(onUpdate: flag ? goRight : goLeft);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goRight"), rels
+    assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goLeft"), rels
+
+
+def test_list_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
+    files = {
+        "app.dart": (
+            "class Registry {\n"
+            "  void first() {}\n"
+            "  void second() {}\n"
+            "  void register() {\n"
+            "    addAll(handlers: [first, second]);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, ".Registry.register", REFERENCES, ".Registry.first"), rels
+    assert _has(rels, ".Registry.register", REFERENCES, ".Registry.second"), rels
