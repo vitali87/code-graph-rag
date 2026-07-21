@@ -126,12 +126,26 @@ def _api_key_configured() -> bool:
     return True
 
 
+def _orchestrator_reliably_tool_calls() -> bool:
+    # Small local models emit tool calls as JSON text often enough that
+    # asserting on executed tools tests the model, not our wiring.
+    from codebase_rag import constants as cs
+    from codebase_rag.config import settings
+
+    return settings.active_orchestrator_config.provider != cs.Provider.OLLAMA
+
+
 @pytest.fixture(scope="module")
 def agent(tracking_tools: list[Tool]) -> Agent:
     if not _api_key_configured():
         pytest.skip(
             "Live orchestrator API key not resolved "
             "(unset or unresolved op:// reference); skipping live API integration."
+        )
+    if not _orchestrator_reliably_tool_calls():
+        pytest.skip(
+            "Local Ollama orchestrators emit tool calls as text unreliably; "
+            "skipping live tool-calling assertions."
         )
     try:
         rag_agent, _ = create_rag_orchestrator(tracking_tools)
