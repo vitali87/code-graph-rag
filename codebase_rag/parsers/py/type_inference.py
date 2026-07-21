@@ -76,11 +76,10 @@ class PythonTypeInferenceEngine(
         self._method_return_type_cache: dict[str, str | None] = {}
         self._type_inference_in_progress: set[str] = set()
         self._available_classes_cache: dict[str, list[str]] = {}
-        # Keyed by the Node itself, never id(node): Node hashes by its
-        # underlying tree-sitter identity, while a freed wrapper's id() is
-        # reused by unrelated nodes, producing stale hits that vary with
-        # memory layout (nondeterministic graphs, caught by the determinism
-        # test). Keys hold the node, so an alive entry can never collide.
+        # Keyed by the Node itself, never id(node): Node hashes by its tree-sitter
+        # identity, while a freed wrapper's id() is reused by unrelated nodes,
+        # producing stale hits that vary with memory layout (nondeterministic graphs,
+        # caught by the determinism test). Keys hold the node, so entries never collide.
         self._return_stmt_cache: dict[Node, list] = {}
         self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
@@ -92,7 +91,7 @@ class PythonTypeInferenceEngine(
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
-            # Single-pass traversal avoids O(5*N) multiple traversals for type inference.
+            # Single-pass traversal avoids O(5*N) traversals for type inference.
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
             self._infer_instance_attributes_from_init(
                 caller_node, local_var_types, module_qn

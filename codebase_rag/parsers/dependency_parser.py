@@ -270,12 +270,12 @@ class PubspecYamlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         # pubspec.yaml is flat enough that a line scanner beats adding a YAML
         # dependency: track the current top-level key by zero indentation and
-        # collect the `name: spec` lines indented under dependencies blocks. The
-        # block's own entry indent is whatever the FIRST entry uses (2 spaces, 4
-        # spaces, ...), so packages are lines at exactly that indent; deeper
-        # lines are a nested block's keys (`sdk:`, `git:`, `path:`) and are
-        # skipped. A nested block's parent key (`flutter:`) has no inline
-        # scalar, so it is recorded name-only (spec = "").
+        # collect the `name: spec` lines under dependencies blocks. The block's
+        # entry indent is whatever the FIRST entry uses, so packages are lines at
+        # exactly that indent; deeper lines are a nested block's keys (`sdk:`,
+        # `git:`, `path:`) and are skipped. A nested block's parent key
+        # (`flutter:`) has no inline scalar, so it is recorded name-only
+        # (spec = "").
         dependencies: list[Dependency] = []
         try:
             in_deps = False

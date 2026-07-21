@@ -20,8 +20,7 @@ _CLIENT_BACKEND: VectorStoreBackend | None = None
 
 # Each name is the real class or None (dependency absent), typed Any via
 # cast so ty does not flag the guarded call sites: the availability gates
-# in _get_vector_store/get_*_client keep the None case from ever being
-# called, and the module-level binding is what the tests patch.
+# never call the None case, and tests patch the module-level binding.
 if has_qdrant_client():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams

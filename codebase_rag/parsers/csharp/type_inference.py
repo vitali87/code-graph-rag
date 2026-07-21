@@ -161,7 +161,7 @@ class CSharpTypeInferenceEngine:
     def build_variable_type_map(self, scope_node: Node) -> dict[str, str]:
         # Parameters and locals only. Field types are looked up at resolve
         # time against class_field_types (keyed by class qn), which also
-        # reaches fields inherited from a base class in another file -- the
+        # reaches fields inherited from a base class in another file; the
         # enclosing class qn is not known here, only at the call site.
         types: dict[str, str] = {}
         self._collect_parameters(scope_node, types)
@@ -195,11 +195,11 @@ class CSharpTypeInferenceEngine:
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
         # One type map per method (as every language engine here builds), so
         # sibling blocks are not distinguished: two `{ var x = ... }` blocks
-        # that declare `x` as DIFFERENT types cannot both be modelled. Rather
-        # than let the last declaration win and confidently misbind the other
-        # block's calls, a name seen with conflicting types is dropped so it
-        # falls back to (correct-when-unambiguous) bare-name resolution. Full
-        # block-scoped precision needs the Roslyn semantic model (follow-up).
+        # declaring `x` as DIFFERENT types cannot both be modelled. Rather than
+        # let the last declaration win and misbind the other block's calls, a
+        # name seen with conflicting types is dropped so it falls back to
+        # bare-name resolution. Full block-scoped precision needs the Roslyn
+        # semantic model (follow-up).
         conflicted: set[str] = set()
         for decl in self._local_variable_declarations(scope_node):
             declared = self._declared_type_name(decl)
@@ -240,9 +240,9 @@ class CSharpTypeInferenceEngine:
         # initializers (method calls, literals) are left untyped; chained
         # return-type inference is Roslyn-follow-up territory. The initializer
         # may be a direct child of the declarator or wrapped in an
-        # equals_value_clause depending on grammar version, so search the
-        # declarator's own subtree (a lambda body would be a separate scope,
-        # but an initializer expression is small and self-contained).
+        # equals_value_clause by grammar version, so search the declarator's
+        # own subtree (a lambda body is a separate scope, but an initializer
+        # expression is small and self-contained).
         for node in self._descendants_of_type(
             declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
         ):
@@ -255,8 +255,8 @@ class CSharpTypeInferenceEngine:
         # read from the per-class maps recorded at ingestion (so it reaches a
         # field inherited from a base in another file). Seed the BFS with every
         # partial part of the class so a field declared on ANOTHER part
-        # (`helper` on P1, used in a method on P2) is found. BFS with a visited
-        # guard so a malformed inheritance cycle cannot loop.
+        # (`helper` on P1, used in a method on P2) is found; a visited guard
+        # stops a malformed inheritance cycle looping.
         seen: set[str] = set()
         queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
@@ -279,11 +279,11 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
-        # A Roslyn call fact for this exact site wins over every heuristic:
-        # it is the compiler's own overload resolution (argument types, not
-        # arity) and covers receivers no syntax walk can type (chained
-        # returns) plus reduced extension methods. Any key miss falls
-        # through to the heuristics below.
+        # A Roslyn call fact for this exact site wins over every heuristic: it
+        # is the compiler's own overload resolution (argument types, not arity)
+        # and covers receivers no syntax walk can type (chained returns) plus
+        # reduced extension methods. Any key miss falls through to the
+        # heuristics below.
         if semantic := self._semantic_call_target(call_node, module_qn):
             return semantic
         func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -309,9 +309,8 @@ class CSharpTypeInferenceEngine:
 
         # `base.X()` binds the BASE chain only: a first-party base's member
         # when one exists, otherwise the base is external (object.Equals in
-        # Polly's hide-object-members regions) and the call must emit
-        # nothing -- the trie fallback was self-looping it onto the
-        # caller's own override.
+        # Polly's hide-object-members regions) and the call must emit nothing;
+        # the trie fallback was self-looping it onto the caller's own override.
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
             if class_qn := self._containing_class_qn(caller_qn):
                 seen: set[str] = set()
@@ -348,7 +347,7 @@ class CSharpTypeInferenceEngine:
                     return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, arity_hit
         # An extension method (`static M(this T x, ...)` on an unrelated static
-        # class) whose `this` receiver type matches the call's receiver -- the
+        # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
         if ext := self._try_extension_call(
             receiver,
@@ -513,13 +512,13 @@ class CSharpTypeInferenceEngine:
     ) -> str | None:
         # Walk the caller's scope chain probing for a registered local
         # function. Each level is probed both as-is and with the overload
-        # signature suffix stripped, because local functions register under
-        # the BARE method scope name while the caller_qn carries the host
-        # overload's signatured identity (`Handle(System.Func)` hosts
-        # `Handle.Handle`). A hit must match the call's arity AND be
-        # declared in a host the caller sits inside -- C# scoping, without
-        # which the parameterless sibling overload would capture the local
-        # fn textually nested under its own bare qn.
+        # signature suffix stripped, because local functions register under the
+        # BARE method scope name while the caller_qn carries the host overload's
+        # signatured identity (`Handle(System.Func)` hosts `Handle.Handle`). A
+        # hit must match the call's arity AND be declared in a host the caller
+        # sits inside (C# scoping), without which the parameterless sibling
+        # overload would capture the local fn textually nested under its own
+        # bare qn.
         if not caller_qn:
             return None
         scope = caller_qn
@@ -795,10 +794,10 @@ class CSharpTypeInferenceEngine:
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
         ):
             return self._annotated_type_field(receiver)
-        # Same chained-receiver typing as the instance path, stopping at
-        # the (arity-annotated) type name -- extensions often target
-        # unregistered BCL types like `string`, and both sides of the
-        # matcher carry the annotation consistently.
+        # Same chained-receiver typing as the instance path, stopping at the
+        # (arity-annotated) type name; extensions often target unregistered BCL
+        # types like `string`, and both sides of the matcher carry the
+        # annotation consistently.
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             return self._invocation_return_type_name(
                 receiver, local_var_types, module_qn, caller_qn
@@ -880,7 +879,7 @@ class CSharpTypeInferenceEngine:
             if ftype := self._field_type(class_qn, name):
                 return ftype
         # An unknown bare identifier is a TYPE name (a static call
-        # `Widget.M()`), not an instance -- extension methods bind on instances
+        # `Widget.M()`), not an instance; extension methods bind on instances
         # only, so do NOT treat it as an extension receiver (else `Widget.Poke()`
         # would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
@@ -952,7 +951,7 @@ class CSharpTypeInferenceEngine:
         recv_qualified = cs.SEPARATOR_DOT in receiver_type_name
         # An UNqualified receiver whose simple name maps to more than one
         # registered first-party type (`N1.Widget` vs `N2.Widget`) is
-        # genuinely ambiguous -- we can't tell which one it is, so an
+        # genuinely ambiguous, since we can't tell which one it is, so an
         # unqualified-vs-unqualified match must not guess. A qualified receiver
         # or a BCL name (not registered) is not affected.
         same_name_decls = [
@@ -981,7 +980,7 @@ class CSharpTypeInferenceEngine:
             # cannot take a `this Builder` extension).
             if receiver_arity is not None and cand_recv_arity != receiver_arity:
                 continue
-            # `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
+            # `_arity` reads the first `(`/last `)`, so pass the whole qn; a
             # leaf-split on `.` would land inside a qualified param type.
             if _arity(qn) != arg_count + 1:
                 continue
@@ -1187,10 +1186,9 @@ class CSharpTypeInferenceEngine:
     # wins before any same-name fallback, so an inherited correct-arity overload
     # (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
     # (`Derived.Foo(int)`). resolve_csharp_method_call sequences the two around
-    # the extension-method lookup so an arity-correct extension is preferred over
-    # a lone-same-name instance fallback. Both phases span every part of a
-    # partial class (and each part's bases), so a member/base on another part
-    # binds.
+    # the extension-method lookup so an arity-correct extension beats a
+    # lone-same-name instance fallback. Both phases span every part of a partial
+    # class (and each part's bases), so a member/base on another part binds.
     def _partial_roots(self, class_qn: str) -> list[str]:
         return self.csharp_partial_groups.get(class_qn) or [class_qn]
 
@@ -1351,7 +1349,7 @@ class CSharpTypeInferenceEngine:
         # Every variable_declaration lexically in this method's own scope,
         # pruning nested callables (lambdas, local functions, anonymous
         # methods): their locals belong to a separate scope and must not leak
-        # into -- or shadow -- the enclosing method's type map.
+        # into or shadow the enclosing method's type map.
         found: list[Node] = []
         stack = list(scope_node.children)
         while stack:

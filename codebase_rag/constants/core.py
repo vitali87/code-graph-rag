@@ -2,13 +2,10 @@
 
 from enum import StrEnum
 
-# File names
 INIT_PY = "__init__.py"
 
-# Encoding
 ENCODING_UTF8 = "utf-8"
 
-# Tool argument field names
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
 ARG_FILE_PATH = "file_path"
@@ -19,40 +16,33 @@ ARG_REWRITE = "rewrite"
 ARG_LANGUAGE = "language"
 ARG_DRY_RUN = "dry_run"
 
-# Qualified name separators
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
 
-# Path navigation
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
 GLOB_ALL = "*"
 
-# Trie internal keys
 TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"
 TRIE_INTERNAL_PREFIX = "__"
 
 SEPARATOR_COMMA = ","
 
-# Byte size constants
 BYTES_PER_MB = 1024 * 1024
 
-# Method signature formatting
 EMPTY_PARENS = "()"
 DOCSTRING_STRIP_CHARS = "'\" \n"
 
-# Inline module path prefix
 INLINE_MODULE_PATH_PREFIX = "inline_module_"
 
 # Method name constants for getattr/hasattr
 METHOD_FIND_WITH_PREFIX = "find_with_prefix"
 METHOD_ITEMS = "items"
 
-# JSON formatting
 JSON_INDENT = 2
 
 
@@ -99,10 +89,8 @@ REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 DEFAULT_NAME = "Unknown"
 TEXT_UNKNOWN = "unknown"
 
-# File editor constants
 TMP_EXTENSION = ".tmp"
 
-# Call processor constants
 MOD_RS = "mod.rs"
 SEPARATOR_DOUBLE_COLON = "::"
 SEPARATOR_COLON = ":"
@@ -124,9 +112,9 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {HASH_CACHE_FILENAME, DIR_MTIMES_FILENAME, PARSER_FINGERPRINT_FILENAME}
 )
 
-# Inputs to the parser fingerprint: everything that changes how source
-# files are turned into graph nodes and edges, plus the installed grammar
-# wheels. Paths are relative to the codebase_rag package root.
+# Inputs to the parser fingerprint: everything that changes how source files
+# become graph nodes and edges, plus the installed grammar wheels. Paths are
+# relative to the codebase_rag package root.
 PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
@@ -134,9 +122,9 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "parser_loader.py",
 )
 PY_SOURCE_GLOB = "*.py"
-# The bundled Roslyn C# frontend tool is parser code too, even though it is
-# .cs/.csproj rather than Python: an edit to it changes the semantic edges it
-# produces, so its sources are folded into the parser fingerprint.
+# The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
+# rather than Python: an edit changes the semantic edges it produces, so its
+# sources are folded into the parser fingerprint.
 PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp_frontend/roslyn"
 PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 GRAMMAR_DIST_PREFIX = "tree-sitter"
@@ -145,15 +133,12 @@ GIT_DIR_NAME = ".git"
 ROOT_DIR_KEY = "."
 JSON_EMPTY_OBJECT = "{}"
 
-# Fallback display value
 STR_NONE = "None"
 
-# Entity type names
 ENTITY_CLASS = "Class"
 ENTITY_FUNCTION = "Function"
 ENTITY_METHOD = "Method"
 
-# Anonymous function name prefixes
 PREFIX_LAMBDA = "lambda_"
 PREFIX_ANONYMOUS = "anonymous_"
 PREFIX_IIFE = "iife_"
@@ -165,7 +150,6 @@ PREFIX_FUNC = "func"
 JSON_KEY_HAS_ENTITY = "hasEntity"
 JSON_KEY_ENTITY_TYPE = "entityType"
 
-# Import processor misc
 IMPORT_DEFAULT_SUFFIX = ".default"
 IMPORT_STD_PREFIX = "std."
 CPP_STD_PREFIX = "std"

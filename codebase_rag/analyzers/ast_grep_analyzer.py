@@ -174,8 +174,7 @@ class FindingAnalyzer:
         start_line = node_range.start.line + 1
         end_line = node_range.end.line + 1
         # qn scopes the finding to file+line+column+rule so two matches of one
-        # rule on the same line stay distinct, while re-indexing merges the
-        # same site idempotently.
+        # rule on one line stay distinct, while re-indexing merges the site.
         qualified_name = cs.SEPARATOR_DOT.join(
             [module_qn, str(start_line), str(node_range.start.column), rule.rule_id]
         )

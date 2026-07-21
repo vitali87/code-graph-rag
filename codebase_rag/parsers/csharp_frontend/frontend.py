@@ -2,11 +2,10 @@
 # console tool (`roslyn/`) that loads the target repo's real .csproj/.sln via
 # MSBuildWorkspace and emits location-keyed semantic facts the tree-sitter
 # heuristics cannot derive: per-type base classifications (INHERITS vs
-# IMPLEMENTS), per-invocation exact call targets (overloads by argument
-# types, extension methods via the reduced form), partial-type declaration
-# groups (exact symbol identity across files), and LINQ query-operator
-# calls (query syntax has no invocation nodes). Every join key that misses
-# falls back to the tree-sitter heuristics, and no dotnet, no project, or a
+# IMPLEMENTS), per-invocation exact call targets (overloads by argument types,
+# extension methods via the reduced form), partial-type declaration groups, and
+# LINQ query-operator calls (query syntax has no invocation nodes). Every join
+# key that misses falls back to the heuristics, and no dotnet, no project, or a
 # build/restore failure all leave the facts empty, so indexing stays pure
 # tree-sitter.
 from __future__ import annotations
@@ -332,7 +331,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
     )
     if not any(facts) and stderr.strip():
         # A well-formed but entirely empty payload means the workspace load
-        # went wrong (SDK pin mismatch, unloadable solution) -- surface the
+        # went wrong (SDK pin mismatch, unloadable solution); surface the
         # tool's diagnostics instead of looking identical to success.
         logger.warning(ls.CSHARP_FRONTEND_NO_FACTS.format(stderr=stderr.strip()))
     return facts

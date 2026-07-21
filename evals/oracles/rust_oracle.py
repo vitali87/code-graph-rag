@@ -28,10 +28,10 @@ def rust_available() -> bool:
 @lru_cache(maxsize=1)
 def _binary_path() -> Path:
     # Ask cargo where the release binary lands rather than hardcoding
-    # `target/release/rs_oracle`: a user/global cargo config (e.g. the common
-    # macOS `build.target-dir = "target.noindex"` Spotlight workaround) or
-    # CARGO_TARGET_DIR redirects it elsewhere. `cargo metadata` is read-only
-    # (no build, no link race), and memoized so it runs once per process.
+    # `target/release/rs_oracle`: a user/global cargo config (e.g. the macOS
+    # `build.target-dir = "target.noindex"` Spotlight workaround) or
+    # CARGO_TARGET_DIR redirects it elsewhere. `cargo metadata` is read-only and
+    # memoized so it runs once per process.
     proc = subprocess.run(
         [
             ec.CARGO_BIN,
@@ -52,7 +52,7 @@ def _binary_path() -> Path:
 
 def _exe_suffix(os_name: str = os.name) -> str:
     # Cargo appends `.exe` to the binary on Windows; direct exec must use the
-    # real filename (the old `cargo run` delegated this to cargo).
+    # real filename (the old `cargo run` delegated this).
     return ec.EXE_SUFFIX_WINDOWS if os_name == ec.OS_NT else ""
 
 
@@ -66,12 +66,12 @@ def _ensure_oracle_built() -> Path:
     # Build the syn oracle binary exactly once, serialized across parallel
     # pytest-xdist workers by a cross-process file lock, then exec the binary
     # directly instead of via `cargo run`. `cargo run` re-links the release
-    # binary on every invocation, so concurrent workers raced that link step --
+    # binary on every invocation, so concurrent workers raced that link step:
     # one worker exec'd the binary while another rewrote it (ETXTBSY), and cargo
-    # exited 101. That was an intermittent CI flake (seen on the macos-py3.12
-    # runner under `pytest -n auto`). A prebuilt binary is only ever read
-    # afterwards, so concurrent execs are safe. The mtime guard still rebuilds
-    # when the oracle source changes (local dev correctness).
+    # exited 101, an intermittent CI flake on the macos-py3.12 runner under
+    # `pytest -n auto`. A prebuilt binary is only ever read afterwards, so
+    # concurrent execs are safe. The mtime guard still rebuilds when the oracle
+    # source changes.
     binary = _binary_path()
     with FileLock(str(_BUILD_LOCK)):
         if not binary.exists() or _sources_newer_than(binary):
@@ -107,10 +107,9 @@ def run_rust_oracle(target: Path) -> GraphData:
 
 
 def run_rust_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level Rust call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function/Method), with the declared name
-    # universe so the cgr side can be held to the same set. Mirrors the Go
-    # call oracle (run_go_call_oracle).
+    # File-level Rust call sites restricted to first-party callees (simple name
+    # is a declared Function/Method), with the declared name universe so the cgr
+    # side is held to the same set. Mirrors run_go_call_oracle.
     payload = _run_rust_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

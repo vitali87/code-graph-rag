@@ -51,9 +51,9 @@ def snapshot(store: _StatefulIngestor) -> GraphState:
 
 
 def _purge_index_state(work: Path) -> None:
-    # A copied tree may carry cgr's own hash/dir-mtime caches (the real
-    # codebase_rag source does). Left in place, a future-dated cache makes the
-    # baseline index skip every file, so remove all such state before indexing.
+    # A copied tree may carry cgr's own hash/dir-mtime caches. Left in place, a
+    # future-dated cache makes the baseline index skip every file, so remove
+    # such state before indexing.
     for name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
         for stale in work.rglob(name):
             stale.unlink()
@@ -94,7 +94,7 @@ def run_neutral_edit_scenario(
     _index(store, work, project, parsers, queries, force=False)
 
     # The neutral edit must read as "changed": bump its mtime past the hash
-    # cache so the in-sync fast path and the per-file mtime gate both fire.
+    # cache so the in-sync fast path and per-file mtime gate both fire.
     cache = work / cs.HASH_CACHE_FILENAME
     future = cache.stat().st_mtime + ec.INCREMENTAL_MTIME_BUMP
     target = work / target_rel
@@ -224,8 +224,8 @@ def main(
     parsers, queries = load_parsers()
     results: list[ScoreResult] = []
     clean_equivalent = 0
-    # Work outside the repo tree: each probe copies the whole target, so a
-    # work dir under out_dir would pollute the repo and be scanned by hooks.
+    # Work outside the repo tree: each probe copies the whole target, so a work
+    # dir under out_dir would pollute the repo and be scanned by hooks.
     work_root = Path(tempfile.mkdtemp(prefix=ec.INCREMENTAL_TMP_PREFIX))
     try:
         for index, rel in enumerate(probes, start=1):

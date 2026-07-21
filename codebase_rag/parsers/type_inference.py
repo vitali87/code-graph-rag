@@ -101,15 +101,15 @@ class TypeInferenceEngine:
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
         # Must preserve the shared dict reference: the factory passes the
-        # DefinitionProcessor's map, which is empty at construction and populated
-        # later during ingestion. `or {}` would swap an empty dict for a new one and
-        # silently lose every field type written afterward.
+        # DefinitionProcessor's map, empty at construction and populated later during
+        # ingestion. `or {}` would swap it for a new dict and silently lose every
+        # field type written afterward.
         self.class_field_types = (
             class_field_types if class_field_types is not None else {}
         )
         # Shared reference (as with class_field_types): Rust guard-field inner types
         # (`Shared.state` -> State for a `Mutex<State>` field), applied only at a
-        # guard-accessor hop so a direct wrapper call isn't mis-resolved to the inner.
+        # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
         self.class_field_guard_inner = (
             class_field_guard_inner if class_field_guard_inner is not None else {}
         )
@@ -293,8 +293,8 @@ class TypeInferenceEngine:
     ) -> dict[str, str]:
         local = self._build_local_variable_type_map(caller_node, module_qn, language)
         # When the caller is a method, overlay its class's member-field types as a
-        # base so a bare `field_.method()` receiver resolves; parameters and locals
-        # with the same name shadow a field, so the local map wins on conflict.
+        # base so a bare `field_.method()` receiver resolves; a same-named parameter
+        # or local shadows a field, so the local map wins on conflict.
         fields = self._collect_field_types(class_context) if class_context else {}
         if fields:
             local = {**fields, **local}
@@ -304,8 +304,8 @@ class TypeInferenceEngine:
             if class_context:
                 # Rust member calls carry the explicit `self` receiver: type `self`
                 # to the impl target (so `self.accept()` dispatches) and each
-                # `self.<field>` to the field's type (so `self.shutdown.is_shutdown()`
-                # hops through the field). setdefault: a same-named local wins.
+                # `self.<field>` to its field type (`self.shutdown.is_shutdown()`
+                # hops through it). setdefault: a same-named local wins.
                 local.setdefault(cs.KEYWORD_SELF, class_context)
                 for field, ftype in fields.items():
                     local.setdefault(
@@ -319,14 +319,13 @@ class TypeInferenceEngine:
     def _enrich_dart_call_locals(
         self, caller_node: ASTNode, var_types: dict[str, str]
     ) -> None:
-        # A local bound from a class-qualified call (`var s =
-        # Base.member(args)`) was heuristically typed as Base; when the
-        # member is a REGISTERED method with a recorded return type, that
-        # type wins (a named constructor or same-class factory keeps Base,
-        # a `static String describe()` local becomes a String whose member
-        # calls then drop as external). A registered member WITHOUT a
-        # recorded return (void) untypes the local; an unregistered member
-        # (external library factory) keeps the heuristic.
+        # A local bound from a class-qualified call (`var s = Base.member(args)`)
+        # was heuristically typed as Base; when the member is a REGISTERED method
+        # with a recorded return type, that type wins (a named constructor or
+        # same-class factory keeps Base, a `static String describe()` local becomes
+        # a String whose member calls then drop as external). A registered member
+        # WITHOUT a recorded return (void) untypes the local; an unregistered member
+        # keeps the heuristic.
         bindings = self.dart_type_inference.collect_static_call_bindings(caller_node)
         for name, (base, member) in bindings.items():
             if var_types.get(name) != base:
@@ -356,10 +355,10 @@ class TypeInferenceEngine:
     ) -> None:
         # Type a Go local bound from a method call (`root := engine.trees.get(m)`)
         # with the call's return type, so a later `root.addRoute()` resolves to the
-        # real type (node) instead of mis-resolving to the enclosing class's
-        # same-named method. Resolves the callee selector hop by hop: base local
-        # type, struct-field types for middle hops, then the final method's
-        # recorded return type. Only fills names not already typed.
+        # real type (node) instead of the enclosing class's same-named method.
+        # Resolves the callee selector hop by hop: base local type, struct-field
+        # types for middle hops, then the final method's recorded return type. Only
+        # fills names not already typed.
         for name, segments in self.go_type_inference.collect_call_var_bindings(
             caller_node
         ):
@@ -375,9 +374,9 @@ class TypeInferenceEngine:
     ) -> str | None:
         # `['e','trees','get']`: base `e` -> Engine (a typed local), field `trees`
         # -> its struct-field type, then method `get` -> its recorded return type.
-        # A plain function (`['f']`) types from the free-fn return map:
-        # same-module first, then a same-package sibling file (Go package
-        # scope spans the directory, viper's remote.go shape).
+        # A plain function (`['f']`) types from the free-fn return map: same-module
+        # first, then a same-package sibling file (Go package scope spans the
+        # directory, viper's remote.go shape).
         if len(segments) == 1:
             return self._go_free_fn_return_type(segments[0], module_qn)
         if len(segments) < 2:
@@ -395,12 +394,11 @@ class TypeInferenceEngine:
         return self.method_return_types.get(method_qn)
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
-        # Same module (file) first; then the enclosing package's sibling
-        # files (same parent dir), since Go free functions are
-        # package-scoped, not file-scoped. The sibling lookup goes through
-        # a lazily rebuilt (package, name) index: the shared map fills
-        # DURING ingestion, so an init-time index would be empty, and the
-        # size check rebuilds only when entries were added since.
+        # Same module (file) first; then the enclosing package's sibling files
+        # (same parent dir), since Go free functions are package-scoped, not
+        # file-scoped. The sibling lookup goes through a lazily rebuilt (package,
+        # name) index: the shared map fills DURING ingestion, so an init-time index
+        # would be empty; the size check rebuilds only when entries were added.
         if hit := self.go_function_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
@@ -423,8 +421,8 @@ class TypeInferenceEngine:
     ) -> None:
         # Type a Rust local bound from an associated-function call
         # (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
-        # later `cmd.apply()` resolves to the real type instead of the ambiguous
-        # name-only trie fallback. Only fills names not already typed.
+        # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
+        # trie fallback. Only fills names not already typed.
         for name, segments in self.rust_type_inference.collect_call_var_bindings(
             caller_node
         ):
@@ -443,8 +441,8 @@ class TypeInferenceEngine:
         #   ['self','shared','state','lock','unwrap'] -> base local self (Db),
         #     field shared (Arc<Shared>->Shared), field state (Mutex<State>, guard
         #     inner State), lock unwraps the guard -> State, unwrap identity -> State.
-        # Each hop tries: guard-unwrap (a guard accessor right after a guard-
-        # wrapped field) -> field-type -> method-return -> identity.
+        # Each hop tries guard-unwrap (a guard accessor right after a guard-wrapped
+        # field) -> field-type -> method-return -> identity.
         if not segments:
             return None
         current_type = self._rust_chain_base_type(segments, module_qn, var_types)
@@ -461,9 +459,9 @@ class TypeInferenceEngine:
                 continue
             guard_inner = None
             # A bare guard-wrapper type not immediately guard-accessed can't
-            # continue: its inner is only reachable at runtime and is unrecoverable
-            # from the bare name. Bail so the trie fallback resolves the downstream
-            # call (matching a direct wrapper-method call's behavior).
+            # continue: its inner is only reachable at runtime, unrecoverable from
+            # the bare name. Bail so the trie fallback resolves the downstream call
+            # (matching a direct wrapper-method call).
             if current_type in cs.RS_GUARD_WRAPPERS:
                 return None
             class_qn = self._resolve_rust_type_qn(current_type, module_qn)
@@ -482,9 +480,9 @@ class TypeInferenceEngine:
         self, segments: list[str], module_qn: str, var_types: dict[str, str]
     ) -> str | None:
         # Base of a flattened chain: a typed local (self/var) when present in
-        # var_types, else a free fn called by bare name (`let s = make()`),
-        # else the segment itself as a type name -- only useful when there are
-        # hops to walk, so a bare unresolved name types nothing.
+        # var_types, else a free fn called by bare name (`let s = make()`), else the
+        # segment itself as a type name, useful only when there are hops to walk, so
+        # a bare unresolved name types nothing.
         base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
             segments[0], module_qn
         )
@@ -496,8 +494,8 @@ class TypeInferenceEngine:
         # Resolve a Rust type name to its class-node qn, honoring imports: a `use`
         # target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
         # find the registered class node whose simple name matches. Falls back to
-        # same-module resolution for a locally-defined type.
-        # A fully-qualified inline base (`crate::cmd::Command`) carries its own path.
+        # same-module resolution for a locally-defined type. A fully-qualified inline
+        # base (`crate::cmd::Command`) carries its own path.
         if cs.SEPARATOR_DOUBLE_COLON in type_name:
             return self._resolve_rust_import_path(type_name)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -508,11 +506,11 @@ class TypeInferenceEngine:
         return self._resolve_class_name(type_name, module_qn) or type_name
 
     def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
-        # Return type of a free fn called by bare name: same-module first, then
-        # a `use`-imported fn resolved through its raw `::` path. A type-name
-        # base (`Maker::make`) misses here because a bare type is never a
-        # recorded key (fns and types share a name only across Rust's separate
-        # fn/type namespaces, which idiomatic code never does).
+        # Return type of a free fn called by bare name: same-module first, then a
+        # `use`-imported fn resolved through its raw `::` path. A type-name base
+        # (`Maker::make`) misses here because a bare type is never a recorded key
+        # (fns and types share a name only across Rust's separate fn/type namespaces,
+        # which idiomatic code never does).
         if return_type := self.method_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
@@ -535,10 +533,10 @@ class TypeInferenceEngine:
         ),
     ) -> str:
         # Map a `use` target (`crate::cmd::Command`) to its registry qn. Prefer the
-        # candidate whose qn ends with the import's module path (`.cmd.Command`),
-        # so two same-named types in different modules disambiguate by path; fall
-        # back to the deterministic-min simple-name match when the path (e.g. a
-        # crate-root re-export `crate::Command`) can't pinpoint one.
+        # candidate whose qn ends with the import's module path (`.cmd.Command`), so
+        # two same-named types in different modules disambiguate by path; fall back
+        # to the deterministic-min simple-name match when the path (a crate-root
+        # re-export `crate::Command`) can't pinpoint one.
         parts = [
             p
             for p in target.split(cs.SEPARATOR_DOUBLE_COLON)
@@ -562,7 +560,7 @@ class TypeInferenceEngine:
         # Collect member-field types along the inheritance chain so a derived class
         # method can resolve a field inherited from a base. Bases are visited first
         # and the class's own fields applied last, so a derived field shadows a
-        # base field of the same name. Guards against inheritance cycles.
+        # same-named base field. Guards against inheritance cycles.
         fields: dict[str, str] = {}
         seen: set[str] = set()
 

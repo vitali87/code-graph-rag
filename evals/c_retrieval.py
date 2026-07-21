@@ -1,11 +1,10 @@
 # Multi-language retrieval (C). Extends the file-level call-localization
 # benchmark to C: for each first-party C function, which files call it.
 # cgr's C CALLS edges (reduced to (caller_file, callee_simple_name)) are
-# graded against call sites extracted by libclang, over the same first-party
-# name universe. libclang resolves the true translation-unit call graph,
-# independent of cgr's tree-sitter C frontend (cgr parses C with tree-sitter
-# by default; CPP_FRONTEND=libclang is off), so this measures cgr's cross-file
-# C call resolution against ground truth (mirrors evals/lua_retrieval.py).
+# graded against call sites libclang extracts over the same name universe.
+# libclang resolves the true translation-unit call graph independent of
+# cgr's tree-sitter C frontend (CPP_FRONTEND=libclang is off), so this
+# measures cgr's cross-file C call resolution (mirrors evals/lua_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 

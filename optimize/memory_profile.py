@@ -106,10 +106,10 @@ def measure_object_sizes() -> dict:
     tracemalloc.clear_traces()
     snap_before = tracemalloc.take_snapshot()
 
-    # Simulate storing mock entries (can't use real AST nodes without tree-sitter parsing)
+    # Simulate storing mock entries (real AST nodes need tree-sitter parsing)
     for i in range(1000):
         key = Path(f"/fake/path/module_{i}.py")
-        # Use a placeholder tuple since we can't create real AST nodes without parsing
+        # Placeholder tuple; real AST nodes need parsing
         cache.cache[key] = (None, "python")  # type: ignore
     gc.collect()
     snap_after = tracemalloc.take_snapshot()
@@ -205,7 +205,6 @@ def measure_tree_sitter_parsing() -> dict:
     except Exception as e:
         return {"error": f"tree-sitter setup failed: {e}"}
 
-    # Find Python files in the project itself
     py_files = sorted(PROJECT_ROOT.glob("codebase_rag/**/*.py"))
     if not py_files:
         return {"error": "No Python files found"}
@@ -248,7 +247,7 @@ def measure_tree_sitter_parsing() -> dict:
         f"Retaining {len(root_nodes)} AST root nodes", snap_before, snap_after
     )
 
-    # Profile what happens when we walk AST nodes (simulating function extraction)
+    # Profile walking AST nodes (simulating function extraction)
     gc.collect()
     tracemalloc.clear_traces()
     snap_before = tracemalloc.take_snapshot()
@@ -270,7 +269,6 @@ def measure_tree_sitter_parsing() -> dict:
     )
     results["ast_walk_function_extraction"]["function_class_count"] = len(all_function_nodes)
 
-    # Cleanup
     del trees, root_nodes, all_function_nodes
 
     return results
@@ -313,7 +311,6 @@ def measure_graph_loader_json() -> dict:
         },
     }
 
-    # Write temp file
     tmp_path = PROJECT_ROOT / "optimize" / "_tmp_graph.json"
     with open(tmp_path, "w") as f:
         json.dump(graph_data, f)
@@ -398,7 +395,7 @@ def measure_gc_pressure() -> dict:
     gc_stats_before = gc.get_stats()
     gc.disable()
 
-    # Simulate a typical file processing workload creating many temporary objects
+    # Simulate a file processing workload creating many temporary objects
     temp_objects_created = 0
     for i in range(1000):
         # Simulate tree-sitter query results (lists of tuples, dicts)
@@ -443,7 +440,7 @@ def measure_string_duplication() -> dict:
     tracemalloc.clear_traces()
     snap_before = tracemalloc.take_snapshot()
 
-    # Simulate how property dicts repeat the same key strings thousands of times
+    # Simulate property dicts repeating the same key strings thousands of times
     all_dicts: list[dict] = []
     for i in range(5000):
         d = {
@@ -628,7 +625,6 @@ def main() -> None:
 
     tracemalloc.stop()
 
-    # Print summary report
     print("\n" + "=" * 70)
     print("RESULTS SUMMARY")
     print("=" * 70)
@@ -654,7 +650,6 @@ def main() -> None:
                     after = value[f"gc_gen{gen}_after"]
                     print(f"    Gen{gen}: collections {before['collections']} -> {after['collections']}, collected {before['collected']} -> {after['collected']}")
 
-    # Save detailed JSON
     output_path = PROJECT_ROOT / "optimize" / "memory_profile_results.json"
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2, default=str)

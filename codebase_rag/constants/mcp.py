@@ -3,7 +3,6 @@
 from enum import StrEnum
 
 
-# MCP tool names
 class MCPToolName(StrEnum):
     LIST_PROJECTS = "list_projects"
     DELETE_PROJECT = "delete_project"
@@ -22,20 +21,17 @@ class MCPToolName(StrEnum):
     ASK_AGENT = "ask_agent"
 
 
-# MCP transport selection
 class MCPTransport(StrEnum):
     STDIO = "stdio"
     HTTP = "http"
 
 
-# MCP environment variables
 class MCPEnvVar(StrEnum):
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
     CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
     PWD = "PWD"
 
 
-# MCP schema types
 class MCPSchemaType(StrEnum):
     OBJECT = "object"
     STRING = "string"
@@ -43,7 +39,6 @@ class MCPSchemaType(StrEnum):
     BOOLEAN = "boolean"
 
 
-# MCP schema fields
 class MCPSchemaField(StrEnum):
     TYPE = "type"
     PROPERTIES = "properties"
@@ -52,7 +47,6 @@ class MCPSchemaField(StrEnum):
     DEFAULT = "default"
 
 
-# MCP parameter names
 class MCPParamName(StrEnum):
     PROJECT_NAME = "project_name"
     CONFIRM = "confirm"

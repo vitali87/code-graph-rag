@@ -125,9 +125,9 @@ class UniXcoder(nn.Module):
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
-            # transformers 5.5 widened config.eos_token_id to int | list[int] |
-            # None (models may declare several EOS tokens); Beam accepts either
-            # form and stops on any of them.
+            # transformers 5.5 widened config.eos_token_id to int |
+            # list[int] | None (models may declare several EOS tokens);
+            # Beam accepts either and stops on any of them.
             eos_id = self.config.eos_token_id
         assert eos_id is not None
 
@@ -209,7 +209,7 @@ class Beam:
         self.scores: torch.Tensor = torch.FloatTensor(size).zero_().to(device)
         self.prevKs: list[torch.Tensor] = []
         self.nextYs: list[torch.Tensor] = [torch.LongTensor(size).fill_(0).to(device)]
-        # Normalize to a set of stop ids so a config with multiple EOS tokens
+        # Normalise to a set of stop ids so a config with multiple EOS tokens
         # terminates on any of them (transformers 5.5 typing).
         self._eos: frozenset[int] = frozenset(eos if isinstance(eos, list) else [eos])
         self.eosTop = False

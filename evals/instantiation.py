@@ -1,9 +1,8 @@
-# Instantiation eval. File-level constructor localization: for each
-# first-party class, which files instantiate it. cgr's INSTANTIATES edges are
-# compared against an ast oracle of calls whose callee simple name is a
-# first-party class, over the same file and class universe. This isolates the
-# INSTANTIATES signal that the retrieval eval folds into CALLS, so a
-# constructor-resolution regression shows up on its own.
+# Instantiation eval. File-level constructor localization: for each first-party
+# class, which files instantiate it. cgr's INSTANTIATES edges are compared
+# against an ast oracle of calls whose callee simple name is a first-party
+# class, over the same file and class universe. This isolates the INSTANTIATES
+# signal the retrieval eval folds into CALLS, so a regression shows up alone.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -42,11 +41,11 @@ def _class_names(trees: list[tuple[str, ast.Module]]) -> set[str]:
 
 
 def _externally_shadowed_names(tree: ast.Module, rel: str, project: str) -> set[str]:
-    # Names this file rebinds to a non-first-party import (a stdlib/third-party
-    # `from ext import Name`, or any `import mod` that binds `mod`). A bare
-    # `Name()` call on such a name is not a first-party instantiation, so the
-    # oracle must not credit one against the shared simple-name class set, or
-    # it would report a false missing edge and unfairly lower cgr recall.
+    # Names this file rebinds to a non-first-party import (`from ext import
+    # Name`, or any `import mod` that binds `mod`). A bare `Name()` call on such
+    # a name is not a first-party instantiation, so the oracle must not credit
+    # one against the shared simple-name class set, else it reports a false
+    # missing edge and unfairly lowers cgr recall.
     pkg_parts = [project, *Path(rel).parent.parts]
     shadowed: set[str] = set()
     for node in ast.walk(tree):
@@ -72,8 +71,8 @@ def oracle_instantiations(target: Path, project: str) -> set[InstantiationEdge]:
             if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
                 # A simple-name callee bound to an external import names that
                 # import, not the first-party class; an attribute callee
-                # (`mod.Cls()`) is qualified, so the shadow check applies only
-                # to the bare-name form.
+                # (`mod.Cls()`) is qualified, so the shadow check is bare-name
+                # only.
                 if name in classes and not (
                     isinstance(node.func, ast.Name) and name in shadowed
                 ):

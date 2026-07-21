@@ -1,10 +1,10 @@
-# Multi-language retrieval (Lua). Extends the file-level call-localization
-# benchmark to Lua: for each first-party Lua function, which files call it.
-# cgr's Lua CALLS edges (reduced to (caller_file, callee_simple_name)) are
-# graded against call sites extracted by luaparse, over the same first-party
-# name universe. luaparse is independent of cgr's tree-sitter Lua frontend,
-# so this measures cgr's cross-file Lua call resolution against ground truth
-# (mirrors evals/php_retrieval.py / java_retrieval.py / ts_retrieval.py).
+# Multi-language retrieval (Lua). File-level call-localization: for each
+# first-party Lua function, which files call it. cgr's Lua CALLS edges
+# ((caller_file, callee_simple_name)) are graded against call sites extracted
+# by luaparse, over the same first-party name universe. luaparse is independent
+# of cgr's tree-sitter Lua frontend, so this measures cgr's cross-file Lua call
+# resolution against ground truth (mirrors evals/php_retrieval.py /
+# java_retrieval.py / ts_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 

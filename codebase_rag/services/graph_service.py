@@ -130,9 +130,9 @@ class MemgraphIngestor:
         try:
             if exc_type:
                 logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-                # Best-effort flush: attempt to persist buffered nodes/relationships
-                # even when an exception occurred. Catching broad Exception so a
-                # secondary flush failure never masks the original exception.
+                # Best-effort flush: persist buffered nodes/relationships even when
+                # an exception occurred. Catch broad Exception so a secondary flush
+                # failure never masks the original.
                 try:
                     self.flush_all()
                 except Exception as flush_err:

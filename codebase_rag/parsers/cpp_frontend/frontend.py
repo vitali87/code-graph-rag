@@ -39,7 +39,7 @@ def cpp_frontend_available() -> bool:
 
 def find_compile_commands(start: Path) -> Path | None:
     # Discover the directory holding a compile_commands.json: the indexed
-    # target, then each ancestor -- checking the conventional build/ subdir
+    # target, then each ancestor, checking the conventional build/ subdir
     # beside every level, so indexing a subdirectory (nlohmann's
     # include/nlohmann) still finds the repo root's build/.
     start = start.resolve()
@@ -85,12 +85,12 @@ class _Collector:
         hybrid: bool = False,
     ) -> None:
         self.resolver = resolver
-        # Hybrid mode: tree-sitter remains the backbone (its definitions
-        # and CALLS stand), so collect ONLY the facts libclang is uniquely
-        # right about -- macro definitions/uses and includes. Definition qns
-        # diverge from tree-sitter's wherever macros hide namespaces, so no
-        # definition node may be emitted; macro and Module qns are
-        # scheme-identical (module_qn parity) and safe.
+        # Hybrid mode: tree-sitter remains the backbone (its definitions and
+        # CALLS stand), so collect ONLY the facts libclang is uniquely right
+        # about: macro definitions/uses and includes. Definition qns diverge
+        # from tree-sitter's wherever macros hide namespaces, so no definition
+        # node may be emitted; macro and Module qns are scheme-identical and
+        # safe.
         self.hybrid = hybrid
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
@@ -105,31 +105,31 @@ class _Collector:
         self._include_file_info: dict[str, tuple[str, str] | None] = {}
         # (use-site rel, use-site line, macro Function qn, use-site absolute
         # file): macro cursors are TU-level preprocessing entities, so the
-        # enclosing caller is only recoverable by span once ALL definitions
-        # are collected -- resolved at flush.
+        # enclosing caller is only recoverable by span once ALL definitions are
+        # collected; resolved at flush.
         self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
         # {macro qn: identifier tokens in its definition body}: a macro
-        # expanded only inside another macro's body is a NESTED expansion
-        # the preprocessing record never reports, so the body reference is
-        # the only evidence of use -- resolved to macro -> macro CALLS at
-        # flush, once every macro node is known.
+        # expanded only inside another macro's body is a NESTED expansion the
+        # preprocessing record never reports, so the body reference is the only
+        # evidence of use; resolved to macro -> macro CALLS at flush, once every
+        # macro node is known.
         self._macro_body_refs: dict[str, set[str]] = {}
-        # {absolute file: [(sl, sc, el, ec)]} macro instantiation extents:
-        # a CALL_EXPR whose own start lies inside one was produced by the
-        # expansion (its text lives in the macro body), so tree-sitter
-        # never sees it -- the one call class hybrid must emit itself.
-        # Preprocessing-record cursors precede the AST among TU children,
-        # so within a TU every instantiation is recorded before any
-        # CALL_EXPR at its site is visited.
+        # {absolute file: [(sl, sc, el, ec)]} macro instantiation extents: a
+        # CALL_EXPR whose own start lies inside one was produced by the
+        # expansion (its text lives in the macro body), so tree-sitter never
+        # sees it, the one call class hybrid must emit itself.
+        # Preprocessing-record cursors precede the AST among TU children, so
+        # within a TU every instantiation is recorded before any CALL_EXPR at
+        # its site is visited.
         self._instantiation_extents: dict[str, list[tuple[int, int, int, int]]] = {}
         # (caller rel, caller line, callee USR, callee rel, callee line):
         # both ends join to tree-sitter definition spans after Pass 2.
         self._pending_expansion_calls: set[tuple[str, int, str, str, int]] = set()
-        # {USR: (rel, line)} of every in-repo function/method DEFINITION
-        # seen across all TUs: a cross-TU callee's get_definition() is None
-        # in the calling TU (only the header declaration is visible), but
-        # another TU parses the definition -- prefer its location so the
-        # span join targets the definition node, not the prototype.
+        # {USR: (rel, line)} of every in-repo function/method DEFINITION seen
+        # across all TUs: a cross-TU callee's get_definition() is None in the
+        # calling TU (only the header declaration is visible), but another TU
+        # parses the definition; prefer its location so the span join targets
+        # the definition node, not the prototype.
         self._usr_definitions: dict[str, tuple[str, int]] = {}
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
@@ -316,8 +316,8 @@ class _Collector:
         # A call with no enclosing function/method runs at module load time
         # (a default member initializer or a file/namespace-scope global
         # initializer); the tree-sitter path attributes these to the Module,
-        # so mirror that instead of dropping the edge. The call site must be
-        # inside the indexed repo (module_qn is None for system headers).
+        # so mirror that. The call site must be inside the indexed repo
+        # (module_qn is None for system headers).
         if cursor.location.file is None:
             return None
         file_name = cursor.location.file.name
@@ -330,11 +330,10 @@ class _Collector:
 
     def _macro_function_qn(self, cursor: Cursor) -> str | None:
         # Macros register as Function nodes (the cross-language decision:
-        # C/C++/Rust macros all map onto Function). Builtins and
-        # command-line macros have no file; system-header macros resolve
-        # outside the repo; an empty-bodied object-like macro (include
-        # guard, feature flag -- extent covers only the name) is a flag,
-        # not a callable.
+        # C/C++/Rust macros all map onto Function). Builtins and command-line
+        # macros have no file; system-header macros resolve outside the repo;
+        # an empty-bodied object-like macro (include guard or feature flag,
+        # extent covers only the name) is a flag, not a callable.
         if cursor.location.file is None:
             return None
         extent = cursor.extent
@@ -346,10 +345,10 @@ class _Collector:
         return self.resolver.function_qn(cursor)
 
     def _process_macro_definition(self, cursor: Cursor) -> None:
-        # Guard order matters for reachability: builtins/command-line
-        # macros (no file) first, system-header macros (outside the repo)
-        # second, THEN the shared eligibility check (whose remaining filter
-        # here is the empty-body one -- include guards, feature flags).
+        # Guard order matters for reachability: builtins/command-line macros
+        # (no file) first, system-header macros (outside the repo) second,
+        # THEN the shared eligibility check (whose remaining filter here is the
+        # empty-body one: include guards, feature flags).
         if cursor.location.file is None:
             return
         file_name = cursor.location.file.name
@@ -372,12 +371,12 @@ class _Collector:
             fc.LABEL_FUNCTION,
             qn,
         )
-        # Body tokens after the macro's own name. A function-like macro
-        # ('(' abutting the name -- the standard's distinction from an
-        # object-like body that starts with a parenthesis) has its
-        # parameter list skipped and those names excluded from the body:
-        # a parameter is substituted by the caller's argument, so one
-        # named like a real macro is not a reference to it.
+        # Body tokens after the macro's own name. A function-like macro ('('
+        # abutting the name, the standard's distinction from an object-like
+        # body that starts with a parenthesis) has its parameter list skipped
+        # and those names excluded from the body: a parameter is substituted by
+        # the caller's argument, so one named like a real macro is not a
+        # reference to it.
         tokens = list(cursor.get_tokens())
         body_start = 1
         params: set[str] = set()
@@ -433,10 +432,10 @@ class _Collector:
         )
 
     def _process_hybrid(self, cursor: Cursor) -> None:
-        # The hybrid subset: expansion-produced calls, scope-safe type
-        # aliases, and definition LOCATIONS (for cross-TU callee joins).
-        # Everything else emits definition nodes or CALLS with
-        # libclang-scheme qns -- tree-sitter's territory in hybrid.
+        # The hybrid subset: expansion-produced calls, scope-safe type aliases,
+        # and definition LOCATIONS (for cross-TU callee joins). Everything else
+        # emits definition nodes or CALLS with libclang-scheme qns,
+        # tree-sitter's territory in hybrid.
         if cursor.kind.name == fc.KIND_CALL_EXPR:
             self._queue_expansion_call(cursor)
             return
@@ -460,9 +459,9 @@ class _Collector:
 
     def _queue_expansion_call(self, cursor: Cursor) -> None:
         # Only expansion-produced calls: everything else is tree-sitter's.
-        # Both ends are kept as locations; qns are joined to tree-sitter
-        # spans after Pass 2 (libclang's own qns are wrong-scheme wherever
-        # macros hide namespaces -- which is exactly where macros live).
+        # Both ends are kept as locations; qns are joined to tree-sitter spans
+        # after Pass 2 (libclang's own qns are wrong-scheme wherever macros
+        # hide namespaces, which is exactly where macros live).
         if not self._inside_instantiation(cursor):
             return
         referenced = cursor.referenced
@@ -490,9 +489,9 @@ class _Collector:
     def _process_hybrid_type_alias(self, cursor: Cursor) -> None:
         # tree-sitter emits no Type nodes for C++ using/typedef at all, so
         # namespace/file-scope aliases are a pure addition with a
-        # Module-anchored DEFINES (Module qns are scheme-identical). A
-        # MEMBER alias would anchor to a libclang-scheme Class qn -- a
-        # phantom node in hybrid -- so it is skipped.
+        # Module-anchored DEFINES (Module qns are scheme-identical). A MEMBER
+        # alias would anchor to a libclang-scheme Class qn, a phantom node in
+        # hybrid, so it is skipped.
         if cursor.location.file is None:
             return
         parent = cursor.semantic_parent
@@ -569,10 +568,10 @@ class _Collector:
     def process_includes(self, tu) -> None:
         # `#include` is the C++ import: emit IMPORTS Module -> Module for every
         # within-repo inclusion, at any depth (calc.h including util.h counts,
-        # attributed to calc.h -- FileInclusion.source is the INCLUDING file).
-        # System headers resolve outside the repo (module_qn None) and emit
-        # nothing; the source != include guard keeps the tree-sitter path's
-        # self-import bug out of the frontend.
+        # attributed to calc.h, since FileInclusion.source is the INCLUDING
+        # file). System headers resolve outside the repo (module_qn None) and
+        # emit nothing; the source != include guard keeps the tree-sitter
+        # path's self-import bug out of the frontend.
         for inclusion in tu.get_includes():
             source = inclusion.source
             included = inclusion.include

@@ -1,19 +1,19 @@
 # Polyglot (cross-language) ingestion eval. Every other eval indexes a
-# single-language (or Python-dominant) corpus, so none checks what happens
-# when cgr builds ONE graph over files from every supported language at
-# once -- the mixed-language repo it is actually pointed at in the wild.
-# This ingests a corpus spanning all 14 SupportedLanguages (including a
-# deliberate same-basename collision across three languages) and grades
-# cross-language integrity invariants that need no external oracle:
+# single-language (or Python-dominant) corpus, so none checks what happens when
+# cgr builds ONE graph over files from every supported language at once, the
+# mixed-language repo it is actually pointed at in the wild. This ingests a
+# corpus spanning all 14 SupportedLanguages (including a deliberate same-basename
+# collision across three languages) and grades cross-language integrity
+# invariants that need no external oracle:
 #   1. every language contributes at least one module and one definition
 #      (no language silently dropped when mixed in),
 #   2. two files that strip to the same module qn get DISTINCT qns
 #      (cross-language basename collisions are disambiguated, not overwritten),
 #   3. no CALLS/INHERITS/OVERRIDES/IMPLEMENTS/INSTANTIATES edge crosses a
-#      language boundary (a Rust call must not resolve onto a Python node --
+#      language boundary (a Rust call must not resolve onto a Python node,
 #      cross-language qn bleed),
-#   4. the report is deterministic (same corpus -> same qns), so the collision
-#      winner never churns run to run.
+#   4. the report is deterministic (same corpus yields same qns), so the
+#      collision winner never churns run to run.
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,8 +37,8 @@ _DEFINITION_LABELS = frozenset(
     }
 )
 # Semantic def-to-def edges that must never cross a language boundary.
-# IMPORTS/CONTAINS/DEFINES are excluded: an import can legitimately point at
-# an external stub, and CONTAINS/DEFINES are module-internal by construction.
+# IMPORTS/CONTAINS/DEFINES are excluded: an import can point at an external
+# stub, and CONTAINS/DEFINES are module-internal by construction.
 _CODE_EDGES = frozenset(
     {
         cs.RelationshipType.CALLS.value,
@@ -52,7 +52,7 @@ _CODE_EDGES = frozenset(
 # A tiny, self-contained module per language: each declares a module plus at
 # least one definition and one intra-file call, so "language present" and the
 # cross-language-edge check both have material. shapes.{rs,cpp,ts} share a
-# basename on purpose -- they are THE collision the disambiguation must split.
+# basename on purpose: they are THE collision the disambiguation must split.
 _RS_SHAPES = """pub trait Shape {
     fn area(&self) -> f64;
 }
@@ -204,13 +204,13 @@ POLYGLOT_SOURCES: dict[str, str] = {
         "  return helper(1);\n"
         "}\n"
     ),
-    # the cross-language collision trio -- same basename, three languages.
+    # the cross-language collision trio: same basename, three languages.
     "shapes.rs": _RS_SHAPES,
     "shapes.cpp": _CPP_SHAPES,
     "shapes.ts": _TS_SHAPES,
 }
 
-# The languages the corpus is meant to exercise -- one per SupportedLanguage.
+# The languages the corpus is meant to exercise, one per SupportedLanguage.
 EXPECTED_LANGUAGES: frozenset[cs.SupportedLanguage] = frozenset(cs.SupportedLanguage)
 
 # Basenames that appear under more than one file in the corpus: the

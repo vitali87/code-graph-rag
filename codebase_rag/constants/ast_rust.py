@@ -5,7 +5,6 @@ from .ast_nodes import TS_IDENTIFIER, TS_SCOPED_IDENTIFIER, TS_TYPE_IDENTIFIER
 from .ast_scala import TS_GENERIC_FUNCTION
 from .core import KEYWORD_SELF, KEYWORD_SUPER
 
-# Tree-sitter Rust node types
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
 TS_RS_PRIMITIVE_TYPE = "primitive_type"
 TS_RS_USE_AS_CLAUSE = "use_as_clause"
@@ -45,13 +44,12 @@ TS_RS_STRING_LITERAL = "string_literal"
 TS_RS_STRING_CONTENT = "string_content"
 TS_RS_BLOCK = "block"
 TS_RS_FIELD_MACRO = "macro"
-# A macro body is a flat `token_tree` of raw tokens (`::` and `(...)` included),
-# not a parse tree, so a call inside `println!(..)` has no call_expression node.
+# A macro body is a flat `token_tree` of raw tokens, not a parse tree, so a
+# call inside `println!(..)` has no call_expression node.
 TS_RS_TOKEN_TREE = "token_tree"
 TS_RS_TOKEN_SCOPE = "::"
-# `s.field` is a field_expression (value/field); `arr[i]` an index_expression
-# (unnamed children in this grammar). Inert for I/O (Rust env access is a call),
-# wired for correctness / future value-level sinks.
+# `s.field` is a field_expression; `arr[i]` an index_expression. Inert for I/O
+# (Rust env access is a call), wired for correctness and future value sinks.
 TS_RS_INDEX_EXPRESSION = "index_expression"
 RS_FIELD_FIELD = "field"
 RS_FIELD_INDEX = "index"
@@ -85,24 +83,21 @@ TS_RS_FIELD_EXPRESSION = "field_expression"
 RS_RESULT_UNWRAP_METHODS = frozenset({"unwrap", "expect"})
 TS_RS_FIELD_PATH = "path"
 TS_RS_TOKEN_DOT = "."
-# Nodes that can be a receiver token preceding `.method` in a macro token
-# stream: a plain identifier or the `self` keyword.
 # A receiver/chain base that is a plain identifier or the `self` keyword (used
 # both for macro-token receiver reconstruction and value-chain base flattening).
 RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
-# Transparent smart pointers that auto-deref (Rust deref coercion) to their
-# inner type: a method call on the pointer dispatches to the inner type's method,
-# so strip them from any type name (receiver OR return) to reach the real type.
+# Transparent smart pointers that auto-deref to their inner type: a method call
+# on the pointer dispatches to the inner type's method, so strip them from any
+# type name (receiver OR return) to reach the real type.
 RS_DEREF_WRAPPERS = frozenset({"Arc", "Rc", "Box", "Pin"})
 # Guard containers that do NOT deref-coerce: the inner value is only reachable
 # through a lock/borrow guard accessor. Stripped to the inner type ONLY in field
-# extraction (where the field is virtually always accessed via a lock chain, e.g.
-# `self.shared.state.lock().unwrap()`); a bare local/param/return of a guard type
-# is preserved so a direct wrapper-method call (`m.is_poisoned()`) is not
-# mis-resolved to an inner-type method.
+# extraction (the field is nearly always via a lock chain, e.g.
+# `self.shared.state.lock().unwrap()`); a bare local/param/return guard type is
+# preserved so a direct wrapper call (`m.is_poisoned()`) is not mis-resolved.
 RS_GUARD_WRAPPERS = frozenset({"Mutex", "RwLock", "RefCell", "Cell"})
 # Result<T>/Option<T>: stripped to their inner T only for a RETURN type (the
 # value a `?`/`.unwrap()` yields). NOT stripped for a receiver type, where a
@@ -112,10 +107,10 @@ RS_RESULT_WRAPPERS = frozenset({"Result", "Option"})
 RS_RETURN_STRIP_WRAPPERS = RS_DEREF_WRAPPERS | RS_RESULT_WRAPPERS
 TS_RS_REFERENCE_TYPE = "reference_type"
 TS_RS_POINTER_TYPE = "pointer_type"
-# Trait-object and impl-Trait wrappers: `dyn Svc` / `impl Svc` /
-# `dyn Svc + Send`. The trait IS the value's static type (a method call on
-# the value dispatches through the trait), so type walkers descend through
-# these to the trait name, mirroring the Java interface-receiver design.
+# Trait-object and impl-Trait wrappers: `dyn Svc` / `impl Svc` / `dyn Svc + Send`.
+# The trait IS the value's static type (a method call dispatches through it), so
+# type walkers descend through these to the trait name, like the Java
+# interface-receiver design.
 TS_RS_DYNAMIC_TYPE = "dynamic_type"
 TS_RS_ABSTRACT_TYPE = "abstract_type"
 TS_RS_BOUNDED_TYPE = "bounded_type"
@@ -123,9 +118,9 @@ TS_RS_BOUNDED_TYPE = "bounded_type"
 # single-element one is grouping (a real tuple has no single bare type).
 TS_RS_TUPLE_TYPE = "tuple_type"
 # Node types that can stand for a Rust return/field type. Reference/pointer
-# wrappers (`&Frame`, `*const T`) are included so a generic inner argument
-# (`Result<&Frame>`) and a bare `-> &Frame` return descend to the referent;
-# dyn/impl/bounded wrappers so a trait-object type descends to its trait.
+# wrappers (`&Frame`, `*const T`) let a generic inner argument (`Result<&Frame>`)
+# and a bare `-> &Frame` descend to the referent; dyn/impl/bounded wrappers let a
+# trait-object type descend to its trait.
 RS_RETURN_TYPE_NODE_TYPES = (
     TS_TYPE_IDENTIFIER,
     TS_RS_PRIMITIVE_TYPE,
@@ -156,27 +151,22 @@ RS_IDENTITY_METHODS = frozenset(
     }
 )
 # Guard accessors: called on a guard container (Mutex/RwLock/RefCell) to obtain a
-# guard that derefs to the inner type. In a receiver chain, one of these
-# immediately after a guard-wrapped field unwraps the wrapper to its inner type
-# (recorded in class_field_guard_inner) -- the only sound unwrap point, since
-# guard containers do not deref-coerce.
+# guard that derefs to the inner type. In a receiver chain, one immediately after
+# a guard-wrapped field unwraps the wrapper to its inner type (recorded in
+# class_field_guard_inner), the only sound unwrap point, since guard containers
+# do not deref-coerce.
 RS_GUARD_ACCESSORS = frozenset(
     {"lock", "read", "write", "try_lock", "borrow", "borrow_mut"}
 )
 
-# Rust identifier tuples
 RS_IDENTIFIER_TYPES = (TS_IDENTIFIER, TS_TYPE_IDENTIFIER)
 RS_SCOPED_TYPES = (TS_SCOPED_IDENTIFIER, TS_RS_SCOPED_TYPE_IDENTIFIER)
 RS_PATH_KEYWORDS = (TS_RS_CRATE, KEYWORD_SUPER, KEYWORD_SELF)
 
-# Delimiter tokens for Rust use lists
 RS_USE_LIST_DELIMITERS = frozenset({"{", "}", ","})
 
-# Rust encoding
 RS_ENCODING_UTF8 = "utf8"
 
-# Rust wildcard prefix
 RS_WILDCARD_PREFIX = "*"
 
-# Rust field names
 RS_FIELD_ARGUMENT = "argument"

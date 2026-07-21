@@ -2,9 +2,9 @@
 # benchmark to Scala: for each first-party Scala symbol, which files call it.
 # cgr's Scala CALLS edges (reduced to caller file + callee simple name) are
 # graded against scalameta call sites over the same first-party name universe.
-# The oracle uses scalameta (via scala-cli), independent of cgr's tree-sitter
-# frontend, so this measures cgr's cross-file Scala call resolution against
-# ground truth (mirrors evals/java_retrieval.py).
+# scalameta (via scala-cli) is independent of cgr's tree-sitter frontend, so
+# this measures cgr's cross-file Scala call resolution (mirrors
+# evals/java_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 
@@ -54,7 +54,7 @@ def cgr_scala_call_edges(
         if path is None or path not in covered:
             continue
         # Reduce a callee qn to its trailing simple name to match the oracle,
-        # dropping any dotted scope and (defensively) a parameter signature.
+        # dropping dotted scope and (defensively) a parameter signature.
         name = str(to_val).split(cs.SEPARATOR_DOT)[-1].split(cs.CHAR_PAREN_OPEN)[0]
         if name in declared:
             edges.add((path, name))

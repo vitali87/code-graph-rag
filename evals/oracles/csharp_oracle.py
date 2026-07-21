@@ -20,9 +20,8 @@ _DLL = _BUILD_DIR / ec.CSHARP_ORACLE_DLL
 _LOCK = _ORACLE_DIR / ec.CSHARP_ORACLE_BUILD_LOCK
 # Class names count as callables: `new T()` on a type with no explicit
 # constructor is a real creation site with no ctor Method to carry the name
-# (Python's retrieval has the same shape -- a class IS a callable there).
-# A C# method cannot share its enclosing type's name, so admitting Class
-# names never lets a plain invocation collide with a type.
+# (Python retrieval has the same shape). A C# method cannot share its
+# enclosing type's name, so admitting Class names never collides with a type.
 _CALLABLE_KINDS = frozenset(
     {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value, cs.NodeLabel.CLASS.value}
 )
@@ -39,10 +38,9 @@ def _dll_fresh() -> bool:
 
 def _ensure_built(dotnet: str) -> bool:
     # Build the oracle assembly ONCE, then invocations run the DLL read-only,
-    # so parallel pytest-xdist workers never race on a shared MSBuild output
-    # (which is what `dotnet run` per call would do). The mkdir lock serialises
-    # the one build; a rebuild is triggered only when the DLL is missing or
-    # older than the source. Same discipline as _common.ensure_node_deps.
+    # so parallel pytest-xdist workers never race on a shared MSBuild output.
+    # The mkdir lock serialises the one build; a rebuild triggers only when the
+    # DLL is missing or older than the source. Same as _common.ensure_node_deps.
     if _dll_fresh():
         return True
     for _ in range(ec.NODE_DEPS_LOCK_TRIES):
@@ -92,16 +90,16 @@ def _run_csharp_oracle_payload(target: Path) -> OraclePayload:
             **os.environ,
             **_DOTNET_ENV,
             # Hand cgr's full ignore set to the oracle so its file walk (and the
-            # declared-type universe it builds) matches what cgr indexes, not a
-            # smaller hardcoded subset -- otherwise types under an ignored dir
-            # (build/, .venv/) could misclassify a real file's inheritance edge.
+            # declared-type universe it builds) matches what cgr indexes. Otherwise
+            # types under an ignored dir (build/, .venv/) could misclassify a real
+            # file's inheritance edge.
             ec.CGR_IGNORE_DIRS_ENV: ",".join(sorted(cs.IGNORE_PATTERNS)),
         },
     )
-    # The program prints exactly one JSON line; take the last non-empty stdout
-    # line so any stray runtime notice printed before it cannot corrupt parse.
-    # Surface both streams on a decode failure so a broken build/run is not
-    # reduced to a context-free JSONDecodeError.
+    # The program prints one JSON line; take the last non-empty stdout line so a
+    # stray runtime notice printed before it cannot corrupt the parse. Surface
+    # both streams on a decode failure so a broken build/run is not reduced to a
+    # context-free JSONDecodeError.
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     try:
         payload: OraclePayload = json.loads(lines[-1] if lines else "{}")
@@ -119,10 +117,9 @@ def run_csharp_oracle(target: Path) -> GraphData:
 
 
 def run_csharp_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level C# call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function/Method), with the declared name
-    # universe so the cgr side can be held to the same set. Mirrors the Go and
-    # Java call oracles (run_go_call_oracle / run_java_call_oracle).
+    # File-level C# call sites restricted to first-party callees (simple name is
+    # a declared Function/Method), with the declared name universe so the cgr
+    # side is held to the same set. Mirrors run_go_call_oracle / run_java_call_oracle.
     payload = _run_csharp_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

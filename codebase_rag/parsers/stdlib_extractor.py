@@ -597,12 +597,11 @@ func main() {
         result = full_qualified_name
         # Fold ONLY a KNOWN stdlib type into its namespace path
         # (`System.Collections.Generic.List` -> `System.Collections.Generic`).
-        # C# namespaces are PascalCase like types, so a case heuristic cannot
-        # tell them apart and would misfold a namespace leaf
-        # (`Microsoft.Extensions.Logging`, `System.Text.Json`); folding only a
-        # recognized type never misclassifies a namespace. Gated to a stdlib
-        # prefix so a first-party type sharing a BCL name is untouched. Exact
-        # type-vs-namespace disambiguation needs a symbol table (Roslyn).
+        # C# namespaces are PascalCase like types, so a case heuristic cannot tell
+        # them apart and would misfold a namespace leaf (`Microsoft.Extensions.Logging`,
+        # `System.Text.Json`); folding only a recognized type never does. Gated to a
+        # stdlib prefix so a first-party type sharing a BCL name is untouched. Exact
+        # disambiguation needs a symbol table (Roslyn).
         if (
             len(parts) >= 2
             and parts[-1] in cs.CSHARP_STDLIB_CLASSES

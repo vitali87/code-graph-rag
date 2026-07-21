@@ -59,13 +59,13 @@ def _process_mro_shadow_overrides(
     # `self._combine()` to SearchVectorCombinable._combine, yet the mixin
     # never inherits Combinable, so the per-method ancestor walk above
     # cannot see the relation. For every class, linearize its ancestry in
-    # reverse post-order (a C3-compatible MRO stand-in) and link each
-    # method name's FIRST provider (the runtime dispatch target here)
-    # to every later provider; dead-code override expansion then revives
-    # the shadowing method when the shadowed one has live callers.
-    # Interfaces are not walked: default-method shadowing is rare and
-    # Java resolves it differently. ponytail: name-exact matching only, so
-    # a Java generic type-var rename across branches is not linked.
+    # reverse post-order (a C3-compatible MRO stand-in) and link each method
+    # name's FIRST provider (the runtime dispatch target) to every later
+    # provider; dead-code override expansion then revives the shadowing
+    # method when the shadowed one has live callers. Interfaces are not
+    # walked: default-method shadowing is rare and Java resolves it
+    # differently. ponytail: name-exact matching only, so a Java generic
+    # type-var rename across branches is not linked.
     method_names_cache: dict[str, list[str]] = {}
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
@@ -155,10 +155,9 @@ def _invert_implementers(
     # class_inheritance holds only superclasses (an `implements` clause or a
     # Rust `impl Trait for Type` never enters it), so the override walk needs
     # the implementer -> interfaces direction too, or no interface/trait
-    # implementation ever gets an OVERRIDES edge. Both loops sorted: the
-    # map and its sets are hash-ordered and edge emission must be
-    # deterministic (each implementer's interface list follows the outer
-    # sort; the inner sort makes the dict order deterministic too).
+    # implementation ever gets an OVERRIDES edge. Both loops sorted: the map
+    # and its sets are hash-ordered and edge emission must be deterministic
+    # (the inner sort makes the dict order deterministic too).
     inverted: dict[str, list[str]] = {}
     for interface_qn, implementer_qns in sorted(interface_implementers.items()):
         for implementer_qn in sorted(implementer_qns):

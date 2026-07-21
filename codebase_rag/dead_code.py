@@ -1,10 +1,10 @@
 # Dead-code reachability engine. Roots (entry points, framework hooks,
-# module-load callees, test code) are expanded over CALLS/REFERENCES edges;
+# module-load callees, test code) expand over CALLS/REFERENCES edges;
 # whatever is never reached is reported. Reachability runs client-side in
 # Python: the per-root *BFS Cypher formulation is O(roots x graph) and hit
-# memgraph's 600s query timeout on big projects (django: 31k roots, 101k
-# CALLS edges), while a multi-source walk over the fetched edge list is
-# linear and finishes in milliseconds.
+# memgraph's 600s timeout on big projects (django: 31k roots, 101k CALLS
+# edges), whereas a multi-source walk over the fetched edges is linear and
+# finishes in milliseconds.
 from collections import defaultdict
 from fnmatch import fnmatch
 
@@ -60,9 +60,9 @@ def _norm_decorator(decorator: str) -> str:
 
 
 def _is_dunder(name: str) -> bool:
-    # A __dunder__ method is invoked by the Python runtime (async with, iteration,
-    # operators, ...), never by an explicit call the call graph can see, so it is a
-    # reachability root rather than dead code.
+    # A __dunder__ method is invoked by the Python runtime (async with,
+    # iteration, operators), never by an explicit call the graph can see, so it
+    # is a reachability root, not dead code.
     return (
         len(name) > len(cs.PY_NAME_DUNDER) * 2
         and name.startswith(cs.PY_NAME_DUNDER)
@@ -72,7 +72,7 @@ def _is_dunder(name: str) -> bool:
 
 def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     # A Rust `.rs` symbol the language/runtime invokes with no call site: `fn
-    # main()` (entry) or a trait-impl method (Display::fmt, Iterator::next, ...).
+    # main()` (entry) or a trait-impl method (Display::fmt, Iterator::next).
     # Name-scoped like Python dunders; trait methods must be methods.
     if not path.endswith(cs.EXT_RS):
         return False
@@ -85,19 +85,19 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
 
 def _is_cpp_operator_root(name: str, path: str) -> bool:
     # A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
-    # `operator""_json`) is invoked by operator/literal SYNTAX, not a named call the
-    # graph can see, so it is a reachability root (like Python dunders / Rust trait
-    # methods). `operator` heads every such definition (member or free), so the name
-    # prefix on a C++ file identifies them uniquely.
+    # `operator""_json`) is invoked by operator/literal SYNTAX, not a named call
+    # the graph sees, so it is a reachability root (like Python dunders / Rust
+    # trait methods). `operator` heads every such definition (member or free),
+    # so the name prefix on a C++ file identifies them.
     return name.startswith(cs.CPP_OPERATOR_PREFIX) and path.endswith(cs.CPP_EXTENSIONS)
 
 
 def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     # A Java serialization hook (`readObject`/`writeObject`/`writeReplace`/
     # `readResolve`/`readObjectNoData`) is invoked reflectively by the java.io
-    # serialization runtime, never by a named call the graph can see, so it is a
-    # reachability root (like Python dunders / Rust trait methods). Gated to methods
-    # on a .java file; `name` is the bare method name (signature stripped by caller).
+    # runtime, never by a named call the graph sees, so it is a reachability root
+    # (like Python dunders / Rust trait methods). Gated to methods on a .java
+    # file; `name` is the bare method name (signature stripped by caller).
     return (
         is_method
         and path.endswith(cs.EXT_JAVA)
@@ -107,9 +107,9 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
 
 def _is_csharp_attribute_root(props: PropertyDict, path: str) -> bool:
     # A C# method carrying a framework/runtime attribute ([Fact], [HttpGet],
-    # [OnDeserialized], ...) is invoked reflectively, never by a call the
-    # graph sees, so it is a reachability root. Gated to .cs; the decorator
-    # set is matched via the normalized (lowercased, arg-stripped) form.
+    # [OnDeserialized]) is invoked reflectively, never by a call the graph sees,
+    # so it is a reachability root. Gated to .cs; the decorator set matches via
+    # the normalized (lowercased, arg-stripped) form.
     return path.endswith(cs.EXT_CS) and _has_root_decorator(
         props, cs.CSHARP_ROOT_ATTRIBUTES
     )
@@ -127,9 +127,9 @@ def _is_csharp_dispose_root(name: str, is_method: bool, path: str) -> bool:
 
 def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
     # An operator overload is invoked by operator SYNTAX (`a + b`) and a
-    # finalizer (`~Foo`) by the GC -- never a named call the graph sees -- so
-    # both are reachability roots on a .cs file (cf. the C++ operator root).
-    # The synthesized leaf carries the `operator_`/`~` prefix.
+    # finalizer (`~Foo`) by the GC, never a named call the graph sees, so both
+    # are reachability roots on a .cs file (cf. the C++ operator root). The
+    # synthesized leaf carries the `operator_`/`~` prefix.
     return path.endswith(cs.EXT_CS) and (
         name.startswith(cs.TS_CSHARP_OPERATOR_NAME_PREFIX)
         or name.startswith(cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX)
@@ -139,8 +139,8 @@ def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
 def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
     # Match test-path patterns against a leading-slash-normalized path so a dir
     # pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
-    # tests, a top-level tests/ folder) -- not just a nested `src/tests/`. The
-    # leading slash keeps `contests/` from matching `/tests/` (no false segment).
+    # tests, a top-level tests/ folder), not just a nested `src/tests/`. The
+    # leading slash keeps `contests/` from matching `/tests/`.
     normalized = (
         path if path.startswith(cs.SEPARATOR_SLASH) else cs.SEPARATOR_SLASH + path
     )
@@ -194,8 +194,8 @@ def dead_code_from_graph(
             module_path[str(uid)] = str(props.get(cs.KEY_PATH, ""))
         elif label in labels and str(uid).startswith(project_prefix):
             # With tests excluded, a test-file symbol's only callers are
-            # excluded as roots, so reporting it is unconditional noise (test
-            # helpers and mocks are infrastructure, not dead production code).
+            # excluded as roots, so reporting it is noise (test helpers and
+            # mocks are infrastructure, not dead production code).
             if not config.include_tests and _matches_test_path(
                 str(props.get(cs.KEY_PATH) or ""), config.test_patterns
             ):
@@ -207,8 +207,8 @@ def dead_code_from_graph(
 
     roots: set[str] = set()
     # A method of a typing.Protocol subclass is an interface stub whose callers
-    # resolve to the implementations, and DEFINES edges from functions/methods
-    # feed the live-owner registration round below.
+    # resolve to the implementations; DEFINES edges from functions/methods feed
+    # the live-owner registration round below.
     defines_pairs: list[tuple[str, str]] = []
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
@@ -237,10 +237,10 @@ def dead_code_from_graph(
         if qn in roots:
             continue
         props = props_by_qn[qn]
-        # The duplicate-qn marker (`init@51`, a SECOND Go init() in one
-        # file) is a registration artifact, never part of the written
-        # name; strip it so every name-scoped root rule sees the real leaf
-        # (kubernetes pkg.apis.abac register.init@51 reported dead).
+        # The duplicate-qn marker (`init@51`, a SECOND Go init() in one file)
+        # is a registration artifact, never part of the written name; strip it
+        # so every name-scoped root rule sees the real leaf (kubernetes
+        # pkg.apis.abac register.init@51 reported dead).
         leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
@@ -248,7 +248,7 @@ def dead_code_from_graph(
             roots.add(qn)
         # A method overriding an EXTERNAL stdlib base's method (click's
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
-        # never by a first-party call -- a root.
+        # never by a first-party call, so it is a root.
         elif props.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
             roots.add(qn)
         elif qn in protocol_stubs:
@@ -260,7 +260,7 @@ def dead_code_from_graph(
         ):
             roots.add(qn)
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
-        # invoked by the enum machinery by NAME, like dunders -- roots, not
+        # invoked by the enum machinery by NAME, like dunders: roots, not
         # dead code (django's TextChoices._generate_next_value_).
         elif (
             qn in method_qns
@@ -339,24 +339,21 @@ def dead_code_from_graph(
     # point because they feed each other (a factory revived only via an
     # override's callee still needs its class rooted, and vice versa).
     #
-    # Factory-class rule: a class defined inside a LIVE function or method
-    # (django's create_reverse_many_to_one_manager) escapes through the
-    # factory's return value or arguments, so its instances live behind
-    # receivers the call graph cannot type and no call edge ever lands on
-    # the methods. Treat the methods as dispatch surface (like exported
-    # API) and revive their callee closure; a DEAD factory's class stays
-    # dead.
+    # Factory-class rule: a class defined inside a LIVE function
+    # (django's create_reverse_many_to_one_manager) escapes via its return
+    # value or arguments, so no call edge lands on its methods. Treat them as
+    # dispatch surface and revive their callee closure; a DEAD factory's
+    # class stays dead.
     #
     # Override rule: a call to a base or interface method dispatches at
-    # runtime to any override, so every (transitive) override of a LIVE
-    # method is a reachable dispatch target, as is its callee closure.
-    # `override_rev` walks all multi-level overriders (Base<-Sub<-SubSub);
-    # an override of a DEAD base stays dead.
+    # runtime to any override, so every transitive override of a LIVE method
+    # is a reachable dispatch target, as is its callee closure. `override_rev`
+    # walks all multi-level overriders (Base<-Sub<-SubSub); an override of a
+    # DEAD base stays dead.
     #
-    # Each round scans only the nodes revived since the last one (the pair
-    # maps and override_rev are static, so a rescanned node cannot yield
-    # anything new), keeping the loop O(live) total; a round that adds
-    # nothing terminates it.
+    # Each round scans only nodes revived since the last (the pair maps and
+    # override_rev are static, so a rescanned node yields nothing new),
+    # keeping the loop O(live) total; a round that adds nothing ends it.
     classes_by_owner: dict[str, set[str]] = defaultdict(set)
     for owner, cls in nested_class_pairs:
         classes_by_owner[owner].add(cls)
@@ -396,7 +393,7 @@ def dead_code_from_graph(
     # Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
     # the REPORT only, after reachability: they stay full participants as roots
     # and callers, so a real function invoked only from generated glue is not
-    # newly flagged -- excluding earlier would drop those live edges.
+    # newly flagged; excluding earlier would drop those live edges.
     if config.exclude_patterns:
         dead = {
             qn
@@ -417,8 +414,8 @@ def _as_str_list(value: ResultValue | None) -> list[str]:
 
 def _node_props(row: ResultRow) -> PropertyDict:
     # Coalesce NULL column values at the fetch boundary so the engine never
-    # sees None where a str/list/bool is expected. Only the properties the
-    # engine reads are kept; the report is built from the raw rows.
+    # sees None where a str/list/bool is expected. Only properties the engine
+    # reads are kept; the report is built from the raw rows.
     return {
         cs.KEY_PATH: str(row.get(cs.KEY_PATH) or ""),
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),

@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 # The libclang oracle is authoritative C/C++ ground truth: driven by a
 # compile_commands.json it resolves #includes and expands macros to the true
-# translation-unit AST, which tree-sitter (cgr's parser) cannot do. cgr's
-# C/C++ nodes are graded against it on (kind, file, start_line).
+# translation-unit AST, which tree-sitter (cgr's parser) cannot. cgr's C/C++
+# nodes are graded against it on (kind, file, start_line).
 
 _CLASS = cs.NodeLabel.CLASS.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
@@ -40,8 +40,8 @@ _EdgeId = tuple[str, str, int, str, int]
 _NameEdgeId = tuple[str, str, int, str]
 
 # libclang CursorKind members are registered dynamically (not static class
-# attributes), so map by the kind's stable NAME string — exactly what
-# `cursor.kind.name` yields at runtime — instead of `ci.CursorKind.CLASS_DECL`.
+# attributes), so map by the kind's stable NAME string (exactly what
+# `cursor.kind.name` yields at runtime) instead of `ci.CursorKind.CLASS_DECL`.
 _KIND_BY_NAME: dict[str, str] = {
     "CLASS_DECL": _CLASS,
     "STRUCT_DECL": _CLASS,
@@ -60,18 +60,18 @@ _libclang_pinned = False
 
 def _ensure_libclang() -> None:
     # Pin the libclang shared library BEFORE the first Index.create (libclang is
-    # a global one-shot). Prefer a system libclang whose clang version matches the
-    # active SDK's libc++ — required to parse C++ standard headers, which the
-    # bundled pip wheel's older clang cannot. C parsing is unaffected by the
-    # choice, so both the C and C++ oracles share one consistent toolchain.
+    # a global one-shot). Prefer a system libclang whose clang version matches
+    # the active SDK's libc++, needed to parse C++ standard headers that the
+    # bundled pip wheel's older clang cannot. C parsing is unaffected, so both
+    # the C and C++ oracles share one consistent toolchain.
     global _libclang_pinned
     if _libclang_pinned:
         return
     _libclang_pinned = True
     # clang is an optional dependency: if the bindings are absent this import
     # raises ModuleNotFoundError, so swallow it here and let cpp_available's own
-    # try/except report the oracle as unavailable (returning False), rather than
-    # letting the exception escape and break test collection / the CLI path.
+    # try/except report the oracle as unavailable, rather than letting the
+    # exception escape and break test collection or the CLI path.
     try:
         from clang.cindex import Config
     except Exception:
@@ -86,7 +86,7 @@ def _ensure_libclang() -> None:
                 # libclang loading raises a wide, unpredictable range of errors
                 # (arch mismatch, format errors, an already-loaded library); on
                 # any, fall through to the next candidate, else the bundled
-                # default the bindings load on their own.
+                # default the bindings load themselves.
                 continue
 
 
@@ -149,8 +149,8 @@ def _walk(
 
 def _base_simple_name(spelling: str) -> str:
     # Mirror cgr's base-name normalization (extract_cgr_lang_graph): collapse
-    # `::` to `.` and take the last component, so the oracle and cgr agree on
-    # the inheritance target spelling.
+    # `::` to `.` and take the last component, so oracle and cgr agree on the
+    # inheritance target spelling.
     flat = spelling.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
     return flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
@@ -231,8 +231,8 @@ def _capture_path(command: tuple[str, ...]) -> str | None:
 def _clang_system_args() -> list[str]:
     # Resolve the SDK system headers and clang's own builtin headers
     # (stdarg.h, stddef.h) so a translation unit parses fully without a
-    # compile_commands.json. Best-effort and portable: each probe is skipped
-    # when its tool is absent (e.g. no SDK on Linux, headers found on PATH).
+    # compile_commands.json. Best-effort: each probe is skipped when its tool
+    # is absent (e.g. no SDK on Linux).
     args: list[str] = []
     if sdk := _capture_path(ec.XCRUN_SDK_PATH_CMD):
         args.extend((ec.CLANG_ISYSROOT_FLAG, sdk))
@@ -257,11 +257,11 @@ def _c_include_args(root: Path) -> list[str]:
 
 def _callee_is_first_party(call: Cursor, root: Path) -> bool:
     # libclang resolves a call to its callee declaration; grade the call only
-    # when that declaration is itself first-party. Without this, a call whose
-    # simple name collides with a first-party symbol (e.g. `std::string::size`
-    # vs a project `size()`) would be counted as a first-party edge, understating
-    # cgr recall against calls it correctly resolves as external/builtin. C++'s
-    # large STL surface (size/data/empty/clear/...) makes this collision common.
+    # when that declaration is first-party. Otherwise a call whose simple name
+    # collides with a first-party symbol (e.g. `std::string::size` vs a project
+    # `size()`) counts as a first-party edge, understating cgr recall against
+    # calls it correctly resolves as external. C++'s large STL surface
+    # (size/data/empty/clear/...) makes this collision common.
     ref = call.referenced
     if ref is None or ref.location.file is None:
         return False
@@ -304,14 +304,13 @@ def _collect_decls_and_calls(
 def run_c_call_oracle(
     target: Path,
 ) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
-    # File-level C call sites restricted to first-party callees (a callee whose
-    # name is a first-party defined function), the declared name universe, and
-    # the set of cleanly-parsed source files. libclang resolves the true call
-    # graph (independent of cgr's tree-sitter C frontend). Each .c file is
-    # parsed directly (no compile_commands.json); C has no overloading, so a
-    # simple name is unambiguous. A file whose TU emits an error diagnostic
-    # (a missing build-generated header) is not authoritative, so it is left
-    # out of the covered set and the cgr side is held to the same files.
+    # File-level C call sites restricted to first-party callees, the declared
+    # name universe, and the cleanly-parsed source files. libclang resolves the
+    # true call graph (independent of cgr's tree-sitter C frontend). Each .c
+    # file is parsed directly (no compile_commands.json); C has no overloading,
+    # so a simple name is unambiguous. A file whose TU emits an error diagnostic
+    # (a missing build-generated header) is not authoritative, so it is left out
+    # of the covered set and cgr is held to the same files.
     _ensure_libclang()
     import clang.cindex as ci
 
@@ -351,7 +350,7 @@ def _cpp_system_args() -> list[str]:
     # Like _clang_system_args but for C++: the SDK's libc++ headers must precede
     # the clang builtin resource headers, else libc++'s <cstddef> resolves the C
     # <stddef.h> first and the parse fails. isysroot supplies the platform C
-    # library; the resource dir supplies clang builtins (stdarg.h, stddef.h).
+    # library; the resource dir supplies clang builtins.
     args: list[str] = []
     if sdk := _capture_path(ec.XCRUN_SDK_PATH_CMD):
         args.extend((ec.CLANG_ISYSROOT_FLAG, sdk))
@@ -381,12 +380,12 @@ def run_cpp_call_oracle(
     target: Path,
     extra_defines: tuple[str, ...] = (),
 ) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
-    # File-level C++ call sites restricted to first-party callees (free functions
-    # and member functions), the declared name universe, and the cleanly-parsed
+    # File-level C++ call sites restricted to first-party callees (free and
+    # member functions), the declared name universe, and the cleanly-parsed
     # source files. libclang resolves the true translation-unit call graph
     # (independent of cgr's tree-sitter C++ frontend). Overloads collapse under
-    # the (file, simple-name) metric, so they need no disambiguation. extra_defines
-    # carries corpus-specific platform macros (e.g. LEVELDB_PLATFORM_POSIX) that a
+    # the (file, simple-name) metric, needing no disambiguation. extra_defines
+    # carries corpus-specific platform macros (e.g. LEVELDB_PLATFORM_POSIX) a
     # build system would normally supply; a TU that still errors abstains.
     _ensure_libclang()
     import clang.cindex as ci

@@ -1,9 +1,9 @@
 # Multi-language retrieval (TypeScript). Extends the file-level
 # call-localization benchmark to TypeScript: for each first-party TS symbol,
 # which files call it. cgr's TS CALLS edges (reduced to (caller_file,
-# callee_simple_name)) are graded against call sites extracted by the
-# TypeScript compiler API (tsc), over the same first-party name universe.
-# tsc is independent of cgr's tree-sitter TS frontend, so this measures cgr's
+# callee_simple_name)) are graded against call sites from the TypeScript
+# compiler API (tsc), over the same first-party name universe. tsc is
+# independent of cgr's tree-sitter TS frontend, so this measures cgr's
 # cross-file TS call resolution against ground truth (mirrors java_retrieval.py).
 from pathlib import Path
 from typing import Annotated

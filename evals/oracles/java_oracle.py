@@ -24,7 +24,7 @@ def java_available() -> bool:
 
 
 def _ensure_compiled() -> None:
-    # Recompile when the class is missing OR older than the source, so an
+    # Recompile when the class is missing or older than the source, so an
     # edited Oracle.java is never shadowed by a stale (gitignored) .class.
     if _CLASS.is_file() and _CLASS.stat().st_mtime >= _SOURCE.stat().st_mtime:
         return
@@ -60,10 +60,9 @@ def run_java_oracle(target: Path) -> GraphData:
 
 
 def run_java_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level Java call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function/Method), with the declared name
-    # universe so the cgr side can be held to the same set. Mirrors the Go and
-    # Rust call oracles (run_go_call_oracle / run_rust_call_oracle).
+    # File-level Java call sites restricted to first-party callees (simple name
+    # is a declared Function/Method), with the declared name universe so the cgr
+    # side is held to the same set. Mirrors run_go_call_oracle / run_rust_call_oracle.
     payload = _run_java_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

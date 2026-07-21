@@ -49,9 +49,9 @@ class JsTsModuleSystemMixin:
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
     # Span-claim protocol (implemented by FunctionIngestMixin): one source
-    # function must mint exactly one node PER NAME, so every JS/TS
-    # registration path checks the claim before registering and claims
-    # after (deliberate different-name twins still register).
+    # function must mint exactly one node PER NAME, so every JS/TS registration
+    # path checks the claim before registering and claims after (deliberate
+    # different-name twins still register).
     @abstractmethod
     def _span_claimed_for_qn(
         self, module_qn: str, func_node: ASTNode, candidate_qn: str

@@ -83,9 +83,9 @@ def find_orphans(
     identities = _node_identities(nodes)
     connected: set[tuple[str, PropertyValue]] = set()
     for rel in relationships:
-        # The database MERGEs a relationship by MATCHing both endpoints, so
-        # an edge with a nonexistent endpoint is silently dropped and must
-        # not count as connectivity for the endpoint that does exist.
+        # The database MERGEs a relationship by MATCHing both endpoints, so a
+        # dangling edge is silently dropped and must not count as connectivity
+        # for the endpoint that does exist.
         endpoints = [(label, value) for label, _, value in (rel.from_spec, rel.to_spec)]
         if all(endpoint in identities for endpoint in endpoints):
             connected.update(endpoints)

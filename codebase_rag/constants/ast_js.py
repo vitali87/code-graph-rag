@@ -34,10 +34,9 @@ TS_LOCALS_PATTERN = """
 (identifier) @local.reference
 """
 
-# Receivers that address the MODULE itself in CommonJS code
-# (`exports.render()`, `module.exports.x()`, prototype-pattern `this`):
-# only these may bind a dotted call to a same-module free function; an
-# ordinary identifier receiver (`view.render()`) is an instance call.
+# Receivers that address the MODULE itself in CommonJS code (`exports.render()`,
+# `module.exports.x()`, prototype-pattern `this`): only these bind a dotted call
+# to a same-module free function; `view.render()` is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 # `this.` receiver prefix of a call name; a prototype-assigned function
 # (`Date.prototype.strftime`) dispatches such calls to a sibling method of
@@ -45,9 +44,8 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 JS_THIS_CALL_PREFIX = "this."
 
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
-# JSX element nodes that carry a component name (javascript and tsx
-# grammars share these); the closing element repeats the name and must not
-# double-emit.
+# JSX element nodes that carry a component name (javascript and tsx grammars
+# share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
 TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
 # The `{...}` wrapper around an expression in a JSX attribute value or child
@@ -55,10 +53,10 @@ TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
 # hand a function to the element as a prop.
 TS_JSX_EXPRESSION = "jsx_expression"
 
-# TS "cast" wrappers that are transparent for reference resolution: `x as T`,
-# `x satisfies T`, and the non-null assertion `x!`. Their first named child is
-# the wrapped value, so unwrapping reaches the real referenced expression
-# (`export const persist = persistImpl as unknown as Persist`).
+# TS "cast" wrappers transparent for reference resolution: `x as T`,
+# `x satisfies T`, and non-null `x!`. Their first named child is the wrapped
+# value, so unwrapping reaches the referenced expression
+# (`persistImpl as unknown as Persist`).
 TS_AS_EXPRESSION = "as_expression"
 TS_SATISFIES_EXPRESSION = "satisfies_expression"
 TS_NON_NULL_EXPRESSION = "non_null_expression"
@@ -72,10 +70,9 @@ TS_OBJECT = "object"
 TS_ARRAY = "array"
 
 # When a variable_declarator's value is one of these, the variable binds the
-# call/construction RESULT, not a function -- so an arrow found inside its
-# arguments (`const m = useMutation({fn: () => {}})`) must not inherit the
-# variable's name. Object-literal / arrow values are not here, so arrows nested
-# directly under an object bound to a const still take the object's name.
+# call/construction RESULT, not a function, so an arrow inside its arguments
+# (`const m = useMutation({fn: () => {}})`) must not inherit the variable's
+# name; arrows nested under a const-bound object still take the object's name.
 JS_CALL_RESULT_VALUE_TYPES = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
 TS_FUNCTION_EXPRESSION = "function_expression"
 TS_ARROW_FUNCTION = "arrow_function"
@@ -202,8 +199,7 @@ FIELD_ALTERNATIVE = "alternative"
 FIELD_HANDLER = "handler"
 FIELD_FINALIZER = "finalizer"
 # The C-style `for (init; cond; increment)` update clause, which runs AFTER the
-# body each iteration (not in the header), so taint the body carries into it
-# reaches the next iteration.
+# body each iteration, so taint the body carries into it reaches the next one.
 FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types

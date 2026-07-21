@@ -18,8 +18,8 @@ from .utils.dependencies import has_torch, has_transformers
 
 def _cache_namespace() -> str:
     # Embeddings from different providers/models live in different vector
-    # spaces (and dimensions); namespacing cache keys prevents a provider
-    # or model switch from replaying stale vectors of the wrong space.
+    # spaces; namespacing cache keys prevents a provider or model switch
+    # from replaying stale vectors of the wrong space.
     if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
         namespace = f"{cs.EmbeddingProvider.OPENAI}:{settings.OPENAI_EMBEDDING_MODEL}"
         if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
@@ -159,7 +159,7 @@ def _parse_embedding_rows(response: httpx.Response, expected: int) -> list[list[
         )
     # Place each row at its declared index instead of sorting: a buggy
     # server emitting duplicate or out-of-range indices must fail loudly
-    # rather than silently pair snippets with the wrong vectors.
+    # rather than pair snippets with the wrong vectors.
     placed: list[list[float] | None] = [None] * expected
     for row in rows:
         try:

@@ -83,10 +83,10 @@ def _rust_get_name(node: Node) -> str | None:
         if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type == cs.TS_IMPL_ITEM:
-        # An `impl Foo` block is an FQN scope, but it has no `name` field; its
-        # target type is the segment that anchors its methods' qns
-        # (owner_module.Foo.method). Without this the scope walk drops `Foo`, so
-        # a closure/nested fn in an impl method binds to a phantom parent qn.
+        # An `impl Foo` block is an FQN scope but has no `name` field; its
+        # target type anchors its methods' qns (owner_module.Foo.method).
+        # Without this the scope walk drops `Foo`, so a nested fn in an impl
+        # method binds to a phantom parent qn.
         from .parsers.rs import utils as rs_utils
 
         return rs_utils.extract_impl_target(node)
@@ -165,7 +165,7 @@ def _csharp_get_name(node: Node) -> str | None:
     # governs, not their ancestor, so it never appears in a type's ancestor
     # walk. compilation_unit IS every top-level type's ancestor, so fold the
     # file-scoped namespace in here. Block `namespace N { }` is an ordinary
-    # ancestor and needs no shim (compilation_unit then has no such child).
+    # ancestor and needs no shim.
     if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
         for child in node.children:
             if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
@@ -185,7 +185,7 @@ def _csharp_get_name(node: Node) -> str | None:
     # A reserved keyword as the name means tree-sitter parse-recovered a broken
     # construct into a declaration node (e.g. a `#if` splitting an if/else chain
     # makes the trailing `else if` parse as a local_function named `if`). Such a
-    # node is never a real definition, so drop it instead of polluting the graph.
+    # node is never a real definition, so drop it.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
     return name
@@ -195,11 +195,10 @@ def _dart_get_name(node: Node) -> str | None:
     # Most Dart declarations expose a `name` field (functions, getters,
     # setters, classes, enums, extensions). Constructors/factories and mixins
     # do not: their LAST bare `identifier` child is the declared name
-    # (`C.named` -> `named`, `factory C.create` -> `create`, `mixin Swimmer`
-    # -> `Swimmer`, a default constructor `C(...)` -> `C`). The constructor
-    # check comes FIRST: the grammar's `name` field on constructor_signature
-    # is the CLASS identifier, which would collapse every named constructor
-    # into a duplicate of the default one.
+    # (`C.named` -> `named`, `mixin Swimmer` -> `Swimmer`, a default
+    # constructor `C(...)` -> `C`). The constructor check comes FIRST: the
+    # grammar's `name` field on constructor_signature is the CLASS identifier,
+    # which would collapse every named constructor into a duplicate default.
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
         if ids:
@@ -368,7 +367,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     # .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
     # JSX into an ERROR forest (dropping every call inside a component), and
     # the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
-    # legal .ts -- so each extension keeps its own grammar with a shared spec.
+    # legal .ts, so each extension keeps its own grammar with a shared spec.
     cs.SupportedLanguage.TSX: LanguageSpec(
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,

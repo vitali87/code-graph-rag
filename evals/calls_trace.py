@@ -16,12 +16,12 @@ _SYNTHETIC_QUALNAME_MARKERS = (
 )
 _LOCALS_SEGMENT = ".<locals>"
 
-# functools.wraps decorator wrappers: the inner function is named "wrapper" and
-# closes over the wrapped callable under one of these free-variable names. cgr
-# resolves a call to a decorated function as a call to the function itself (it sees
-# through the decorator), so the trace must attribute the generic wrapper frame to
-# the function it wraps; otherwise calls would be credited to the recycled wrapper
-# node. See evals/README.md ("Decorator-wrapper normalization").
+# functools.wraps wrappers: the inner function is named "wrapper" and closes
+# over the wrapped callable under one of these free-variable names. cgr resolves
+# a call to a decorated function as a call to the function itself, so the trace
+# attributes the wrapper frame to the function it wraps, else calls get credited
+# to the recycled wrapper node. See evals/README.md ("Decorator-wrapper
+# normalization").
 _WRAPPER_CODE_NAME = "wrapper"
 _WRAPPED_FREE_VARS = ("func", "fn", "wrapped", "method", "f")
 

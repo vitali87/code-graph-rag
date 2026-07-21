@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from ... import constants as cs
 
-# libclang CursorKind members are registered dynamically (not static class
-# attributes), so they are matched by the stable NAME string that
+# libclang CursorKind members are registered dynamically, not static class
+# attributes, so they are matched by the stable NAME string that
 # `cursor.kind.name` yields at runtime, never via `ci.CursorKind.CLASS_DECL`
-# (which trips ty's unresolved-attribute). Same approach as the eval oracle
+# (which trips ty's unresolved-attribute). Same as the eval oracle
 # (evals/oracles/cpp_oracle.py).
 
 KIND_NAMESPACE = "NAMESPACE"

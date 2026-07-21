@@ -87,25 +87,25 @@ _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
 def _text(value: PropertyValue) -> str | None:
     # path / qualified_name / absolute_path are always textual; narrow the
-    # general PropertyValue (which includes list[str]) so the row matches the
-    # ResultValue shape the prune query consumer expects.
+    # general PropertyValue (which includes list[str]) to the ResultValue
+    # shape the prune query consumer expects.
     return value if isinstance(value, str) else None
 
 
 def _int(value: PropertyValue) -> int | None:
     # start_line / end_line are always integral; narrow the general
-    # PropertyValue (whose list[str] member is invariant-incompatible with
-    # ResultValue) so the row matches the ResultValue shape. bool is an int
-    # subclass but line numbers are never bool, so the guard is exact.
+    # PropertyValue (whose list[str] member clashes with ResultValue) to the
+    # ResultValue shape. bool is an int subclass but line numbers are never
+    # bool, so the guard is exact.
     return value if isinstance(value, int) else None
 
 
 class _StatefulIngestor:
     # A faithful in-memory stand-in for the persistent graph store. Unlike
     # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
-    # the incremental updater issues, so a graph mutated by an incremental run
-    # can be compared against a clean re-index. Only the exact queries cgr
-    # emits are emulated (matched by identity), nothing more.
+    # the incremental updater issues, so an incrementally mutated graph can be
+    # compared against a clean re-index. Only the exact queries cgr emits are
+    # emulated (matched by identity).
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
@@ -366,10 +366,10 @@ def _lang_endpoint_key(
     suffix: str | tuple[str, ...],
     exclude_suffix: str | None = None,
 ) -> NodeKey | None:
-    # Resolve any node (incl. the per-file Module, which carries no
-    # start_line) to a NodeKey so containment edges can join on it. cgr keys
-    # module-level DEFINES parents at the module node; mirror the ast oracle
-    # by placing the module at MODULE_START_LINE.
+    # Resolve any node (incl. the per-file Module, which has no start_line)
+    # to a NodeKey so containment edges can join on it. cgr keys module-level
+    # DEFINES parents at the module node; mirror the ast oracle by placing the
+    # module at MODULE_START_LINE.
     path = props.get(cs.KEY_PATH)
     if path is None:
         return None
@@ -381,8 +381,8 @@ def _lang_endpoint_key(
     raw_start = props.get(cs.KEY_START_LINE)
     if label == cs.NodeLabel.MODULE.value:
         # The per-file module carries no start line (keyed at line 0); an
-        # inline module (Rust `mod`) carries its declaration line, which keeps
-        # it distinct from the file module so nested containment can join.
+        # inline module (Rust `mod`) carries its declaration line, keeping it
+        # distinct from the file module so nested containment can join.
         if isinstance(raw_start, int | float):
             return NodeKey(label, file, int(raw_start))
         return NodeKey(label, file, ec.MODULE_START_LINE)
@@ -441,10 +441,9 @@ def extract_cgr_lang_graph(
 def restrict_to_files(graph: GraphData, files: set[str]) -> GraphData:
     # Scope a graph to a file universe. A compile_commands.json oracle only
     # "sees" files its compiled TUs reach, while cgr indexes the whole tree
-    # (bundled test deps, uncompiled sources). Grading cgr's out-of-universe
-    # nodes against that oracle is meaningless, so restrict cgr to the files
-    # the oracle actually parsed before scoring. Drops only false positives:
-    # no oracle node lives outside its own universe, so recall is untouched.
+    # (bundled test deps, uncompiled sources), so restrict cgr to the files
+    # the oracle parsed before scoring. Drops only false positives: no oracle
+    # node lives outside its universe, so recall is untouched.
     nodes = {k: v for k, v in graph.nodes.items() if k.file in files}
     edges = {e for e in graph.edges if e.parent.file in files and e.child.file in files}
     name_edges = {n for n in graph.name_edges if n.source.file in files}
@@ -639,10 +638,9 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
 
     prefix = project_name + cs.SEPARATOR_DOT
     # Only real in-repo Python modules count as internal import targets. cgr
-    # also emits placeholder MODULE nodes for unresolved imports whose path is
-    # the dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a
-    # .py path excludes those so IMPORTS is graded against real files only,
-    # consistent with the .py node filter and the ast oracle.
+    # also emits placeholder MODULE nodes for unresolved imports keyed by the
+    # dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a .py
+    # path excludes those so IMPORTS is graded against real files only.
     internal_modules: dict[str, str] = {
         str(uid): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()

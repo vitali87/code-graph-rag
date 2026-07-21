@@ -5,9 +5,9 @@ from enum import StrEnum
 from ... import constants as cs
 
 # Python nested-scope boundaries. The per-caller IO/flow DFS must not descend
-# into these: a nested def/class is its own caller and is walked separately,
-# so a read/write/flow is attributed to its immediate scope only (matching
-# how CALLS is attributed). Single source of truth for io_access + flow_access.
+# into these: a nested def/class is its own caller and is walked separately, so a
+# read/write/flow is attributed to its immediate scope only (matching how CALLS is
+# attributed). Single source of truth for io_access + flow_access.
 PY_SCOPE_BOUNDARIES = (
     cs.TS_PY_FUNCTION_DEFINITION,
     cs.TS_PY_CLASS_DEFINITION,
@@ -47,9 +47,9 @@ MODE_UPDATE_CHAR = "+"
 
 # SQL leading keywords used to refine a DB handle execute() into read vs write.
 # An unlisted first keyword falls back to the method's declared direction
-# (execute -> READ_WRITE), so only add keywords whose direction is unambiguous
-# from the first token. WITH/PRAGMA are intentionally omitted (a CTE or pragma
-# can be either), keeping the fallback rather than guessing.
+# (execute -> READ_WRITE), so only add keywords whose direction is unambiguous from
+# the first token. WITH/PRAGMA are intentionally omitted (a CTE or pragma can be
+# either), keeping the fallback rather than guessing.
 SQL_READ_KEYWORDS = ("SELECT", "EXPLAIN", "VALUES")
 SQL_WRITE_KEYWORDS = (
     "INSERT",
