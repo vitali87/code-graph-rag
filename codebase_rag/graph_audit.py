@@ -24,13 +24,13 @@ def documented_node_properties() -> dict[str, dict[str, bool]]:
     for schema in NODE_SCHEMAS:
         props: dict[str, bool] = {}
         for entry in schema.properties.strip(cs.SCHEMA_PROPS_BRACES).split(
-            cs.SEPARATOR_COMMA
+            cs.CHAR_COMMA
         ):
             # A trailing comma or stray whitespace in a schema string must
             # not register an empty-named required property.
             if not (entry := entry.strip()):
                 continue
-            name, _, type_part = entry.partition(cs.SEPARATOR_COLON)
+            name, _, type_part = entry.partition(cs.CHAR_COLON)
             props[name.strip()] = not type_part.strip().endswith(
                 cs.SCHEMA_OPTIONAL_SUFFIX
             )

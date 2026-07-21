@@ -221,7 +221,7 @@ class TestGetSeparator:
         )
 
     def test_returns_colon_over_dot(self, call_resolver: CallResolver) -> None:
-        assert call_resolver._get_separator("module:method") == cs.SEPARATOR_COLON
+        assert call_resolver._get_separator("module:method") == cs.CHAR_COLON
 
     def test_returns_dot_as_default(self, call_resolver: CallResolver) -> None:
         assert call_resolver._get_separator("obj.method") == cs.SEPARATOR_DOT
