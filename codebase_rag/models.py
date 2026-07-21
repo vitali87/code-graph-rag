@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -21,6 +22,11 @@ class SessionState:
     permission_mode: PermissionMode = PermissionMode.NORMAL
     context_tokens: int = 0
     target_repo: Path | None = None
+    # Cumulative token consumption and USD cost across the session (issue #80).
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: Decimal = field(default_factory=lambda: Decimal(0))
+    cost_known: bool = False
 
     def reset_cancelled(self) -> None:
         self.cancelled = False

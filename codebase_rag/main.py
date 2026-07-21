@@ -16,6 +16,7 @@ from collections import deque
 from collections.abc import Callable, Coroutine
 from contextlib import contextmanager
 from dataclasses import replace
+from decimal import Decimal
 from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,6 +94,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
+    from pydantic_ai.usage import RunUsage
 
 
 def style(
@@ -584,6 +586,36 @@ def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
     )
 
 
+def _price_current_run(usage: RunUsage) -> Decimal | None:
+    try:
+        model_config = settings.active_orchestrator_config
+    except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+        return None
+    from .services.usage_cost import price_run
+
+    return price_run(usage, model_config.provider, model_config.model_id)
+
+
+def _record_and_print_turn_usage(
+    turn_input: int, turn_output: int, turn_cost: Decimal, turn_priced: bool
+) -> None:
+    session = app_context.session
+    session.total_input_tokens += turn_input
+    session.total_output_tokens += turn_output
+    session.total_cost_usd += turn_cost
+    if turn_priced:
+        session.cost_known = True
+    line = cs.UI_TURN_USAGE_TOKENS.format(
+        ti=turn_input,
+        to=turn_output,
+        si=session.total_input_tokens,
+        so=session.total_output_tokens,
+    )
+    if session.cost_known:
+        line += cs.UI_TURN_USAGE_COST.format(tc=turn_cost, sc=session.total_cost_usd)
+    app_context.console.print(dim(line))
+
+
 async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -594,6 +626,9 @@ async def _run_agent_response_loop(
 ) -> None:
     deferred_results: DeferredToolResults | None = None
     pending_prompt: str | list[UserContent] | None = question_with_context
+    turn_input = turn_output = 0
+    turn_cost = Decimal(0)
+    turn_priced = False
 
     while True:
         with _thinking_with_status_bar(config.status_message):
@@ -614,6 +649,14 @@ async def _run_agent_response_loop(
             break
 
         message_history.extend(response.new_messages())
+
+        run_usage = response.usage()
+        turn_input += run_usage.input_tokens
+        turn_output += run_usage.output_tokens
+        run_cost = _price_current_run(run_usage)
+        if run_cost is not None:
+            turn_cost += run_cost
+            turn_priced = True
 
         if isinstance(response.output, DeferredToolRequests):
             deferred_results = await _process_tool_approvals(
@@ -639,6 +682,7 @@ async def _run_agent_response_loop(
         )
 
         log_session_event(f"{cs.SESSION_PREFIX_ASSISTANT}{output_text}")
+        _record_and_print_turn_usage(turn_input, turn_output, turn_cost, turn_priced)
         break
 
 
