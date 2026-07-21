@@ -553,6 +553,79 @@ def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> Non
     assert lines == [4], lines
 
 
+def test_lua_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
+    # Dogfood FP (luarocks): `password = creds:match("([^:]*):(.*)")` is a
+    # destructuring match, not a secret; the string literal must be the assigned
+    # value, not an argument buried in a call (line 1). Lines 2 and 3 are real
+    # literals, including a parenthesized one (recall preserved through parens).
+    src = (
+        'user, password = creds:match("([^:]*):(.*)")\n'
+        'local secret = "abcdefghij"\n'
+        'local token = ("anotherlongsecret")\n'
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "s.lua", src)
+        if p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert lines == [2, 3], lines
+
+
+def test_lua_factory_function_matches_name_not_body(tmp_path: Path) -> None:
+    # Dogfood FP (luarocks): the old rule scanned the whole body for any
+    # new/create/make identifier, so a function merely CALLING results.new() was
+    # flagged. Only the function NAME should decide. Lines 1-3 are real factories
+    # (bare, dotted, and colon-method forms); line 4 only calls one in its body.
+    src = (
+        "function create_thing(a) return {} end\n"
+        "function results.new(a) return {} end\n"
+        "function Factory:new(a) return {} end\n"
+        "function download.download_all(a) return results.new(a) end\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "f.lua", src)
+        if p[cs.KEY_NAME] == "factory_function"
+    )
+    assert lines == [1, 2, 3], lines
+
+
+def test_lua_module_return_only_top_level(tmp_path: Path) -> None:
+    # Dogfood FP (luarocks): module_return is the idiomatic trailing `return M`
+    # export, NOT every `return x` inside a function. Only the top-level return
+    # (line 5) counts; returns inside a `function` and a `local function` (which
+    # ast-grep also parses as a function_declaration) must stay clean.
+    src = (
+        "local M = {}\n"
+        "function M.f() return r end\n"
+        "local function helper() return q end\n"
+        "M.helper = helper\n"
+        "return M\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "m.lua", src)
+        if p[cs.KEY_NAME] == "module_return"
+    )
+    assert lines == [5], lines
+
+
+def test_lua_global_assignment_ignores_field_writes(tmp_path: Path) -> None:
+    # Dogfood FP (luarocks): a pure field/index write (`M.const = {}`,
+    # `mt.__index = f`, `t[k] = v`) is never a leaked global; a bare-identifier
+    # target is. A MIXED target (`shadowed, G.x = 1, 2`) still leaks its bare
+    # part, so lines 4 and 5 fire, lines 1-3 do not.
+    src = (
+        "M.const = {}\nmt.__index = funcs\nt[k] = v\nleaked = 5\nshadowed, G.x = 1, 2\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "g.lua", src)
+        if p[cs.KEY_NAME] == "global_assignment"
+    )
+    assert lines == [4, 5], lines
+
+
 def test_go_sqli_concat_requires_concat_inside_the_query_call(
     tmp_path: Path,
 ) -> None:
