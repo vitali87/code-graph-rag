@@ -116,10 +116,9 @@ def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
 
 def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
     # A Mutex/RwLock does NOT deref-coerce: a bare `let m: Mutex<Inner>` receiver
-    # can only reach Inner via a lock/borrow hop, so `m` must stay typed as the
-    # wrapper -- NOT erased to Inner (which would mis-resolve a direct `m.work()`
-    # to Inner.work). `work` is defined on two types so the trie can't mask a
-    # precise mis-resolution.
+    # reaches Inner only via a lock/borrow hop, so `m` stays typed as the wrapper,
+    # not erased to Inner (which would mis-resolve a direct `m.work()` to
+    # Inner.work). `work` is on two types so the trie can't mask a mis-resolution.
     _make_crate(
         tmp_path,
         "use std::sync::Mutex;\n"
@@ -318,9 +317,9 @@ def test_enum_match_multiarm_binding_shadowing(tmp_path: Path) -> None:
 
 def test_nested_match_binding_not_leaked_to_outer_arm(tmp_path: Path) -> None:
     # A nested `match inner { Foo(x) => ... }` rebinds `x` only within its own arm.
-    # The outer arm's `x.tag()` (x = the Bar param) must stay Bar.tag -- the nested
-    # Foo binding must NOT be scoped to the whole outer arm (which would mis-overlay
-    # the outer call to Foo.tag).
+    # The outer arm's `x.tag()` (x = the Bar param) must stay Bar.tag; the nested
+    # Foo binding must NOT scope to the whole outer arm and mis-overlay the outer
+    # call to Foo.tag.
     _make_crate(
         tmp_path,
         "pub struct Bar {}\n"
@@ -377,11 +376,10 @@ def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
 
 
 def test_imported_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
-    # `use crate::cmd::Command; let cmd = Command::from_frame(f); cmd.apply()`:
-    # the type is IMPORTED, so its import target is a raw `::`-path, not a registry
-    # qn. The call-return binding must resolve it to the real class node
-    # (crate.cmd.Command) to look up from_frame's recorded return type -- else it
-    # falls back to the ambiguous trie path.
+    # `use crate::cmd::Command; let cmd = Command::from_frame(f); cmd.apply()`: the
+    # type is IMPORTED, so its import target is a raw `::`-path, not a registry qn.
+    # The call-return binding must resolve it to the real class node
+    # (crate.cmd.Command) for from_frame's return type, else it falls to the trie.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib.rs").write_text("pub mod cmd;\npub mod app;\n", encoding="utf-8")
     (tmp_path / "cmd.rs").write_text(
@@ -435,11 +433,10 @@ def test_reference_return_type_chained_dispatch(tmp_path: Path) -> None:
 
 
 def test_imported_type_disambiguated_by_path(tmp_path: Path) -> None:
-    # Two `Command` types in different modules whose `mk()` returns DIFFERENT
-    # types (cmd.Command -> Real, other.Command -> Fake). `use crate::cmd::Command`
+    # Two `Command` types in different modules whose `mk()` returns DIFFERENT types
+    # (cmd.Command gives Real, other.Command gives Fake). `use crate::cmd::Command`
     # must resolve the call-return base to crate.cmd.Command so `x.run()` lands on
-    # Real.run. A simple-name-only match would pick the alphabetically-first
-    # crate.aaa.Command, type x as Fake, and mis-resolve to Fake.run.
+    # Real.run, not the alphabetically-first crate.aaa.Command that types x as Fake.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib.rs").write_text(
         "pub mod aaa;\npub mod cmd;\npub mod types;\npub mod app;\n",

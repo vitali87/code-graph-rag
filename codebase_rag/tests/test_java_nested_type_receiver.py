@@ -45,7 +45,7 @@ def test_nested_class_typed_field_receiver_resolves(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
     calls = _calls(mock_ingestor)
     # HELPER is typed by the nested Helper, so HELPER.check must resolve to the
-    # nested Helper.check -- not drop.
+    # nested Helper.check, not drop.
     assert any(
         f.endswith(".M.ok(int)") and t.endswith(".M.Helper.check(int)")
         for f, t in calls

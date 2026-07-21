@@ -62,7 +62,7 @@ def test_oracle_captures_first_party_scala_calls(tmp_path: Path) -> None:
     # A bare paren-less select (u.done) is NOT graded: uniform access makes a
     # nullary call and a field read identical, so it is scoped out on both sides.
     assert ("Use.scala", "done") not in edges
-    # orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called, so never a call edge.
     assert ("T.scala", "orphan") not in edges
     assert {
         "helper",

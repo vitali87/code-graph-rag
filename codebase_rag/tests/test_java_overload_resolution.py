@@ -24,7 +24,7 @@ def test_call_binds_to_arity_matching_overload(
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
     # resolve(a,b,c) is public API; it calls the 4-arg overload resolve(a,b,c,m).
-    # Both must be reachable -- the 4-arg call must bind to the 4-arg overload, not
+    # Both must be reachable: the 4-arg call must bind to the 4-arg overload, not
     # the 3-arg one that merely shares the name.
     (pkg / "M.java").write_text(
         "package com.example;\n"

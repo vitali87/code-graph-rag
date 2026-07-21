@@ -1,9 +1,8 @@
-# An anonymous function expression used as an OBJECT VALUE (`var pets = {
-# list: function(req, res) {...}, delete: function(req, res) {...} }`,
-# express's route-map example) must NOT climb past the pair to the enclosing
-# declarator and steal its name -- that registers phantom `pets`/`pets@50`
-# Function nodes that nothing references (false dead). The pair-key naming
-# path owns object values.
+# An anonymous function expression used as an OBJECT VALUE (express's route-map
+# `var pets = { list: function(...){}, delete: function(...){} }`) must NOT
+# climb past the pair to the enclosing declarator and steal its name; that
+# registers phantom `pets`/`pets@50` Function nodes nothing references (false
+# dead). The pair-key naming path owns object values.
 from __future__ import annotations
 
 from pathlib import Path

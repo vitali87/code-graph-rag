@@ -44,9 +44,8 @@ def _has(
 
 def test_tsx_component_usage_is_referenced(tmp_path: Path) -> None:
     # `<Card />` renders the Card component: React invokes it through the
-    # element, so the JSX usage must reference it or every component used
-    # only in markup reports as dead (the shadcn/ui cluster on the FastAPI
-    # template).
+    # element, so the JSX usage must reference it or every component used only
+    # in markup reports as dead (the shadcn/ui cluster on the FastAPI template).
     files = {
         "card.tsx": (
             "export function Card({ title }: { title: string }) {\n"
@@ -69,9 +68,9 @@ def test_tsx_component_usage_is_referenced(tmp_path: Path) -> None:
 
 
 def test_tsx_paired_element_component_is_referenced(tmp_path: Path) -> None:
-    # A paired element (<Layout>...</Layout>) carries the component name on
-    # its opening element; only the opening side must emit (no duplicate
-    # from the closing tag).
+    # A paired element (<Layout>...</Layout>) carries the component name on its
+    # opening element; only the opening side emits (no duplicate from the
+    # closing tag).
     files = {
         "layout.tsx": (
             "export function Layout({ children }: { children: unknown }) {\n"
@@ -106,10 +105,10 @@ def test_jsx_component_usage_in_js_is_referenced(tmp_path: Path) -> None:
 
 
 def test_tsx_class_component_usage_is_referenced(tmp_path: Path) -> None:
-    # A React class component resolves to a CLASS node, not a function; the
-    # JSX usage must still reference the class. JS/TS classes have no
-    # __init__, so routing through the Python callback helper (which
-    # redirects CLASS -> Class.__init__) would silently drop the edge.
+    # A React class component resolves to a CLASS node, not a function; the JSX
+    # usage must still reference the class. JS/TS classes have no __init__, so
+    # routing through the Python callback helper (which redirects CLASS to
+    # Class.__init__) would silently drop the edge.
     files = {
         "card.tsx": (
             "import * as React from 'react'\n"
@@ -144,11 +143,10 @@ def test_html_tags_are_not_referenced(tmp_path: Path) -> None:
 
 
 def test_jsx_attribute_bare_handler_is_referenced(tmp_path: Path) -> None:
-    # `<button onClick={handleLogout}>` hands a local function to the element
-    # as a prop; the framework invokes it on the event, never by a call the
-    # graph can see, so the rendering scope must reference it or every event
-    # handler passed by name reports as dead (Sidebar/User handlers on the
-    # FastAPI template).
+    # `<button onClick={handleLogout}>` hands a local function to the element as
+    # a prop; the framework invokes it on the event, not by a call the graph can
+    # see, so the rendering scope must reference it or every event handler passed
+    # by name reports as dead (Sidebar/User handlers on the FastAPI template).
     files = {
         "panel.tsx": (
             "export function Panel() {\n"
@@ -166,8 +164,7 @@ def test_jsx_attribute_inline_arrow_is_referenced(tmp_path: Path) -> None:
     # An inline arrow in a JSX attribute (`onClick={() => toggle()}`) registers
     # as an anonymous node in the rendering scope with no incoming edge; the
     # element consumes it, so the scope must reference it by position or every
-    # inline JSX handler reports as dead (the routes/* form callbacks on the
-    # template).
+    # inline JSX handler reports as dead (routes/* form callbacks on the template).
     files = {
         "input.tsx": (
             "export function PasswordInput() {\n"
@@ -188,9 +185,9 @@ def test_jsx_attribute_inline_arrow_is_referenced(tmp_path: Path) -> None:
 def test_jsx_handler_in_nested_callback_is_referenced(tmp_path: Path) -> None:
     # A JSX handler inside a nested anonymous callback (`items.map(item => <a
     # onClick={handleMenuClick}/>)`) must still be referenced by the enclosing
-    # component. The map arrow is anonymous, so it never gets its own caller pass;
-    # the component's JSX walk must therefore continue THROUGH it instead of
-    # stopping at the arrow boundary, or the handler reports as dead.
+    # component. The map arrow is anonymous and never gets its own caller pass, so
+    # the component's JSX walk must continue THROUGH it, or the handler reports as
+    # dead.
     files = {
         "main.tsx": (
             "export function Main() {\n"

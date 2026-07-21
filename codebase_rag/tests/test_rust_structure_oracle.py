@@ -1,6 +1,6 @@
 # Covers the Rust structure oracle harness (evals/oracles/rs_oracle +
-# evals/rust_l1.py): the syn-based oracle is authoritative ground truth, and
-# cgr's captured Rust nodes are graded against it on (kind, file, start_line).
+# evals/rust_l1.py): the syn-based oracle is ground truth, and cgr's captured
+# Rust nodes are graded against it on (kind, file, start_line).
 from __future__ import annotations
 
 from pathlib import Path

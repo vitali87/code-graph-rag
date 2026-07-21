@@ -45,8 +45,8 @@ REFERENCES = cs.RelationshipType.REFERENCES.value
 
 def test_js_function_assigned_to_const_is_referenced(tmp_path: Path) -> None:
     # `const cb = handler` binds a first-class function to a local for later
-    # dynamic dispatch; the assignment must reference it exactly like the
-    # Python `http_callback = fn` shape or dead-code wrongly flags handler.
+    # dynamic dispatch; the assignment must reference it like the Python
+    # `http_callback = fn` shape or dead-code wrongly flags handler.
     files = {
         "m.js": (
             "function handler(evt) { return evt; }\n\n"
@@ -83,7 +83,7 @@ def test_js_module_exports_assignment_in_callless_module_is_referenced(
     tmp_path: Path,
 ) -> None:
     # `module.exports.run = run` in a file with NO call expressions must still
-    # emit the Module -> REFERENCES edge; the call-driven pass early-returns on
+    # emit the Module REFERENCES edge; the call-driven pass early-returns on
     # such modules, so the assignment scan has to run before it.
     files = {
         "m.js": ("function run() { return 1; }\n\nmodule.exports.run = run;\n"),
@@ -142,10 +142,10 @@ def test_js_plain_value_assignments_are_not_referenced(tmp_path: Path) -> None:
 
 def test_ts_as_cast_assignment_references_target(tmp_path: Path) -> None:
     # `export const persist = persistImpl as unknown as Persist` aliases the real
-    # implementation through TS `as` casts. The cast expression is transparent for
-    # reference resolution, so the module must reference persistImpl or it (and
-    # everything only it reaches) reports as dead -- the zustand middleware
-    # pattern where the public export is a cast of the internal impl.
+    # implementation through TS `as` casts. The cast is transparent for reference
+    # resolution, so the module must reference persistImpl or it (and everything
+    # only it reaches) reports as dead; the zustand middleware pattern where the
+    # public export is a cast of the internal impl.
     files = {
         "mw.ts": (
             "const persistImpl = (config) => build(config)\n"
@@ -172,7 +172,7 @@ def test_ts_non_null_cast_assignment_references_target(tmp_path: Path) -> None:
 
 def test_ts_cast_object_value_is_referenced(tmp_path: Path) -> None:
     # A cast function in a collection value (`{ onEvent: handler as any }`) must
-    # still be referenced -- the cast wrapper is unwrapped in the value-ref path.
+    # still be referenced; the cast wrapper is unwrapped in the value-ref path.
     files = {
         "m.ts": (
             "function handler() { return 1 }\n"

@@ -1,8 +1,7 @@
 # A function declared inside an anonymous callback must be DEFINEd by that
-# callback (its lexical parent), not hoisted to the nearest named ancestor.
-# The child's qn omits anonymous scopes, so deriving the DEFINES parent by
-# trimming the child qn skipped the callback; the parent is now recomputed
-# from the enclosing function node itself.
+# callback (its lexical parent), not the nearest named ancestor. The child's qn
+# omits anonymous scopes, so trimming it to derive the DEFINES parent skipped the
+# callback; the parent is now recomputed from the enclosing function node.
 from __future__ import annotations
 
 from pathlib import Path

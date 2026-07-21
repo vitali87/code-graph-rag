@@ -1,8 +1,7 @@
 # Covers Python L1 node SPAN (end_line) validation: cgr's end_line for each
 # Class/Function/Method is graded against the ast oracle (node.end_lineno) via
-# the L1 score(), joined on (kind, file, start). Exercises a decorated
-# multi-line def, a property, an async multi-line signature, and a nested
-# function so spans are not trivially single line.
+# score(), joined on (kind, file, start). Exercises a decorated def, a property,
+# an async signature, and a nested function so spans are not single line.
 from __future__ import annotations
 
 from pathlib import Path

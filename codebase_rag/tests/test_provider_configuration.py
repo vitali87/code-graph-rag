@@ -134,8 +134,8 @@ class TestProviderConfiguration:
     def test_default_fallback_behavior(self) -> None:
         """Test that defaults work when no explicit provider is configured."""
         # Clear provider vars but keep the home-dir vars: AppConfig's CGR_HOME
-        # default calls Path.home(), which hard-fails on Windows without
-        # USERPROFILE (POSIX falls back to pwd, so only CI on Windows caught it).
+        # default calls Path.home(), which fails on Windows without USERPROFILE
+        # (POSIX falls back to pwd, so only Windows CI caught it).
         home_env = {
             k: v
             for k, v in os.environ.items()

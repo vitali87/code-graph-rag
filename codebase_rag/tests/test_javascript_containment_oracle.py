@@ -1,7 +1,6 @@
-# Covers JavaScript containment-edge validation: cgr's DEFINES (file module
-# -> class / top-level function) and DEFINES_METHOD (class -> method) edges
-# are graded against the TypeScript-compiler-API oracle run over .js, joined
-# on (kind, file, line).
+# Covers JavaScript containment edges: cgr's DEFINES (module to class or
+# top-level function) and DEFINES_METHOD (class to method), graded against
+# the TypeScript-compiler-API oracle over .js, joined on (kind, file, line).
 from __future__ import annotations
 
 from pathlib import Path

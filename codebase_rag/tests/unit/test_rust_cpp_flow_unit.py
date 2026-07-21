@@ -19,8 +19,8 @@ _LANG_BY_FILE = {"main.rs": "flow_rs", "main.cpp": "flow_cpp"}
 
 
 class _RecordingIngestor:
-    # Structural IngestorProtocol stand-in that records FLOWS_TO relationships; the
-    # query-side methods are no-ops (a single fresh project needs no rehydration).
+    # Structural IngestorProtocol stand-in recording FLOWS_TO relationships;
+    # query-side methods are no-ops (a fresh project needs no rehydration).
     def __init__(self) -> None:
         self.rels: list[
             tuple[

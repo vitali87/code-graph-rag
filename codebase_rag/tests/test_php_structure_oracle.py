@@ -1,8 +1,8 @@
-# Covers the PHP structure oracle harness (evals/oracles/php_oracle +
-# evals/php_l1.py): the php-parser oracle is authoritative ground truth, and
-# cgr's captured PHP nodes are graded against it on (kind, file, start_line).
-# Includes an attributed class (whose span starts at the attribute) and an
-# anonymous class (whose methods cgr models as Functions).
+# Exercises the PHP structure oracle harness (evals/oracles/php_oracle +
+# evals/php_l1.py): the php-parser oracle is ground truth, cgr's PHP nodes are
+# graded against it on (kind, file, start_line). Includes an attributed class
+# (span starts at the attribute) and an anonymous class (methods modelled as
+# Functions).
 from __future__ import annotations
 
 from pathlib import Path

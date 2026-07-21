@@ -1,10 +1,9 @@
 # A base written as a PACKAGE attribute (`forms.ModelForm` via `from django
 # import forms`) names the re-exporting package, not the defining module
-# (django.forms.models.ModelForm re-exported by django/forms/__init__'s
-# star import). The deferred-INHERITS suffix match cannot bridge the missing
-# `.models` segment, so the edge was dropped -- and with it every OVERRIDES
-# relationship of the subclass (django BaseUserCreationForm._post_clean
-# reported dead).
+# (django.forms.models.ModelForm re-exported by django/forms/__init__'s star
+# import). The deferred-INHERITS suffix match cannot bridge the missing
+# `.models` segment, so the edge was dropped, and with it every OVERRIDES
+# relationship of the subclass (django BaseUserCreationForm._post_clean dead).
 from __future__ import annotations
 
 from pathlib import Path
