@@ -508,6 +508,7 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
+        check=False,
         capture_output=True,
         text=True,
         env={**os.environ, "QDRANT_DB_PATH": str(temp_qdrant_path)},
