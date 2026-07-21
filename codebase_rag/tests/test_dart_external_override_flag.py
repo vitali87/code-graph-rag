@@ -162,3 +162,38 @@ def test_mixed_ancestry_flags_only_names_missing_on_registered_base(
     on_frame = next(v for k, v in props.items() if k.endswith("C.onFrame"))
     assert not tick.get(cs.KEY_OVERRIDES_EXTERNAL), tick
     assert on_frame.get(cs.KEY_OVERRIDES_EXTERNAL) is True, on_frame
+
+
+def test_registered_implemented_interface_method_is_not_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A class implementing BOTH a registered interface and an external one:
+    # `implements` targets never enter class_inheritance, so the ancestry
+    # walk must consult the resolved IMPLEMENTS parents too or the registered
+    # interface's method is wrongly rooted, hiding it and its call tree from
+    # dead-code results. A name only the external interface can declare still
+    # roots.
+    root = temp_repo / "dartimplmixed"
+    root.mkdir(parents=True)
+    (root / "app.dart").write_text(
+        "import 'package:events/events.dart';\n"
+        "\n"
+        "abstract class Registered {\n"
+        "  void run();\n"
+        "}\n"
+        "\n"
+        "class Worker implements Registered, ExternalListener {\n"
+        "  @override\n"
+        "  void run() {}\n"
+        "\n"
+        "  @override\n"
+        "  void onEvent() {}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="dart")
+    props = _method_props(mock_ingestor)
+    run = next(v for k, v in props.items() if k.endswith("Worker.run"))
+    on_event = next(v for k, v in props.items() if k.endswith("Worker.onEvent"))
+    assert not run.get(cs.KEY_OVERRIDES_EXTERNAL), run
+    assert on_event.get(cs.KEY_OVERRIDES_EXTERNAL) is True, on_event
