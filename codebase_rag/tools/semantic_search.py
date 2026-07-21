@@ -91,6 +91,18 @@ def semantic_code_search(
         return []
 
 
+def _resolve_project_roots(
+    ingestor: QueryProtocol,
+    roots_cache: dict[str, dict[str, str | None]] | None,
+) -> dict[str, str | None]:
+    if roots_cache is not None and "roots" in roots_cache:
+        return roots_cache["roots"]
+    roots = project_roots_from_rows(ingestor.fetch_all(CYPHER_LIST_PROJECTS))
+    if roots_cache is not None:
+        roots_cache["roots"] = roots
+    return roots
+
+
 def get_function_source_code(
     ingestor: QueryProtocol,
     node_id: int,
@@ -127,19 +139,12 @@ def get_function_source_code(
         # path covers repos moved since indexing and old graphs without the
         # property (issue #425).
         absolute_path = result.get("absolute_path")
-        if absolute_path:
-            if roots_cache is not None and "roots" in roots_cache:
-                roots = roots_cache["roots"]
-            else:
-                roots = project_roots_from_rows(
-                    ingestor.fetch_all(CYPHER_LIST_PROJECTS)
-                )
-                if roots_cache is not None:
-                    roots_cache["roots"] = roots
-            if not absolute_path_within_project_root(
-                str(result.get("qualified_name", "")), absolute_path, roots
-            ):
-                absolute_path = None
+        if absolute_path and not absolute_path_within_project_root(
+            str(result.get("qualified_name", "")),
+            absolute_path,
+            _resolve_project_roots(ingestor, roots_cache),
+        ):
+            absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
 
