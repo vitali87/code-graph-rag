@@ -1,7 +1,7 @@
-# (H) Covers Lua node SPAN (end_line) validation: cgr's end_line for each Function
-# (H) is graded against the luaparse oracle (which emits node.loc.end.line), joined
-# (H) on (kind, file, start). Exercises a global function, a nested function, and a
-# (H) multi-line anonymous function expression so spans are not single line.
+# Covers Lua node SPAN (end_line) validation: cgr's end_line for each Function
+# is graded against the luaparse oracle (which emits node.loc.end.line), joined
+# on (kind, file, start). Exercises a global function, a nested function, and a
+# multi-line anonymous function expression so spans are not single line.
 from __future__ import annotations
 
 from pathlib import Path

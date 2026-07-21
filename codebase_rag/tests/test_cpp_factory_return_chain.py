@@ -1,9 +1,9 @@
-# (H) A C++ chained call on a factory-call receiver (`parser(ia, cb).parse(true, r)`,
-# (H) nlohmann/json's basic_json::parse -> detail::parser) has the return of a factory
-# (H) function/method as its receiver. Without inferring that return type the final
-# (H) method binds to nothing and the whole returned-class cluster (parser.parse/accept/
-# (H) sax_parse) reports as dead. cgr must type the factory's recorded return type and
-# (H) resolve the chained method on it.
+# A C++ chained call on a factory-call receiver (`parser(ia, cb).parse(true, r)`,
+# nlohmann/json's basic_json::parse -> detail::parser) has the return of a factory
+# function/method as its receiver. Without inferring that return type the final
+# method binds to nothing and the whole returned-class cluster (parser.parse/accept/
+# sax_parse) reports as dead. cgr must type the factory's recorded return type and
+# resolve the chained method on it.
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -25,9 +25,9 @@ def _make(root: Path, body: str) -> None:
 
 
 def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) `make().run()` where `make` is a free function returning Widget must reach
-    # (H) Widget.run, not drop or mis-bind. Aaa.run is an alphabetical decoy: a bare
-    # (H) trie fallback would pick it, so a passing test proves real return typing.
+    # `make().run()` where `make` is a free function returning Widget must reach
+    # Widget.run, not drop or mis-bind. Aaa.run is an alphabetical decoy: a bare
+    # trie fallback would pick it, so a passing test proves real return typing.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -49,10 +49,10 @@ def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) nlohmann shape: a static factory METHOD on Owner returns a DIFFERENT class,
-    # (H) called as `parser(...).parse(...)` from inside Owner. The factory name is a
-    # (H) callable (Owner.parser), distinct from the returned class (Parser). Aaa.parse
-    # (H) is an alphabetical decoy the bare fallback would wrongly pick.
+    # nlohmann shape: a static factory METHOD on Owner returns a DIFFERENT class,
+    # called as `parser(...).parse(...)` from inside Owner. The factory name is a
+    # callable (Owner.parser), distinct from the returned class (Parser). Aaa.parse
+    # is an alphabetical decoy the bare fallback would wrongly pick.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -76,10 +76,10 @@ def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> None:
-    # (H) `make()` returns Widget (recorded), but Widget has NO `run`. The bare-method
-    # (H) C/C++ fallback must NOT fire once the receiver type is known -- binding
-    # (H) `make().run()` to an unrelated alphabetical `Aaa.run` is a false edge. When the
-    # (H) type is inferred and lacks the method, the chain drops (returns nothing).
+    # `make()` returns Widget (recorded), but Widget has NO `run`. The bare-method
+    # C/C++ fallback must NOT fire once the receiver type is known -- binding
+    # `make().run()` to an unrelated alphabetical `Aaa.run` is a false edge. When the
+    # type is inferred and lacks the method, the chain drops (returns nothing).
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -100,11 +100,11 @@ def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> 
 
 
 def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) The header/impl split shape: the factory method is DECLARED in the class body
-    # (H) but DEFINED out-of-class (`Parser Owner::parser(...) { ... }`). Its return type
-    # (H) must still be recorded (the out-of-class path returns before the free-function
-    # (H) recording runs) so `parser(1).parse(true)` types the receiver as Parser rather
-    # (H) than drop or mis-bind to the alphabetical decoy Aaa.parse.
+    # The header/impl split shape: the factory method is DECLARED in the class body
+    # but DEFINED out-of-class (`Parser Owner::parser(...) { ... }`). Its return type
+    # must still be recorded (the out-of-class path returns before the free-function
+    # recording runs) so `parser(1).parse(true)` types the receiver as Parser rather
+    # than drop or mis-bind to the alphabetical decoy Aaa.parse.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -130,9 +130,9 @@ def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_return_type_path_normalizes_template_qualified_scope() -> None:
-    # (H) A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
-    # (H) reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
-    # (H) leaks the `<T>` template arguments, which no class QN carries.
+    # A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
+    # reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
+    # leaks the `<T>` template arguments, which no class QN carries.
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp.utils import extract_return_type_name
 
@@ -155,10 +155,10 @@ def test_return_type_path_normalizes_template_qualified_scope() -> None:
 
 
 def test_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
-    # (H) nlohmann from_cbor shape: `Reader<decltype(ia)>(std::move(ia), fmt)
-    # (H) .sax_parse(...)` chains a method on a CONSTRUCTOR TEMPORARY -- the
-    # (H) callee is the class itself, so the receiver type IS that class. Aaa
-    # (H) is the alphabetical trie decoy.
+    # nlohmann from_cbor shape: `Reader<decltype(ia)>(std::move(ia), fmt)
+    # .sax_parse(...)` chains a method on a CONSTRUCTOR TEMPORARY -- the
+    # callee is the class itself, so the receiver type IS that class. Aaa
+    # is the alphabetical trie decoy.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -182,8 +182,8 @@ def test_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
-    # (H) The namespace-qualified form `detail::Reader<...>(...).sax_parse(...)`
-    # (H) (nlohmann json.hpp:4159) must resolve through the qualified path too.
+    # The namespace-qualified form `detail::Reader<...>(...).sax_parse(...)`
+    # (nlohmann json.hpp:4159) must resolve through the qualified path too.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -209,12 +209,12 @@ def test_qualified_constructor_temporary_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_macro_attributed_definition_name_extracted() -> None:
-    # (H) nlohmann shape (JSON_HEDLEY_NON_NULL(3) before bool sax_parse(...)):
-    # (H) tree-sitter merges the attribute macro into the definition as a
-    # (H) parenthesized_declarator wrapping an ERROR plus the REAL
-    # (H) function_declarator. The name walk must descend through it, or the
-    # (H) method never registers and its whole callee cluster (binary_reader's
-    # (H) 37 methods) reads as dead.
+    # nlohmann shape (JSON_HEDLEY_NON_NULL(3) before bool sax_parse(...)):
+    # tree-sitter merges the attribute macro into the definition as a
+    # parenthesized_declarator wrapping an ERROR plus the REAL
+    # function_declarator. The name walk must descend through it, or the
+    # method never registers and its whole callee cluster (binary_reader's
+    # 37 methods) reads as dead.
     from tree_sitter import Node
 
     from codebase_rag.parser_loader import load_parsers
@@ -244,17 +244,17 @@ def test_macro_attributed_definition_name_extracted() -> None:
 
     defn = find(tree.root_node, "function_definition")
     assert defn is not None
-    # (H) Pin the mangled shape this test exists for: if a grammar bump starts
-    # (H) parsing the macro cleanly, this guard flags the test for revisit.
+    # Pin the mangled shape this test exists for: if a grammar bump starts
+    # parsing the macro cleanly, this guard flags the test for revisit.
     assert find(defn, "parenthesized_declarator") is not None
     assert cpp_utils.extract_function_name(defn) == "sax_parse"
 
-    # (H) Macro-attributed CONSTRUCTOR with a member-initializer list
-    # (H) (nlohmann's exception hierarchy): recovery buries the REAL ctor
-    # (H) declarator inside the ERROR and leaves the base-initializer
-    # (H) (`: exception(...)`) as the sibling function_declarator. The walk
-    # (H) must take the first declarator in SOURCE order, entering the ERROR,
-    # (H) or every such ctor registers under the base class's name.
+    # Macro-attributed CONSTRUCTOR with a member-initializer list
+    # (nlohmann's exception hierarchy): recovery buries the REAL ctor
+    # declarator inside the ERROR and leaves the base-initializer
+    # (`: exception(...)`) as the sibling function_declarator. The walk
+    # must take the first declarator in SOURCE order, entering the ERROR,
+    # or every such ctor registers under the base class's name.
     ctor_src = (
         "class invalid_iterator : public exception {\n"
         "  private:\n"
@@ -271,11 +271,11 @@ def test_macro_attributed_definition_name_extracted() -> None:
 
 
 def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
-    # (H) nlohmann's exception factories: `static invalid_iterator create(...)
-    # (H) { return {id_, w.c_str()}; }` constructs via a braced initializer
-    # (H) list -- no call node exists, so the private ctor gets no CALLS edge
-    # (H) and reports dead even though its only factory is alive. The declared
-    # (H) return type names the constructed class.
+    # nlohmann's exception factories: `static invalid_iterator create(...)
+    # { return {id_, w.c_str()}; }` constructs via a braced initializer
+    # list -- no call node exists, so the private ctor gets no CALLS edge
+    # and reports dead even though its only factory is alive. The declared
+    # return type names the constructed class.
     _make(
         tmp_path,
         "struct Aaa {\n"

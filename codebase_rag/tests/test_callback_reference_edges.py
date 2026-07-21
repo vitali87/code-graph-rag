@@ -11,7 +11,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -42,9 +42,9 @@ REFERENCES = cs.RelationshipType.REFERENCES.value
 
 
 def test_callback_kwarg_to_first_party_function_is_referenced(tmp_path: Path) -> None:
-    # (H) A nested function passed by keyword to a FIRST-PARTY callee that stores it
-    # (H) (never invokes it) must get a REFERENCES edge from the passing scope, or
-    # (H) dead-code wrongly flags it (with_brrr_from_cfg/create_context shape).
+    # A nested function passed by keyword to a FIRST-PARTY callee that stores it
+    # (never invokes it) must get a REFERENCES edge from the passing scope, or
+    # dead-code wrongly flags it (with_brrr_from_cfg/create_context shape).
     files = {
         "brrrlib.py": (
             "def with_brrr_from_cfg(cfg, handlers, create_context=None):\n"
@@ -64,8 +64,8 @@ def test_callback_kwarg_to_first_party_function_is_referenced(tmp_path: Path) ->
 
 
 def test_callback_kwarg_to_constructor_is_referenced(tmp_path: Path) -> None:
-    # (H) A nested function passed into a first-party CONSTRUCTOR that stores it as a
-    # (H) field must get a REFERENCES edge (AnteriorCodec/create_context shape).
+    # A nested function passed into a first-party CONSTRUCTOR that stores it as a
+    # field must get a REFERENCES edge (AnteriorCodec/create_context shape).
     files = {
         "codec.py": (
             "class Codec:\n"
@@ -85,11 +85,11 @@ def test_callback_kwarg_to_constructor_is_referenced(tmp_path: Path) -> None:
 
 
 def test_callback_to_misbound_external_method_is_referenced(tmp_path: Path) -> None:
-    # (H) df arrives as an UNTYPED parameter, so the trie binds df.apply by bare name
-    # (H) to a same-named first-party method; the passed callback must STILL be
-    # (H) referenced from the passing scope (build_suggestion shape). A locally
-    # (H) constructed receiver (df = pd.DataFrame(...)) is instead typed external and
-    # (H) suppressed outright -- covered in test_external_receiver_misbind.py.
+    # df arrives as an UNTYPED parameter, so the trie binds df.apply by bare name
+    # to a same-named first-party method; the passed callback must STILL be
+    # referenced from the passing scope (build_suggestion shape). A locally
+    # constructed receiver (df = pd.DataFrame(...)) is instead typed external and
+    # suppressed outright -- covered in test_external_receiver_misbind.py.
     files = {
         "strategies.py": (
             "class BatchingStrategyBase:\n"
@@ -111,7 +111,7 @@ def test_callback_to_misbound_external_method_is_referenced(tmp_path: Path) -> N
 
 
 def test_plain_argument_is_not_referenced(tmp_path: Path) -> None:
-    # (H) Non-callable arguments (locals, literals) must not produce REFERENCES noise.
+    # Non-callable arguments (locals, literals) must not produce REFERENCES noise.
     files = {
         "lib.py": "def consume(x, y):\n    return x\n",
         "m.py": (
@@ -126,10 +126,10 @@ def test_plain_argument_is_not_referenced(tmp_path: Path) -> None:
 
 
 def test_function_assigned_to_local_variable_is_referenced(tmp_path: Path) -> None:
-    # (H) A nested function assigned to a local (http_callback =
-    # (H) llm_http_task_closure_with_context) is referenced even if never called by
-    # (H) name in this scope; the alias may be stored or passed onward for dynamic
-    # (H) dispatch, so the assignment itself must keep the function reachable.
+    # A nested function assigned to a local (http_callback =
+    # llm_http_task_closure_with_context) is referenced even if never called by
+    # name in this scope; the alias may be stored or passed onward for dynamic
+    # dispatch, so the assignment itself must keep the function reachable.
     files = {
         "svc.py": (
             "import os\n\n"
@@ -153,10 +153,10 @@ def test_function_assigned_to_local_variable_is_referenced(tmp_path: Path) -> No
 
 
 def test_function_assigned_to_object_attribute_is_referenced(tmp_path: Path) -> None:
-    # (H) A nested function monkeypatched onto an object attribute (mock_client.post
-    # (H) = handle_post) is invoked later through that attribute; the assignment must
-    # (H) reference it (MockHTTPRouter shape). Its body's self-call then keeps the
-    # (H) called method reachable transitively.
+    # A nested function monkeypatched onto an object attribute (mock_client.post
+    # = handle_post) is invoked later through that attribute; the assignment must
+    # reference it (MockHTTPRouter shape). Its body's self-call then keeps the
+    # called method reachable transitively.
     files = {
         "mocking.py": (
             "class MockHTTPRouter:\n"
@@ -185,10 +185,10 @@ def test_function_assigned_to_object_attribute_is_referenced(tmp_path: Path) -> 
 
 
 def test_monkeypatch_assignment_is_referenced(tmp_path: Path) -> None:
-    # (H) A function assigned over a third-party attribute chain
-    # (H) (genai.Client.__init__ = _vertex_ai_client_init) is invoked by the
-    # (H) patched class later; the assignment must reference it
-    # (H) (_vertex_ai_client_init shape).
+    # A function assigned over a third-party attribute chain
+    # (genai.Client.__init__ = _vertex_ai_client_init) is invoked by the
+    # patched class later; the assignment must reference it
+    # (_vertex_ai_client_init shape).
     files = {
         "helpers.py": (
             "import google.genai as genai_client\n\n"
@@ -208,10 +208,10 @@ def test_monkeypatch_assignment_is_referenced(tmp_path: Path) -> None:
 def test_module_level_assignment_in_callless_module_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) A module whose ONLY statement is a first-class function assignment (no call
-    # (H) expressions at all) must still emit the Module -> REFERENCES edge; the
-    # (H) call-driven pass early-returns on such modules, so the assignment scan has
-    # (H) to run before it.
+    # A module whose ONLY statement is a first-class function assignment (no call
+    # expressions at all) must still emit the Module -> REFERENCES edge; the
+    # call-driven pass early-returns on such modules, so the assignment scan has
+    # to run before it.
     files = {
         "handlers.py": "def handle_event(evt):\n    return evt\n",
         "registry.py": (
@@ -223,9 +223,9 @@ def test_module_level_assignment_in_callless_module_is_referenced(
 
 
 def test_annotated_assignment_is_referenced(tmp_path: Path) -> None:
-    # (H) An annotated assignment (handler: Callable = handle_event) parses as the
-    # (H) same tree-sitter `assignment` node with an extra type child; the walker
-    # (H) must reference its RHS exactly like an unannotated one.
+    # An annotated assignment (handler: Callable = handle_event) parses as the
+    # same tree-sitter `assignment` node with an extra type child; the walker
+    # must reference its RHS exactly like an unannotated one.
     files = {
         "handlers.py": "def handle_event(evt):\n    return evt\n",
         "registry.py": (
@@ -239,10 +239,10 @@ def test_annotated_assignment_is_referenced(tmp_path: Path) -> None:
 
 
 def test_argument_to_call_expression_callee_is_referenced(tmp_path: Path) -> None:
-    # (H) `wraps(view_func)(_view_wrapper)` consumes _view_wrapper through the
-    # (H) callable the inner call returns. The callee has no extractable name (it
-    # (H) is itself a call), but the passed function must still be referenced or
-    # (H) dead-code flags every django-style view decorator wrapper.
+    # `wraps(view_func)(_view_wrapper)` consumes _view_wrapper through the
+    # callable the inner call returns. The callee has no extractable name (it
+    # is itself a call), but the passed function must still be referenced or
+    # dead-code flags every django-style view decorator wrapper.
     files = {
         "deco.py": (
             "from functools import wraps\n\n"
@@ -257,9 +257,9 @@ def test_argument_to_call_expression_callee_is_referenced(tmp_path: Path) -> Non
 
 
 def test_ternary_assignment_references_both_methods(tmp_path: Path) -> None:
-    # (H) `get_response = self._async if flag else self._sync` binds one of two
-    # (H) methods as a value; both are possible referents and must be referenced
-    # (H) (django BaseHandler.load_middleware shape), or dead-code flags them.
+    # `get_response = self._async if flag else self._sync` binds one of two
+    # methods as a value; both are possible referents and must be referenced
+    # (django BaseHandler.load_middleware shape), or dead-code flags them.
     files = {
         "handler.py": (
             "def convert(handler):\n"
@@ -280,9 +280,9 @@ def test_ternary_assignment_references_both_methods(tmp_path: Path) -> None:
 
 
 def test_returned_method_attribute_is_referenced(tmp_path: Path) -> None:
-    # (H) `return self._get_point_2d` hands the bound method to the caller for
-    # (H) later dispatch (django GEOSCoordSeq._point_getter shape); the returning
-    # (H) scope must reference it or dead-code flags the whole getter cluster.
+    # `return self._get_point_2d` hands the bound method to the caller for
+    # later dispatch (django GEOSCoordSeq._point_getter shape); the returning
+    # scope must reference it or dead-code flags the whole getter cluster.
     files = {
         "coordseq.py": (
             "class GEOSCoordSeq:\n"
@@ -309,8 +309,8 @@ def test_returned_method_attribute_is_referenced(tmp_path: Path) -> None:
 
 
 def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
-    # (H) The ternary's condition is truthiness-tested, never bound to the LHS,
-    # (H) so a callable named there must NOT get an assignment reference.
+    # The ternary's condition is truthiness-tested, never bound to the LHS,
+    # so a callable named there must NOT get an assignment reference.
     files = {
         "picker.py": (
             "def check():\n"
@@ -331,10 +331,10 @@ def test_ternary_condition_is_not_referenced(tmp_path: Path) -> None:
 
 
 def test_bound_function_argument_is_referenced(tmp_path: Path) -> None:
-    # (H) `el.addEventListener("click", handler.bind(this))` hands off `handler`;
-    # (H) the .bind call itself resolves to the Function.prototype builtin, so the
-    # (H) bound function must be referenced from the passing scope or it reports
-    # (H) dead (django admin's inlines.js inlineDeleteHandler).
+    # `el.addEventListener("click", handler.bind(this))` hands off `handler`;
+    # the .bind call itself resolves to the Function.prototype builtin, so the
+    # bound function must be referenced from the passing scope or it reports
+    # dead (django admin's inlines.js inlineDeleteHandler).
     files = {
         "inlines.js": (
             "function formset(row) {\n"
@@ -353,9 +353,9 @@ def test_bound_function_argument_is_referenced(tmp_path: Path) -> None:
 
 
 def test_bound_function_assignment_rhs_is_referenced(tmp_path: Path) -> None:
-    # (H) `const bound = handler.bind(null)` stores the bound handler for later
-    # (H) invocation; the assignment walk must peel .bind like a cast so the
-    # (H) underlying function is referenced.
+    # `const bound = handler.bind(null)` stores the bound handler for later
+    # invocation; the assignment walk must peel .bind like a cast so the
+    # underlying function is referenced.
     files = {
         "store.js": (
             "function attach() {\n"
@@ -373,10 +373,10 @@ def test_bound_function_assignment_rhs_is_referenced(tmp_path: Path) -> None:
 
 
 def test_cast_wrapped_bound_function_argument_is_referenced(tmp_path: Path) -> None:
-    # (H) `(handler as any).bind(this)` interleaves a cast INSIDE the bind
-    # (H) receiver; a single unwrap pass leaves the cast node behind, so the
-    # (H) peel must iterate cast/paren and bind unwraps to a fixpoint. Chained
-    # (H) binds (`h.bind(a).bind(b)`) peel the same way.
+    # `(handler as any).bind(this)` interleaves a cast INSIDE the bind
+    # receiver; a single unwrap pass leaves the cast node behind, so the
+    # peel must iterate cast/paren and bind unwraps to a fixpoint. Chained
+    # binds (`h.bind(a).bind(b)`) peel the same way.
     files = {
         "wrapped.ts": (
             "function attach(el: { on: (cb: unknown) => void }) {\n"
@@ -397,9 +397,9 @@ def test_cast_wrapped_bound_function_argument_is_referenced(tmp_path: Path) -> N
 
 
 def test_bound_function_argument_flows_to_callable_param(tmp_path: Path) -> None:
-    # (H) A bound function passed to a FIRST-PARTY callee that invokes its
-    # (H) parameter must produce the callable-flow CALLS edge (run -> handler),
-    # (H) not just the passing scope's REFERENCES edge.
+    # A bound function passed to a FIRST-PARTY callee that invokes its
+    # parameter must produce the callable-flow CALLS edge (run -> handler),
+    # not just the passing scope's REFERENCES edge.
     files = {
         "flow.js": (
             "function run(cb) {\n"
@@ -419,9 +419,9 @@ def test_bound_function_argument_flows_to_callable_param(tmp_path: Path) -> None
 
 
 def test_bound_function_flows_through_passthrough_param(tmp_path: Path) -> None:
-    # (H) The callable-flow fixpoint (outer forwards its param to run) records
-    # (H) seeds in _collect_callable_flow, which must peel .bind like the
-    # (H) direct-argument path or the propagated CALLS edge is lost.
+    # The callable-flow fixpoint (outer forwards its param to run) records
+    # seeds in _collect_callable_flow, which must peel .bind like the
+    # direct-argument path or the propagated CALLS edge is lost.
     files = {
         "flow2.js": (
             "function run(cb) {\n"

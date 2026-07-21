@@ -1,10 +1,10 @@
-# (H) Semantic-search relevance eval. cgr's semantic search embeds each function's
-# (H) source and retrieves by cosine similarity to a query embedding. This grades
-# (H) that relevance directly: for controlled fixtures whose natural-language query
-# (H) maps unambiguously to one function, does cgr's embedder rank that function in
-# (H) the top k? It uses cgr's own embedder over function source extracted from the
-# (H) captured graph, so it tests cgr's embedding + ranking pipeline (the part that
-# (H) decides relevance); the Qdrant ANN layer only approximates this same ranking.
+# Semantic-search relevance eval. cgr's semantic search embeds each function's
+# source and retrieves by cosine similarity to a query embedding. This grades
+# that relevance directly: for controlled fixtures whose natural-language query
+# maps unambiguously to one function, does cgr's embedder rank that function in
+# the top k? It uses cgr's own embedder over function source extracted from the
+# captured graph, so it tests cgr's embedding + ranking pipeline (the part that
+# decides relevance); the Qdrant ANN layer only approximates this same ranking.
 from pathlib import Path
 from typing import NamedTuple
 
@@ -33,8 +33,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def function_snippets(target: Path, project: str) -> dict[str, str]:
-    # (H) The source of every first-party function/method, keyed by qualified name,
-    # (H) read from the captured node's file and span -- the same text cgr embeds.
+    # The source of every first-party function/method, keyed by qualified name,
+    # read from the captured node's file and span -- the same text cgr embeds.
     ingestor = _capture(target, project)
     snippets: dict[str, str] = {}
     for (label, uid), props in ingestor.nodes.items():
@@ -83,9 +83,9 @@ def cgr_semantic_ranking(
 def score_semantic(
     cases: list[SemanticCase], ranking: dict[str, list[str]]
 ) -> ScoreResult:
-    # (H) recall@k: a case is a hit when its expected function is in the query's
-    # (H) top-k. Modelled as a set of satisfied cases vs all cases, so precision is
-    # (H) 1.0 by construction and the headline number is recall.
+    # recall@k: a case is a hit when its expected function is in the query's
+    # top-k. Modelled as a set of satisfied cases vs all cases, so precision is
+    # 1.0 by construction and the headline number is recall.
     oracle = {(case.query, case.expected_qn) for case in cases}
     hits = {
         (case.query, case.expected_qn)

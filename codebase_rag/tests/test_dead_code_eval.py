@@ -52,7 +52,7 @@ def _method(uid: str, path: str = "m.py", decorators: list[str] | None = None) -
 
 
 def test_dead_code_flags_uncalled_function() -> None:
-    # (H) Module calls main(); main() calls helper(); orphan() is never called.
+    # Module calls main(); main() calls helper(); orphan() is never called.
     nodes = dict(
         [
             (
@@ -73,10 +73,10 @@ def test_dead_code_flags_uncalled_function() -> None:
 
 
 def test_go_init_and_main_are_roots() -> None:
-    # (H) Go `func init()` is auto-run by the runtime at package load and `func
-    # (H) main()` is the program entry; neither is ever called explicitly, so both
-    # (H) are reachability roots (like Python dunders). A same-file helper with no
-    # (H) caller is still dead -- the exemption is name-scoped to init/main.
+    # Go `func init()` is auto-run by the runtime at package load and `func
+    # main()` is the program entry; neither is ever called explicitly, so both
+    # are reachability roots (like Python dunders). A same-file helper with no
+    # caller is still dead -- the exemption is name-scoped to init/main.
     nodes = dict(
         [
             (
@@ -93,17 +93,17 @@ def test_go_init_and_main_are_roots() -> None:
     assert "proj.mode.init" not in dead
     assert "proj.main.main" not in dead
     assert "proj.util.helper" in dead
-    # (H) A receiver method named init/main is NOT the package init/entry, so the
-    # (H) exemption is Function-scoped and this stays dead.
+    # A receiver method named init/main is NOT the package init/entry, so the
+    # exemption is Function-scoped and this stays dead.
     assert "proj.mode.Type.init" in dead
 
 
 def test_rust_trait_methods_and_main_are_roots() -> None:
-    # (H) Rust trait-impl methods (Display::fmt, PartialEq::eq, Iterator::next) are
-    # (H) dispatched by the language (format!, ==, for), never called explicitly, and
-    # (H) `fn main()` is the program entry -- all reachability roots (like Python
-    # (H) dunders), gated by the .rs extension. A custom method (push_int) is not a
-    # (H) trait name, so it stays dead.
+    # Rust trait-impl methods (Display::fmt, PartialEq::eq, Iterator::next) are
+    # dispatched by the language (format!, ==, for), never called explicitly, and
+    # `fn main()` is the program entry -- all reachability roots (like Python
+    # dunders), gated by the .rs extension. A custom method (push_int) is not a
+    # trait name, so it stays dead.
     nodes = dict(
         [
             (
@@ -124,18 +124,18 @@ def test_rust_trait_methods_and_main_are_roots() -> None:
     assert "proj.iter.It.next" not in dead
     assert "proj.main.main" not in dead
     assert "proj.frame.Frame.push_int" in dead
-    # (H) A method named main is not the binary entry, so it stays dead (main is
-    # (H) Function-scoped; trait-method rooting is the reverse, Method-scoped).
+    # A method named main is not the binary entry, so it stays dead (main is
+    # Function-scoped; trait-method rooting is the reverse, Method-scoped).
     assert "proj.frame.Frame.main" in dead
 
 
 def test_cpp_operator_overloads_are_roots() -> None:
-    # (H) A C++ operator overload / user-defined literal (member `operator==`, free
-    # (H) `operator<<`, UDL `operator""_json`) is invoked by operator/literal SYNTAX
-    # (H) (`a == b`, `os << x`, `1_json`), never by a named call the graph can see, so
-    # (H) it is a reachability root (like Python dunders / Rust trait methods), gated
-    # (H) by a C++ file extension. A regular uncalled method stays dead, and a non-C++
-    # (H) symbol whose name merely starts with `operator` is NOT rooted.
+    # A C++ operator overload / user-defined literal (member `operator==`, free
+    # `operator<<`, UDL `operator""_json`) is invoked by operator/literal SYNTAX
+    # (`a == b`, `os << x`, `1_json`), never by a named call the graph can see, so
+    # it is a reachability root (like Python dunders / Rust trait methods), gated
+    # by a C++ file extension. A regular uncalled method stays dead, and a non-C++
+    # symbol whose name merely starts with `operator` is NOT rooted.
     nodes = dict(
         [
             (
@@ -155,21 +155,21 @@ def test_cpp_operator_overloads_are_roots() -> None:
     assert "proj.json.Json.operator_subscript" not in dead
     assert "proj.json.operator_left_shift" not in dead
     assert 'proj.json.operator_""_json' not in dead
-    # (H) A regular method with no caller is still dead -- rooting is prefix-scoped
-    # (H) to `operator`, not a blanket C++ exemption.
+    # A regular method with no caller is still dead -- rooting is prefix-scoped
+    # to `operator`, not a blanket C++ exemption.
     assert "proj.json.Json.push_back" in dead
-    # (H) The `operator` prefix only roots on a C++ file; a .py symbol stays dead.
+    # The `operator` prefix only roots on a C++ file; a .py symbol stays dead.
     assert "proj.mod.operator_equal" in dead
 
 
 def test_java_serialization_hooks_are_roots() -> None:
-    # (H) Java serialization hooks (readObject/writeObject/writeReplace/readResolve/
-    # (H) readObjectNoData) are invoked reflectively by the java.io runtime, never by a
-    # (H) call the graph can see, so they are reachability roots (like Python dunders),
-    # (H) gated by the .java extension. The real Java QN carries a signature
-    # (H) (`readObject(ObjectInputStream)`), which must be stripped to the bare name. A
-    # (H) regular uncalled method stays dead, and a same-named symbol on a non-Java file
-    # (H) is NOT rooted.
+    # Java serialization hooks (readObject/writeObject/writeReplace/readResolve/
+    # readObjectNoData) are invoked reflectively by the java.io runtime, never by a
+    # call the graph can see, so they are reachability roots (like Python dunders),
+    # gated by the .java extension. The real Java QN carries a signature
+    # (`readObject(ObjectInputStream)`), which must be stripped to the bare name. A
+    # regular uncalled method stays dead, and a same-named symbol on a non-Java file
+    # is NOT rooted.
     nodes = dict(
         [
             (
@@ -187,20 +187,20 @@ def test_java_serialization_hooks_are_roots() -> None:
     assert "proj.S.S.readObject(ObjectInputStream)" not in dead
     assert "proj.S.S.writeReplace()" not in dead
     assert "proj.S.S.readResolve()" not in dead
-    # (H) A regular uncalled method is still dead -- rooting is name-scoped to the
-    # (H) reserved serialization hooks, not a blanket Java exemption.
+    # A regular uncalled method is still dead -- rooting is name-scoped to the
+    # reserved serialization hooks, not a blanket Java exemption.
     assert "proj.S.S.helper()" in dead
-    # (H) The hook names only root on a .java file; a .py symbol stays dead.
+    # The hook names only root on a .java file; a .py symbol stays dead.
     assert "proj.mod.C.readObject(ObjectInputStream)" in dead
 
 
 def test_override_of_reachable_method_is_reachable() -> None:
-    # (H) A call to a base/interface method dispatches at runtime to any override, so
-    # (H) an override of a REACHABLE method is itself reachable (sound virtual dispatch).
-    # (H) The graph records OVERRIDES (overrider -> overridden) but the reachability walk
-    # (H) follows CALLS/REFERENCES only, so overrides reached solely by dispatch looked
-    # (H) dead (gson's RecordHelper strategy subclasses). A call reaches the base; the
-    # (H) override must be revived; an override of a DEAD base stays dead.
+    # A call to a base/interface method dispatches at runtime to any override, so
+    # an override of a REACHABLE method is itself reachable (sound virtual dispatch).
+    # The graph records OVERRIDES (overrider -> overridden) but the reachability walk
+    # follows CALLS/REFERENCES only, so overrides reached solely by dispatch looked
+    # dead (gson's RecordHelper strategy subclasses). A call reaches the base; the
+    # override must be revived; an override of a DEAD base stays dead.
     _OVERRIDES = cs.RelationshipType.OVERRIDES.value
     nodes = dict(
         [
@@ -221,27 +221,27 @@ def test_override_of_reachable_method_is_reachable() -> None:
     rels = [
         (_FUNCTION, "proj.m.entry", _CALLS, _MTD, "proj.m.Base.run(int)"),
         (_MTD, "proj.m.Sub.run(int)", _OVERRIDES, _MTD, "proj.m.Base.run(int)"),
-        # (H) multi-level: SubSub overrides Sub overrides Base -- all must revive.
+        # multi-level: SubSub overrides Sub overrides Base -- all must revive.
         (_MTD, "proj.m.SubSub.run(int)", _OVERRIDES, _MTD, "proj.m.Sub.run(int)"),
         (_MTD, "proj.m.DeadSub.gone()", _OVERRIDES, _MTD, "proj.m.DeadBase.gone()"),
     ]
     dead = dead_code_from_graph(nodes, rels, _PREFIX, _CONFIG)
-    # (H) Base is called (via exported entry) -> live; its overrides (direct and
-    # (H) transitive) are dispatch targets -> revived.
+    # Base is called (via exported entry) -> live; its overrides (direct and
+    # transitive) are dispatch targets -> revived.
     assert "proj.m.Base.run(int)" not in dead
     assert "proj.m.Sub.run(int)" not in dead
     assert "proj.m.SubSub.run(int)" not in dead
-    # (H) DeadBase is never called, so neither it nor its override is reachable.
+    # DeadBase is never called, so neither it nor its override is reachable.
     assert "proj.m.DeadBase.gone()" in dead
     assert "proj.m.DeadSub.gone()" in dead
 
 
 def test_root_level_tests_dir_is_excluded() -> None:
-    # (H) A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
-    # (H) `tests/` folder) is test infrastructure. The `/tests/` pattern needs a
-    # (H) leading slash, so a root tests/ dir was missed and every test fn leaked as
-    # (H) a candidate. Path matching must normalize a leading slash so root tests/ is
-    # (H) recognized; a `contests/` dir must NOT be mistaken for a tests dir.
+    # A top-level `tests/` dir (Rust integration tests `tests/client.rs`, a JS
+    # `tests/` folder) is test infrastructure. The `/tests/` pattern needs a
+    # leading slash, so a root tests/ dir was missed and every test fn leaked as
+    # a candidate. Path matching must normalize a leading slash so root tests/ is
+    # recognized; a `contests/` dir must NOT be mistaken for a tests dir.
     nodes = dict(
         [
             (
@@ -257,19 +257,19 @@ def test_root_level_tests_dir_is_excluded() -> None:
     )
     dead = dead_code_from_graph(nodes, [], _PREFIX, _CONFIG)
     assert "proj.tests.client.smoke" not in dead
-    # (H) `contests/` is not a tests dir, so a genuinely-uncalled symbol there is
-    # (H) still reported (no false leading-slash match).
+    # `contests/` is not a tests dir, so a genuinely-uncalled symbol there is
+    # still reported (no false leading-slash match).
     assert "proj.contests.entry" in dead
 
 
 def test_dead_code_excludes_generated_paths() -> None:
-    # (H) A generated file (openapi-ts client/core, routeTree.gen.ts) has no
-    # (H) in-repo caller, so every symbol in it reports as dead -- pure noise the
-    # (H) user cannot act on. An exclude glob suppresses those from the report while
-    # (H) a real orphan elsewhere is still flagged. Crucially, the excluded file
-    # (H) stays a live participant: `used_by_gen` is called only from the generated
-    # (H) module and must NOT be flagged dead (excluding before reachability would
-    # (H) drop that edge and wrongly report it).
+    # A generated file (openapi-ts client/core, routeTree.gen.ts) has no
+    # in-repo caller, so every symbol in it reports as dead -- pure noise the
+    # user cannot act on. An exclude glob suppresses those from the report while
+    # a real orphan elsewhere is still flagged. Crucially, the excluded file
+    # stays a live participant: `used_by_gen` is called only from the generated
+    # module and must NOT be flagged dead (excluding before reachability would
+    # drop that edge and wrongly report it).
     nodes = dict(
         [
             (
@@ -295,8 +295,8 @@ def test_dead_code_excludes_generated_paths() -> None:
 
 
 def test_dead_code_flags_orphan_chain() -> None:
-    # (H) orphan() calls buried(), but orphan() itself is never reached, so both
-    # (H) are dead (a callee kept alive only by dead code is dead too).
+    # orphan() calls buried(), but orphan() itself is never reached, so both
+    # are dead (a callee kept alive only by dead code is dead too).
     nodes = dict(
         [
             (
@@ -317,8 +317,8 @@ def test_dead_code_flags_orphan_chain() -> None:
 
 
 def test_decorated_function_is_a_root() -> None:
-    # (H) A function with a recognised entry-point decorator (e.g. @app.route) is
-    # (H) live even if nothing calls it.
+    # A function with a recognised entry-point decorator (e.g. @app.route) is
+    # live even if nothing calls it.
     config = _CONFIG._replace(root_decorators=frozenset({"route"}))
     nodes = dict(
         [
@@ -334,9 +334,9 @@ def test_decorated_function_is_a_root() -> None:
 
 
 def test_pydantic_validator_is_a_root() -> None:
-    # (H) Pydantic invokes @field_validator/@model_validator methods by registration
-    # (H) through library code that is not in the first-party graph, so reachability
-    # (H) cannot trace the call; the default decorator set must seed them as roots.
+    # Pydantic invokes @field_validator/@model_validator methods by registration
+    # through library code that is not in the first-party graph, so reachability
+    # cannot trace the call; the default decorator set must seed them as roots.
     config = default_dead_code_config(include_tests=False, include_classes=False)
     nodes = dict(
         [
@@ -356,11 +356,11 @@ def test_pydantic_validator_is_a_root() -> None:
 
 
 def test_test_file_symbols_are_not_candidates_when_tests_excluded() -> None:
-    # (H) A helper defined INSIDE a test file is test infrastructure, not
-    # (H) production dead code. With tests excluded its only callers (test
-    # (H) functions) can never root it, so reporting it is unconditional noise
-    # (H) (the MockHTTPRouter/mock-helper cluster); production code reached only
-    # (H) from tests must still be reported.
+    # A helper defined INSIDE a test file is test infrastructure, not
+    # production dead code. With tests excluded its only callers (test
+    # functions) can never root it, so reporting it is unconditional noise
+    # (the MockHTTPRouter/mock-helper cluster); production code reached only
+    # from tests must still be reported.
     nodes = dict(
         [
             (
@@ -382,9 +382,9 @@ def test_test_file_symbols_are_not_candidates_when_tests_excluded() -> None:
 
 
 def test_pydantic_computed_field_is_a_root() -> None:
-    # (H) Pydantic calls @computed_field methods during serialization through
-    # (H) library code outside the first-party graph, so no CALLS edge reaches
-    # (H) them; the default decorator set must seed them as roots too.
+    # Pydantic calls @computed_field methods during serialization through
+    # library code outside the first-party graph, so no CALLS edge reaches
+    # them; the default decorator set must seed them as roots too.
     config = default_dead_code_config(include_tests=False, include_classes=False)
     nodes = dict(
         [
@@ -400,7 +400,7 @@ def test_pydantic_computed_field_is_a_root() -> None:
 
 
 def test_non_test_module_does_not_keep_code_alive_when_tests_excluded() -> None:
-    # (H) With tests excluded, a call from a test module must not root project code.
+    # With tests excluded, a call from a test module must not root project code.
     nodes = dict(
         [
             (
@@ -435,9 +435,9 @@ def test_cgr_dead_code_matches_known_dead_set(tmp_path: Path) -> None:
     src = tmp_path / "proj"
     _make_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
-    # (H) A private, uncalled function is genuinely dead. A public one is part of
-    # (H) the module's API surface (a potential external entry point), so it is a
-    # (H) reachability root and must not be flagged.
+    # A private, uncalled function is genuinely dead. A public one is part of
+    # the module's API surface (a potential external entry point), so it is a
+    # reachability root and must not be flagged.
     assert "proj.m._orphan" in dead
     assert "proj.m.orphan" not in dead
     assert "proj.m.main" not in dead
@@ -445,9 +445,9 @@ def test_cgr_dead_code_matches_known_dead_set(tmp_path: Path) -> None:
 
 
 def test_dunder_root_is_limited_to_methods() -> None:
-    # (H) Implicit dunder dispatch applies to special METHODS on objects, not to a
-    # (H) module-level function that merely has a dunder-shaped name, so an uncalled
-    # (H) function named __unused__ must stay a dead-code candidate.
+    # Implicit dunder dispatch applies to special METHODS on objects, not to a
+    # module-level function that merely has a dunder-shaped name, so an uncalled
+    # function named __unused__ must stay a dead-code candidate.
     nodes = dict(
         [
             (
@@ -471,10 +471,10 @@ def test_dunder_root_is_limited_to_methods() -> None:
 
 
 def test_dunder_method_is_a_root() -> None:
-    # (H) __aenter__/__aexit__ are invoked by the `async with` protocol, never by an
-    # (H) explicit call, so cgr cannot see an inbound edge. They are runtime protocol
-    # (H) hooks and must be treated as reachable roots, while a plain private method
-    # (H) with no caller stays dead.
+    # __aenter__/__aexit__ are invoked by the `async with` protocol, never by an
+    # explicit call, so cgr cannot see an inbound edge. They are runtime protocol
+    # hooks and must be treated as reachable roots, while a plain private method
+    # with no caller stays dead.
     nodes = dict(
         [
             (
@@ -514,9 +514,9 @@ def _make_async_cm_repo(root: Path) -> None:
 
 
 def test_cgr_dead_code_does_not_flag_context_manager_dunders(tmp_path: Path) -> None:
-    # (H) __aenter__/__aexit__ on the Inner class returned by Counter.__call__ are
-    # (H) driven by `async with` and can never show an inbound call edge; they must
-    # (H) not be reported dead (full parse -> graph -> reachability path).
+    # __aenter__/__aexit__ on the Inner class returned by Counter.__call__ are
+    # driven by `async with` and can never show an inbound call edge; they must
+    # not be reported dead (full parse -> graph -> reachability path).
     src = tmp_path / "proj"
     _make_async_cm_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
@@ -525,9 +525,9 @@ def test_cgr_dead_code_does_not_flag_context_manager_dunders(tmp_path: Path) -> 
 
 
 def test_dunder_root_is_scoped_to_python() -> None:
-    # (H) Dunder methods are a Python runtime protocol. A function named __unused__ in
-    # (H) another language (a .ts file) is not implicitly invoked, so it must stay a
-    # (H) dead-code candidate; only Python (.py) dunders are rooted.
+    # Dunder methods are a Python runtime protocol. A function named __unused__ in
+    # another language (a .ts file) is not implicitly invoked, so it must stay a
+    # dead-code candidate; only Python (.py) dunders are rooted.
     nodes = dict(
         [
             (
@@ -551,9 +551,9 @@ def test_dunder_root_is_scoped_to_python() -> None:
 
 
 def test_abstract_method_is_a_root() -> None:
-    # (H) An @abstractmethod is a contract invoked polymorphically through concrete
-    # (H) overrides, never by a direct call the graph can trace, so the abstract stub
-    # (H) must not be reported dead (SqsBatchJob._raw_batch_operation shape).
+    # An @abstractmethod is a contract invoked polymorphically through concrete
+    # overrides, never by a direct call the graph can trace, so the abstract stub
+    # must not be reported dead (SqsBatchJob._raw_batch_operation shape).
     config = default_dead_code_config(include_tests=False, include_classes=False)
     nodes = dict(
         [
@@ -570,10 +570,10 @@ def test_abstract_method_is_a_root() -> None:
 
 
 def test_registration_decorated_nested_function_is_a_root() -> None:
-    # (H) A decorated function nested inside another function (prompt_toolkit
-    # (H) @bindings.add, MCP @server.list_tools) is handed to a framework when the
-    # (H) enclosing function runs, so it is live regardless of the decorator-name
-    # (H) whitelist; an undecorated uncalled sibling closure stays dead.
+    # A decorated function nested inside another function (prompt_toolkit
+    # @bindings.add, MCP @server.list_tools) is handed to a framework when the
+    # enclosing function runs, so it is live regardless of the decorator-name
+    # whitelist; an undecorated uncalled sibling closure stays dead.
     nodes = dict(
         [
             (
@@ -595,9 +595,9 @@ def test_registration_decorated_nested_function_is_a_root() -> None:
 
 
 def test_closure_of_dead_function_is_not_a_root() -> None:
-    # (H) The registration exemption is tied to a LIVE owner: when the enclosing
-    # (H) function is itself unreachable its decorated closure never registers, so
-    # (H) the closure and the helper only it calls are dead too, not hidden.
+    # The registration exemption is tied to a LIVE owner: when the enclosing
+    # function is itself unreachable its decorated closure never registers, so
+    # the closure and the helper only it calls are dead too, not hidden.
     nodes = dict(
         [
             (
@@ -630,8 +630,8 @@ def test_closure_of_dead_function_is_not_a_root() -> None:
 
 
 def test_closure_callee_of_live_function_stays_live() -> None:
-    # (H) The registered closure of a LIVE owner runs, so a helper reachable only
-    # (H) through the closure's calls is live as well.
+    # The registered closure of a LIVE owner runs, so a helper reachable only
+    # through the closure's calls is live as well.
     nodes = dict(
         [
             (
@@ -659,8 +659,8 @@ def test_closure_callee_of_live_function_stays_live() -> None:
 
 
 def test_typer_callback_decorator_is_a_root() -> None:
-    # (H) typer invokes @app.callback() functions by registration, so the default
-    # (H) decorator whitelist must seed them as roots (codebase_rag.cli shape).
+    # typer invokes @app.callback() functions by registration, so the default
+    # decorator whitelist must seed them as roots (codebase_rag.cli shape).
     config = default_dead_code_config(include_tests=False, include_classes=False)
     nodes = dict(
         [
@@ -683,9 +683,9 @@ def _class(uid: str, path: str = "m.py") -> tuple:
 
 
 def test_protocol_stub_method_is_a_root() -> None:
-    # (H) A method of a typing.Protocol subclass is an interface stub; callers are
-    # (H) traced to the implementations, never to the stub itself, so the stub must
-    # (H) not be reported dead while a plain class's uncalled private method is.
+    # A method of a typing.Protocol subclass is an interface stub; callers are
+    # traced to the implementations, never to the stub itself, so the stub must
+    # not be reported dead while a plain class's uncalled private method is.
     nodes = dict(
         [
             (
@@ -739,8 +739,8 @@ def _make_registration_repo(root: Path) -> None:
 def test_cgr_dead_code_keeps_registration_closures_and_protocol_stubs(
     tmp_path: Path,
 ) -> None:
-    # (H) Full parse -> graph -> reachability: the @bindings.add closure and the
-    # (H) Protocol stub must not be flagged (the 2026-07-03 false-positive shapes).
+    # Full parse -> graph -> reachability: the @bindings.add closure and the
+    # Protocol stub must not be flagged (the 2026-07-03 false-positive shapes).
     src = tmp_path / "proj"
     _make_registration_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
@@ -755,9 +755,9 @@ def test_score_dead_code_prf() -> None:
 
 
 def test_referenced_function_is_reachable() -> None:
-    # (H) A function reachable only through a REFERENCES edge (passed as a callback
-    # (H) into first-party plumbing that stores it) is live; a sibling with no
-    # (H) inbound edge stays dead.
+    # A function reachable only through a REFERENCES edge (passed as a callback
+    # into first-party plumbing that stores it) is live; a sibling with no
+    # inbound edge stays dead.
     nodes = dict(
         [
             (
@@ -804,8 +804,8 @@ def _make_callback_repo(root: Path) -> None:
 
 
 def test_cgr_dead_code_keeps_stored_callback_alive(tmp_path: Path) -> None:
-    # (H) Full pipeline: a nested callback passed by keyword into first-party
-    # (H) plumbing that stores it must not be reported dead (create_context shape).
+    # Full pipeline: a nested callback passed by keyword into first-party
+    # plumbing that stores it must not be reported dead (create_context shape).
     src = tmp_path / "proj"
     _make_callback_repo(src)
     dead = cgr_dead_code(src, "proj", default_dead_code_config(False, False))
@@ -813,10 +813,10 @@ def test_cgr_dead_code_keeps_stored_callback_alive(tmp_path: Path) -> None:
 
 
 def test_external_override_property_is_root() -> None:
-    # (H) A method flagged `overrides_external` (subclass of a stdlib class
-    # (H) overriding one of its methods, click's textwrap.TextWrapper subclass) is
-    # (H) invoked by the external base's machinery -- a reachability root. An
-    # (H) unflagged sibling with no callers is still dead.
+    # A method flagged `overrides_external` (subclass of a stdlib class
+    # overriding one of its methods, click's textwrap.TextWrapper subclass) is
+    # invoked by the external base's machinery -- a reachability root. An
+    # unflagged sibling with no callers is still dead.
     flagged = _method("proj.tw.TextWrapper._wrap_chunks", path="tw.py")
     flagged[1][cs.KEY_OVERRIDES_EXTERNAL] = True
     nodes = dict(
@@ -835,11 +835,11 @@ def test_external_override_property_is_root() -> None:
 
 
 def test_singular_test_dir_is_excluded() -> None:
-    # (H) The Node.js/mocha convention keeps tests under a singular `test/` dir
-    # (H) (express: 34 of 49 dead-code reports were test helpers). With tests
-    # (H) excluded, such symbols are unconditional noise. `contest/` and
-    # (H) `latest/` must NOT match (the pattern is segment-anchored by the
-    # (H) leading-slash normalization).
+    # The Node.js/mocha convention keeps tests under a singular `test/` dir
+    # (express: 34 of 49 dead-code reports were test helpers). With tests
+    # excluded, such symbols are unconditional noise. `contest/` and
+    # `latest/` must NOT match (the pattern is segment-anchored by the
+    # leading-slash normalization).
     nodes = dict(
         [
             (
@@ -856,8 +856,8 @@ def test_singular_test_dir_is_excluded() -> None:
 
 
 def test_missing_decorators_property_is_not_a_root() -> None:
-    # (H) A node whose decorators property is absent (NULL in the graph) must not
-    # (H) crash root selection and must stay a dead candidate.
+    # A node whose decorators property is absent (NULL in the graph) must not
+    # crash root selection and must stay a dead candidate.
     nodes = {
         (_FUNCTION, "proj.m.bare"): {
             cs.KEY_QUALIFIED_NAME: "proj.m.bare",
@@ -869,8 +869,8 @@ def test_missing_decorators_property_is_not_a_root() -> None:
 
 
 def test_module_edge_to_non_candidate_is_ignored() -> None:
-    # (H) A module-load edge whose target is outside the candidate set (a class
-    # (H) with classes excluded) must not root anything or leak into the report.
+    # A module-load edge whose target is outside the candidate set (a class
+    # with classes excluded) must not root anything or leak into the report.
     nodes = dict(
         [
             (
@@ -890,11 +890,11 @@ def test_module_edge_to_non_candidate_is_ignored() -> None:
 
 
 def test_factory_class_methods_are_dispatch_roots() -> None:
-    # (H) django-style class factory: create_manager() defines RelatedManager
-    # (H) inside itself and hands it out (return value / argument), so instances
-    # (H) surface behind dynamic receivers and no call edge ever lands on the
-    # (H) methods. Once the factory is LIVE its class's methods are dispatch
-    # (H) surface, and their callee closure revives with them.
+    # django-style class factory: create_manager() defines RelatedManager
+    # inside itself and hands it out (return value / argument), so instances
+    # surface behind dynamic receivers and no call edge ever lands on the
+    # methods. Once the factory is LIVE its class's methods are dispatch
+    # surface, and their callee closure revives with them.
     method = cs.NodeLabel.METHOD.value
     nodes = dict(
         [
@@ -944,9 +944,9 @@ def test_factory_class_methods_are_dispatch_roots() -> None:
 
 
 def test_dead_factory_class_methods_stay_dead() -> None:
-    # (H) The factory itself is never called: neither it nor its nested class's
-    # (H) methods may be revived (the dispatch-surface rule applies only to LIVE
-    # (H) factories).
+    # The factory itself is never called: neither it nor its nested class's
+    # methods may be revived (the dispatch-surface rule applies only to LIVE
+    # factories).
     method = cs.NodeLabel.METHOD.value
     nodes = dict(
         [
@@ -983,8 +983,8 @@ def test_dead_factory_class_methods_stay_dead() -> None:
 
 
 def test_module_level_class_methods_are_not_rooted_by_defines() -> None:
-    # (H) The dispatch-surface rule is scoped to classes nested in functions or
-    # (H) methods: a module-level class's uncalled method must stay dead.
+    # The dispatch-surface rule is scoped to classes nested in functions or
+    # methods: a module-level class's uncalled method must stay dead.
     method = cs.NodeLabel.METHOD.value
     nodes = dict(
         [
@@ -1012,10 +1012,10 @@ def test_module_level_class_methods_are_not_rooted_by_defines() -> None:
 
 
 def test_factory_revived_by_override_expansion_roots_its_class() -> None:
-    # (H) Interleaving: Sub.make only goes live as an OVERRIDE of the called
-    # (H) Base.make, and Sub.make is itself a class factory. The factory and
-    # (H) override expansions feed each other, so the nested class's methods
-    # (H) must still be revived (fixed point, not a fixed pass order).
+    # Interleaving: Sub.make only goes live as an OVERRIDE of the called
+    # Base.make, and Sub.make is itself a class factory. The factory and
+    # override expansions feed each other, so the nested class's methods
+    # must still be revived (fixed point, not a fixed pass order).
     method = cs.NodeLabel.METHOD.value
     nodes = dict(
         [
@@ -1051,11 +1051,11 @@ def test_factory_revived_by_override_expansion_roots_its_class() -> None:
 
 
 def test_enum_protocol_hooks_are_roots() -> None:
-    # (H) Python's Enum machinery invokes _generate_next_value_ (on auto())
-    # (H) and _missing_ (on failed lookup) by NAME, never through a call the
-    # (H) graph can see -- runtime hooks exactly like dunders (django's
-    # (H) TextChoices._generate_next_value_). An arbitrary sunder-named
-    # (H) method is NOT in the protocol and must stay a dead candidate.
+    # Python's Enum machinery invokes _generate_next_value_ (on auto())
+    # and _missing_ (on failed lookup) by NAME, never through a call the
+    # graph can see -- runtime hooks exactly like dunders (django's
+    # TextChoices._generate_next_value_). An arbitrary sunder-named
+    # method is NOT in the protocol and must stay a dead candidate.
     nodes = dict(
         [
             (
@@ -1065,9 +1065,9 @@ def test_enum_protocol_hooks_are_roots() -> None:
             _method("proj.m.TextChoices._generate_next_value_"),
             _method("proj.m.Color._missing_"),
             _method("proj.m.Color._custom_sunder_"),
-            # (H) _order_ / _ignore_ are Enum class ATTRIBUTES consumed at
-            # (H) class creation, never methods the machinery invokes; a
-            # (H) user-defined method with that name is ordinary dead code.
+            # _order_ / _ignore_ are Enum class ATTRIBUTES consumed at
+            # class creation, never methods the machinery invokes; a
+            # user-defined method with that name is ordinary dead code.
             _method("proj.m.Color._order_"),
         ]
     )
@@ -1076,13 +1076,13 @@ def test_enum_protocol_hooks_are_roots() -> None:
 
 
 def test_property_family_decorated_methods_are_roots() -> None:
-    # (H) A @property/@cached_property/@classproperty method (and @x.setter /
-    # (H) @x.deleter) is invoked by ATTRIBUTE syntax -- a bare read like
-    # (H) `self.app_config._is_default_auto_field_overridden` produces no call
-    # (H) node, so no CALLS edge can ever land on it (django's
-    # (H) WhereNode._output_field_or_none, Expression._constructor_signature).
-    # (H) Same invisible-invocation situation as dunders: roots, not dead code.
-    # (H) Its callees revive through the normal walk.
+    # A @property/@cached_property/@classproperty method (and @x.setter /
+    # @x.deleter) is invoked by ATTRIBUTE syntax -- a bare read like
+    # `self.app_config._is_default_auto_field_overridden` produces no call
+    # node, so no CALLS edge can ever land on it (django's
+    # WhereNode._output_field_or_none, Expression._constructor_signature).
+    # Same invisible-invocation situation as dunders: roots, not dead code.
+    # Its callees revive through the normal walk.
     config = default_dead_code_config(include_tests=False, include_classes=False)
     nodes = dict(
         [
@@ -1118,12 +1118,12 @@ def test_property_family_decorated_methods_are_roots() -> None:
 
 
 def test_duplicate_variant_leaf_still_matches_name_roots() -> None:
-    # (H) Go allows several init() in ONE file; the duplicate-qn machinery
-    # (H) renames the second to `init@51`, whose leaf failed the name-based
-    # (H) root checks and reported the runtime-invoked initializer dead
-    # (H) (kubernetes pkg.apis.abac register.init@51). The marker suffix is a
-    # (H) registration artifact, never part of the written name -- strip it
-    # (H) before every name-scoped root rule.
+    # Go allows several init() in ONE file; the duplicate-qn machinery
+    # renames the second to `init@51`, whose leaf failed the name-based
+    # root checks and reported the runtime-invoked initializer dead
+    # (kubernetes pkg.apis.abac register.init@51). The marker suffix is a
+    # registration artifact, never part of the written name -- strip it
+    # before every name-scoped root rule.
     nodes = dict(
         [
             (
@@ -1140,6 +1140,6 @@ def test_duplicate_variant_leaf_still_matches_name_roots() -> None:
     assert "proj.register.init" not in dead
     assert "proj.register.init@51" not in dead
     assert "proj.frame.Frame.fmt@12" not in dead
-    # (H) a non-root name keeps its variant dead -- stripping the marker must
-    # (H) not accidentally widen any rule
+    # a non-root name keeps its variant dead -- stripping the marker must
+    # not accidentally widen any rule
     assert "proj.register.helper@60" in dead

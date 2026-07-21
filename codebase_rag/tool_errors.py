@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-# (H) Generic error wrapper
+# Generic error wrapper
 ERROR_WRAPPER = "Error: {message}"
 
-# (H) File operation errors
+# File operation errors
 FILE_NOT_FOUND = "File not found."
 FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
 BINARY_FILE = "File '{path}' is a binary file. Ask the user to attach it inline if they want it analyzed."
@@ -12,7 +12,7 @@ UNICODE_DECODE = (
     "If it is a document (e.g., PDF), ask the user to attach it inline."
 )
 
-# (H) Directory errors
+# Directory errors
 DIRECTORY_INVALID = "Error: '{path}' is not a valid directory."
 DIRECTORY_EMPTY = "Error: The directory '{path}' is empty."
 DIRECTORY_LIST_FAILED = "Error: Could not list contents of '{path}'."
@@ -21,7 +21,7 @@ DIRECTORY_PATH_OUTSIDE_ROOT = (
     "Use a relative path from the project root, or the full absolute path within it."
 )
 
-# (H) Shell command errors
+# Shell command errors
 COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"
 COMMAND_EMPTY = "Empty command provided."
 COMMAND_DANGEROUS = "Rejected dangerous command: {cmd}"
@@ -31,20 +31,20 @@ COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
 COMMAND_SUBSHELL_NOT_ALLOWED = "Subshell execution not allowed: {pattern}"
 COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
 
-# (H) Code retrieval errors
+# Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
 CODE_MISSING_LOCATION = "Graph entry is missing location data."
 
-# (H) File writer errors
+# File writer errors
 FILE_WRITER_SECURITY = (
     "Security risk: Attempted to create file outside of project root: {path}"
 )
 FILE_WRITER_CREATE = "Error creating file {path}: {error}"
 
-# (H) Export errors
+# Export errors
 EXPORT_FAILED = "Failed to export graph: {error}"
 
-# (H) MCP tool errors
+# MCP tool errors
 MCP_TOOL_RETURNED_NONE = "Tool returned None"
 MCP_INVALID_RESPONSE = "Code snippet tool returned an invalid response"
 MCP_PATH_NOT_EXISTS = "Target repository path does not exist: {path}"
@@ -53,6 +53,6 @@ MCP_PROJECT_NOT_FOUND = (
     "Project '{project_name}' not found. Available projects: {projects}"
 )
 
-# (H) CLI validation errors
+# CLI validation errors
 INVALID_POSITIVE_INT = "{value!r} is not a valid positive integer"
 INVALID_NON_NEGATIVE_FLOAT = "Value must be non-negative, got {value}"

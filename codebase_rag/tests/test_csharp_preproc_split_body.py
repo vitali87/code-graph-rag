@@ -1,8 +1,8 @@
-# (H) A `#if` directive that splits an if/else chain mid-method makes tree-sitter
-# (H) parse-recover the trailing `else if (...)` as a local_function_statement
-# (H) whose `name` field is the reserved keyword `if`. That is a parse artifact,
-# (H) not a real function; cgr must not emit a Function/Method node for it (it was
-# (H) polluting the graph, e.g. 184 bogus "if" nodes in Newtonsoft.Json).
+# A `#if` directive that splits an if/else chain mid-method makes tree-sitter
+# parse-recover the trailing `else if (...)` as a local_function_statement
+# whose `name` field is the reserved keyword `if`. That is a parse artifact,
+# not a real function; cgr must not emit a Function/Method node for it (it was
+# polluting the graph, e.g. 184 bogus "if" nodes in Newtonsoft.Json).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -47,16 +47,16 @@ def test_if_split_body_emits_no_keyword_named_function(
         assert "if" not in names, f"{label} node named 'if' leaked from #if-split body"
 
 
-# (H) When a `#if` splits a statement deep inside a method, tree-sitter's error
-# (H) recovery can TRUNCATE the enclosing class_declaration node early; every
-# (H) member after the truncation point detaches into the namespace's
-# (H) declaration_list with no class ancestor. A C# `method_declaration` /
-# (H) `property_declaration` is grammatically only ever a type member (a real
-# (H) top-level function is a local_function_statement), so such a detached node
-# (H) is still a class method and must be emitted as a Method, never mislabelled a
-# (H) module-level Function (this was ~133 phantom Function FPs on Newtonsoft.Json,
-# (H) e.g. JsonTextReader.BlockCopyChars, a private static member). The body below
-# (H) is a reduced slice of the real JsonTextReader.ParseReadString derailment.
+# When a `#if` splits a statement deep inside a method, tree-sitter's error
+# recovery can TRUNCATE the enclosing class_declaration node early; every
+# member after the truncation point detaches into the namespace's
+# declaration_list with no class ancestor. A C# `method_declaration` /
+# `property_declaration` is grammatically only ever a type member (a real
+# top-level function is a local_function_statement), so such a detached node
+# is still a class method and must be emitted as a Method, never mislabelled a
+# module-level Function (this was ~133 phantom Function FPs on Newtonsoft.Json,
+# e.g. JsonTextReader.BlockCopyChars, a private static member). The body below
+# is a reduced slice of the real JsonTextReader.ParseReadString derailment.
 _ORPHAN_MEMBER_SRC = """\
 namespace N
 {
@@ -136,13 +136,13 @@ def test_if_truncated_class_body_orphan_members_are_methods(
     func_leaves = _leaf_names(mock_ingestor, cs.NodeLabel.FUNCTION.value)
     method_leaves = _leaf_names(mock_ingestor, cs.NodeLabel.METHOD.value)
 
-    # (H) The method and property that the truncation detached from the class node
-    # (H) must be Methods, not module Functions.
+    # The method and property that the truncation detached from the class node
+    # must be Methods, not module Functions.
     for name in ("BlockCopyChars", "Prop"):
         assert name not in func_leaves, f"{name} leaked as a module Function"
         assert name in method_leaves, f"{name} missing as a Method"
 
-    # (H) They must attach to the recovered enclosing class, not orphan or vanish.
+    # They must attach to the recovered enclosing class, not orphan or vanish.
     method_qns = get_node_names(mock_ingestor, cs.NodeLabel.METHOD.value)
     assert any(".Reader.BlockCopyChars" in qn for qn in method_qns), method_qns
     defines_method_targets = {
@@ -152,10 +152,10 @@ def test_if_truncated_class_body_orphan_members_are_methods(
         defines_method_targets
     )
 
-    # (H) A call inside the recovered method must be attributed to its Method node,
-    # (H) not a re-derived module-Function qn (which would source a dropped edge).
-    # (H) The recovery records function_locations so Pass 3 reuses the Method
-    # (H) identity; the graph audit already rejects any dangling CALLS endpoint.
+    # A call inside the recovered method must be attributed to its Method node,
+    # not a re-derived module-Function qn (which would source a dropped edge).
+    # The recovery records function_locations so Pass 3 reuses the Method
+    # identity; the graph audit already rejects any dangling CALLS endpoint.
     shift_calls = [
         c
         for c in get_relationships(mock_ingestor, "CALLS")
@@ -171,12 +171,12 @@ def test_if_truncated_class_body_orphan_members_are_methods(
 def test_directive_wrapped_default_interface_bodies_parse_clean(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) An interface member with an `#if`-wrapped default body
-    # (H) (`void M() #if X => Impl() #endif ;`, Serilog's ILogger) shatters the
-    # (H) whole interface into an ERROR node: every member registers as a
-    # (H) module-level Function and the directive CONDITION itself becomes a
-    # (H) phantom node. Blanking conditional-directive lines on a broken parse
-    # (H) recovers the real structure.
+    # An interface member with an `#if`-wrapped default body
+    # (`void M() #if X => Impl() #endif ;`, Serilog's ILogger) shatters the
+    # whole interface into an ERROR node: every member registers as a
+    # module-level Function and the directive CONDITION itself becomes a
+    # phantom node. Blanking conditional-directive lines on a broken parse
+    # recovers the real structure.
     project = temp_repo / "cs_default_iface"
     project.mkdir()
     members = []

@@ -26,15 +26,15 @@ def test_oracle_resolves_direct_first_party_calls(tmp_path: Path) -> None:
     _make_repo(src)
     edges = oracle_static_calls(src, "proj")
 
-    # (H) same-module direct call use() -> helper()
+    # same-module direct call use() -> helper()
     assert ("proj.mod_a.use", "proj.mod_a.helper") in edges
-    # (H) import-resolved direct call run() -> helper()
+    # import-resolved direct call run() -> helper()
     assert ("proj.mod_b.run", "proj.mod_a.helper") in edges
 
 
 def test_decorator_application_is_not_a_call_edge(tmp_path: Path) -> None:
-    # (H) `@guard('k')` above a function is a decorator application, not a call the
-    # (H) decorated function makes; cgr emits no such edge, so the oracle must not.
+    # `@guard('k')` above a function is a decorator application, not a call the
+    # decorated function makes; cgr emits no such edge, so the oracle must not.
     src = tmp_path / "proj"
     src.mkdir(parents=True, exist_ok=True)
     (src / "__init__.py").write_text("", encoding="utf-8")
@@ -51,9 +51,9 @@ def test_decorator_application_is_not_a_call_edge(tmp_path: Path) -> None:
 
 
 def test_oracle_attributes_method_nested_call_to_full_qn(tmp_path: Path) -> None:
-    # (H) A call inside a function nested in a method belongs to that nested
-    # (H) function's full qn (Class.method.nested). The oracle records it there;
-    # (H) the eval then checks cgr emits the same caller qn (see the recall test).
+    # A call inside a function nested in a method belongs to that nested
+    # function's full qn (Class.method.nested). The oracle records it there;
+    # the eval then checks cgr emits the same caller qn (see the recall test).
     src = tmp_path / "proj"
     src.mkdir(parents=True, exist_ok=True)
     (src / "__init__.py").write_text("", encoding="utf-8")
@@ -75,13 +75,13 @@ def test_cgr_recall_on_direct_calls(tmp_path: Path) -> None:
     _make_repo(src)
     oracle = oracle_static_calls(src, "proj")
     cgr = cgr_static_calls(src, "proj")
-    # (H) every statically-resolvable direct call must be present in cgr's graph.
+    # every statically-resolvable direct call must be present in cgr's graph.
     assert oracle <= cgr
 
 
 def test_score_static_calls_recall() -> None:
     oracle = {("a", "b"), ("c", "d")}
-    cgr = {("a", "b")}  # (H) cgr also has many method-call edges the oracle omits
+    cgr = {("a", "b")}  # cgr also has many method-call edges the oracle omits
     result = score_static_calls(cgr, oracle)
     row = next(r for r in result.rows if r["label"] == ec.STATIC_CALLS_LABEL)
     assert (row["tp"], row["fn"]) == (1, 1)

@@ -1,6 +1,6 @@
-# (H) TypeScript class `implements` was dropped: cgr captured `extends`
-# (H) (-> INHERITS) via class_heritage but never the `implements_clause`, so a
-# (H) class implementing interfaces produced no IMPLEMENTS edges.
+# TypeScript class `implements` was dropped: cgr captured `extends`
+# (-> INHERITS) via class_heritage but never the `implements_clause`, so a
+# class implementing interfaces produced no IMPLEMENTS edges.
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,8 +35,8 @@ def test_typescript_class_implements_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "ts_impl.lib"
 
-    # (H) extends still works.
+    # extends still works.
     assert (f"{base}.Circle", f"{base}.Base") in inherits, inherits
-    # (H) implements must now produce IMPLEMENTS to each interface.
+    # implements must now produce IMPLEMENTS to each interface.
     assert (f"{base}.Circle", f"{base}.Shape") in implements, implements
     assert (f"{base}.Circle", f"{base}.Drawable") in implements, implements

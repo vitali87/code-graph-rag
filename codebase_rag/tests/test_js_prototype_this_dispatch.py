@@ -1,8 +1,8 @@
-# (H) `this.method()` inside a prototype-assigned function dispatches to a
-# (H) sibling method of the same prototype target (Date.prototype.strftime
-# (H) calling this.getTwoDigitMonth(), django admin's core.js). Binding `this`
-# (H) only to module-level functions (the CommonJS pattern) leaves every such
-# (H) sibling call unresolved and the methods falsely dead.
+# `this.method()` inside a prototype-assigned function dispatches to a
+# sibling method of the same prototype target (Date.prototype.strftime
+# calling this.getTwoDigitMonth(), django admin's core.js). Binding `this`
+# only to module-level functions (the CommonJS pattern) leaves every such
+# sibling call unresolved and the methods falsely dead.
 from __future__ import annotations
 
 from pathlib import Path
@@ -47,8 +47,8 @@ def test_prototype_this_call_resolves_to_sibling_method(
 def test_module_this_call_still_resolves_to_free_function(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The CommonJS module pattern (`this.render()` at module scope binding a
-    # (H) free function) must keep resolving as before.
+    # The CommonJS module pattern (`this.render()` at module scope binding a
+    # free function) must keep resolving as before.
     project = temp_repo / "module_this"
     project.mkdir()
     (project / "app.js").write_text(

@@ -83,10 +83,10 @@ def _rust_get_name(node: Node) -> str | None:
         if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type == cs.TS_IMPL_ITEM:
-        # (H) An `impl Foo` block is an FQN scope, but it has no `name` field; its
-        # (H) target type is the segment that anchors its methods' qns
-        # (H) (owner_module.Foo.method). Without this the scope walk drops `Foo`, so
-        # (H) a closure/nested fn in an impl method binds to a phantom parent qn.
+        # An `impl Foo` block is an FQN scope, but it has no `name` field; its
+        # target type is the segment that anchors its methods' qns
+        # (owner_module.Foo.method). Without this the scope walk drops `Foo`, so
+        # a closure/nested fn in an impl method binds to a phantom parent qn.
         from .parsers.rs import utils as rs_utils
 
         return rs_utils.extract_impl_target(node)
@@ -138,9 +138,9 @@ def _c_get_name(node: Node) -> str | None:
 
 
 def _cpp_get_name(node: Node) -> str | None:
-    # (H) C++17 `namespace a::b {` is ONE node named `a::b`; render it as
-    # (H) dotted segments so both nesting spellings, the namespace walk in
-    # (H) cpp/utils, and the libclang frontend agree on qns.
+    # C++17 `namespace a::b {` is ONE node named `a::b`; render it as
+    # dotted segments so both nesting spellings, the namespace walk in
+    # cpp/utils, and the libclang frontend agree on qns.
     if node.type == cs.CppNodeType.NAMESPACE_DEFINITION:
         name = _generic_get_name(node)
         if name:
@@ -161,11 +161,11 @@ def _cpp_get_name(node: Node) -> str | None:
 
 
 def _csharp_get_name(node: Node) -> str | None:
-    # (H) A file-scoped `namespace N;` is a SIBLING of the declarations it
-    # (H) governs, not their ancestor, so it never appears in a type's ancestor
-    # (H) walk. compilation_unit IS every top-level type's ancestor, so fold the
-    # (H) file-scoped namespace in here. Block `namespace N { }` is an ordinary
-    # (H) ancestor and needs no shim (compilation_unit then has no such child).
+    # A file-scoped `namespace N;` is a SIBLING of the declarations it
+    # governs, not their ancestor, so it never appears in a type's ancestor
+    # walk. compilation_unit IS every top-level type's ancestor, so fold the
+    # file-scoped namespace in here. Block `namespace N { }` is an ordinary
+    # ancestor and needs no shim (compilation_unit then has no such child).
     if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
         for child in node.children:
             if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
@@ -173,33 +173,33 @@ def _csharp_get_name(node: Node) -> str | None:
                 if name_node and name_node.text:
                     return name_node.text.decode(cs.ENCODING_UTF8)
         return None
-    # (H) Operators expose no `name` field and a destructor's `name` collides
-    # (H) with the constructor; delegate to the shared synthesizer so the FQN
-    # (H) scope walk and the registered node qn agree. Local import avoids a
-    # (H) module-load cycle (csharp.utils -> parsers.utils).
+    # Operators expose no `name` field and a destructor's `name` collides
+    # with the constructor; delegate to the shared synthesizer so the FQN
+    # scope walk and the registered node qn agree. Local import avoids a
+    # module-load cycle (csharp.utils -> parsers.utils).
     if node.type in cs.CSHARP_SYNTHESIZED_NAME_TYPES:
         from .parsers.csharp import utils as csharp_utils
 
         return csharp_utils.synthesize_method_name(node)
     name = _generic_get_name(node)
-    # (H) A reserved keyword as the name means tree-sitter parse-recovered a broken
-    # (H) construct into a declaration node (e.g. a `#if` splitting an if/else chain
-    # (H) makes the trailing `else if` parse as a local_function named `if`). Such a
-    # (H) node is never a real definition, so drop it instead of polluting the graph.
+    # A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # construct into a declaration node (e.g. a `#if` splitting an if/else chain
+    # makes the trailing `else if` parse as a local_function named `if`). Such a
+    # node is never a real definition, so drop it instead of polluting the graph.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
     return name
 
 
 def _dart_get_name(node: Node) -> str | None:
-    # (H) Most Dart declarations expose a `name` field (functions, getters,
-    # (H) setters, classes, enums, extensions). Constructors/factories and mixins
-    # (H) do not: their LAST bare `identifier` child is the declared name
-    # (H) (`C.named` -> `named`, `factory C.create` -> `create`, `mixin Swimmer`
-    # (H) -> `Swimmer`, a default constructor `C(...)` -> `C`). The constructor
-    # (H) check comes FIRST: the grammar's `name` field on constructor_signature
-    # (H) is the CLASS identifier, which would collapse every named constructor
-    # (H) into a duplicate of the default one.
+    # Most Dart declarations expose a `name` field (functions, getters,
+    # setters, classes, enums, extensions). Constructors/factories and mixins
+    # do not: their LAST bare `identifier` child is the declared name
+    # (`C.named` -> `named`, `factory C.create` -> `create`, `mixin Swimmer`
+    # -> `Swimmer`, a default constructor `C(...)` -> `C`). The constructor
+    # check comes FIRST: the grammar's `name` field on constructor_signature
+    # is the CLASS identifier, which would collapse every named constructor
+    # into a duplicate of the default one.
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
         if ids:
@@ -323,7 +323,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
 }
 
 
-# (H) Node-type sets shared by the typescript and tsx grammar variants.
+# Node-type sets shared by the typescript and tsx grammar variants.
 _TS_FUNCTION_NODE_TYPES = cs.JS_TS_FUNCTION_NODES + (cs.TS_FUNCTION_SIGNATURE,)
 _TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
     cs.TS_ABSTRACT_CLASS_DECLARATION,
@@ -365,10 +365,10 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         import_node_types=cs.JS_TS_IMPORT_NODES,
         import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
-    # (H) .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
-    # (H) JSX into an ERROR forest (dropping every call inside a component), and
-    # (H) the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
-    # (H) legal .ts -- so each extension keeps its own grammar with a shared spec.
+    # .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
+    # JSX into an ERROR forest (dropping every call inside a component), and
+    # the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
+    # legal .ts -- so each extension keeps its own grammar with a shared spec.
     cs.SupportedLanguage.TSX: LanguageSpec(
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,
@@ -609,8 +609,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_CSHARP_CALL_TYPES,
         import_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
-        # (H) Bare captures (like C/C++): names come from _csharp_get_name, since
-        # (H) operators/ctors/dtors have no uniform `name` field.
+        # Bare captures (like C/C++): names come from _csharp_get_name, since
+        # operators/ctors/dtors have no uniform `name` field.
         function_query="""
         (method_declaration) @function
         (constructor_declaration) @function
@@ -639,12 +639,12 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         function_node_types=cs.SPEC_DART_FUNCTION_TYPES,
         class_node_types=cs.SPEC_DART_CLASS_TYPES,
         module_node_types=cs.SPEC_DART_MODULE_TYPES,
-        # (H) The grammar has no call-expression node: a call site is a
-        # (H) `selector` (or `cascade_section`) holding an `argument_part`,
-        # (H) invoking whatever the preceding sibling chain names; the call
-        # (H) name is reassembled by dart_call_name. Names come from
-        # (H) _dart_get_name (bare captures); the signature/body split is
-        # (H) repaired by dart_definition_end_point at ingestion.
+        # The grammar has no call-expression node: a call site is a
+        # `selector` (or `cascade_section`) holding an `argument_part`,
+        # invoking whatever the preceding sibling chain names; the call
+        # name is reassembled by dart_call_name. Names come from
+        # _dart_get_name (bare captures); the signature/body split is
+        # repaired by dart_definition_end_point at ingestion.
         call_node_types=cs.SPEC_DART_CALL_TYPES,
         call_query=cs.DART_CALL_QUERY,
         import_node_types=cs.SPEC_DART_IMPORT_TYPES,

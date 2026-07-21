@@ -1,10 +1,10 @@
-# (H) The C++ function query captures a templated free function twice: the
-# (H) template_declaration wrapper AND its inner function_definition. Both used
-# (H) to register, so every template function minted a `qn@line` duplicate node
-# (H) and Pass-3 caller attribution could bind the body's calls to the
-# (H) duplicate instead of the natural qn (issue #652). The wrapper is the
-# (H) canonical node (mirroring the class rule); the inner definition is
-# (H) redundant and must not register.
+# The C++ function query captures a templated free function twice: the
+# template_declaration wrapper AND its inner function_definition. Both used
+# to register, so every template function minted a `qn@line` duplicate node
+# and Pass-3 caller attribution could bind the body's calls to the
+# duplicate instead of the natural qn (issue #652). The wrapper is the
+# canonical node (mirroring the class rule); the inner definition is
+# redundant and must not register.
 from __future__ import annotations
 
 from pathlib import Path

@@ -8,7 +8,7 @@ from codebase_rag.tests.conftest import run_updater
 
 
 def _calls(mock_ingestor: MagicMock) -> list[tuple[str, str, str]]:
-    # (H) CALLS edges as (caller_label, caller_qn, callee_qn).
+    # CALLS edges as (caller_label, caller_qn, callee_qn).
     out: list[tuple[str, str, str]] = []
     for c in mock_ingestor.ensure_relationship_batch.call_args_list:
         if c.args[1] == cs.RelationshipType.CALLS:
@@ -20,7 +20,7 @@ class TestDecoratorCallEdges:
     def test_bare_decorator_emits_module_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) `@task` applies task(handler) at module load -> a module-level call.
+        # `@task` applies task(handler) at module load -> a module-level call.
         (temp_repo / "app.py").write_text(
             "def task(fn):\n    return fn\n\n\n@task\ndef handler():\n    return 1\n",
             encoding="utf-8",
@@ -39,7 +39,7 @@ class TestDecoratorCallEdges:
     def test_call_decorator_emits_module_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) `@register(...)` also runs at module load.
+        # `@register(...)` also runs at module load.
         (temp_repo / "app.py").write_text(
             "def register(name):\n"
             "    def wrap(fn):\n"
@@ -66,7 +66,7 @@ class TestDecoratorCallEdges:
     def test_class_decorator_emits_module_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) a bare decorator on a class also runs at module load.
+        # a bare decorator on a class also runs at module load.
         (temp_repo / "app.py").write_text(
             "def deco(cls):\n    return cls\n\n\n@deco\nclass MyClass:\n    pass\n",
             encoding="utf-8",
@@ -85,7 +85,7 @@ class TestDecoratorCallEdges:
     def test_alias_decorator_resolves_to_first_party(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) `@alias` where `alias = task` still calls task at module load.
+        # `@alias` where `alias = task` still calls task at module load.
         (temp_repo / "app.py").write_text(
             "def task(fn):\n"
             "    return fn\n"
@@ -113,8 +113,8 @@ class TestDecoratorCallEdges:
     def test_decorator_on_nested_function_not_module_attributed(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) a decorator on a function nested in another function runs when the
-        # (H) outer function is called, not at module load -> no module edge.
+        # a decorator on a function nested in another function runs when the
+        # outer function is called, not at module load -> no module edge.
         (temp_repo / "app.py").write_text(
             "def deco(fn):\n"
             "    return fn\n"

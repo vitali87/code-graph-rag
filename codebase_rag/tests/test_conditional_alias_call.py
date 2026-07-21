@@ -1,7 +1,7 @@
-# (H) L3 finding from the evals/ harness: CallProcessor._ingest_function_calls binds a
-# (H) local to a conditionally-selected bound method (resolve_builtin =
-# (H) resolver.resolve_builtin_call if is_js_ts else None) then calls it. The alias must
-# (H) be resolved through the non-None branch of the conditional to its real method.
+# L3 finding from the evals/ harness: CallProcessor._ingest_function_calls binds a
+# local to a conditionally-selected bound method (resolve_builtin =
+# resolver.resolve_builtin_call if is_js_ts else None) then calls it. The alias must
+# be resolved through the non-None branch of the conditional to its real method.
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,11 +1,11 @@
-# (H) Inheritance eval. Grades cgr's resolved INHERITS (subclass_qn -> base_qn)
-# (H) and OVERRIDES (subclass_qn, base_qn, method) against an ast oracle. The L1
-# (H) structure eval only checks INHERITS by the base's simple name; this checks
-# (H) that cgr resolves the base to the correct first-party class and that method
-# (H) overrides are attributed to the right base. The oracle resolves a base only
-# (H) via same-module definitions and `from <first-party> import <Base>`, and
-# (H) skips attribute/ambiguous/external bases (counted, never silently dropped),
-# (H) so it stays independent of cgr's resolver and never invents an edge.
+# Inheritance eval. Grades cgr's resolved INHERITS (subclass_qn -> base_qn)
+# and OVERRIDES (subclass_qn, base_qn, method) against an ast oracle. The L1
+# structure eval only checks INHERITS by the base's simple name; this checks
+# that cgr resolves the base to the correct first-party class and that method
+# overrides are attributed to the right base. The oracle resolves a base only
+# via same-module definitions and `from <first-party> import <Base>`, and
+# skips attribute/ambiguous/external bases (counted, never silently dropped),
+# so it stays independent of cgr's resolver and never invents an edge.
 import ast
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -45,12 +45,12 @@ class _ClassInfo(NamedTuple):
 class OracleResult(NamedTuple):
     inherits: set[InheritEdge]
     overrides: set[OverrideEdge]
-    # (H) Universe of top-level classes the oracle understands; cgr edges whose
-    # (H) subclass is outside it (e.g. a class nested in a function) are not graded.
+    # Universe of top-level classes the oracle understands; cgr edges whose
+    # subclass is outside it (e.g. a class nested in a function) are not graded.
     top_classes: frozenset[str]
-    # (H) Subclasses eligible for OVERRIDES grading: top-level and single-base, so
-    # (H) override attribution is unambiguous. Multi-base (mixin/MRO) classes are
-    # (H) excluded on both sides rather than guessed at.
+    # Subclasses eligible for OVERRIDES grading: top-level and single-base, so
+    # override attribution is unambiguous. Multi-base (mixin/MRO) classes are
+    # excluded on both sides rather than guessed at.
     override_scope: frozenset[str]
 
 
@@ -68,8 +68,8 @@ def _method_names(node: ast.ClassDef) -> frozenset[str]:
 
 
 def _from_import_map(tree: ast.Module, rel: str, project: str) -> dict[str, str]:
-    # (H) name -> source module dotted, for `from <module> import <name>` whose
-    # (H) base resolves under the project package (first-party).
+    # name -> source module dotted, for `from <module> import <name>` whose
+    # base resolves under the project package (first-party).
     pkg_parts = [project, *Path(rel).parent.parts]
     mapping: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -89,8 +89,8 @@ def _collect(
     target: Path, project: str
 ) -> tuple[dict[str, _ClassInfo], dict[str, str]]:
     classes: dict[str, _ClassInfo] = {}
-    # (H) import_maps is keyed "<module>\x00<name>" and filled after all modules
-    # (H) are collected so base resolution can look a name up in its own scope.
+    # import_maps is keyed "<module>\x00<name>" and filled after all modules
+    # are collected so base resolution can look a name up in its own scope.
     import_maps: dict[str, str] = {}
     per_module_imports: dict[str, dict[str, str]] = {}
     for path in _iter_py_files(target):
@@ -111,8 +111,8 @@ def _collect(
                     methods=_method_names(node),
                     bases=tuple(node.bases),
                 )
-    # (H) Flatten per-module import maps into a single "<module>\x00<name>" key so
-    # (H) base resolution can look up an imported name in its own module's scope.
+    # Flatten per-module import maps into a single "<module>\x00<name>" key so
+    # base resolution can look up an imported name in its own module's scope.
     for module, mapping in per_module_imports.items():
         for name, source in mapping.items():
             import_maps[f"{module}{ec.SEP_NUL}{name}"] = source
@@ -126,7 +126,7 @@ def _resolve_base(
     import_maps: dict[str, str],
 ) -> str | None:
     if not isinstance(base, ast.Name):
-        # (H) Attribute (pkg.Base) and other base forms are not resolved here.
+        # Attribute (pkg.Base) and other base forms are not resolved here.
         return None
     name = base.id
     same_module = f"{info.module}{cs.SEPARATOR_DOT}{name}"
@@ -155,9 +155,9 @@ def oracle_inheritance(target: Path, project: str) -> OracleResult:
                 continue
             resolved_bases.append(base_qn)
             inherits.add((info.qn, base_qn))
-        # (H) Grade overrides only for unambiguous single first-party-base classes;
-        # (H) with multiple bases the MRO decides which base a method overrides, a
-        # (H) call this ast oracle does not model.
+        # Grade overrides only for unambiguous single first-party-base classes;
+        # with multiple bases the MRO decides which base a method overrides, a
+        # call this ast oracle does not model.
         if len(resolved_bases) == 1:
             override_scope.add(info.qn)
             base_qn = resolved_bases[0]
@@ -204,10 +204,10 @@ def _override_repr(edge: OverrideEdge) -> str:
 
 
 def score_inheritance(cgr: CgrResult, oracle: OracleResult) -> ScoreResult:
-    # (H) Restrict cgr to the oracle's gradeable universe: subclasses the oracle
-    # (H) understands (top-level) for INHERITS, and single-base subclasses for
-    # (H) OVERRIDES. This drops nested-class and multi-base-MRO edges the oracle
-    # (H) cannot adjudicate, rather than scoring cgr against an incomplete oracle.
+    # Restrict cgr to the oracle's gradeable universe: subclasses the oracle
+    # understands (top-level) for INHERITS, and single-base subclasses for
+    # OVERRIDES. This drops nested-class and multi-base-MRO edges the oracle
+    # cannot adjudicate, rather than scoring cgr against an incomplete oracle.
     cgr_inh = {e for e in cgr.inherits if e[0] in oracle.top_classes}
     cgr_ovr = {e for e in cgr.overrides if e[0] in oracle.override_scope}
     oracle_inh = oracle.inherits

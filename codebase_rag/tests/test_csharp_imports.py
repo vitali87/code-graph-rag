@@ -1,4 +1,4 @@
-# (H) C# Phase 1: using directives become IMPORTS.
+# C# Phase 1: using directives become IMPORTS.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -34,5 +34,5 @@ public class Program { public void Main() {} }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = get_relationships(mock_ingestor, "IMPORTS")
-    # (H) Every using directive above should produce an IMPORTS edge.
+    # Every using directive above should produce an IMPORTS edge.
     assert len(imports) >= 4, f"expected >=4 IMPORTS, got {len(imports)}"

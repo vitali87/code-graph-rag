@@ -19,8 +19,8 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def dead_rows() -> list[ResultRow]:
-    # (H) Node rows as the dead-code node fetch returns them; neither symbol has
-    # (H) an incoming edge, so both are reported dead.
+    # Node rows as the dead-code node fetch returns them; neither symbol has
+    # an incoming edge, so both are reported dead.
     return [
         {
             "label": "Function",
@@ -89,8 +89,8 @@ class TestDeadCodeCommand:
         }
 
     def test_exclude_glob_drops_matching_paths(self, runner: CliRunner) -> None:
-        # (H) --exclude drops candidates whose file path matches the glob (generated
-        # (H) code) while keeping real orphans elsewhere.
+        # --exclude drops candidates whose file path matches the glob (generated
+        # code) while keeping real orphans elsewhere.
         rows: list[ResultRow] = [
             {
                 "label": "Function",
@@ -149,8 +149,8 @@ class TestDeadCodeCommand:
         assert params["project_prefix"] == "myproj."
 
     def test_scoped_to_selected_project(self, runner: CliRunner) -> None:
-        # (H) Only symbols of the selected project are reported even if the
-        # (H) fetch surfaces rows from another prefix.
+        # Only symbols of the selected project are reported even if the
+        # fetch surfaces rows from another prefix.
         rows: list[ResultRow] = [
             {
                 "label": "Function",
@@ -189,8 +189,8 @@ class TestDeadCodeCommand:
     def test_entry_point_roots_matching_symbol(
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
-        # (H) -e marks matching qualified-name suffixes as reachable roots, so
-        # (H) only the non-matching orphan is reported.
+        # -e marks matching qualified-name suffixes as reachable roots, so
+        # only the non-matching orphan is reported.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
             result = runner.invoke(
@@ -202,8 +202,8 @@ class TestDeadCodeCommand:
         assert names == {"myproj.mod.Thing.orphan_two"}
 
     def test_decorator_root_extends_defaults(self, runner: CliRunner) -> None:
-        # (H) --decorator-root adds to the built-in root set (task, route, ...),
-        # (H) so both decorated symbols are live and only the plain orphan reports.
+        # --decorator-root adds to the built-in root set (task, route, ...),
+        # so both decorated symbols are live and only the plain orphan reports.
         rows: list[ResultRow] = [
             {
                 "label": "Function",
@@ -278,8 +278,8 @@ class TestDeadCodeCommand:
 
     @staticmethod
     def _test_flow_rows() -> tuple[list[ResultRow], list[ResultRow]]:
-        # (H) A test function calls a production helper; nothing else reaches
-        # (H) the helper.
+        # A test function calls a production helper; nothing else reaches
+        # the helper.
         nodes: list[ResultRow] = [
             {
                 "label": "Function",
@@ -310,8 +310,8 @@ class TestDeadCodeCommand:
         return nodes, rels
 
     def test_include_tests_default_roots_test_code(self, runner: CliRunner) -> None:
-        # (H) With tests included (default), test functions are roots: the test
-        # (H) and the helper it calls are both live, so nothing is reported.
+        # With tests included (default), test functions are roots: the test
+        # and the helper it calls are both live, so nothing is reported.
         nodes, rels = self._test_flow_rows()
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=nodes, rels=rels
@@ -325,9 +325,9 @@ class TestDeadCodeCommand:
     def test_no_include_tests_reports_test_only_production_code(
         self, runner: CliRunner
     ) -> None:
-        # (H) With tests excluded, production code reached only from tests is
-        # (H) reported; the test function itself is filtered from the report
-        # (H) (its only callers are excluded as roots, so it is pure noise).
+        # With tests excluded, production code reached only from tests is
+        # reported; the test function itself is filtered from the report
+        # (its only callers are excluded as roots, so it is pure noise).
         nodes, rels = self._test_flow_rows()
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=nodes, rels=rels

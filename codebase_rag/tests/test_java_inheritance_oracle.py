@@ -1,6 +1,6 @@
-# (H) Covers Java inheritance-edge validation: cgr's INHERITS (class/interface
-# (H) extends) and IMPLEMENTS (class/enum implements) edges are graded against the
-# (H) JDK Compiler Tree API oracle, by (source node, base SIMPLE NAME).
+# Covers Java inheritance-edge validation: cgr's INHERITS (class/interface
+# extends) and IMPLEMENTS (class/enum implements) edges are graded against the
+# JDK Compiler Tree API oracle, by (source node, base SIMPLE NAME).
 from __future__ import annotations
 
 from pathlib import Path

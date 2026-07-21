@@ -52,8 +52,8 @@ def extract_oracle_graph(target: Path, project_name: str) -> GraphData:
 
 
 def _comment_and_code_lines(text: str) -> tuple[dict[int, int], set[int]]:
-    # (H) line -> column for comment-only lines, plus every line carrying code;
-    # (H) drives the trailing-comment span extension below.
+    # line -> column for comment-only lines, plus every line carrying code;
+    # drives the trailing-comment span extension below.
     comment_cols: dict[int, int] = {}
     code_lines: set[int] = set()
     skip = (
@@ -72,7 +72,7 @@ def _comment_and_code_lines(text: str) -> tuple[dict[int, int], set[int]]:
                 code_lines.update(range(tok.start[0], tok.end[0] + 1))
     except tokenize.TokenError:
         return {}, set()
-    # (H) A comment sharing a line with code is not a comment-only line.
+    # A comment sharing a line with code is not a comment-only line.
     for line in code_lines:
         comment_cols.pop(line, None)
     return comment_cols, code_lines
@@ -81,10 +81,10 @@ def _comment_and_code_lines(text: str) -> tuple[dict[int, int], set[int]]:
 def _extend_spans_over_trailing_comments(
     tree: ast.Module, text: str, rel: str, nodes: dict[NodeKey, DefNode]
 ) -> None:
-    # (H) ast ends a def/class at its last STATEMENT; tree-sitter's block also
-    # (H) spans trailing comment lines indented deeper than the def keyword
-    # (H) (they lexically belong to the suite). Extend to match; a comment at
-    # (H) the def's own indentation is a sibling and stops the scan.
+    # ast ends a def/class at its last STATEMENT; tree-sitter's block also
+    # spans trailing comment lines indented deeper than the def keyword
+    # (they lexically belong to the suite). Extend to match; a comment at
+    # the def's own indentation is a sibling and stops the scan.
     comment_cols, code_lines = _comment_and_code_lines(text)
     if not comment_cols:
         return
@@ -138,12 +138,12 @@ def _lookup_module(
 ) -> str | None:
     if dotted in module_index:
         return module_index[dotted]
-    # (H) A src-root distribution (setup.py maps src/ to the package named
-    # (H) after the project) writes imports against the DISTRIBUTION name
-    # (H) (`thrift.Thrift`) while the index keys are path-based
-    # (H) (`thrift.src.Thrift`). An import claiming the project's own
-    # (H) top-level name must be internal; a UNIQUE whole-segment suffix
-    # (H) match recovers the file, ambiguity resolves nothing.
+    # A src-root distribution (setup.py maps src/ to the package named
+    # after the project) writes imports against the DISTRIBUTION name
+    # (`thrift.Thrift`) while the index keys are path-based
+    # (`thrift.src.Thrift`). An import claiming the project's own
+    # top-level name must be internal; a UNIQUE whole-segment suffix
+    # match recovers the file, ambiguity resolves nothing.
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     if not dotted.startswith(prefix):
         return None
@@ -165,10 +165,10 @@ def _import_targets(
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                # (H) `import a.b.c` imports a AND a.b AND a.b.c; when the full
-                # (H) dotted name maps to no module (a C extension like
-                # (H) thrift.protocol.fastbinary), the deepest importable
-                # (H) parent package is still imported.
+                # `import a.b.c` imports a AND a.b AND a.b.c; when the full
+                # dotted name maps to no module (a C extension like
+                # thrift.protocol.fastbinary), the deepest importable
+                # parent package is still imported.
                 parts = alias.name.split(cs.SEPARATOR_DOT)
                 while parts:
                     dotted = cs.SEPARATOR_DOT.join(parts)
@@ -228,8 +228,8 @@ def _child_stmts(node: ast.stmt) -> list[ast.stmt]:
             if isinstance(item, ast.stmt):
                 out.append(item)
             elif isinstance(item, ast.ExceptHandler | ast.match_case):
-                # (H) except handlers and match cases are not ast.stmt but hold
-                # (H) statement bodies that may define functions/classes.
+                # except handlers and match cases are not ast.stmt but hold
+                # statement bodies that may define functions/classes.
                 out.extend(s for s in item.body if isinstance(s, ast.stmt))
     return out
 

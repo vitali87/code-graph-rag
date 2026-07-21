@@ -595,14 +595,14 @@ func main() {
 
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         result = full_qualified_name
-        # (H) Fold ONLY a KNOWN stdlib type into its namespace path
-        # (H) (`System.Collections.Generic.List` -> `System.Collections.Generic`).
-        # (H) C# namespaces are PascalCase like types, so a case heuristic cannot
-        # (H) tell them apart and would misfold a namespace leaf
-        # (H) (`Microsoft.Extensions.Logging`, `System.Text.Json`); folding only a
-        # (H) recognized type never misclassifies a namespace. Gated to a stdlib
-        # (H) prefix so a first-party type sharing a BCL name is untouched. Exact
-        # (H) type-vs-namespace disambiguation needs a symbol table (Roslyn).
+        # Fold ONLY a KNOWN stdlib type into its namespace path
+        # (`System.Collections.Generic.List` -> `System.Collections.Generic`).
+        # C# namespaces are PascalCase like types, so a case heuristic cannot
+        # tell them apart and would misfold a namespace leaf
+        # (`Microsoft.Extensions.Logging`, `System.Text.Json`); folding only a
+        # recognized type never misclassifies a namespace. Gated to a stdlib
+        # prefix so a first-party type sharing a BCL name is untouched. Exact
+        # type-vs-namespace disambiguation needs a symbol table (Roslyn).
         if (
             len(parts) >= 2
             and parts[-1] in cs.CSHARP_STDLIB_CLASSES

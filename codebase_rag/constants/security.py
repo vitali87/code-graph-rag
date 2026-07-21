@@ -1,6 +1,6 @@
-# (H) Dangerous shell command and Cypher query guard tables.
+# Dangerous shell command and Cypher query guard tables.
 
-# (H) Cypher response cleaning
+# Cypher response cleaning
 CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
@@ -46,7 +46,7 @@ CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
     }
 )
 
-# (H) Shell command constants
+# Shell command constants
 SHELL_CMD_GREP = "grep"
 SHELL_CMD_GIT = "git"
 SHELL_CMD_RM = "rm"
@@ -56,7 +56,7 @@ SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 
-# (H) Dangerous commands - absolutely blocked
+# Dangerous commands - absolutely blocked
 SHELL_DANGEROUS_COMMANDS = frozenset(
     {
         "dd",
@@ -95,11 +95,11 @@ SHELL_DANGEROUS_COMMANDS = frozenset(
     }
 )
 
-# (H) Dangerous rm flags
+# Dangerous rm flags
 SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
 SHELL_RM_FORCE_FLAG = "-f"
 
-# (H) System directories to protect from rm -rf
+# System directories to protect from rm -rf
 SHELL_SYSTEM_DIRECTORIES = frozenset(
     {
         "bin",
@@ -124,17 +124,17 @@ SHELL_SYSTEM_DIRECTORIES = frozenset(
     }
 )
 
-# (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
+# Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
 SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
     (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
     (r"base64\s+-d.*\|", "base64 decode pipe execution"),
 )
 
-# (H) Build system directory regex pattern dynamically
+# Build system directory regex pattern dynamically
 _SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
 
-# (H) Dangerous patterns for individual segments (per-command patterns)
+# Dangerous patterns for individual segments (per-command patterns)
 SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
     (rf"rm\s+.*-[rf]+\s+/({_SYSTEM_DIRS_PATTERN})($|/|\s)", "rm with system directory"),

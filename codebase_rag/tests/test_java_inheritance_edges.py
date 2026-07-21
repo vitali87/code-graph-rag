@@ -1,7 +1,7 @@
-# (H) Java inheritance edges. cgr captured a class's `extends`/`implements` but
-# (H) missed two cases: an interface's `extends` superinterfaces (-> INHERITS)
-# (H) and an enum's `implements` interfaces (-> IMPLEMENTS). Both clauses carry a
-# (H) type_list of interface names that were never extracted.
+# Java inheritance edges. cgr captured a class's `extends`/`implements` but
+# missed two cases: an interface's `extends` superinterfaces (-> INHERITS)
+# and an enum's `implements` interfaces (-> IMPLEMENTS). Both clauses carry a
+# type_list of interface names that were never extracted.
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,7 +30,7 @@ class Holder extends Box<String> implements Comparable<Holder> {}
 
 
 def _pairs(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
-    # (H) (source_qn, target_qn) for the given relationship.
+    # (source_qn, target_qn) for the given relationship.
     return {
         (call[0][0][2], call[0][2][2]) for call in get_relationships(mock_ingestor, rel)
     }
@@ -48,15 +48,15 @@ def test_java_inheritance_and_implements_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "java_inh.Demo"
 
-    # (H) Interface extends -> INHERITS to each superinterface.
+    # Interface extends -> INHERITS to each superinterface.
     assert (f"{base}.Big", f"{base}.A") in inherits, inherits
     assert (f"{base}.Big", f"{base}.B") in inherits, inherits
-    # (H) Enum implements -> IMPLEMENTS.
+    # Enum implements -> IMPLEMENTS.
     assert (f"{base}.Color", f"{base}.A") in implements, implements
-    # (H) Class extends/implements (already worked) stay intact.
+    # Class extends/implements (already worked) stay intact.
     assert (f"{base}.Circle", f"{base}.Base") in inherits, inherits
     assert (f"{base}.Circle", f"{base}.A") in implements, implements
     assert (f"{base}.Circle", f"{base}.B") in implements, implements
-    # (H) Generic (parameterized) bases must be captured by their base type.
+    # Generic (parameterized) bases must be captured by their base type.
     assert (f"{base}.Holder", f"{base}.Box") in inherits, inherits
     assert (f"{base}.Holder", f"{base}.Comparable") in implements, implements

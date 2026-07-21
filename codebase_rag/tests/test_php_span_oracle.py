@@ -1,7 +1,7 @@
-# (H) Covers PHP node SPAN (end_line) validation: cgr's end_line for each node is
-# (H) graded against the php-parser oracle (which emits node.loc.end.line), joined
-# (H) on (kind, file, start). Exercises a class with a multi-line method, an
-# (H) interface, an enum, and a multi-line function so spans are not single line.
+# Covers PHP node SPAN (end_line) validation: cgr's end_line for each node is
+# graded against the php-parser oracle (which emits node.loc.end.line), joined
+# on (kind, file, start). Exercises a class with a multi-line method, an
+# interface, an enum, and a multi-line function so spans are not single line.
 from __future__ import annotations
 
 from pathlib import Path

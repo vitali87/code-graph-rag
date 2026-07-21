@@ -9,18 +9,18 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
-# (H) Fast unit coverage for the Go/Java path-sensitive flat walk (issue #714): runs the
-# (H) real GraphUpdater against a one-file project with a recording in-memory ingestor
-# (H) (no Memgraph), so it is collected under `pytest -m "not integration"` and its
-# (H) coverage counts toward SonarCloud. The integration suite
-# (H) (test_flat_path_sensitive_flow_e2e.py) asserts the same behavior end to end.
+# Fast unit coverage for the Go/Java path-sensitive flat walk (issue #714): runs the
+# real GraphUpdater against a one-file project with a recording in-memory ingestor
+# (no Memgraph), so it is collected under `pytest -m "not integration"` and its
+# coverage counts toward SonarCloud. The integration suite
+# (test_flat_path_sensitive_flow_e2e.py) asserts the same behavior end to end.
 
 _LANG_BY_FILE = {"main.go": "flow_go", "App.java": "flow_java"}
 
 
 class _RecordingIngestor:
-    # (H) Structural IngestorProtocol stand-in that records FLOWS_TO relationships; the
-    # (H) query-side methods are no-ops (a single fresh project needs no rehydration).
+    # Structural IngestorProtocol stand-in that records FLOWS_TO relationships; the
+    # query-side methods are no-ops (a single fresh project needs no rehydration).
     def __init__(self) -> None:
         self.rels: list[
             tuple[

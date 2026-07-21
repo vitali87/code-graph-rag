@@ -1,10 +1,10 @@
-# (H) A Python chained call on a free-function factory receiver
-# (H) (`get_resolver()._is_callback(name)`, django's urls/base.py) has the return of
-# (H) a factory function as its receiver. Without inferring that return type the
-# (H) final method binds to nothing and the returned class's methods report as dead
-# (H) (django URLResolver._is_callback). cgr must infer the factory's return type
-# (H) (annotation first, then return-statement analysis, transitively through
-# (H) factory-calls-factory hops) and resolve the chained method on it.
+# A Python chained call on a free-function factory receiver
+# (`get_resolver()._is_callback(name)`, django's urls/base.py) has the return of
+# a factory function as its receiver. Without inferring that return type the
+# final method binds to nothing and the returned class's methods report as dead
+# (django URLResolver._is_callback). cgr must infer the factory's return type
+# (annotation first, then return-statement analysis, transitively through
+# factory-calls-factory hops) and resolve the chained method on it.
 from pathlib import Path
 
 from evals.cgr_graph import _capture
@@ -31,9 +31,9 @@ _DECOY = "class Aaa:\n    def run(self):\n        pass\n"
 
 
 def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) `make_widget().run()` where make_widget returns Widget() must reach
-    # (H) Widget.run. Aaa.run is an alphabetical decoy: a bare trie fallback would
-    # (H) pick it, so a passing test proves real return typing.
+    # `make_widget().run()` where make_widget returns Widget() must reach
+    # Widget.run. Aaa.run is an alphabetical decoy: a bare trie fallback would
+    # pick it, so a passing test proves real return typing.
     _make(
         tmp_path,
         {
@@ -59,9 +59,9 @@ def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_imported_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) The factory and the returned class live in another module; the call site
-    # (H) imports only the factory. The return type must resolve in the FACTORY's
-    # (H) module scope, not the caller's.
+    # The factory and the returned class live in another module; the call site
+    # imports only the factory. The return type must resolve in the FACTORY's
+    # module scope, not the caller's.
     _make(
         tmp_path,
         {
@@ -90,9 +90,9 @@ def test_imported_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_two_hop_factory_chain_resolves(tmp_path: Path) -> None:
-    # (H) The exact django shape: get_resolver delegates to a cached inner factory
-    # (H) that constructs the class. The inference must follow the
-    # (H) factory-returns-factory-call hop transitively.
+    # The exact django shape: get_resolver delegates to a cached inner factory
+    # that constructs the class. The inference must follow the
+    # factory-returns-factory-call hop transitively.
     _make(
         tmp_path,
         {
@@ -134,8 +134,8 @@ def test_two_hop_factory_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_annotated_factory_return_resolves(tmp_path: Path) -> None:
-    # (H) The factory body is opaque (returns a cache entry) but its return
-    # (H) annotation names the class: the annotation is the return-type source.
+    # The factory body is opaque (returns a cache entry) but its return
+    # annotation names the class: the annotation is the return-type source.
     _make(
         tmp_path,
         {
@@ -163,8 +163,8 @@ def test_annotated_factory_return_resolves(tmp_path: Path) -> None:
 
 
 def test_optional_annotated_factory_return_resolves(tmp_path: Path) -> None:
-    # (H) `-> Widget | None` is the idiomatic optional-factory signature; the
-    # (H) non-None operand is the receiver type.
+    # `-> Widget | None` is the idiomatic optional-factory signature; the
+    # non-None operand is the receiver type.
     _make(
         tmp_path,
         {
@@ -191,9 +191,9 @@ def test_optional_annotated_factory_return_resolves(tmp_path: Path) -> None:
 
 
 def test_unknown_factory_return_does_not_bind_bare(tmp_path: Path) -> None:
-    # (H) The factory's return type is uninferrable (opaque body, no annotation):
-    # (H) the chained method must DROP, never rebind by bare name to the
-    # (H) alphabetical decoy.
+    # The factory's return type is uninferrable (opaque body, no annotation):
+    # the chained method must DROP, never rebind by bare name to the
+    # alphabetical decoy.
     _make(
         tmp_path,
         {
@@ -216,8 +216,8 @@ def test_unknown_factory_return_does_not_bind_bare(tmp_path: Path) -> None:
 
 
 def test_local_var_factory_assignment_types_receiver(tmp_path: Path) -> None:
-    # (H) `r = make_widget(); r.run()` must type r via the factory's return, not
-    # (H) via the bare-name trie (the decoy makes a trie hit ambiguous and wrong).
+    # `r = make_widget(); r.run()` must type r via the factory's return, not
+    # via the bare-name trie (the decoy makes a trie hit ambiguous and wrong).
     _make(
         tmp_path,
         {
@@ -244,10 +244,10 @@ def test_local_var_factory_assignment_types_receiver(tmp_path: Path) -> None:
 
 
 def test_reexported_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # (H) django imports get_resolver through package re-exports (`from
-    # (H) django.urls import get_resolver` -> __init__ -> .resolvers): the import
-    # (H) target is the package qn, not the registered function qn, so the
-    # (H) resolution must follow the re-export hops.
+    # django imports get_resolver through package re-exports (`from
+    # django.urls import get_resolver` -> __init__ -> .resolvers): the import
+    # target is the package qn, not the registered function qn, so the
+    # resolution must follow the re-export hops.
     _make(
         tmp_path,
         {
@@ -286,8 +286,8 @@ def test_reexported_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_factory_returning_local_variable_resolves(tmp_path: Path) -> None:
-    # (H) The factory builds the instance into a local and returns the identifier;
-    # (H) the identifier's type comes from the factory's own local-variable map.
+    # The factory builds the instance into a local and returns the identifier;
+    # the identifier's type comes from the factory's own local-variable map.
     _make(
         tmp_path,
         {
@@ -313,9 +313,9 @@ def test_factory_returning_local_variable_resolves(tmp_path: Path) -> None:
 
 
 def test_self_annotated_classmethod_factory_resolves(tmp_path: Path) -> None:
-    # (H) `-> Self` on a classmethod factory names the enclosing class as a full
-    # (H) qn, so a cross-module `Widget.create().run()` chain resolves without a
-    # (H) caller-scope class lookup.
+    # `-> Self` on a classmethod factory names the enclosing class as a full
+    # qn, so a cross-module `Widget.create().run()` chain resolves without a
+    # caller-scope class lookup.
     _make(
         tmp_path,
         {

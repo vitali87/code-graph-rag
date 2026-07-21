@@ -1,8 +1,8 @@
-# (H) Structural search/replace over the project using ast-grep patterns (#415).
-# (H) Purely additive: no graph, parser, or index dependency. Language is chosen
-# (H) per file from its extension; languages ast-grep has no grammar for (scala,
-# (H) dart) are skipped. Metavariables in a rewrite are interpolated here because
-# (H) ast-grep's node.replace() does not substitute them.
+# Structural search/replace over the project using ast-grep patterns (#415).
+# Purely additive: no graph, parser, or index dependency. Language is chosen
+# per file from its extension; languages ast-grep has no grammar for (scala,
+# dart) are skipped. Metavariables in a rewrite are interpolated here because
+# ast-grep's node.replace() does not substitute them.
 from __future__ import annotations
 
 import difflib
@@ -22,8 +22,8 @@ from ..utils.path_utils import should_skip_path
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
 
-# (H) ast-grep's own language ids (e.g. "csharp"), accepted alongside the repo's
-# (H) SupportedLanguage values (e.g. "c_sharp") so either spelling selects C#.
+# ast-grep's own language ids (e.g. "csharp"), accepted alongside the repo's
+# SupportedLanguage values (e.g. "c_sharp") so either spelling selects C#.
 _AST_GREP_LANG_IDS = frozenset(cs.AST_GREP_LANGUAGES.values())
 
 
@@ -32,8 +32,8 @@ class AstGrepService:
 
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
-        # (H) honour the same .gitignore/.cgrignore scope as graph ingestion, so
-        # (H) a rewrite never touches paths the repo excludes from indexing.
+        # honour the same .gitignore/.cgrignore scope as graph ingestion, so
+        # a rewrite never touches paths the repo excludes from indexing.
         patterns = load_ignore_patterns(self.project_root)
         self.exclude_paths = patterns.exclude
         self.unignore_paths = patterns.unignore
@@ -47,9 +47,9 @@ class AstGrepService:
             ast_grep_lang = cs.AST_GREP_LANGUAGES.get(supported)
             if ast_grep_lang is not None:
                 return ast_grep_lang
-        # (H) also accept ast-grep's own ids directly (e.g. "csharp" as well as
-        # (H) the repo's "c_sharp"), which is what callers and the tool
-        # (H) descriptions use.
+        # also accept ast-grep's own ids directly (e.g. "csharp" as well as
+        # the repo's "c_sharp"), which is what callers and the tool
+        # descriptions use.
         if language in _AST_GREP_LANG_IDS:
             return language
         raise ValueError(
@@ -62,8 +62,8 @@ class AstGrepService:
     def _classify_file(
         self, abs_path: Path, wanted: str | None
     ) -> tuple[str, str] | None:
-        # (H) (rel_posix, ast_grep_lang) if the file is one ast-grep can parse
-        # (H) and passes the ignore rules / language filter, else None.
+        # (rel_posix, ast_grep_lang) if the file is one ast-grep can parse
+        # and passes the ignore rules / language filter, else None.
         lang = get_language_for_extension(abs_path.suffix)
         if lang is None:
             return None
@@ -83,8 +83,8 @@ class AstGrepService:
         return abs_path.relative_to(self.project_root).as_posix(), ast_grep_lang
 
     def _iter_source_files(self, language: str | None) -> list[tuple[Path, str, str]]:
-        # (H) (abs_path, rel_posix, ast_grep_lang) for every file ast-grep can
-        # (H) parse, honouring the same ignore rules as graph ingestion.
+        # (abs_path, rel_posix, ast_grep_lang) for every file ast-grep can
+        # parse, honouring the same ignore rules as graph ingestion.
         wanted = self._resolve_language(language) if language else None
         out: list[tuple[Path, str, str]] = []
         for dirpath, dirnames, filenames in os.walk(self.project_root):
@@ -124,9 +124,9 @@ class AstGrepService:
 
     @staticmethod
     def _find_all(root: SgNode, pattern: str) -> list[SgNode]:
-        # (H) ast-grep raises RuntimeError for a matcher-less pattern (empty,
-        # (H) "$$$"); surface it as ValueError so the tool layer reports it
-        # (H) instead of crashing the turn.
+        # ast-grep raises RuntimeError for a matcher-less pattern (empty,
+        # "$$$"); surface it as ValueError so the tool layer reports it
+        # instead of crashing the turn.
         try:
             return root.find_all(pattern=pattern)
         except RuntimeError as exc:
@@ -163,11 +163,11 @@ class AstGrepService:
         return results
 
     def _interpolate(self, rewrite: str, match: SgNode) -> str:
-        # (H) $$$NAME -> joined text of the multi-capture, $NAME -> the single
-        # (H) capture. Unknown metavars are left literal. ponytail: multi-capture
-        # (H) joins matched node texts, so inter-token spacing can normalise
-        # (H) (e.g. "a, b" -> "a,b"); upgrade to a source-span slice only if
-        # (H) exact whitespace fidelity is ever required.
+        # $$$NAME -> joined text of the multi-capture, $NAME -> the single
+        # capture. Unknown metavars are left literal. ponytail: multi-capture
+        # joins matched node texts, so inter-token spacing can normalise
+        # (e.g. "a, b" -> "a,b"); upgrade to a source-span slice only if
+        # exact whitespace fidelity is ever required.
         def _sub(m: re.Match[str]) -> str:
             multi, single = m.group(1), m.group(2)
             if multi is not None:

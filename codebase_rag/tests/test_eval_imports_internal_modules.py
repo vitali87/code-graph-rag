@@ -1,8 +1,8 @@
-# (H) Covers the L1 eval (evals/cgr_graph.py): cgr emits placeholder MODULE nodes
-# (H) for unresolved imports whose path is the dotted import name (e.g.
-# (H) "thrift.TTornado"). Those must not be treated as internal import targets when
-# (H) scoring IMPORTS, or every "from <pkg>.x import ..." collapses onto them as a
-# (H) false positive. Only real in-repo .py modules count as internal.
+# Covers the L1 eval (evals/cgr_graph.py): cgr emits placeholder MODULE nodes
+# for unresolved imports whose path is the dotted import name (e.g.
+# "thrift.TTornado"). Those must not be treated as internal import targets when
+# scoring IMPORTS, or every "from <pkg>.x import ..." collapses onto them as a
+# false positive. Only real in-repo .py modules count as internal.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -23,7 +23,7 @@ def test_import_placeholder_module_not_scored_as_internal() -> None:
     ingestor = _CapturingIngestor()
     _module(ingestor, "proj.src", "src.py")
     _module(ingestor, "proj.real", "pkg/real.py")
-    # (H) Placeholder for an unresolved import: path is the dotted name, not a file.
+    # Placeholder for an unresolved import: path is the dotted name, not a file.
     _module(ingestor, "proj.placeholder", "proj.placeholder")
 
     for target in ("proj.real", "proj.placeholder"):

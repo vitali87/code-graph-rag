@@ -1,7 +1,7 @@
-# (H) ast-grep finding analyzer (issue #413). Runs categorized YAML rules over
-# (H) indexed source files and emits Pattern/CodeSmell/SecurityIssue nodes linked
-# (H) to each file's Module. The FINDINGS capture group is opt-in, so these tests
-# (H) build a selection with it enabled and assert the finding nodes/edges land.
+# ast-grep finding analyzer (issue #413). Runs categorized YAML rules over
+# indexed source files and emits Pattern/CodeSmell/SecurityIssue nodes linked
+# to each file's Module. The FINDINGS capture group is opt-in, so these tests
+# build a selection with it enabled and assert the finding nodes/edges land.
 from __future__ import annotations
 
 from pathlib import Path
@@ -91,7 +91,7 @@ def test_safe_query_not_flagged(tmp_path: Path) -> None:
 
 
 def test_findings_opt_in_disabled_by_default(tmp_path: Path) -> None:
-    # (H) FINDINGS is not in DEFAULT_CAPTURE_GROUPS; a default index emits none.
+    # FINDINGS is not in DEFAULT_CAPTURE_GROUPS; a default index emits none.
     mock = _run(tmp_path, {"config.py": SINGLETON_PY, "dao.py": SQLI_PY}, [])
     assert _node_names(mock, PATTERN) == set()
     assert _node_names(mock, SECURITY_ISSUE) == set()
@@ -155,8 +155,8 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
 
 
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
-    # (H) two matches of one rule on a single line must not collapse into one
-    # (H) node; the qualified_name has to distinguish them by column.
+    # two matches of one rule on a single line must not collapse into one
+    # node; the qualified_name has to distinguish them by column.
     from codebase_rag.analyzers import FindingAnalyzer
 
     src = tmp_path / "a.js"
@@ -175,11 +175,11 @@ def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
 
 
 def test_hardcoded_secret_ignores_empty_and_format_templates(tmp_path: Path) -> None:
-    # (H) empty strings and format/message templates (an f-string/.format {..}
-    # (H) placeholder or a printf %s/%d specifier) are not secrets. Real secret
-    # (H) literals that legitimately contain %, spaces, embedded-credential URLs
-    # (H) or SCREAMING_SNAKE shapes MUST still be caught (a security rule favours
-    # (H) recall). Lines 4-6 are the three false-negative shapes Greptile flagged.
+    # empty strings and format/message templates (an f-string/.format {..}
+    # placeholder or a printf %s/%d specifier) are not secrets. Real secret
+    # literals that legitimately contain %, spaces, embedded-credential URLs
+    # or SCREAMING_SNAKE shapes MUST still be caught (a security rule favours
+    # recall). Lines 4-6 are the three false-negative shapes Greptile flagged.
     from codebase_rag.analyzers import FindingAnalyzer
 
     src = tmp_path / "s.py"

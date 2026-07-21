@@ -21,7 +21,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _plain(output: str) -> str:
-    # (H) ANSI-stripped output with Rich soft-wrap newlines rejoined
+    # ANSI-stripped output with Rich soft-wrap newlines rejoined
     return _ANSI.sub("", output).replace("\n", "")
 
 

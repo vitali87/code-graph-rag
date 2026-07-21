@@ -1,8 +1,8 @@
-# (H) Structural integrity audit over recorded graph batches. Codifies the
-# (H) checks from the gdotv knowledge-graph analysis (issue #646): orphan
-# (H) nodes, required-property completeness, and conformance of labels,
-# (H) properties, and relationship endpoint triples against the documented
-# (H) schema in types_defs.NODE_SCHEMAS / RELATIONSHIP_SCHEMAS.
+# Structural integrity audit over recorded graph batches. Codifies the
+# checks from the gdotv knowledge-graph analysis (issue #646): orphan
+# nodes, required-property completeness, and conformance of labels,
+# properties, and relationship endpoint triples against the documented
+# schema in types_defs.NODE_SCHEMAS / RELATIONSHIP_SCHEMAS.
 from __future__ import annotations
 
 import collections
@@ -88,9 +88,9 @@ class TestOrphans:
         assert ga.find_orphans(nodes, rels) == []
 
     def test_project_only_graph_is_valid(self) -> None:
-        # (H) An empty repo indexes to just its Project root; the recorder
-        # (H) stores labels as plain strings, so the exemption must hold for
-        # (H) the string form.
+        # An empty repo indexes to just its Project root; the recorder
+        # stores labels as plain strings, so the exemption must hold for
+        # the string form.
         assert ga.collect_violations([_project()], []) == []
 
 
@@ -156,9 +156,9 @@ class TestPropertyMerging:
 
 class TestDanglingRelationships:
     def test_edge_to_missing_node_is_flagged_and_not_connectivity(self) -> None:
-        # (H) Live Memgraph silently drops an edge whose endpoint has no node,
-        # (H) so the mock audit must flag the dangling edge AND still report
-        # (H) the emitted node as an orphan.
+        # Live Memgraph silently drops an edge whose endpoint has no node,
+        # so the mock audit must flag the dangling edge AND still report
+        # the emitted node as an orphan.
         nodes, rels = _clean_graph()
         nodes.append(_function("proj.mod.lam"))
         rels.append(
@@ -338,9 +338,9 @@ class TestExportNameCollision:
     def test_export_sharing_a_method_name_is_still_ingested(
         self, temp_repo, mock_ingestor
     ) -> None:
-        # (H) The nested-export guard must not skip a legitimate top-level
-        # (H) export just because a class method elsewhere in the module
-        # (H) shares its simple name.
+        # The nested-export guard must not skip a legitimate top-level
+        # export just because a class method elsewhere in the module
+        # shares its simple name.
         from codebase_rag.tests.conftest import run_updater
 
         (temp_repo / "svc.js").write_text(JS_EXPORT_NAME_COLLISION)

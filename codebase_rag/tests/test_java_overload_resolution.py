@@ -1,8 +1,8 @@
-# (H) The Java resolver matched a call to a method by NAME only ("any signature"),
-# (H) returning the first overload, so a same-named overload with a different arity got
-# (H) no CALLS edge and looked dead (gson's recursive `GsonTypes.resolve` 3-arg public
-# (H) vs 4-arg private, `TypeToken.isAssignableFrom` overloads). A call must bind to the
-# (H) overload whose parameter count matches the call's argument count.
+# The Java resolver matched a call to a method by NAME only ("any signature"),
+# returning the first overload, so a same-named overload with a different arity got
+# no CALLS edge and looked dead (gson's recursive `GsonTypes.resolve` 3-arg public
+# vs 4-arg private, `TypeToken.isAssignableFrom` overloads). A call must bind to the
+# overload whose parameter count matches the call's argument count.
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,9 +23,9 @@ def test_call_binds_to_arity_matching_overload(
     root = temp_repo / "jovl"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
-    # (H) resolve(a,b,c) is public API; it calls the 4-arg overload resolve(a,b,c,m).
-    # (H) Both must be reachable -- the 4-arg call must bind to the 4-arg overload, not
-    # (H) the 3-arg one that merely shares the name.
+    # resolve(a,b,c) is public API; it calls the 4-arg overload resolve(a,b,c,m).
+    # Both must be reachable -- the 4-arg call must bind to the 4-arg overload, not
+    # the 3-arg one that merely shares the name.
     (pkg / "M.java").write_text(
         "package com.example;\n"
         "import java.util.HashMap;\n"
@@ -41,7 +41,7 @@ def test_call_binds_to_arity_matching_overload(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
     calls = _calls(mock_ingestor)
-    # (H) the 3-arg resolve calls the 4-arg overload (arity 4 matches the 4-arg call).
+    # the 3-arg resolve calls the 4-arg overload (arity 4 matches the 4-arg call).
     assert any(
         f.endswith(".M.resolve(int,int,int)")
         and t.endswith(".M.resolve(int,int,int,HashMap<Integer, Integer>)")
@@ -52,10 +52,10 @@ def test_call_binds_to_arity_matching_overload(
 def test_inherited_overload_binds_to_arity_match(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Overloads declared on a BASE class, called through a subclass receiver: the
-    # (H) inherited-method lookup must also pick the arity-matching overload, not the
-    # (H) first same-named one (a 2-arg call must reach resolve(int,int), not
-    # (H) resolve(int)).
+    # Overloads declared on a BASE class, called through a subclass receiver: the
+    # inherited-method lookup must also pick the arity-matching overload, not the
+    # first same-named one (a 2-arg call must reach resolve(int,int), not
+    # resolve(int)).
     root = temp_repo / "jovl2"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
@@ -85,9 +85,9 @@ def test_inherited_overload_binds_to_arity_match(
 def test_same_arity_overload_binds_by_argument_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Two overloads of the SAME arity (isX(Class) vs isX(String)) can't be told
-    # (H) apart by arg count; a call with a String-typed argument must bind to the
-    # (H) isX(String) overload (gson's isJavaType/isAndroidType String overloads).
+    # Two overloads of the SAME arity (isX(Class) vs isX(String)) can't be told
+    # apart by arg count; a call with a String-typed argument must bind to the
+    # isX(String) overload (gson's isJavaType/isAndroidType String overloads).
     root = temp_repo / "jovl3"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)

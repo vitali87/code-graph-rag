@@ -1,4 +1,4 @@
-# (H) Application constants, re-exported from themed submodules.
+# Application constants, re-exported from themed submodules.
 
 from .ast_cpp import *  # noqa: F403
 from .ast_csharp import *  # noqa: F403

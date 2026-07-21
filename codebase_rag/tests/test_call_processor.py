@@ -361,7 +361,7 @@ class TestResolveBuiltinCall:
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.apply"
 
     def test_prototype_call(self, call_processor: CallProcessor) -> None:
-        # (H) .call suffix is matched first, returns Function.prototype.call
+        # .call suffix is matched first, returns Function.prototype.call
         result = call_processor._resolver.resolve_builtin_call(
             "Array.prototype.slice.call"
         )
@@ -475,9 +475,9 @@ class TestResolveCppOperatorCall:
     def test_builtin_operator_plus_has_no_callee(
         self, call_processor: CallProcessor
     ) -> None:
-        # (H) A primitive builtin operator is not a first-party callee; the old
-        # (H) synthetic builtin.cpp.* qns had no nodes, so their edges were
-        # (H) silently dropped by the database (issue #652).
+        # A primitive builtin operator is not a first-party callee; the old
+        # synthetic builtin.cpp.* qns had no nodes, so their edges were
+        # silently dropped by the database (issue #652).
         result = call_processor._resolver.resolve_cpp_operator_call(
             "operator_plus", "proj.module"
         )

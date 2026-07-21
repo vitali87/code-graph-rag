@@ -33,8 +33,8 @@ def mock_ast_cache() -> MagicMock:
     cache = MagicMock()
     cache.__contains__ = MagicMock(return_value=False)
     cache.__getitem__ = MagicMock(return_value=(None, None))
-    # (H) load() mirrors the real cache's reload-on-miss contract through the
-    # (H) per-test dunder mocks (closes over `cache`, so reassignment is seen).
+    # load() mirrors the real cache's reload-on-miss contract through the
+    # per-test dunder mocks (closes over `cache`, so reassignment is seen).
     cache.load = lambda key: cache[key] if key in cache else None
     return cache
 

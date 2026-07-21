@@ -1,8 +1,8 @@
-# (H) ast-grep pattern-driven language tier (issue #414). Languages without a
-# (H) tree-sitter LanguageSpec (here: Ruby) are extracted structurally from
-# (H) per-language YAML pattern configs, emitting the same Module/Function/Class
-# (H) nodes and DEFINES/IMPORTS relationships the tree-sitter path emits. These
-# (H) tests index a real .rb file end to end and assert those nodes/edges land.
+# ast-grep pattern-driven language tier (issue #414). Languages without a
+# tree-sitter LanguageSpec (here: Ruby) are extracted structurally from
+# per-language YAML pattern configs, emitting the same Module/Function/Class
+# nodes and DEFINES/IMPORTS relationships the tree-sitter path emits. These
+# tests index a real .rb file end to end and assert those nodes/edges land.
 from __future__ import annotations
 
 from pathlib import Path
@@ -98,8 +98,8 @@ def test_ruby_imports_edges(tmp_path: Path) -> None:
 
 
 def test_class_and_method_on_same_line_both_land(tmp_path: Path) -> None:
-    # (H) one-liner: class and def share a start line; per-label dedup must
-    # (H) keep both instead of the function claiming the line for the class too.
+    # one-liner: class and def share a start line; per-label dedup must
+    # keep both instead of the function claiming the line for the class too.
     mock = _run(tmp_path, {"oneliner.rb": "class Boxed; def unwrap; end; end\n"})
     assert "unwrap" in _node_names(mock, FUNCTION)
     assert "Boxed" in _node_names(mock, CLASS)

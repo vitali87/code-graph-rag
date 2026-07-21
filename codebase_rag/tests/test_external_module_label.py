@@ -1,6 +1,6 @@
-# (H) #498: external modules get a dedicated ExternalModule label (mirroring
-# (H) Package/ExternalPackage) instead of Module plus an is_external boolean the
-# (H) LLM prompts and schemas never surfaced.
+# #498: external modules get a dedicated ExternalModule label (mirroring
+# Package/ExternalPackage) instead of Module plus an is_external boolean the
+# LLM prompts and schemas never surfaced.
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -23,8 +23,8 @@ def test_external_import_creates_external_module_node(tmp_path: Path) -> None:
     assert (cs.NodeLabel.EXTERNAL_MODULE.value, "requests") in node_labels
     assert (cs.NodeLabel.MODULE.value, "requests") not in node_labels
 
-    # (H) the IMPORTS edge must target the ExternalModule label, or the edge
-    # (H) would dangle (no Module node with that qualified name exists).
+    # the IMPORTS edge must target the ExternalModule label, or the edge
+    # would dangle (no Module node with that qualified name exists).
     imports = {
         (str(fl), str(f), str(tl), str(t))
         for fl, f, rel, tl, t in ingestor.rels

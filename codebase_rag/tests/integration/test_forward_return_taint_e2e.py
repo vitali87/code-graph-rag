@@ -52,9 +52,9 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 def test_forward_return_taint_same_file(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) caller() is defined BEFORE build(), so build's return-taint summary is
-    # (H) unknown when caller is walked. The forward return edge and the
-    # (H) build-origin resource flow must still appear (fixpoint over summaries).
+    # caller() is defined BEFORE build(), so build's return-taint summary is
+    # unknown when caller is walked. The forward return edge and the
+    # build-origin resource flow must still appear (fixpoint over summaries).
     project = tmp_path / "fwd_project"
     project.mkdir()
     (project / "mod.py").write_text(
@@ -75,9 +75,9 @@ def test_forward_return_taint_same_file(
 def test_forward_return_taint_transitive(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) top() -> mid() -> low() with every function defined before the one it
-    # (H) calls: the fixpoint must transitively carry ENV::K through both return
-    # (H) hops to the STDOUT sink, and emit both return edges.
+    # top() -> mid() -> low() with every function defined before the one it
+    # calls: the fixpoint must transitively carry ENV::K through both return
+    # hops to the STDOUT sink, and emit both return edges.
     project = tmp_path / "fwd_project2"
     project.mkdir()
     (project / "mod.py").write_text(
@@ -101,9 +101,9 @@ def test_forward_return_taint_transitive(
 def test_untainted_forward_callee_emits_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) compute() (defined later) returns nothing tainted. Deferring caller's
-    # (H) taint must NOT fabricate a return edge or an arg edge once the fixpoint
-    # (H) resolves compute() to untainted -- no FLOWS_TO edge may exist at all.
+    # compute() (defined later) returns nothing tainted. Deferring caller's
+    # taint must NOT fabricate a return edge or an arg edge once the fixpoint
+    # resolves compute() to untainted -- no FLOWS_TO edge may exist at all.
     project = tmp_path / "clean_project"
     project.mkdir()
     (project / "mod.py").write_text(

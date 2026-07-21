@@ -17,9 +17,9 @@ from .utils.dependencies import has_torch, has_transformers
 
 
 def _cache_namespace() -> str:
-    # (H) Embeddings from different providers/models live in different vector
-    # (H) spaces (and dimensions); namespacing cache keys prevents a provider
-    # (H) or model switch from replaying stale vectors of the wrong space.
+    # Embeddings from different providers/models live in different vector
+    # spaces (and dimensions); namespacing cache keys prevents a provider
+    # or model switch from replaying stale vectors of the wrong space.
     if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
         namespace = f"{cs.EmbeddingProvider.OPENAI}:{settings.OPENAI_EMBEDDING_MODEL}"
         if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
@@ -157,9 +157,9 @@ def _parse_embedding_rows(response: httpx.Response, expected: int) -> list[list[
         raise RuntimeError(
             ex.OPENAI_EMBEDDING_COUNT_MISMATCH.format(got=len(rows), expected=expected)
         )
-    # (H) Place each row at its declared index instead of sorting: a buggy
-    # (H) server emitting duplicate or out-of-range indices must fail loudly
-    # (H) rather than silently pair snippets with the wrong vectors.
+    # Place each row at its declared index instead of sorting: a buggy
+    # server emitting duplicate or out-of-range indices must fail loudly
+    # rather than silently pair snippets with the wrong vectors.
     placed: list[list[float] | None] = [None] * expected
     for row in rows:
         try:
@@ -208,11 +208,11 @@ if has_torch() and has_transformers():
     _batches_since_cache_drop = 0
 
     def _sync_after_batch(device: torch.device | str) -> None:
-        # (H) MPS wedges inside Metal's waitUntilCompleted when command buffers
-        # (H) accumulate across thousands of batches (issue #689); draining the
-        # (H) stream after every batch keeps each command buffer short-lived,
-        # (H) and a periodic (not per-batch: ~21% throughput cost) cache drop
-        # (H) bounds Metal allocator growth over monorepo-scale runs.
+        # MPS wedges inside Metal's waitUntilCompleted when command buffers
+        # accumulate across thousands of batches (issue #689); draining the
+        # stream after every batch keeps each command buffer short-lived,
+        # and a periodic (not per-batch: ~21% throughput cost) cache drop
+        # bounds Metal allocator growth over monorepo-scale runs.
         if torch.device(device).type != cs.EmbeddingDevice.MPS:
             return
         torch.mps.synchronize()

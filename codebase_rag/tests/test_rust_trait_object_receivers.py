@@ -1,12 +1,12 @@
-# (H) A trait-object/impl-Trait parameter (`s: &dyn Svc`) never entered the
-# (H) local variable type map: tree-sitter wraps the trait in dynamic_type /
-# (H) abstract_type / bounded_type nodes, none of which the Rust bare-type
-# (H) walker descends through, so the receiver stayed untyped and `s.run()`
-# (H) fell to the name-only trie fallback whose lexicographic tie-break binds
-# (H) an ARBITRARY same-named method (an impl or the trait method, depending
-# (H) on how the type names happen to sort). The static callee must be the
-# (H) trait method, mirroring the Java interface-receiver design; OVERRIDES
-# (H) expansion then keeps every impl alive for dead-code.
+# A trait-object/impl-Trait parameter (`s: &dyn Svc`) never entered the
+# local variable type map: tree-sitter wraps the trait in dynamic_type /
+# abstract_type / bounded_type nodes, none of which the Rust bare-type
+# walker descends through, so the receiver stayed untyped and `s.run()`
+# fell to the name-only trie fallback whose lexicographic tie-break binds
+# an ARBITRARY same-named method (an impl or the trait method, depending
+# on how the type names happen to sort). The static callee must be the
+# trait method, mirroring the Java interface-receiver design; OVERRIDES
+# expansion then keeps every impl alive for dead-code.
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,8 +28,8 @@ try:
 except ImportError:
     RUST_AVAILABLE = False
 
-# (H) Impl names sort BEFORE "Svc" so the pre-fix lexicographic tie-break
-# (H) picks an impl, not the trait method; the fix must not depend on luck.
+# Impl names sort BEFORE "Svc" so the pre-fix lexicographic tie-break
+# picks an impl, not the trait method; the fix must not depend on luck.
 TRAIT_OBJECT_CALLERS = (
     "trait Svc { fn run(&self) -> i32; }\n"
     "struct Alpha;\n"
@@ -70,11 +70,11 @@ def test_trait_typed_receiver_binds_to_trait_method(
 def test_boxed_dyn_return_type_binds_to_trait_method(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The same walker gap on the RETURN side: a factory returning
-    # (H) `Box<dyn Svc>` typed its result as `Box`, so a call on the bound
-    # (H) local never reached the trait method either. (An associated-fn
-    # (H) factory: only impl-method return types are recorded, a free fn's
-    # (H) `let s = make()` chain is a separate, unrelated gap.)
+    # The same walker gap on the RETURN side: a factory returning
+    # `Box<dyn Svc>` typed its result as `Box`, so a call on the bound
+    # local never reached the trait method either. (An associated-fn
+    # factory: only impl-method return types are recorded, a free fn's
+    # `let s = make()` chain is a separate, unrelated gap.)
     (temp_repo / "m.rs").write_text(
         "trait Svc { fn run(&self) -> i32; }\n"
         "struct Alpha;\n"
@@ -98,10 +98,10 @@ def test_boxed_dyn_return_type_binds_to_trait_method(
 
 
 def test_multi_impl_trait_nothing_dead_regardless_of_names(tmp_path: Path) -> None:
-    # (H) With impls sorting before the trait, the pre-fix arbitrary binding
-    # (H) lands on one impl, leaving the trait method and the other impl dead.
-    # (H) Typed to the trait, the call plus OVERRIDES expansion keeps all
-    # (H) three alive.
+    # With impls sorting before the trait, the pre-fix arbitrary binding
+    # lands on one impl, leaving the trait method and the other impl dead.
+    # Typed to the trait, the call plus OVERRIDES expansion keeps all
+    # three alive.
     root = tmp_path / "rdyn"
     root.mkdir()
     (root / "m.rs").write_text(
@@ -119,9 +119,9 @@ def test_multi_impl_trait_nothing_dead_regardless_of_names(tmp_path: Path) -> No
 
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="tree-sitter-rust not installed")
 def test_one_ary_tuple_is_not_grouping_parens() -> None:
-    # (H) Rust writes a 1-ary tuple `(T,)` with a trailing comma; it also has
-    # (H) exactly one typed child, so a child-count-only grouping check would
-    # (H) type the value as its element. Only comma-free parens are grouping.
+    # Rust writes a 1-ary tuple `(T,)` with a trailing comma; it also has
+    # exactly one typed child, so a child-count-only grouping check would
+    # type the value as its element. Only comma-free parens are grouping.
     parser = Parser(Language(tsrust.language()))
     src = (
         b"fn a(s: (Alpha,)) -> (Beta,) { s.run() }\n"

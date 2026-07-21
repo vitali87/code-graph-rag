@@ -1,7 +1,7 @@
-# (H) Covers JavaScript containment-edge validation: cgr's DEFINES (file module
-# (H) -> class / top-level function) and DEFINES_METHOD (class -> method) edges
-# (H) are graded against the TypeScript-compiler-API oracle run over .js, joined
-# (H) on (kind, file, line).
+# Covers JavaScript containment-edge validation: cgr's DEFINES (file module
+# -> class / top-level function) and DEFINES_METHOD (class -> method) edges
+# are graded against the TypeScript-compiler-API oracle run over .js, joined
+# on (kind, file, line).
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,12 +24,12 @@ export class Point {
 export function free() { return 1; }
 """
 
-# (H) `View.prototype.lookup = function () {...}` is DEFINEd by the CONSTRUCTOR
-# (H) node in cgr's model (the prototype pass registers `module.View.lookup`
-# (H) under the constructor). The oracle used to expect a module parent, which
-# (H) only matched cgr's since-cured anonymous-twin duplicate; it must model
-# (H) the constructor containment, including a constructor declared as a
-# (H) var-assigned function expression and an assignment nested in a function.
+# `View.prototype.lookup = function () {...}` is DEFINEd by the CONSTRUCTOR
+# node in cgr's model (the prototype pass registers `module.View.lookup`
+# under the constructor). The oracle used to expect a module parent, which
+# only matched cgr's since-cured anonymous-twin duplicate; it must model
+# the constructor containment, including a constructor declared as a
+# var-assigned function expression and an assignment nested in a function.
 JS_PROTOTYPE_SRC = """\
 function View(name) {
     this.name = name;

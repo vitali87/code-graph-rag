@@ -41,9 +41,9 @@ def _has(rels: set[tuple[str, str, str]], caller: str, rel: str, resource: str) 
 
 
 def test_env_member_assignment_is_a_write(tmp_path: Path) -> None:
-    # (H) `process.env.KEY = v` mutates the environment (dotenv's core
-    # (H) behavior); the member walk fired on the assignment LHS and emitted a
-    # (H) READ, mislabeling every env write.
+    # `process.env.KEY = v` mutates the environment (dotenv's core
+    # behavior); the member walk fired on the assignment LHS and emitted a
+    # READ, mislabeling every env write.
     rels = _run_io(
         tmp_path,
         {"m.js": "export function set(v) { process.env.MY_KEY = v }\n"},
@@ -62,7 +62,7 @@ def test_env_subscript_assignment_is_a_write(tmp_path: Path) -> None:
 
 
 def test_env_augmented_assignment_reads_and_writes(tmp_path: Path) -> None:
-    # (H) `process.env.KEY += v` reads the old value and writes the new one.
+    # `process.env.KEY += v` reads the old value and writes the new one.
     rels = _run_io(
         tmp_path,
         {"m.js": "export function grow(v) { process.env.PATH_LIKE += v }\n"},
@@ -72,8 +72,8 @@ def test_env_augmented_assignment_reads_and_writes(tmp_path: Path) -> None:
 
 
 def test_env_update_expression_reads_and_writes(tmp_path: Path) -> None:
-    # (H) `process.env.COUNT++` increments in place: an update_expression
-    # (H) parent reads the old value and writes the new one.
+    # `process.env.COUNT++` increments in place: an update_expression
+    # parent reads the old value and writes the new one.
     rels = _run_io(
         tmp_path,
         {"m.js": "export function bump() { process.env.COUNT++ }\n"},

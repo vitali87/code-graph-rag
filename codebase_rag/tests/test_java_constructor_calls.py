@@ -1,8 +1,8 @@
-# (H) Java collected only `method_invocation` as call nodes, never
-# (H) `object_creation_expression`, so `new X(...)` produced no INSTANTIATES edge to the
-# (H) class and no CALLS edge to the constructor. Every constructor reached only via
-# (H) `new` therefore looked dead (45 of gson's 114 false positives). A `new X(...)` must
-# (H) instantiate the class and call its constructor, mirroring Python/JS class calls.
+# Java collected only `method_invocation` as call nodes, never
+# `object_creation_expression`, so `new X(...)` produced no INSTANTIATES edge to the
+# class and no CALLS edge to the constructor. Every constructor reached only via
+# `new` therefore looked dead (45 of gson's 114 false positives). A `new X(...)` must
+# instantiate the class and call its constructor, mirroring Python/JS class calls.
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,8 +51,8 @@ def test_new_expression_calls_constructor_and_instantiates(
 def test_new_expression_reaches_overloaded_constructors(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Overload resolution by argument type is not attempted; for reachability a
-    # (H) `new X(...)` reaches every declared constructor of X so none is reported dead.
+    # Overload resolution by argument type is not attempted; for reachability a
+    # `new X(...)` reaches every declared constructor of X so none is reported dead.
     _project(
         temp_repo,
         "class Box {\n"
@@ -76,9 +76,9 @@ def test_new_expression_reaches_overloaded_constructors(
 def test_generic_new_expression_reaches_constructor(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `new MyList<String>()`: the type field is a `generic_type`, not a plain
-    # (H) `type_identifier`, so the creation query must still capture it (generic args
-    # (H) are stripped to the base name) or the constructor looks dead.
+    # `new MyList<String>()`: the type field is a `generic_type`, not a plain
+    # `type_identifier`, so the creation query must still capture it (generic args
+    # are stripped to the base name) or the constructor looks dead.
     _project(
         temp_repo,
         "class MyList<T> {\n"
@@ -100,8 +100,8 @@ def test_generic_new_expression_reaches_constructor(
 def test_scoped_new_expression_reaches_nested_constructor(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `new Outer.Inner()`: the type field is a `scoped_type_identifier`, which the
-    # (H) creation query must capture so the nested class's constructor is reached.
+    # `new Outer.Inner()`: the type field is a `scoped_type_identifier`, which the
+    # creation query must capture so the nested class's constructor is reached.
     _project(
         temp_repo,
         "class Outer {\n"

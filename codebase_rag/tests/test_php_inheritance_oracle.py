@@ -1,6 +1,6 @@
-# (H) Covers PHP inheritance-edge validation: cgr's INHERITS (class/interface
-# (H) extends) and IMPLEMENTS (class implements) edges are graded against the
-# (H) php-parser oracle, by (source node, base SIMPLE NAME).
+# Covers PHP inheritance-edge validation: cgr's INHERITS (class/interface
+# extends) and IMPLEMENTS (class implements) edges are graded against the
+# php-parser oracle, by (source node, base SIMPLE NAME).
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,10 +1,10 @@
-# (H) L2 module-call attribution: does cgr attribute the right calls to the
-# (H) module? The L3 trace records the innermost function frame as the caller and
-# (H) drops <module> frames, so it is structurally blind to module-level call
-# (H) attribution. This eval fills that gap with an AST oracle that models
-# (H) import-time execution. Both sides are compared as (module_file,
-# (H) callee_simple_name) name-edges, restricted to first-party callees and
-# (H) excluding dunders, since cgr only emits first-party CALLS.
+# L2 module-call attribution: does cgr attribute the right calls to the
+# module? The L3 trace records the innermost function frame as the caller and
+# drops <module> frames, so it is structurally blind to module-level call
+# attribution. This eval fills that gap with an AST oracle that models
+# import-time execution. Both sides are compared as (module_file,
+# callee_simple_name) name-edges, restricted to first-party callees and
+# excluding dunders, since cgr only emits first-party CALLS.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -48,13 +48,13 @@ def _has_future_annotations(tree: ast.Module) -> bool:
 
 
 class _ModuleCallVisitor(ast.NodeVisitor):
-    # (H) Collect callee names of calls that execute at module-load time. A
-    # (H) function's decorators, argument defaults, and (unless postponed)
-    # (H) annotations run in the enclosing scope, so they are visited at the
-    # (H) current depth; only its body is function scope. Class bodies execute at
-    # (H) definition time, so they stay at the enclosing depth. Lambda bodies and
-    # (H) generator expressions are deferred (run when called/consumed), so their
-    # (H) calls are not import-time and are entered as a nested (function) scope.
+    # Collect callee names of calls that execute at module-load time. A
+    # function's decorators, argument defaults, and (unless postponed)
+    # annotations run in the enclosing scope, so they are visited at the
+    # current depth; only its body is function scope. Class bodies execute at
+    # definition time, so they stay at the enclosing depth. Lambda bodies and
+    # generator expressions are deferred (run when called/consumed), so their
+    # calls are not import-time and are entered as a nested (function) scope.
     def __init__(self, count_annotations: bool) -> None:
         self.names: set[str] = set()
         self._func_depth = 0
@@ -68,8 +68,8 @@ class _ModuleCallVisitor(ast.NodeVisitor):
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for decorator in node.decorator_list:
             if self._func_depth == 0:
-                # (H) a bare decorator `@task` is a Name (not a Call), so record
-                # (H) its callee name explicitly; applying it runs at module load.
+                # a bare decorator `@task` is a Name (not a Call), so record
+                # its callee name explicitly; applying it runs at module load.
                 target = (
                     decorator.func if isinstance(decorator, ast.Call) else decorator
                 )
@@ -104,8 +104,8 @@ class _ModuleCallVisitor(ast.NodeVisitor):
         self._visit_function(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        # (H) a class decorator runs at definition (module-load) time too; the
-        # (H) class body stays at the current depth (eager at import).
+        # a class decorator runs at definition (module-load) time too; the
+        # class body stays at the current depth (eager at import).
         if self._func_depth == 0:
             for decorator in node.decorator_list:
                 target = (
@@ -124,9 +124,9 @@ class _ModuleCallVisitor(ast.NodeVisitor):
         self._func_depth -= 1
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        # (H) the outermost iterable is evaluated eagerly when the generator is
-        # (H) created (enclosing scope); the element, conditions, and any further
-        # (H) iterables are lazy (run during consumption).
+        # the outermost iterable is evaluated eagerly when the generator is
+        # created (enclosing scope); the element, conditions, and any further
+        # iterables are lazy (run during consumption).
         if node.generators:
             self.visit(node.generators[0].iter)
         self._func_depth += 1
@@ -185,10 +185,10 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
     method_label = cs.NodeLabel.METHOD.value
     edges: set[NameEdge] = set()
     for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:
-        # (H) A module-scope construction `X()` is an INSTANTIATES edge to the
-        # (H) class node (callee is the class name directly); a function/method
-        # (H) call is a CALLS edge. The oracle records both as a bare callee name,
-        # (H) so credit both kinds of module-caller edge.
+        # A module-scope construction `X()` is an INSTANTIATES edge to the
+        # class node (callee is the class name directly); a function/method
+        # call is a CALLS edge. The oracle records both as a bare callee name,
+        # so credit both kinds of module-caller edge.
         if rel_type not in (_CALLS, _INSTANTIATES) or from_label != module_label:
             continue
         path = module_paths.get(str(from_val))
@@ -196,10 +196,10 @@ def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
             continue
         segments = str(to_val).split(ec.SEP)
         name = segments[-1]
-        # (H) A constructor call `X()` on a class WITH __init__ resolves to the
-        # (H) `X.__init__` METHOD via CALLS; the oracle sees the class name `X`, so
-        # (H) credit it to the class. A bare first-party FUNCTION named `__init__`
-        # (H) is left as a dunder (filtered below), not remapped to its segment.
+        # A constructor call `X()` on a class WITH __init__ resolves to the
+        # `X.__init__` METHOD via CALLS; the oracle sees the class name `X`, so
+        # credit it to the class. A bare first-party FUNCTION named `__init__`
+        # is left as a dunder (filtered below), not remapped to its segment.
         if name == ec.INIT_STEM and to_label == method_label and len(segments) >= 2:
             name = segments[-2]
         if _is_dunder(name):

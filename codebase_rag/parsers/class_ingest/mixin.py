@@ -61,10 +61,10 @@ if TYPE_CHECKING:
 
 
 def _java_anonymous_base_type(method_node: Node, class_node: Node) -> str | None:
-    # (H) If `method_node` sits inside an anonymous class body between it and
-    # (H) `class_node` (`new Base(){ ... m() ... }`), return the anon class's base type
-    # (H) name (the object_creation's `type` field, generic args stripped). None when the
-    # (H) method belongs directly to the enclosing class, not an anonymous subclass.
+    # If `method_node` sits inside an anonymous class body between it and
+    # `class_node` (`new Base(){ ... m() ... }`), return the anon class's base type
+    # name (the object_creation's `type` field, generic args stripped). None when the
+    # method belongs directly to the enclosing class, not an anonymous subclass.
     current = method_node.parent
     while current is not None and current is not class_node:
         if current.type == cs.TS_CLASS_BODY:
@@ -119,15 +119,15 @@ def _skip_method(
 
 
 class _DeferredForwardDecl(NamedTuple):
-    # (H) A C/C++ forward declaration held back until every file's real definitions
-    # (H) are registered, so we can tell an only-forward-declared type (keep it) from
-    # (H) one that also has a bodied definition elsewhere (drop the phantom).
+    # A C/C++ forward declaration held back until every file's real definitions
+    # are registered, so we can tell an only-forward-declared type (keep it) from
+    # one that also has a bodied definition elsewhere (drop the phantom).
     class_node: Node
     class_name: str
-    # (H) The namespace-qualified name (module-file prefix stripped, so `A::Foo` is
-    # (H) `A.Foo` regardless of which header declares it). Comparing on this — not the
-    # (H) bare simple name — keeps a forward-declared `B::Foo` when only `A::Foo` is
-    # (H) defined, while still matching a cross-file forward/definition of one type.
+    # The namespace-qualified name (module-file prefix stripped, so `A::Foo` is
+    # `A.Foo` regardless of which header declares it). Comparing on this — not the
+    # bare simple name — keeps a forward-declared `B::Foo` when only `A::Foo` is
+    # defined, while still matching a cross-file forward/definition of one type.
     ns_qn: str
     module_qn: str
     language: cs.SupportedLanguage
@@ -174,20 +174,20 @@ class ClassIngestMixin:
     declared_module_qns: set[str]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
-        # (H) Strip the module-file prefix so two nodes for the same C++ type in
-        # (H) different headers share one key (`leveldb.db.x.h.leveldb.VersionSet` and
-        # (H) `...y.h.leveldb.VersionSet` both -> `leveldb.VersionSet`), while types in
-        # (H) different namespaces stay distinct.
+        # Strip the module-file prefix so two nodes for the same C++ type in
+        # different headers share one key (`leveldb.db.x.h.leveldb.VersionSet` and
+        # `...y.h.leveldb.VersionSet` both -> `leveldb.VersionSet`), while types in
+        # different namespaces stay distinct.
         prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
         return class_qn[len(prefix) :] if class_qn.startswith(prefix) else class_qn
 
     def _namespace_qn_has_definition(self, ns_qn: str) -> bool:
-        # (H) A real definition of this namespace-qualified type is registered iff some
-        # (H) class qn ends with it (`....leveldb.VersionSet`). find_ending_with is
-        # (H) indexed by simple name, and because it is queried AFTER the registry is
-        # (H) rehydrated from the graph, it also covers definitions in files an
-        # (H) incremental run did not re-parse (issue: a forward decl must still drop
-        # (H) when its definition lives in an unchanged file).
+        # A real definition of this namespace-qualified type is registered iff some
+        # class qn ends with it (`....leveldb.VersionSet`). find_ending_with is
+        # indexed by simple name, and because it is queried AFTER the registry is
+        # rehydrated from the graph, it also covers definitions in files an
+        # incremental run did not re-parse (issue: a forward decl must still drop
+        # when its definition lives in an unchanged file).
         simple = ns_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
         return any(
@@ -323,21 +323,21 @@ class ClassIngestMixin:
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
     def resolve_deferred_forward_declarations(self) -> int:
-        # (H) Run after every file's definitions are registered. A deferred forward
-        # (H) declaration whose class name already produced a real node is a phantom
-        # (H) (the bodied definition exists) -> drop it. Otherwise it is the only
-        # (H) representation of the type -> register it now. Deterministic: the
-        # (H) deferred list is in file (sorted) order, and the first surviving forward
-        # (H) declaration of an only-declared type claims the name for the rest.
+        # Run after every file's definitions are registered. A deferred forward
+        # declaration whose class name already produced a real node is a phantom
+        # (the bodied definition exists) -> drop it. Otherwise it is the only
+        # representation of the type -> register it now. Deterministic: the
+        # deferred list is in file (sorted) order, and the first surviving forward
+        # declaration of an only-declared type claims the name for the rest.
         deferred = getattr(self, "_deferred_forward_decls", None)
         if not deferred:
             return 0
         self._deferred_forward_decls = []
         registered = 0
         for entry in deferred:
-            # (H) Drop the forward declaration only when a real definition of the SAME
-            # (H) namespace-qualified type exists (not merely the same simple name in
-            # (H) another namespace). Otherwise it is the type's only node -> keep it.
+            # Drop the forward declaration only when a real definition of the SAME
+            # namespace-qualified type exists (not merely the same simple name in
+            # another namespace). Otherwise it is the type's only node -> keep it.
             if self._namespace_qn_has_definition(entry.ns_qn):
                 continue
             self._process_class_node(
@@ -391,9 +391,9 @@ class ClassIngestMixin:
         normalized = entry.base_name.replace(
             cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
         )
-        # (H) Scope-first (see resolve_deferred_cpp_methods): the enclosing
-        # (H) namespaces distinguish same-leaf classes. The child itself is
-        # (H) excluded so `class Type : public other::Type` never self-inherits.
+        # Scope-first (see resolve_deferred_cpp_methods): the enclosing
+        # namespaces distinguish same-leaf classes. The child itself is
+        # excluded so `class Type : public other::Type` never self-inherits.
         candidates = [normalized]
         if entry.namespace_path:
             candidates.insert(
@@ -405,9 +405,9 @@ class ClassIngestMixin:
             )
             if resolved:
                 return parent_qn
-        # (H) The guess strips a qualified base (`other::Type`) to its leaf, so
-        # (H) it can collide with the CHILD's own qn when the base is
-        # (H) unresolvable; a self-INHERITS is never real.
+        # The guess strips a qualified base (`other::Type`) to its leaf, so
+        # it can collide with the CHILD's own qn when the base is
+        # unresolvable; a self-INHERITS is never real.
         if (
             entry.guess_qn != entry.child_qn
             and self.function_registry.get(entry.guess_qn) is not None
@@ -440,16 +440,16 @@ class ClassIngestMixin:
             parent_qn, is_external = resolved
             external_label: str | None = None
             if is_external:
-                # (H) The import pass mints the same node for IMPORTS edges, so
-                # (H) this MERGEs idempotently when the base was imported.
+                # The import pass mints the same node for IMPORTS edges, so
+                # this MERGEs idempotently when the base was imported.
                 self.import_processor.ensure_external_module_node(parent_qn)
                 external_label = cs.NodeLabel.EXTERNAL_MODULE.value
             if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
-                # (H) Dart has no `interface` keyword: `implements X` targets a
-                # (H) concrete class, so a hardcoded Interface label would dangle.
-                # (H) Resolve the target's real registered label (Interface for a
-                # (H) true interface, Class/Enum for a Dart type); external stays
-                # (H) EXTERNAL_MODULE.
+                # Dart has no `interface` keyword: `implements X` targets a
+                # concrete class, so a hardcoded Interface label would dangle.
+                # Resolve the target's real registered label (Interface for a
+                # true interface, Class/Enum for a Dart type); external stays
+                # EXTERNAL_MODULE.
                 interface_label = external_label or rel.get_node_type_for_inheritance(
                     parent_qn, self.function_registry
                 )
@@ -496,16 +496,16 @@ class ClassIngestMixin:
         fact the source declares.
         """
         if entry.parent_qn == entry.child_qn:
-            # (H) Parse-time resolution can land on the child ITSELF. A
-            # (H) self-edge is never real. In C# the written base can be an
-            # (H) ARITY sibling (`class Foo : Foo<object>`, a different type
-            # (H) sharing the simple name); recover it before falling back.
-            # (H) Otherwise the written base must refer to a SHADOWED outer
-            # (H) name (thrift's `pub enum Error` implementing the std `Error`
-            # (H) trait): when the module-anchored remainder is a bare single
-            # (H) segment it IS the written name and externalizes. A dotted
-            # (H) remainder (a nested child like SimpleHashMap.Entry) was
-            # (H) never written as such; derivation would be a lie, so no edge.
+            # Parse-time resolution can land on the child ITSELF. A
+            # self-edge is never real. In C# the written base can be an
+            # ARITY sibling (`class Foo : Foo<object>`, a different type
+            # sharing the simple name); recover it before falling back.
+            # Otherwise the written base must refer to a SHADOWED outer
+            # name (thrift's `pub enum Error` implementing the std `Error`
+            # trait): when the module-anchored remainder is a bare single
+            # segment it IS the written name and externalizes. A dotted
+            # remainder (a nested child like SimpleHashMap.Entry) was
+            # never written as such; derivation would be a lie, so no edge.
             if (sibling := self._csharp_arity_sibling(entry)) is not None:
                 return sibling, False
             self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
@@ -524,12 +524,12 @@ class ClassIngestMixin:
             return external, True
         prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(prefix):
-            # (H) Project-prefixed but not module-anchored: an import-mapped
-            # (H) qn whose written path skips real directories (thrift's
-            # (H) setup.py maps lib/py/src -> package `thrift`, so the import
-            # (H) says thrift.Thrift while the class qn says
-            # (H) thrift.src.Thrift). A UNIQUE whole-segment suffix match
-            # (H) recovers the real node; ambiguity means no edge.
+            # Project-prefixed but not module-anchored: an import-mapped
+            # qn whose written path skips real directories (thrift's
+            # setup.py maps lib/py/src -> package `thrift`, so the import
+            # says thrift.Thrift while the class qn says
+            # thrift.src.Thrift). A UNIQUE whole-segment suffix match
+            # recovers the real node; ambiguity means no edge.
             tail = entry.parent_qn[len(project_prefix) :]
             simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             suffix = f"{cs.SEPARATOR_DOT}{tail}"
@@ -539,22 +539,22 @@ class ClassIngestMixin:
             }
             if len(matches) == 1:
                 return matches.pop(), False
-            # (H) A base written as a PACKAGE attribute (`forms.ModelForm` via
-            # (H) `from django import forms`) names the re-exporting package, not
-            # (H) the defining module (django.forms.models.ModelForm behind the
-            # (H) package __init__'s star import), so the suffix match cannot
-            # (H) bridge the missing segment. A UNIQUE same-named class UNDER the
-            # (H) written package path is that re-export; ambiguity means no edge.
+            # A base written as a PACKAGE attribute (`forms.ModelForm` via
+            # `from django import forms`) names the re-exporting package, not
+            # the defining module (django.forms.models.ModelForm behind the
+            # package __init__'s star import), so the suffix match cannot
+            # bridge the missing segment. A UNIQUE same-named class UNDER the
+            # written package path is that re-export; ambiguity means no edge.
             package_prefix = (
                 entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
             )
-            # (H) The registry also holds functions/methods with the same simple
-            # (H) name; only a TYPE declaration is a valid inheritance target, so
-            # (H) filter before the uniqueness check (a same-named factory function
-            # (H) under the package must not corrupt the class hierarchy). The
-            # (H) package must also actually EXPOSE the name (its __init__ imports
-            # (H) it explicitly or star-imports the defining module); a same-named
-            # (H) internal class the package never re-exports is not the referent.
+            # The registry also holds functions/methods with the same simple
+            # name; only a TYPE declaration is a valid inheritance target, so
+            # filter before the uniqueness check (a same-named factory function
+            # under the package must not corrupt the class hierarchy). The
+            # package must also actually EXPOSE the name (its __init__ imports
+            # it explicitly or star-imports the defining module); a same-named
+            # internal class the package never re-exports is not the referent.
             type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
             package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
             package_matches = {
@@ -568,14 +568,14 @@ class ClassIngestMixin:
             if len(package_matches) == 1:
                 return package_matches.pop(), False
             return None
-        # (H) The module-anchored fallback shape carries the raw written name
-        # (H) as the remainder after the module qn.
+        # The module-anchored fallback shape carries the raw written name
+        # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
         resolved = self._resolve_class_name(raw_name, entry.module_qn)
         if (
             resolved is not None
-            # (H) A simple-name sweep can land on the child itself; a
-            # (H) self-INHERITS is never real.
+            # A simple-name sweep can land on the child itself; a
+            # self-INHERITS is never real.
             and resolved != entry.child_qn
             and self.function_registry.get(resolved) is not None
         ):
@@ -583,22 +583,22 @@ class ClassIngestMixin:
         return self._externalize_written_base(raw_name, entry.language)
 
     def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
-        # (H) Only C# overloads type names by generic arity, so only there can a
-        # (H) base that resolves to the declaring type itself legally name a
-        # (H) DIFFERENT type. The sibling conventionally lives beside the child
-        # (H) (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
-        # (H) type declaration under the module's parent package qualifies;
-        # (H) ambiguity keeps the no-edge answer rather than guessing.
+        # Only C# overloads type names by generic arity, so only there can a
+        # base that resolves to the declaring type itself legally name a
+        # DIFFERENT type. The sibling conventionally lives beside the child
+        # (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
+        # type declaration under the module's parent package qualifies;
+        # ambiguity keeps the no-edge answer rather than guessing.
         if entry.language != cs.SupportedLanguage.CSHARP:
             return None
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-        # (H) Same-scope pair (issue #764): when both members share ONE file and
-        # (H) scope, they collide on natural qn and the later one registers as a
-        # (H) DUP_QN_MARKER variant. The variants bucket therefore holds exactly
-        # (H) the same-scope declarations of this simple name; the unique other
-        # (H) type declaration IS the written sibling, whichever of the pair the
-        # (H) child happens to be. More than one other means a 3+ arity family;
-        # (H) refuse rather than guess, matching every other ambiguity tier.
+        # Same-scope pair (issue #764): when both members share ONE file and
+        # scope, they collide on natural qn and the later one registers as a
+        # DUP_QN_MARKER variant. The variants bucket therefore holds exactly
+        # the same-scope declarations of this simple name; the unique other
+        # type declaration IS the written sibling, whichever of the pair the
+        # child happens to be. More than one other means a 3+ arity family;
+        # refuse rather than guess, matching every other ambiguity tier.
         natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
         same_scope = [
             qn
@@ -624,11 +624,11 @@ class ClassIngestMixin:
         if len(in_package) == 1:
             return in_package.pop()
         if in_package:
-            # (H) Multiple same-package candidates can still be ONE type: a
-            # (H) `partial` sibling split across files (Polly's PredicateBuilder,
-            # (H) issue #764 shape 3). When every candidate sits in a single
-            # (H) partial group, pick the deterministic representative; genuine
-            # (H) distinct types keep the no-edge answer.
+            # Multiple same-package candidates can still be ONE type: a
+            # `partial` sibling split across files (Polly's PredicateBuilder,
+            # issue #764 shape 3). When every candidate sits in a single
+            # partial group, pick the deterministic representative; genuine
+            # distinct types keep the no-edge answer.
             groups = {
                 frozenset(self.csharp_partial_groups.get(qn, (qn,)))
                 for qn in in_package
@@ -636,17 +636,17 @@ class ClassIngestMixin:
             if len(groups) == 1:
                 return min(in_package)
             return None
-        # (H) No same-package sibling: the pair can span projects (Polly's
-        # (H) legacy BrokenCircuitException<TResult> : the Polly.Core
-        # (H) non-generic), so fall back to a project-wide unique declaration.
+        # No same-package sibling: the pair can span projects (Polly's
+        # legacy BrokenCircuitException<TResult> : the Polly.Core
+        # non-generic), so fall back to a project-wide unique declaration.
         return candidates.pop() if len(candidates) == 1 else None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
-        # (H) True when the package __init__ makes `simple` an attribute of the
-        # (H) package: an explicit import binding the name to this class (or its
-        # (H) defining module member), or a star import of the module that
-        # (H) defines it. Star-import keys carry a leading GLOB_ALL marker,
-        # (H) matching the call resolver's wildcard convention.
+        # True when the package __init__ makes `simple` an attribute of the
+        # package: an explicit import binding the name to this class (or its
+        # defining module member), or a star import of the module that
+        # defines it. Star-import keys carry a leading GLOB_ALL marker,
+        # matching the call resolver's wildcard convention.
         imports = self.import_processor.import_mapping.get(package_qn)
         if not imports:
             return False
@@ -663,17 +663,17 @@ class ClassIngestMixin:
     ) -> tuple[str, bool]:
         if language in cs.JS_TS_LANGUAGES and raw_name in cs.JS_GLOBAL_CLASS_NAMES:
             return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
-        # (H) java.lang is implicitly imported: a bare base in its table gets
-        # (H) its canonical java.lang qn.
+        # java.lang is implicitly imported: a bare base in its table gets
+        # its canonical java.lang qn.
         if (
             language == cs.SupportedLanguage.JAVA
             and raw_name in cs.JAVA_LANG_CLASS_NAMES
         ):
             return f"{cs.JAVA_LANG_PREFIX}{raw_name}", True
-        # (H) Language-agnostic fallback: the written base name resolves to no
-        # (H) indexed class, so the base is external to the index by
-        # (H) construction (Python `object`, Rust `Default`, a generated Java
-        # (H) `Iface`); keep the fact under the written name.
+        # Language-agnostic fallback: the written base name resolves to no
+        # indexed class, so the base is external to the index by
+        # construction (Python `object`, Rust `Default`, a generated Java
+        # `Iface`); keep the fact under the written name.
         return raw_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT), True
 
     def _process_class_node(
@@ -699,23 +699,23 @@ class ClassIngestMixin:
             )
             return
 
-        # (H) A C/C++ forward declaration (`class Widget;`, or `template <T> class
-        # (H) Widget;`) is a bodyless type specifier. Registering it collides with the
-        # (H) real definition's qn (suffixing it `@line`) and fragments one class into
-        # (H) several same-named nodes, which makes member-call resolution pick among
-        # (H) duplicates nondeterministically. But a type that is ONLY ever
-        # (H) forward-declared (an opaque handle, or a metaprogramming primary defined
-        # (H) solely via specializations) has no other node, so it must be kept. We
-        # (H) cannot tell which until every file's definitions are in, so defer the
-        # (H) forward declaration and decide in resolve_deferred_forward_declarations.
-        # (H) The class query captures a templated class twice: the inner
-        # (H) class_specifier AND its template_declaration wrapper. The wrapper is the
-        # (H) canonical node (it carries the template params and always registers with
-        # (H) its natural qn); the inner specifier is redundant. Drop the inner one
-        # (H) outright -- for bodied definitions too, not just bodyless forward decls --
-        # (H) so the class registers exactly once. Registering both suffixes the second
-        # (H) `@line`, splitting members (which attach to the bodied specifier) away
-        # (H) from the natural qn that callers reference, orphaning the whole class.
+        # A C/C++ forward declaration (`class Widget;`, or `template <T> class
+        # Widget;`) is a bodyless type specifier. Registering it collides with the
+        # real definition's qn (suffixing it `@line`) and fragments one class into
+        # several same-named nodes, which makes member-call resolution pick among
+        # duplicates nondeterministically. But a type that is ONLY ever
+        # forward-declared (an opaque handle, or a metaprogramming primary defined
+        # solely via specializations) has no other node, so it must be kept. We
+        # cannot tell which until every file's definitions are in, so defer the
+        # forward declaration and decide in resolve_deferred_forward_declarations.
+        # The class query captures a templated class twice: the inner
+        # class_specifier AND its template_declaration wrapper. The wrapper is the
+        # canonical node (it carries the template params and always registers with
+        # its natural qn); the inner specifier is redundant. Drop the inner one
+        # outright -- for bodied definitions too, not just bodyless forward decls --
+        # so the class registers exactly once. Registering both suffixes the second
+        # `@line`, splitting members (which attach to the bodied specifier) away
+        # from the natural qn that callers reference, orphaning the whole class.
         if (
             language == cs.SupportedLanguage.CPP
             and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
@@ -772,8 +772,8 @@ class ClassIngestMixin:
 
         class_qn, class_name, is_exported = identity
         if language == cs.SupportedLanguage.CSHARP:
-            # (H) Skip a leading `#if [Attr] #endif` directive so the start line is
-            # (H) the conditional attribute, not the `#if` line (matches Roslyn).
+            # Skip a leading `#if [Attr] #endif` directive so the start line is
+            # the conditional attribute, not the `#if` line (matches Roslyn).
             from ..csharp import utils as csharp_utils
 
             class_start_line = csharp_utils.definition_start_line(class_node)
@@ -805,11 +805,11 @@ class ClassIngestMixin:
         self.function_registry[class_qn] = node_type
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)
-            # (H) An out-of-class nested definition (`class Outer::Inner {}`)
-            # (H) carries the qualifier in its extracted name. Index the leaf
-            # (H) too, or an out-of-line method (`bool Inner::m()`, often via a
-            # (H) `using Inner = Outer::Inner;` alias) can never resolve the
-            # (H) class and binds to a phantom fallback qn.
+            # An out-of-class nested definition (`class Outer::Inner {}`)
+            # carries the qualifier in its extracted name. Index the leaf
+            # too, or an out-of-line method (`bool Inner::m()`, often via a
+            # `using Inner = Outer::Inner;` alias) can never resolve the
+            # class and binds to a phantom fallback qn.
             if cs.SEPARATOR_DOUBLE_COLON in class_name:
                 leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
                 self.simple_name_lookup[leaf].add(class_qn)
@@ -825,23 +825,23 @@ class ClassIngestMixin:
             module_qn,
             parent_span=parent_span,
         )
-        # (H) For a templated class the canonical node is the template_declaration
-        # (H) wrapper, which has no `body` field. Its members -- base clause, fields,
-        # (H) methods -- live on the inner class_specifier (type_spec). Extract them
-        # (H) from there so they bind to the class's natural qn. For a plain class
-        # (H) type_spec is class_node, so this is a no-op for non-templates and for
-        # (H) Go/Rust (which never take the template_declaration branch).
+        # For a templated class the canonical node is the template_declaration
+        # wrapper, which has no `body` field. Its members -- base clause, fields,
+        # methods -- live on the inner class_specifier (type_spec). Extract them
+        # from there so they bind to the class's natural qn. For a plain class
+        # type_spec is class_node, so this is a no-op for non-templates and for
+        # Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
-        # (H) When the opt-in Roslyn frontend ran, hand this type's exact base
-        # (H) classifications (keyed by its rel-path + start line) to the split so
-        # (H) INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
-        # (H) for non-C# types or when the frontend is off -> heuristic stands.
+        # When the opt-in Roslyn frontend ran, hand this type's exact base
+        # classifications (keyed by its rel-path + start line) to the split so
+        # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
+        # for non-C# types or when the frontend is off -> heuristic stands.
         csharp_base_kinds: dict[str, str] | None = None
         if language == cs.SupportedLanguage.CSHARP and file_path is not None:
             rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
-            # (H) Reverse index for the Roslyn frontend's location-keyed facts:
-            # (H) partial declaration groups join back to these Class qns after
-            # (H) Pass 2.
+            # Reverse index for the Roslyn frontend's location-keyed facts:
+            # partial declaration groups join back to these Class qns after
+            # Pass 2.
             self.csharp_type_locations[(rel_path, class_start_line)] = class_qn
             if self.csharp_base_kinds:
                 csharp_base_kinds = self.csharp_base_kinds.get(
@@ -865,47 +865,47 @@ class ClassIngestMixin:
             csharp_base_kinds=csharp_base_kinds,
         )
         if language == cs.SupportedLanguage.CPP:
-            # (H) Record this class's member-field types now (from the class body,
-            # (H) usually a header) so out-of-line method bodies in other files can
-            # (H) resolve `field_.method()` via the field's type at call resolution.
+            # Record this class's member-field types now (from the class body,
+            # usually a header) so out-of-line method bodies in other files can
+            # resolve `field_.method()` via the field's type at call resolution.
             if field_types := CppTypeInferenceEngine().build_field_type_map(
                 member_node
             ):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.GO:
-            # (H) Record Go struct field types so a field-hop receiver
-            # (H) (`engine.trees.get()`) resolves, and a local bound from such a call
-            # (H) (`root := engine.trees.get(m)`) picks up the return type.
+            # Record Go struct field types so a field-hop receiver
+            # (`engine.trees.get()`) resolves, and a local bound from such a call
+            # (`root := engine.trees.get(m)`) picks up the return type.
             if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.RUST:
-            # (H) Record Rust struct field types so a field-hop receiver
-            # (H) (`self.shutdown.is_shutdown()`) resolves through the field's type,
-            # (H) plus guard-container inner types (`state: Mutex<State>` -> State),
-            # (H) applied only at a lock/read/borrow hop.
+            # Record Rust struct field types so a field-hop receiver
+            # (`self.shutdown.is_shutdown()`) resolves through the field's type,
+            # plus guard-container inner types (`state: Mutex<State>` -> State),
+            # applied only at a lock/read/borrow hop.
             rust_engine = RustTypeInferenceEngine()
             if field_types := rust_engine.build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
             if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
                 self.class_field_guard_inner[class_qn] = guard_inner
         elif language == cs.SupportedLanguage.DART:
-            # (H) Record Dart field types (`Greeter buddy;`) so a field-typed
-            # (H) receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
-            # (H) through the field's declared type.
+            # Record Dart field types (`Greeter buddy;`) so a field-typed
+            # receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
+            # through the field's declared type.
             if field_types := DartTypeInferenceEngine().build_field_type_map(
                 class_node
             ):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.CSHARP:
-            # (H) Record C# field/property types so a field-typed receiver
-            # (H) (`_w.M()`, `this._w.M()`) resolves, including a field inherited
-            # (H) from a base class in another file (the resolver walks
-            # (H) class_inheritance over these per-class maps).
+            # Record C# field/property types so a field-typed receiver
+            # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
+            # from a base class in another file (the resolver walks
+            # class_inheritance over these per-class maps).
             field_types = csharp_utils.build_field_type_map(member_node) or {}
-            # (H) A record's positional parameters ARE public properties of
-            # (H) the record type; record them as members so receiver typing
-            # (H) and the delegate-invoke gate see them (`Callback();` on a
-            # (H) record param is Action.Invoke, not a first-party call).
+            # A record's positional parameters ARE public properties of
+            # the record type; record them as members so receiver typing
+            # and the delegate-invoke gate see them (`Callback();` on a
+            # record param is Action.Invoke, not a first-party call).
             if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
                 for pl in member_node.children:
                     if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
@@ -921,26 +921,26 @@ class ClassIngestMixin:
                             )
             if field_types:
                 self.class_field_types[class_qn] = field_types
-            # (H) Declared type-parameter count: `Builder<TResult>` -> 1;
-            # (H) unrecorded means 0, so only generics are stored. A class
-            # (H) node's type_parameter_list carries NO field name (unlike a
-            # (H) method's), so scan the children.
+            # Declared type-parameter count: `Builder<TResult>` -> 1;
+            # unrecorded means 0, so only generics are stored. A class
+            # node's type_parameter_list carries NO field name (unlike a
+            # method's), so scan the children.
             for child in member_node.children:
                 if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
                     self.csharp_class_generic_arity[class_qn] = len(
                         child.named_children
                     )
                     break
-            # (H) A `partial` type is split across files into N path-distinct
-            # (H) nodes; group the parts into one shared list so a typed receiver
-            # (H) resolves members and bases from any part. The key is the
-            # (H) declaring DIRECTORY (module_qn minus the file stem) plus the
-            # (H) namespace-qualified name, NOT the bare namespace name: two
-            # (H) independent projects that both declare `N.Widget` live in
-            # (H) different directories and must not be merged across assembly
-            # (H) boundaries. Parts in different directories of one project fall
-            # (H) back to generic resolution (safe under-merge) rather than risk a
-            # (H) cross-project wrong edge.
+            # A `partial` type is split across files into N path-distinct
+            # nodes; group the parts into one shared list so a typed receiver
+            # resolves members and bases from any part. The key is the
+            # declaring DIRECTORY (module_qn minus the file stem) plus the
+            # namespace-qualified name, NOT the bare namespace name: two
+            # independent projects that both declare `N.Widget` live in
+            # different directories and must not be merged across assembly
+            # boundaries. Parts in different directories of one project fall
+            # back to generic resolution (safe under-merge) rather than risk a
+            # cross-project wrong edge.
             if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
                 directory = (
                     module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
@@ -974,10 +974,10 @@ class ClassIngestMixin:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
-        # (H) An impl block inside `mod inner` targets a type whose node lives
-        # (H) under the module path (proj...inner.Widget). Resolve the impl target
-        # (H) against its enclosing module so the method binds to the real type
-        # (H) node instead of a phantom under the file module.
+        # An impl block inside `mod inner` targets a type whose node lives
+        # under the module path (proj...inner.Widget). Resolve the impl target
+        # against its enclosing module so the method binds to the real type
+        # node instead of a phantom under the file module.
         mod_parts = rs_utils.build_module_path(class_node)
         owner_module_qn = (
             f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
@@ -986,15 +986,15 @@ class ClassIngestMixin:
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
 
-        # (H) `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
-        # (H) node label may be Class/Enum/Type, so match the relationship source
-        # (H) to its registered label (else the IMPLEMENTS edge never resolves).
+        # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
+        # node label may be Class/Enum/Type, so match the relationship source
+        # to its registered label (else the IMPLEMENTS edge never resolves).
         if trait_name := rs_utils.extract_impl_trait(class_node):
             trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
-            # (H) The trait (or the impl target) may live in a file not yet
-            # (H) parsed; hold the IMPLEMENTS edge back for
-            # (H) resolve_deferred_inherits so an unresolvable trait
-            # (H) (std::fmt::Display) emits no phantom edge.
+            # The trait (or the impl target) may live in a file not yet
+            # parsed; hold the IMPLEMENTS edge back for
+            # resolve_deferred_inherits so an unresolvable trait
+            # (std::fmt::Display) emits no phantom edge.
             self._deferred_inherits.append(
                 DeferredInherit(
                     rel_type=cs.RelationshipType.IMPLEMENTS,
@@ -1005,8 +1005,8 @@ class ClassIngestMixin:
                     language=cs.SupportedLanguage.RUST,
                 )
             )
-            # (H) Record the implementer so a Rust trait call to the sole concrete
-            # (H) impl redirects, matching the class-declaration IMPLEMENTS path.
+            # Record the implementer so a Rust trait call to the sole concrete
+            # impl redirects, matching the class-declaration IMPLEMENTS path.
             self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
 
         body_node = class_node.child_by_field_name("body")
@@ -1047,16 +1047,16 @@ class ClassIngestMixin:
                 language,
                 file_path=file_path,
                 repo_path=self.repo_path,
-                # (H) The impl target may be a primitive (`impl From<Foo> for u8`)
-                # (H) or a type registered later in the pass; defer the containment
-                # (H) edge so it verifies against the registry (module fallback for
-                # (H) primitives) instead of dangling on a phantom Class qn.
+                # The impl target may be a primitive (`impl From<Foo> for u8`)
+                # or a type registered later in the pass; defer the containment
+                # edge so it verifies against the registry (module fallback for
+                # primitives) instead of dangling on a phantom Class qn.
                 defer_containment=self._deferred_parent_links,
                 module_qn=owner_module_qn,
             )
-            # (H) Record the method's return type (Self -> impl target) so a chained
-            # (H) call (`Ping::new(msg).into_frame()`) and a call-bound local
-            # (H) (`let cmd = Command::from_frame(f)`) can resolve the next hop.
+            # Record the method's return type (Self -> impl target) so a chained
+            # call (`Ping::new(msg).into_frame()`) and a call-bound local
+            # (`let cmd = Command::from_frame(f)`) can resolve the next hop.
             name_node = method_node.child_by_field_name(cs.FIELD_NAME)
             method_name = safe_decode_text(name_node) if name_node else None
             if method_name and (
@@ -1101,11 +1101,11 @@ class ClassIngestMixin:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
 
-        # (H) Names defined by an EXTERNAL stdlib base of this class (click's
-        # (H) `class TextWrapper(textwrap.TextWrapper)`): a method matching one
-        # (H) overrides the base and is invoked by its machinery, so mark it for
-        # (H) the dead-code root property. Only unregistered (external) parents
-        # (H) contribute; first-party bases resolve via OVERRIDES edges.
+        # Names defined by an EXTERNAL stdlib base of this class (click's
+        # `class TextWrapper(textwrap.TextWrapper)`): a method matching one
+        # overrides the base and is invoked by its machinery, so mark it for
+        # the dead-code root property. Only unregistered (external) parents
+        # contribute; first-party bases resolve via OVERRIDES edges.
         external_override_names: frozenset[str] = frozenset()
         if language == cs.SupportedLanguage.PYTHON:
             external_parents = [
@@ -1132,11 +1132,11 @@ class ClassIngestMixin:
                     )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
             elif language == cs.SupportedLanguage.CSHARP:
-                # (H) Give C# methods/constructors a parameter signature so
-                # (H) overloads and overloaded constructors stay distinct nodes
-                # (H) (without it two `Widget(...)` ctors collide and the second
-                # (H) gets an `@line` suffix). Zero-arg members stay bare so their
-                # (H) qn is stable and matches an unsignatured call site.
+                # Give C# methods/constructors a parameter signature so
+                # overloads and overloaded constructors stay distinct nodes
+                # (without it two `Widget(...)` ctors collide and the second
+                # gets an `@line` suffix). Zero-arg members stay bare so their
+                # qn is stable and matches an unsignatured call site.
                 cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
                 if cs_name and cs_params:
                     param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
@@ -1164,10 +1164,10 @@ class ClassIngestMixin:
                 is not None
             ):
                 self.csharp_generic_methods.add(ingested_qn)
-            # (H) Record Dart return types (a constructor "returns" its class)
-            # (H) so a local bound from a static factory or named constructor
-            # (H) (`var s = Greeter.create()`) types from the RECORDED return
-            # (H) instead of guessing the class from the call's base name.
+            # Record Dart return types (a constructor "returns" its class)
+            # so a local bound from a static factory or named constructor
+            # (`var s = Greeter.create()`) types from the RECORDED return
+            # instead of guessing the class from the call's base name.
             if (
                 ingested_qn is not None
                 and language == cs.SupportedLanguage.DART
@@ -1184,14 +1184,14 @@ class ClassIngestMixin:
                     cs.NodeLabel.METHOD.value,
                     ingested_qn,
                 )
-            # (H) Track C# methods (and the `override`-modified subset) so the
-            # (H) override walk gates class-parent matches: an implicit hide or a
-            # (H) `new` shadow is not an override, unlike an interface impl.
+            # Track C# methods (and the `override`-modified subset) so the
+            # override walk gates class-parent matches: an implicit hide or a
+            # `new` shadow is not an override, unlike an interface impl.
             if language == cs.SupportedLanguage.CSHARP and ingested_qn is not None:
                 if module_qn is not None:
-                    # (H) Record where this member landed so the Roslyn frontend's
-                    # (H) declaration-location facts (call targets, query callers)
-                    # (H) resolve to the exact registered qn and label.
+                    # Record where this member landed so the Roslyn frontend's
+                    # declaration-location facts (call targets, query callers)
+                    # resolve to the exact registered qn and label.
                     self.function_locations[
                         function_span_key(module_qn, method_node)
                     ] = FunctionLocation(
@@ -1202,9 +1202,9 @@ class ClassIngestMixin:
                 self.csharp_methods.add(ingested_qn)
                 if csharp_has_override_modifier(method_node):
                     self.csharp_override_methods.add(ingested_qn)
-                # (H) Index extension methods by simple name + receiver type so a
-                # (H) `recv.Ext()` call binds to the static method even though it
-                # (H) lives on an unrelated static class (not in recv's hierarchy).
+                # Index extension methods by simple name + receiver type so a
+                # `recv.Ext()` call binds to the static method even though it
+                # lives on an unrelated static class (not in recv's hierarchy).
                 csharp_utils.index_extension_method(
                     self.csharp_extension_methods,
                     ingested_qn,
@@ -1212,11 +1212,11 @@ class ClassIngestMixin:
                     class_qn,
                     module_qn,
                 )
-            # (H) A Java method declared inside an anonymous class body
-            # (H) (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
-            # (H) class but really overrides the anon class's base type. Record it so a
-            # (H) deferred pass emits the OVERRIDES edge once the base is registered;
-            # (H) with override-reachability that keeps the dispatch-only override live.
+            # A Java method declared inside an anonymous class body
+            # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
+            # class but really overrides the anon class's base type. Record it so a
+            # deferred pass emits the OVERRIDES edge once the base is registered;
+            # with override-reachability that keeps the dispatch-only override live.
             if (
                 language == cs.SupportedLanguage.JAVA
                 and ingested_qn is not None
@@ -1229,11 +1229,11 @@ class ClassIngestMixin:
                 self.java_anon_overrides.append(
                     (ingested_qn, method_name, base, module_qn)
                 )
-            # (H) Record where this method landed so Pass-3 call attribution
-            # (H) reuses the registered qn/label instead of re-deriving them.
-            # (H) The walks diverge on preprocessor-distorted C++ class bodies
-            # (H) and on TS declaration merging, where the member registers
-            # (H) under the namespace's duplicate-suffixed qn (issue #652).
+            # Record where this method landed so Pass-3 call attribution
+            # reuses the registered qn/label instead of re-deriving them.
+            # The walks diverge on preprocessor-distorted C++ class bodies
+            # and on TS declaration merging, where the member registers
+            # under the namespace's duplicate-suffixed qn (issue #652).
             if ingested_qn is not None and module_qn is not None:
                 self.function_locations[function_span_key(module_qn, method_node)] = (
                     FunctionLocation(
@@ -1249,16 +1249,16 @@ class ClassIngestMixin:
                     rt_node := method_node.child_by_field_name(
                         cs.TS_CSHARP_FIELD_RETURNS
                     )
-                    # (H) property_declaration exposes its type via `type`,
-                    # (H) not `returns`; recording it lets chained typing and
-                    # (H) the external-member gate see through properties.
+                    # property_declaration exposes its type via `type`,
+                    # not `returns`; recording it lets chained typing and
+                    # the external-member gate see through properties.
                     or method_node.child_by_field_name(cs.FIELD_TYPE)
                 )
                 is not None
             ):
-                # (H) Record a C# method's return type so a chained call
-                # (H) (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
-                # (H) fluent surface) can type the receiver for the next hop.
+                # Record a C# method's return type so a chained call
+                # (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
+                # fluent surface) can type the receiver for the next hop.
                 if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
                     raw = csharp_utils.safe_decode_text(rt_node) or rt_text
                     self.csharp_method_return_types[ingested_qn] = (
@@ -1266,9 +1266,9 @@ class ClassIngestMixin:
                         csharp_utils.generic_arity_of_type_text(raw),
                     )
             if language == cs.SupportedLanguage.CPP:
-                # (H) Record a C++ method's return type so a chained call off a
-                # (H) static factory method (`parser(...).parse(...)`, nlohmann's
-                # (H) basic_json) can type the receiver and resolve the next hop.
+                # Record a C++ method's return type so a chained call off a
+                # static factory method (`parser(...).parse(...)`, nlohmann's
+                # basic_json) can type the receiver and resolve the next hop.
                 method_name = cpp_utils.extract_function_name(method_node)
                 if method_name and (
                     return_type := cpp_utils.extract_return_type_name(method_node)
@@ -1291,10 +1291,10 @@ class ClassIngestMixin:
             if not module_name_node.text:
                 continue
 
-            # (H) A bodyless `mod foo;` only declares that the file module foo.rs
-            # (H) belongs here; foo.rs already yields its own real-path Module node
-            # (H) with the same qn. Emitting a second synthetic-path node collides
-            # (H) on that qn and clobbers the file's real path, so skip it.
+            # A bodyless `mod foo;` only declares that the file module foo.rs
+            # belongs here; foo.rs already yields its own real-path Module node
+            # with the same qn. Emitting a second synthetic-path node collides
+            # on that qn and clobbers the file's real path, so skip it.
             if module_node.child_by_field_name(cs.FIELD_BODY) is None:
                 continue
 
@@ -1311,8 +1311,8 @@ class ClassIngestMixin:
                 cs.KEY_START_LINE: module_node.start_point[0] + 1,
                 cs.KEY_END_LINE: module_node.end_point[0] + 1,
             }
-            # (H) A bodied inline module is physically located in this file; give
-            # (H) it the real path so it joins containment on (file, line).
+            # A bodied inline module is physically located in this file; give
+            # it the real path so it joins containment on (file, line).
             file_path = self.module_qn_to_file_path.get(module_qn)
             if file_path is not None:
                 module_props[cs.KEY_PATH] = cached_relative_path(
@@ -1325,13 +1325,13 @@ class ClassIngestMixin:
                 )
             )
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
-            # (H) Record the inline module qn so deferred import verification
-            # (H) counts it as a real internal target.
+            # Record the inline module qn so deferred import verification
+            # counts it as a real internal target.
             self.declared_module_qns.add(inline_module_qn)
 
-            # (H) Link the inline module into the containment tree: its enclosing
-            # (H) module (file module, or an outer mod) DEFINES it. Without this the
-            # (H) inline Module node is an orphan defining nothing.
+            # Link the inline module into the containment tree: its enclosing
+            # module (file module, or an outer mod) DEFINES it. Without this the
+            # inline Module node is an orphan defining nothing.
             parent_module_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if parent_module_qn and parent_module_qn != inline_module_qn:
                 self.ingestor.ensure_relationship_batch(
@@ -1352,22 +1352,22 @@ class ClassIngestMixin:
         self._resolve_java_anon_overrides()
 
     def _resolve_java_anon_overrides(self) -> None:
-        # (H) Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion
-        # (H) (`new Base(){ @Override m(){} }`). The base type is resolved by UNIQUE
-        # (H) global simple-name match among type declarations (the base is usually in
-        # (H) another file; a full import resolve is unnecessary and this stays
-        # (H) revive-only -- an ambiguous or unfound base is skipped). Each base method
-        # (H) directly on the base whose simple name matches gets an OVERRIDES edge from
-        # (H) the anon override, so override-reachability keeps the dispatch-only method
-        # (H) live when the base is reachable.
+        # Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion
+        # (`new Base(){ @Override m(){} }`). The base type is resolved by UNIQUE
+        # global simple-name match among type declarations (the base is usually in
+        # another file; a full import resolve is unnecessary and this stays
+        # revive-only -- an ambiguous or unfound base is skipped). Each base method
+        # directly on the base whose simple name matches gets an OVERRIDES edge from
+        # the anon override, so override-reachability keeps the dispatch-only method
+        # live when the base is reachable.
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
         for anon_qn, method_name, base_type, _module_qn in self.java_anon_overrides:
-            # (H) A method-body anonymous override is registered as a FUNCTION (via the
-            # (H) function-ingest path), a field-initializer one as a METHOD. The graph
-            # (H) matches an edge endpoint by LABEL + qn, so emit the source with the qn's
-            # (H) ACTUAL registered label -- a hard-coded Method label drops the edge for
-            # (H) the Function-labelled overrides (the eval matches by qn and would hide
-            # (H) this, but the production Cypher would not).
+            # A method-body anonymous override is registered as a FUNCTION (via the
+            # function-ingest path), a field-initializer one as a METHOD. The graph
+            # matches an edge endpoint by LABEL + qn, so emit the source with the qn's
+            # ACTUAL registered label -- a hard-coded Method label drops the edge for
+            # the Function-labelled overrides (the eval matches by qn and would hide
+            # this, but the production Cypher would not).
             anon_type = self.function_registry.get(anon_qn)
             if anon_type is None:
                 continue

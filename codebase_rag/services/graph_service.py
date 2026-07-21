@@ -130,9 +130,9 @@ class MemgraphIngestor:
         try:
             if exc_type:
                 logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-                # (H) Best-effort flush: attempt to persist buffered nodes/relationships
-                # (H) even when an exception occurred. Catching broad Exception so a
-                # (H) secondary flush failure never masks the original exception.
+                # Best-effort flush: attempt to persist buffered nodes/relationships
+                # even when an exception occurred. Catching broad Exception so a
+                # secondary flush failure never masks the original exception.
                 try:
                     self.flush_all()
                 except Exception as flush_err:
@@ -463,11 +463,11 @@ class MemgraphIngestor:
                 props = row[KEY_PROPS] or {}
                 by_keys[tuple(p for p in candidate if p in props)].append(row)
             if len(by_keys) > 1:
-                # (H) Rows for the same endpoints may carry different distinguishing
-                # (H) props (issue #722); flush each merge-key signature on its own so
-                # (H) a prop absent from one row is not dropped from the key for the
-                # (H) rest, which would re-collapse the parallel provenance edges.
-                # (H) Pass `conn` through unchanged to preserve the lock semantics.
+                # Rows for the same endpoints may carry different distinguishing
+                # props (issue #722); flush each merge-key signature on its own so
+                # a prop absent from one row is not dropped from the key for the
+                # rest, which would re-collapse the parallel provenance edges.
+                # Pass `conn` through unchanged to preserve the lock semantics.
                 totals = [
                     self._flush_rel_pattern_group(pattern, rows, conn=conn)
                     for rows in by_keys.values()

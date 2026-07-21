@@ -1,10 +1,10 @@
-# (H) `using appender = basic_appender<char>; appender(out)` constructs the
-# (H) aliased class, but the alias is no registered node, so the call resolved
-# (H) to nothing and the class's ctor kept zero incoming edges (fmt's
-# (H) basic_appender.basic_appender dead-list residual from PR #791). A bare
-# (H) unresolved C++ call name that the collected typedef/using alias map
-# (H) resolves to a registered class is a construction: INSTANTIATES + ctor
-# (H) CALLS, exactly like a direct class-name construction.
+# `using appender = basic_appender<char>; appender(out)` constructs the
+# aliased class, but the alias is no registered node, so the call resolved
+# to nothing and the class's ctor kept zero incoming edges (fmt's
+# basic_appender.basic_appender dead-list residual from PR #791). A bare
+# unresolved C++ call name that the collected typedef/using alias map
+# resolves to a registered class is a construction: INSTANTIATES + ctor
+# CALLS, exactly like a direct class-name construction.
 from __future__ import annotations
 
 from pathlib import Path
@@ -114,8 +114,8 @@ def test_alias_to_non_class_emits_nothing(
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
     inst = _edges(mock_ingestor, cs.RelationshipType.INSTANTIATES)
-    # (H) `count_t(4)` is a primitive functional cast; the alias resolves to no
-    # (H) registered class and must stay edge-free.
+    # `count_t(4)` is a primitive functional cast; the alias resolves to no
+    # registered class and must stay edge-free.
     assert not any("count_t" in dst or "int" in dst for _, dst in calls | inst), (
         calls | inst
     )
@@ -145,9 +145,9 @@ def test_function_local_alias_construction_emits_ctor_call(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
-    # (H) The cross-file alias collector deliberately skips function bodies, so
-    # (H) a body-local `using writer = basic_writer;` needs the caller-scoped
-    # (H) map (PR #797 review).
+    # The cross-file alias collector deliberately skips function bodies, so
+    # a body-local `using writer = basic_writer;` needs the caller-scoped
+    # map (PR #797 review).
     assert any(
         src.endswith(".write_it") and dst.endswith(".basic_writer.basic_writer")
         for src, dst in calls
@@ -177,8 +177,8 @@ def test_alias_declared_after_call_site_does_not_bind(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
-    # (H) C++ name lookup is declaration-ordered: `later_alias(1)` precedes the
-    # (H) using-declaration and can never mean real_thing (PR #797 review).
+    # C++ name lookup is declaration-ordered: `later_alias(1)` precedes the
+    # using-declaration and can never mean real_thing (PR #797 review).
     assert not any(
         src.endswith(".confused") and "real_thing" in dst for src, dst in calls
     ), calls
@@ -219,15 +219,15 @@ def test_alias_out_of_lexical_scope_does_not_bind(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
-    # (H) A block/lambda-local alias dies at its closing brace: a later call in
-    # (H) the enclosing scope can never mean it (PR #797 review round 4).
+    # A block/lambda-local alias dies at its closing brace: a later call in
+    # the enclosing scope can never mean it (PR #797 review round 4).
     assert not any(
         src.endswith(".blocked") and "real_widget" in dst for src, dst in calls
     ), calls
     assert not any(
         src.endswith(".lambda_leak") and "real_widget" in dst for src, dst in calls
     ), calls
-    # (H) inside its own block the alias still binds
+    # inside its own block the alias still binds
     assert any(
         src.endswith(".inside") and dst.endswith(".real_widget.real_widget")
         for src, dst in calls
@@ -271,9 +271,9 @@ def test_same_name_aliases_in_disjoint_scopes_both_bind(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
-    # (H) disjoint blocks each own their alias: neither is a conflict of the
-    # (H) other, and each call binds to its own block's target (PR #797 review
-    # (H) round 5).
+    # disjoint blocks each own their alias: neither is a conflict of the
+    # other, and each call binds to its own block's target (PR #797 review
+    # round 5).
     assert any(
         src.endswith(".two_blocks") and dst.endswith(".real_one.real_one")
         for src, dst in calls
@@ -282,8 +282,8 @@ def test_same_name_aliases_in_disjoint_scopes_both_bind(
         src.endswith(".two_blocks") and dst.endswith(".real_two.real_two")
         for src, dst in calls
     ), calls
-    # (H) shadowing: the innermost alias wins inside its block, the outer one
-    # (H) resumes after the block closes
+    # shadowing: the innermost alias wins inside its block, the outer one
+    # resumes after the block closes
     assert any(
         src.endswith(".shadowed") and dst.endswith(".real_two.real_two")
         for src, dst in calls
@@ -316,9 +316,9 @@ def test_local_struct_member_alias_does_not_leak_to_function(
 
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
     inst = _edges(mock_ingestor, cs.RelationshipType.INSTANTIATES)
-    # (H) a member type alias of a local struct is scoped to the struct body;
-    # (H) an unqualified call in the enclosing function can never mean it
-    # (H) (PR #797 review round 6).
+    # a member type alias of a local struct is scoped to the struct body;
+    # an unqualified call in the enclosing function can never mean it
+    # (PR #797 review round 6).
     assert not any(
         src.endswith(".local_struct") and "real_gadget" in dst
         for src, dst in calls | inst

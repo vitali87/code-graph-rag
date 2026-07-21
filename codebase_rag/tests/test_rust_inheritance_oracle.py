@@ -1,6 +1,6 @@
-# (H) Covers Rust inheritance-edge validation: cgr's INHERITS (supertrait bound)
-# (H) and IMPLEMENTS (`impl Trait for Type`) edges are graded against the syn
-# (H) oracle, by (source node, base SIMPLE NAME).
+# Covers Rust inheritance-edge validation: cgr's INHERITS (supertrait bound)
+# and IMPLEMENTS (`impl Trait for Type`) edges are graded against the syn
+# oracle, by (source node, base SIMPLE NAME).
 from __future__ import annotations
 
 from pathlib import Path

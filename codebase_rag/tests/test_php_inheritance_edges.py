@@ -1,7 +1,7 @@
-# (H) PHP inheritance was entirely missing: cgr emitted neither INHERITS
-# (H) (class/interface `extends`) nor IMPLEMENTS (class `implements`). PHP keeps
-# (H) extends in a base_clause and implements in a class_interface_clause, holding
-# (H) `name` nodes that the parent extractor never read.
+# PHP inheritance was entirely missing: cgr emitted neither INHERITS
+# (class/interface `extends`) nor IMPLEMENTS (class `implements`). PHP keeps
+# extends in a base_clause and implements in a class_interface_clause, holding
+# `name` nodes that the parent extractor never read.
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,11 +41,11 @@ def test_php_inheritance_and_implements_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "php_inh.lib"
 
-    # (H) class extends -> INHERITS.
+    # class extends -> INHERITS.
     assert (f"{base}.Circle", f"{base}.Base") in inherits, inherits
-    # (H) class implements -> IMPLEMENTS to each interface.
+    # class implements -> IMPLEMENTS to each interface.
     assert (f"{base}.Circle", f"{base}.Shape") in implements, implements
     assert (f"{base}.Circle", f"{base}.Drawable") in implements, implements
-    # (H) interface extends -> INHERITS to each superinterface.
+    # interface extends -> INHERITS to each superinterface.
     assert (f"{base}.Big", f"{base}.Shape") in inherits, inherits
     assert (f"{base}.Big", f"{base}.Drawable") in inherits, inherits

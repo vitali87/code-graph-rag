@@ -20,10 +20,10 @@ def _make(root: Path) -> None:
 
 
 def test_ts_class_field_arrow_is_modeled_and_calls_resolve(tmp_path: Path) -> None:
-    # (H) A class-property arrow (`helper = (x) => ...`) must be modeled as a
-    # (H) member node (p.t.T.helper) just like a normal method, and the calls in
-    # (H) its body must be attributed to it. Previously the definition pass created
-    # (H) no node for it (no name field) and the call pass skipped its body.
+    # A class-property arrow (`helper = (x) => ...`) must be modeled as a
+    # member node (p.t.T.helper) just like a normal method, and the calls in
+    # its body must be attributed to it. Previously the definition pass created
+    # no node for it (no name field) and the call pass skipped its body.
     _make(tmp_path)
     ingestor = _capture(tmp_path, "p")
     member_qns = {
@@ -37,5 +37,5 @@ def test_ts_class_field_arrow_is_modeled_and_calls_resolve(tmp_path: Path) -> No
 
     assert "p.t.T.helper" in member_qns
     assert ("p.t.T.helper", "p.util.parsedType") in calls
-    # (H) regression guard: the normal method still works.
+    # regression guard: the normal method still works.
     assert ("p.t.T.regular", "p.util.parsedType") in calls

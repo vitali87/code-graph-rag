@@ -63,9 +63,9 @@ class StructureProcessor:
             ):
                 directories.add(path)
 
-        # (H) Package detection needs only the static language specs, never a
-        # (H) loaded grammar; iterating self.queries.values() would force every
-        # (H) lazy grammar to load (issue #68).
+        # Package detection needs only the static language specs, never a
+        # loaded grammar; iterating self.queries.values() would force every
+        # lazy grammar to load (issue #68).
         package_indicators: set[str] = set()
         for lang_config in LANGUAGE_SPECS.values():
             package_indicators.update(lang_config.package_indicators)

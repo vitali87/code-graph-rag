@@ -1,10 +1,10 @@
-# (H) Multi-language retrieval (PHP). Extends the file-level call-localization
-# (H) benchmark to PHP: for each first-party PHP symbol, which files call it.
-# (H) cgr's PHP CALLS edges (reduced to (caller_file, callee_simple_name)) are
-# (H) graded against call sites extracted by php-parser, over the same first-party
-# (H) name universe. php-parser is independent of cgr's tree-sitter PHP frontend,
-# (H) so this measures cgr's cross-file PHP call resolution against ground truth
-# (H) (mirrors evals/java_retrieval.py / ts_retrieval.py).
+# Multi-language retrieval (PHP). Extends the file-level call-localization
+# benchmark to PHP: for each first-party PHP symbol, which files call it.
+# cgr's PHP CALLS edges (reduced to (caller_file, callee_simple_name)) are
+# graded against call sites extracted by php-parser, over the same first-party
+# name universe. php-parser is independent of cgr's tree-sitter PHP frontend,
+# so this measures cgr's cross-file PHP call resolution against ground truth
+# (mirrors evals/java_retrieval.py / ts_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 

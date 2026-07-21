@@ -12,7 +12,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _exported_by_qn(mock: MagicMock) -> dict[str, bool]:
-    # (H) qualified_name -> is_exported for every Function/Method node ingested.
+    # qualified_name -> is_exported for every Function/Method node ingested.
     out: dict[str, bool] = {}
     for c in mock.ensure_node_batch.call_args_list:
         label, props = c.args[0], c.args[1]
@@ -158,15 +158,15 @@ def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
     exported = _run(tmp_path, {"srg.py": PY_SRC})
     assert _one(exported, ".to_srg") is True
     assert _one(exported, ".parse") is True
-    assert _one(exported, ".__init__") is True  # (H) dunder: runtime-invoked
+    assert _one(exported, ".__init__") is True  # dunder: runtime-invoked
     assert _one(exported, "._predicates") is False
     assert _one(exported, "._extract") is False
 
 
 def test_nested_python_function_is_not_a_root(tmp_path: Path) -> None:
-    # (H) A function nested inside another function is a local closure, never public
-    # (H) API, so it must not be seeded as a reachability root even if its name is
-    # (H) public -- otherwise an unreachable outer function's helpers look live.
+    # A function nested inside another function is a local closure, never public
+    # API, so it must not be seeded as a reachability root even if its name is
+    # public -- otherwise an unreachable outer function's helpers look live.
     src = "def outer():\n    def helper():\n        return 1\n    return helper()\n"
     exported = _run(tmp_path, {"m.py": src})
     assert _one(exported, ".outer") is True
@@ -193,21 +193,21 @@ def test_ts_export_keyword_marks_exported(tmp_path: Path) -> None:
 
 
 def test_ts_export_list_marks_exported(tmp_path: Path) -> None:
-    # (H) A separate `export { handler }` list (and `export { x as y }` rename) is
-    # (H) the common JS/TS export form: the declaration is not wrapped by `export`,
-    # (H) so its name must be matched against module-level export clauses instead.
+    # A separate `export { handler }` list (and `export { x as y }` rename) is
+    # the common JS/TS export form: the declaration is not wrapped by `export`,
+    # so its name must be matched against module-level export clauses instead.
     if "typescript" not in load_parsers()[0]:
         pytest.skip("typescript parser not available")
     exported = _run(tmp_path, {"api.ts": TS_EXPORT_LIST_SRC})
     assert _one(exported, ".handler") is True
-    assert _one(exported, ".renamed") is True  # (H) exported under an alias
+    assert _one(exported, ".renamed") is True  # exported under an alias
     assert _one(exported, ".neverExported") is False
 
 
 def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> None:
-    # (H) A `private` method is not part of the class's public API even when the
-    # (H) class is exported, so it must not seed a reachability root; `protected`
-    # (H) stays exported (an inheritance surface, mirroring the Java rule).
+    # A `private` method is not part of the class's public API even when the
+    # class is exported, so it must not seed a reachability root; `protected`
+    # stays exported (an inheritance surface, mirroring the Java rule).
     if "typescript" not in load_parsers()[0]:
         pytest.skip("typescript parser not available")
     exported = _run(tmp_path, {"api.ts": TS_CLASS_ACCESS_SRC})
@@ -217,9 +217,9 @@ def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> 
 
 
 def test_rust_only_unrestricted_pub_is_exported(tmp_path: Path) -> None:
-    # (H) Only bare `pub` is an external API root. `pub(crate)`/`pub(super)` are
-    # (H) visible only within the crate/parent module, so an uncalled one is
-    # (H) genuinely dead and must not be seeded as a reachability root.
+    # Only bare `pub` is an external API root. `pub(crate)`/`pub(super)` are
+    # visible only within the crate/parent module, so an uncalled one is
+    # genuinely dead and must not be seeded as a reachability root.
     if "rust" not in load_parsers()[0]:
         pytest.skip("rust parser not available")
     exported = _run(tmp_path, {"m.rs": RUST_SRC})
@@ -232,8 +232,8 @@ def test_rust_only_unrestricted_pub_is_exported(tmp_path: Path) -> None:
 def test_js_hash_private_method_of_exported_class_is_not_exported(
     tmp_path: Path,
 ) -> None:
-    # (H) An ECMAScript `#name` method is private to the class even when the class
-    # (H) is exported, so it must not seed a reachability root.
+    # An ECMAScript `#name` method is private to the class even when the class
+    # is exported, so it must not seed a reachability root.
     if "javascript" not in load_parsers()[0]:
         pytest.skip("javascript parser not available")
     exported = _run(tmp_path, {"store.js": JS_CLASS_HASH_PRIVATE_SRC})
@@ -274,9 +274,9 @@ function helper() {
 
 
 def test_browser_script_top_level_symbols_are_exported(tmp_path: Path) -> None:
-    # (H) A JS file with no import/export/require runs in page scope: every
-    # (H) top-level declaration (and its class members) is a page-global the
-    # (H) HTML can call, so it is a reachability root (django's OLMapWidget).
+    # A JS file with no import/export/require runs in page scope: every
+    # top-level declaration (and its class members) is a page-global the
+    # HTML can call, so it is a reachability root (django's OLMapWidget).
     exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
     assert _one(exported, "widget.MapWidget.constructor") is True
     assert _one(exported, "widget.MapWidget.createMap") is True
@@ -285,15 +285,15 @@ def test_browser_script_top_level_symbols_are_exported(tmp_path: Path) -> None:
 
 
 def test_browser_script_function_locals_stay_private(tmp_path: Path) -> None:
-    # (H) Declarations inside a function body are locals reached only through
-    # (H) their enclosing scope, even in a page-scope script.
+    # Declarations inside a function body are locals reached only through
+    # their enclosing scope, even in a page-scope script.
     exported = _run(tmp_path, {"widget.js": SCRIPT_JS_SRC})
     assert _one(exported, "pageInit.localFn") is False
 
 
 def test_commonjs_module_symbols_stay_private(tmp_path: Path) -> None:
-    # (H) A require() call marks the file as a CommonJS module, so an
-    # (H) unexported top-level function is module-private, not a page-global.
+    # A require() call marks the file as a CommonJS module, so an
+    # unexported top-level function is module-private, not a page-global.
     exported = _run(tmp_path, {"mod.js": COMMONJS_SRC})
     assert _one(exported, "mod.helper") is False
 
@@ -314,9 +314,9 @@ String.prototype.strptime = function (format) {
 
 
 def test_browser_script_prototype_method_is_exported(tmp_path: Path) -> None:
-    # (H) A prototype-assigned method in a page-scope script (django admin's
-    # (H) core.js String.prototype.strptime) extends a global builtin, so it is
-    # (H) callable from any other script or template: a reachability root.
+    # A prototype-assigned method in a page-scope script (django admin's
+    # core.js String.prototype.strptime) extends a global builtin, so it is
+    # callable from any other script or template: a reachability root.
     exported = _run(tmp_path, {"core.js": PROTO_SCRIPT_JS_SRC})
     assert _one(exported, "core.String.strptime") is True
 
@@ -340,10 +340,10 @@ function helper() {
 
 
 def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
-    # (H) django admin's core.js wraps its prototype extensions in bare
-    # (H) top-level `{ ... }` blocks. A block is not a function scope: the
-    # (H) prototype mutation still lands on the page-global builtin, so the
-    # (H) method must stay a reachability root.
+    # django admin's core.js wraps its prototype extensions in bare
+    # top-level `{ ... }` blocks. A block is not a function scope: the
+    # prototype mutation still lands on the page-global builtin, so the
+    # method must stay a reachability root.
     exported = _run(tmp_path, {"core.js": BLOCK_SCRIPT_JS_SRC})
     assert _one(exported, "core.String.strptime") is True
     assert _one(exported, "core.helper") is True
@@ -352,10 +352,10 @@ def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
 def test_script_module_scan_runs_once_per_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # (H) The module-construct scan walks every top-level statement; it must
-    # (H) run once per FILE (memoized on the tree root), not once per symbol,
-    # (H) or export detection on a bundle with thousands of top-level
-    # (H) declarations goes quadratic.
+    # The module-construct scan walks every top-level statement; it must
+    # run once per FILE (memoized on the tree root), not once per symbol,
+    # or export detection on a bundle with thousands of top-level
+    # declarations goes quadratic.
     from unittest.mock import patch
 
     from codebase_rag import constants as cs
@@ -398,28 +398,28 @@ extension PublicExt on String {
 
 
 def test_dart_visibility_seeds_exported_roots(tmp_path: Path) -> None:
-    # (H) Dart privacy is purely lexical: a leading underscore on the symbol OR
-    # (H) any enclosing type means library-private (not externally reachable),
-    # (H) everything else is public API and must seed a dead-code root. Without
-    # (H) this every public Dart symbol read as private and a library's whole
-    # (H) public surface flagged dead (dart-lang/args: 89 false positives).
+    # Dart privacy is purely lexical: a leading underscore on the symbol OR
+    # any enclosing type means library-private (not externally reachable),
+    # everything else is public API and must seed a dead-code root. Without
+    # this every public Dart symbol read as private and a library's whole
+    # public surface flagged dead (dart-lang/args: 89 false positives).
     exported = _run(tmp_path, {"lib.dart": DART_SRC})
 
     assert _one(exported, ".lib.publicFn") is True
     assert _one(exported, ".lib._privateFn") is False
     assert _one(exported, ".Command.run") is True
     assert _one(exported, ".Command._wrap") is False
-    # (H) a public method of a PRIVATE class is not reachable from outside the
-    # (H) library, so it is not an export root on its own
+    # a public method of a PRIVATE class is not reachable from outside the
+    # library, so it is not an export root on its own
     assert _one(exported, "._Internal.doThing") is False
-    # (H) a public NAMED extension is importable, so its members are roots
+    # a public NAMED extension is importable, so its members are roots
     assert _one(exported, ".PublicExt.boom") is True
 
 
 def test_dart_unnamed_extension_member_is_private() -> None:
-    # (H) An unnamed extension (`extension on String {...}`) is usable only in
-    # (H) its declaring library; export detection must treat its members as
-    # (H) private even though the leaf name looks public (PR #819 review).
+    # An unnamed extension (`extension on String {...}`) is usable only in
+    # its declaring library; export detection must treat its members as
+    # private even though the leaf name looks public (PR #819 review).
     from codebase_rag.parsers.export_detection import _dart_exported
 
     parsers, _ = load_parsers()

@@ -1,7 +1,7 @@
-# (H) Covers the JavaScript structure oracle harness (evals/oracles/ts_oracle run
-# (H) over .js/.jsx + evals/js_l1.py): the TS-compiler-API oracle is authoritative
-# (H) ground truth, and cgr's captured JavaScript nodes are graded against it on
-# (H) (kind, file, start_line).
+# Covers the JavaScript structure oracle harness (evals/oracles/ts_oracle run
+# over .js/.jsx + evals/js_l1.py): the TS-compiler-API oracle is authoritative
+# ground truth, and cgr's captured JavaScript nodes are graded against it on
+# (kind, file, start_line).
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,5 +1,5 @@
-# (H) C# Phase 4: System.* namespaces fold the trailing type into the namespace
-# (H) path (external stdlib), like the Java model.
+# C# Phase 4: System.* namespaces fold the trailing type into the namespace
+# path (external stdlib), like the Java model.
 import pytest
 
 from codebase_rag import constants as cs
@@ -9,8 +9,8 @@ from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
 
 @pytest.fixture(autouse=True)
 def _reset_stdlib_cache() -> None:
-    # (H) The extractor memoizes (and disk-persists) results; clear so a stale
-    # (H) entry from another test or run cannot mask the real resolution.
+    # The extractor memoizes (and disk-persists) results; clear so a stale
+    # entry from another test or run cannot mask the real resolution.
     se._STDLIB_CACHE.clear()
     se._CACHE_TIMESTAMPS.clear()
 
@@ -32,15 +32,15 @@ def test_system_types_fold_into_namespace() -> None:
 
 
 def test_non_type_member_keeps_full_path() -> None:
-    # (H) A lowercase trailing segment is a member/namespace, not a type: keep it.
+    # A lowercase trailing segment is a member/namespace, not a type: keep it.
     assert _path("System.Console.writeLine") == "System.Console.writeLine"
 
 
 def test_namespace_is_not_folded_as_a_type() -> None:
-    # (H) C# namespaces are PascalCase like types, so a bare namespace reference
-    # (H) must not be folded into its parent (a `using System.Text.Json;` names a
-    # (H) namespace, not a `Json` type). Only recognized BCL types fold, so an
-    # (H) unknown PascalCase leaf -- including under Microsoft.* -- stays whole.
+    # C# namespaces are PascalCase like types, so a bare namespace reference
+    # must not be folded into its parent (a `using System.Text.Json;` names a
+    # namespace, not a `Json` type). Only recognized BCL types fold, so an
+    # unknown PascalCase leaf -- including under Microsoft.* -- stays whole.
     assert _path("System.Text.Json") == "System.Text.Json"
     assert _path("System.Collections.Generic") == "System.Collections.Generic"
     assert _path("System.Threading.Tasks") == "System.Threading.Tasks"

@@ -10,14 +10,14 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 
-# (H) Two classes define a method of the same name; only the receiver's type tells
-# (H) which one a call `z->run()` / `z.run()` targets. cgr resolved C++ member calls
-# (H) by the bare method name (the field_expression yielded only `run`), so the
-# (H) name-only trie fallback bound every `run()` call to whichever `run` sorted
-# (H) first (`Alpha.run`), regardless of the receiver. With receiver type inference
-# (H) (parameter/local var -> bare class name), `z` is a `Zeta`, so the call must
-# (H) resolve to `Zeta.run`. `Alpha` sorts before `Zeta`, so the wrong (old) answer
-# (H) is deterministic and this test is a real RED.
+# Two classes define a method of the same name; only the receiver's type tells
+# which one a call `z->run()` / `z.run()` targets. cgr resolved C++ member calls
+# by the bare method name (the field_expression yielded only `run`), so the
+# name-only trie fallback bound every `run()` call to whichever `run` sorted
+# first (`Alpha.run`), regardless of the receiver. With receiver type inference
+# (parameter/local var -> bare class name), `z` is a `Zeta`, so the call must
+# resolve to `Zeta.run`. `Alpha` sorts before `Zeta`, so the wrong (old) answer
+# is deterministic and this test is a real RED.
 CPP_SOURCE = """
 namespace ns {
 
@@ -40,7 +40,7 @@ int use_val(Zeta z) { return z.run(); }
 
 
 def _calls_to_run(mock_ingestor: MagicMock) -> dict[str, str]:
-    # (H) map caller-qn -> callee-qn for every CALLS edge whose callee is a `run`.
+    # map caller-qn -> callee-qn for every CALLS edge whose callee is a `run`.
     out: dict[str, str] = {}
     for c in get_relationships(mock_ingestor, "CALLS"):
         callee = str(c.args[2][2])
@@ -88,12 +88,12 @@ def _first_function_node(source: str):
     return node
 
 
-# (H) A C++ reference parameter (`Alpha& ar`) parses as a `reference_declarator` that
-# (H) holds its identifier as a POSITIONAL child, not under the `declarator` field the
-# (H) way `pointer_declarator` does. The field-only unwrap in `_declarator_name` stalled
-# (H) on it, so reference parameters/locals never entered the type map and their member
-# (H) calls fell back to bare-name resolution. References are pervasive in C++, so this
-# (H) is a real coverage hole.
+# A C++ reference parameter (`Alpha& ar`) parses as a `reference_declarator` that
+# holds its identifier as a POSITIONAL child, not under the `declarator` field the
+# way `pointer_declarator` does. The field-only unwrap in `_declarator_name` stalled
+# on it, so reference parameters/locals never entered the type map and their member
+# calls fell back to bare-name resolution. References are pervasive in C++, so this
+# is a real coverage hole.
 def test_cpp_reference_parameter_maps_to_type() -> None:
     node = _first_function_node("void f(Alpha& ar, Zeta* zp) { }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -141,13 +141,13 @@ def test_cpp_local_reference_receiver_resolves(
     )
 
 
-# (H) The type map is keyed by name with no call-position context, so it cannot model
-# (H) true lexical scope: it cannot tell an outer `Zeta z` from an inner-block `Alpha z`
-# (H) that shadows it. Picking either write order emits a confidently wrong typed edge
-# (H) for one of the two scopes. Instead a name declared with conflicting types is NOT
-# (H) inferred at all -- the call falls back to name-only resolution rather than getting
-# (H) a wrong edge. An inner-block local whose name does NOT collide is still recorded,
-# (H) so recall for the common case is preserved.
+# The type map is keyed by name with no call-position context, so it cannot model
+# true lexical scope: it cannot tell an outer `Zeta z` from an inner-block `Alpha z`
+# that shadows it. Picking either write order emits a confidently wrong typed edge
+# for one of the two scopes. Instead a name declared with conflicting types is NOT
+# inferred at all -- the call falls back to name-only resolution rather than getting
+# a wrong edge. An inner-block local whose name does NOT collide is still recorded,
+# so recall for the common case is preserved.
 def test_cpp_conflicting_shadow_type_is_not_inferred() -> None:
     node = _first_function_node("void f() { Zeta z; { Alpha z; } }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -164,11 +164,11 @@ def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
     )
 
 
-# (H) One C++ declaration statement can declare several variables (`Zeta a, b;`), each
-# (H) exposed as its own `declarator` field child. Recording only the first left `b`
-# (H) unmapped, so `b.run()` fell back to bare-name resolution. Every declarator in the
-# (H) statement shares the leading type and must be recorded, including mixed
-# (H) pointer/plain forms (`Foo* p, q;`).
+# One C++ declaration statement can declare several variables (`Zeta a, b;`), each
+# exposed as its own `declarator` field child. Recording only the first left `b`
+# unmapped, so `b.run()` fell back to bare-name resolution. Every declarator in the
+# statement shares the leading type and must be recorded, including mixed
+# pointer/plain forms (`Foo* p, q;`).
 def test_cpp_multi_declarator_declaration_maps_all_names() -> None:
     node = _first_function_node("void f() { Zeta a, b; Foo* p, q; }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -217,10 +217,10 @@ def test_cpp_second_declarator_receiver_resolves(
     )
 
 
-# (H) A lambda body opens its own scope. A same-named variable declared inside it must
-# (H) not leak into the enclosing function's map: without the scope guard the inner
-# (H) `Alpha z` conflicts with the outer `Zeta z`, so drop-on-conflict would discard
-# (H) `z` entirely and the outer `z.run()` would fall back to name-only (Alpha.run).
+# A lambda body opens its own scope. A same-named variable declared inside it must
+# not leak into the enclosing function's map: without the scope guard the inner
+# `Alpha z` conflicts with the outer `Zeta z`, so drop-on-conflict would discard
+# `z` entirely and the outer `z.run()` would fall back to name-only (Alpha.run).
 def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
     node = _first_function_node("void f() { Zeta z; auto g = [](){ Alpha z; }; }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -229,13 +229,13 @@ def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
     )
 
 
-# (H) When a receiver's inferred type is NOT a first-party class (a `std::string`, any
-# (H) external/STL type), a member call on it must not fall through to the bare-method
-# (H) trie fallback and rebind to a same-named first-party method. Here `s` is a
-# (H) `std::string`, so `s.size()` is an external call; it must NOT resolve to the
-# (H) first-party `ns.Widget.size`. Before the guard, the trie fallback bound the bare
-# (H) `size` to `Widget.size` (the only first-party `size`), a precision bug the C++
-# (H) retrieval eval flagged on leveldb.
+# When a receiver's inferred type is NOT a first-party class (a `std::string`, any
+# external/STL type), a member call on it must not fall through to the bare-method
+# trie fallback and rebind to a same-named first-party method. Here `s` is a
+# `std::string`, so `s.size()` is an external call; it must NOT resolve to the
+# first-party `ns.Widget.size`. Before the guard, the trie fallback bound the bare
+# `size` to `Widget.size` (the only first-party `size`), a precision bug the C++
+# retrieval eval flagged on leveldb.
 _EXTERNAL_RECEIVER_SOURCE = """
 #include <string>
 
@@ -262,8 +262,8 @@ def test_cpp_external_receiver_call_is_not_rebound_to_first_party(
 
     run_updater(project, mock_ingestor)
 
-    # (H) `use` calls std::string::size, which is external; no CALLS edge from it to
-    # (H) the first-party Widget.size may be emitted.
+    # `use` calls std::string::size, which is external; no CALLS edge from it to
+    # the first-party Widget.size may be emitted.
     bad = [
         (str(c.args[0][2]), str(c.args[2][2]))
         for c in get_relationships(mock_ingestor, "CALLS")

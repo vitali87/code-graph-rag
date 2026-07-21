@@ -147,8 +147,8 @@ def test_untainted_value_no_flow(
 def test_return_taint_flows_across_call(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) getSecret() returns process.env.SECRET; the caller assigns and logs it,
-    # (H) so the return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
+    # getSecret() returns process.env.SECRET; the caller assigns and logs it,
+    # so the return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -169,8 +169,8 @@ def test_return_taint_flows_across_call(
 def test_shadowed_console_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local `console` object is not the global; logging through it must not
-    # (H) emit a resource flow.
+    # A local `console` object is not the global; logging through it must not
+    # emit a resource flow.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -192,8 +192,8 @@ def test_shadowed_console_no_flow(
 def test_comment_in_arguments_does_not_break_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Comments are named children; they must not shift argument indices or hide
-    # (H) the taint of a directly-passed source.
+    # Comments are named children; they must not shift argument indices or hide
+    # the taint of a directly-passed source.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -211,8 +211,8 @@ def test_comment_in_arguments_does_not_break_flow(
 def test_parenthesized_source_flows(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A parenthesized source expression must be unwrapped like await, so
-    # (H) `console.log((process.env.SECRET))` still emits the flow.
+    # A parenthesized source expression must be unwrapped like await, so
+    # `console.log((process.env.SECRET))` still emits the flow.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -230,8 +230,8 @@ def test_parenthesized_source_flows(
 def test_comment_before_sink_target_keeps_identity(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A comment before the sink's target argument must not shift the positional
-    # (H) index used for the resource identity (literal_target filters comments).
+    # A comment before the sink's target argument must not shift the positional
+    # index used for the resource identity (literal_target filters comments).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -252,8 +252,8 @@ def test_comment_before_sink_target_keeps_identity(
 def test_module_import_plus_local_shadow_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `fs` is imported module-wide, but a function-local `const fs = {}` shadows
-    # (H) it: fs.writeFileSync must not be the builtin, so no resource flow appears.
+    # `fs` is imported module-wide, but a function-local `const fs = {}` shadows
+    # it: fs.writeFileSync must not be the builtin, so no resource flow appears.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -275,8 +275,8 @@ def test_module_import_plus_local_shadow_no_flow(
 def test_typescript_typed_param_shadows_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A TS parameter is a required_parameter wrapper, not a bare identifier; a
-    # (H) `process` parameter must still shadow the global env source.
+    # A TS parameter is a required_parameter wrapper, not a bare identifier; a
+    # `process` parameter must still shadow the global env source.
     _build(
         memgraph_ingestor,
         tmp_path,

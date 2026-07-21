@@ -16,12 +16,12 @@ _SYNTHETIC_QUALNAME_MARKERS = (
 )
 _LOCALS_SEGMENT = ".<locals>"
 
-# (H) functools.wraps decorator wrappers: the inner function is named "wrapper" and
-# (H) closes over the wrapped callable under one of these free-variable names. cgr
-# (H) resolves a call to a decorated function as a call to the function itself (it sees
-# (H) through the decorator), so the trace must attribute the generic wrapper frame to
-# (H) the function it wraps; otherwise calls would be credited to the recycled wrapper
-# (H) node. See evals/README.md ("Decorator-wrapper normalization").
+# functools.wraps decorator wrappers: the inner function is named "wrapper" and
+# closes over the wrapped callable under one of these free-variable names. cgr
+# resolves a call to a decorated function as a call to the function itself (it sees
+# through the decorator), so the trace must attribute the generic wrapper frame to
+# the function it wraps; otherwise calls would be credited to the recycled wrapper
+# node. See evals/README.md ("Decorator-wrapper normalization").
 _WRAPPER_CODE_NAME = "wrapper"
 _WRAPPED_FREE_VARS = ("func", "fn", "wrapped", "method", "f")
 
@@ -51,8 +51,8 @@ def _code_qn(code: CodeType, target: Path, project_name: str) -> str | None:
 
 
 def _wrapped_code(frame: FrameType) -> CodeType | None:
-    # (H) Recover the wrapped function's code from a @wraps wrapper frame via its
-    # (H) closed-over callable, following any __wrapped__ chain to the real function.
+    # Recover the wrapped function's code from a @wraps wrapper frame via its
+    # closed-over callable, following any __wrapped__ chain to the real function.
     code = frame.f_code
     if code.co_name != _WRAPPER_CODE_NAME:
         return None

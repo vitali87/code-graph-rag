@@ -1,7 +1,7 @@
-# (H) Covers Lua containment-edge validation. Lua has no classes/methods, so the
-# (H) only containment edge is DEFINES: the file module DEFINES top-level
-# (H) functions, and a function DEFINES the functions nested in its body. Graded
-# (H) against the independent luaparse oracle, joined on (kind, file, line).
+# Covers Lua containment-edge validation. Lua has no classes/methods, so the
+# only containment edge is DEFINES: the file module DEFINES top-level
+# functions, and a function DEFINES the functions nested in its body. Graded
+# against the independent luaparse oracle, joined on (kind, file, line).
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,7 +49,7 @@ def test_cgr_matches_luaparse_oracle_on_containment_edges(tmp_path: Path) -> Non
 
     result = score_edge_types(cgr, oracle, ec.SCORED_EDGE_TYPES)
     by_label = {row["label"]: row for row in result.rows}
-    # (H) Lua only has DEFINES (no methods, so no DEFINES_METHOD row at all).
+    # Lua only has DEFINES (no methods, so no DEFINES_METHOD row at all).
     row = by_label.get(cs.RelationshipType.DEFINES.value)
     assert row is not None, (by_label, result.diff)
     assert row["precision"] == 1.0 and row["recall"] == 1.0, (row, result.diff)

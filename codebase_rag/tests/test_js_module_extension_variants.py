@@ -15,8 +15,8 @@ def _call_pairs(ingestor: MagicMock) -> set[tuple[str, str]]:
 
 
 def test_mjs_module_functions_and_calls_ingested(temp_repo: Path) -> None:
-    # (H) ESM packages ship .mjs files (config files, dual-package libs); they
-    # (H) parse with the same grammar as .js and must produce the same graph.
+    # ESM packages ship .mjs files (config files, dual-package libs); they
+    # parse with the same grammar as .js and must produce the same graph.
     root = temp_repo / "mjsproj"
     root.mkdir()
     (root / "util.mjs").write_text(
@@ -67,7 +67,7 @@ def test_cjs_module_functions_and_calls_ingested(temp_repo: Path) -> None:
 
 
 def test_mts_and_cts_typescript_variants_ingested(temp_repo: Path) -> None:
-    # (H) TypeScript's ESM/CJS variants of .ts: same grammar, same graph.
+    # TypeScript's ESM/CJS variants of .ts: same grammar, same graph.
     root = temp_repo / "mtsproj"
     root.mkdir()
     (root / "util.mts").write_text(
@@ -86,7 +86,7 @@ def test_mts_and_cts_typescript_variants_ingested(temp_repo: Path) -> None:
 
 
 def test_extensionless_relative_import_resolves_to_mjs(temp_repo: Path) -> None:
-    # (H) `import './util'` must probe the .mjs/.cjs candidates like .js/.ts.
+    # `import './util'` must probe the .mjs/.cjs candidates like .js/.ts.
     root = temp_repo / "resolveproj"
     root.mkdir()
     (root / "util.mjs").write_text(

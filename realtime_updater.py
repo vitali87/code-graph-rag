@@ -58,12 +58,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
 
-        # (H) Debounce configuration
+        # Debounce configuration
         self.debounce_seconds = debounce_seconds
         self.max_wait_seconds = max_wait_seconds
         self.debounce_enabled = debounce_seconds > 0
 
-        # (H) Thread-safe state for tracking pending changes
+        # Thread-safe state for tracking pending changes
         self.timers: dict[str, threading.Timer] = {}
         self.first_event_time: dict[str, float] = {}
         self.pending_events: dict[str, FileSystemEvent] = {}
@@ -85,19 +85,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         return all(part not in self.ignore_patterns for part in path.parts)
 
     def dispatch(self, event: FileSystemEvent) -> None:
-        # (H) ┌─────────────────────────────────────────────────────────────────────┐
-        # (H) │                      Real-Time Graph Update Steps                   │
-        # (H) ├─────────────────────────────────────────────────────────────────────┤
-        # (H) │ Step 1: Delete all old data from the graph for this file           │
-        # (H) │         Provides a clean slate for the updated information         │
-        # (H) │ Step 2: Clear the specific in-memory state for the file            │
-        # (H) │         Prevents stale in-memory representations                   │
-        # (H) │ Step 3: Re-parse the file if it was modified or created            │
-        # (H) │         Rebuilds in-memory state (AST, function registry)          │
-        # (H) │ Step 4: Re-process all function calls across the entire codebase   │
-        # (H) │         Fixes "island" problem - changes reflect in all relations  │
-        # (H) │ Step 5: Flush all collected changes to the database                │
-        # (H) └─────────────────────────────────────────────────────────────────────┘
+        # ┌─────────────────────────────────────────────────────────────────────┐
+        # │                      Real-Time Graph Update Steps                   │
+        # ├─────────────────────────────────────────────────────────────────────┤
+        # │ Step 1: Delete all old data from the graph for this file           │
+        # │         Provides a clean slate for the updated information         │
+        # │ Step 2: Clear the specific in-memory state for the file            │
+        # │         Prevents stale in-memory representations                   │
+        # │ Step 3: Re-parse the file if it was modified or created            │
+        # │         Rebuilds in-memory state (AST, function registry)          │
+        # │ Step 4: Re-process all function calls across the entire codebase   │
+        # │         Fixes "island" problem - changes reflect in all relations  │
+        # │ Step 5: Flush all collected changes to the database                │
+        # └─────────────────────────────────────────────────────────────────────┘
         src_path = event.src_path
         if isinstance(src_path, bytes):
             src_path = src_path.decode()
@@ -106,17 +106,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return
 
         if not self.debounce_enabled:
-            # (H) No debouncing - process immediately (legacy behavior)
+            # No debouncing - process immediately (legacy behavior)
             self._process_change(event)
             return
 
-        # (H) Debounced processing with hybrid approach
+        # Debounced processing with hybrid approach
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
         current_time = time.time()
 
         with self.lock:
-            # (H) Track the first event time for max-wait calculation
+            # Track the first event time for max-wait calculation
             if relative_path_str not in self.first_event_time:
                 self.first_event_time[relative_path_str] = current_time
                 logger.info(
@@ -127,19 +127,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     )
                 )
 
-            # (H) Always store the latest event for this file
+            # Always store the latest event for this file
             self.pending_events[relative_path_str] = event
 
-            # (H) Cancel any existing timer for this file
+            # Cancel any existing timer for this file
             if relative_path_str in self.timers:
                 self.timers[relative_path_str].cancel()
                 logger.debug(logs.DEBOUNCE_RESET.format(path=relative_path_str))
 
-            # (H) Check if max wait time has been exceeded
+            # Check if max wait time has been exceeded
             time_since_first = current_time - self.first_event_time[relative_path_str]
 
             if time_since_first >= self.max_wait_seconds:
-                # (H) Max wait exceeded - process immediately
+                # Max wait exceeded - process immediately
                 logger.info(
                     logs.DEBOUNCE_MAX_WAIT.format(
                         max_wait=self.max_wait_seconds, path=relative_path_str
@@ -147,7 +147,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 )
                 self._schedule_immediate_processing(relative_path_str)
             else:
-                # (H) Schedule debounced processing
+                # Schedule debounced processing
                 remaining_wait = self.max_wait_seconds - time_since_first
                 effective_delay = min(self.debounce_seconds, remaining_wait)
                 timer = threading.Timer(
@@ -169,7 +169,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
     def _schedule_immediate_processing(self, relative_path_str: str) -> None:
         """Process a file change immediately (called when max wait is exceeded)."""
-        # (H) Use a zero-delay timer to process in the timer thread
+        # Use a zero-delay timer to process in the timer thread
         timer = threading.Timer(
             0, self._process_debounced_change, args=[relative_path_str]
         )
@@ -180,7 +180,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _process_debounced_change(self, relative_path_str: str) -> None:
         """Process a debounced file change after the timer fires."""
         with self.lock:
-            # (H) Retrieve and clear pending state for this file
+            # Retrieve and clear pending state for this file
             event = self.pending_events.pop(relative_path_str, None)
             self.first_event_time.pop(relative_path_str, None)
             self.timers.pop(relative_path_str, None)
@@ -206,12 +206,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
-        # (H) Only process events that actually change file content
-        # (H) Skip read-only events like "opened", "closed_no_write" that don't modify the file
+        # Only process events that actually change file content
+        # Skip read-only events like "opened", "closed_no_write" that don't modify the file
         relevant_events = {
             EventType.MODIFIED,
             EventType.CREATED,
-            EventType.DELETED,  # (H) watchdog deletion event
+            EventType.DELETED,  # watchdog deletion event
         }
         if event.event_type not in relevant_events:
             return
@@ -220,17 +220,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
-        # (H) Step 1: Delete existing nodes for this file path
-        # (H) Delete Module node and its children (for code files)
+        # Step 1: Delete existing nodes for this file path
+        # Delete Module node and its children (for code files)
         ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
-        # (H) Delete File node (for all files including non-code like .md, .json)
+        # Delete File node (for all files including non-code like .md, .json)
         ingestor.execute_write(CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str})
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
-        # (H) Step 2: Clear in-memory state
+        # Step 2: Clear in-memory state
         self.updater.remove_file_from_state(path)
 
-        # (H) Step 3: Re-parse code files and create File nodes for ALL files
+        # Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
             if (
@@ -247,17 +247,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
 
-            # (H) Create File node for ALL files (code and non-code like .md, .json, etc.)
+            # Create File node for ALL files (code and non-code like .md, .json, etc.)
             self.updater.factory.structure_processor.process_generic_file(
                 path, path.name
             )
 
-        # (H) Step 4
+        # Step 4
         logger.info(logs.RECALC_CALLS)
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 
-        # (H) Step 5: Flush changes to database
+        # Step 5: Flush changes to database
         self.updater.ingestor.flush_all()
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
@@ -302,7 +302,7 @@ def _run_watcher_loop(
 ):
     updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
-    # (H) Initial full scan builds the complete context for real-time updates
+    # Initial full scan builds the complete context for real-time updates
     logger.info(logs.INITIAL_SCAN)
     updater.run()
     logger.success(logs.INITIAL_SCAN_DONE)
@@ -402,7 +402,7 @@ def main(
     logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level=LOG_LEVEL_INFO)
     logger.info(logs.LOGGER_CONFIGURED)
 
-    # (H) Validate max_wait is greater than debounce when both are enabled
+    # Validate max_wait is greater than debounce when both are enabled
     if debounce > 0 and max_wait > 0 and max_wait < debounce:
         logger.warning(
             logs.DEBOUNCE_MAX_WAIT_ADJUSTED.format(max_wait=max_wait, debounce=debounce)

@@ -274,9 +274,9 @@ class TestAnthropicProvider:
     def test_anthropic_context_windows(
         self, model_id: str, context_window: int
     ) -> None:
-        # (H) The token gauge looks the bare model id up in
-        # (H) MODEL_CONTEXT_WINDOWS; a missing entry silently falls back to
-        # (H) 200k and misreports usage for 1M-context models (issue #705).
+        # The token gauge looks the bare model id up in
+        # MODEL_CONTEXT_WINDOWS; a missing entry silently falls back to
+        # 200k and misreports usage for 1M-context models (issue #705).
         assert MODEL_CONTEXT_WINDOWS[model_id] == context_window
 
     def test_anthropic_api_key_from_env(self) -> None:

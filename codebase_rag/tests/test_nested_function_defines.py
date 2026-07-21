@@ -1,7 +1,7 @@
-# (H) Finding #2 from the evals/ harness: a function nested inside a METHOD was
-# (H) attributed to the Module via DEFINES (flattened), producing false-positive
-# (H) module-level edges. A nested function must be DEFINES'd by its enclosing
-# (H) scope: the method for function-in-method, the function for function-in-function.
+# Finding #2 from the evals/ harness: a function nested inside a METHOD was
+# attributed to the Module via DEFINES (flattened), producing false-positive
+# module-level edges. A nested function must be DEFINES'd by its enclosing
+# scope: the method for function-in-method, the function for function-in-function.
 from __future__ import annotations
 
 from pathlib import Path

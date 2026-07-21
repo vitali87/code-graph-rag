@@ -13,7 +13,7 @@ from codebase_rag.parser_loader import load_parsers
 def _run_rels(
     tmp_path: Path, files: dict[str, str], lang_key: str
 ) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
     parsers, queries = load_parsers()
     if lang_key not in parsers:
         pytest.skip(f"{lang_key} parser not available")
@@ -44,9 +44,9 @@ REFERENCES = cs.RelationshipType.REFERENCES.value
 
 
 def test_js_function_assigned_to_const_is_referenced(tmp_path: Path) -> None:
-    # (H) `const cb = handler` binds a first-class function to a local for later
-    # (H) dynamic dispatch; the assignment must reference it exactly like the
-    # (H) Python `http_callback = fn` shape or dead-code wrongly flags handler.
+    # `const cb = handler` binds a first-class function to a local for later
+    # dynamic dispatch; the assignment must reference it exactly like the
+    # Python `http_callback = fn` shape or dead-code wrongly flags handler.
     files = {
         "m.js": (
             "function handler(evt) { return evt; }\n\n"
@@ -63,9 +63,9 @@ def test_js_function_assigned_to_const_is_referenced(tmp_path: Path) -> None:
 def test_js_function_assigned_to_object_attribute_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) A nested function monkeypatched onto an object attribute
-    # (H) (client.post = handlePost) is invoked later through that attribute; the
-    # (H) assignment_expression must reference it (MockHTTPRouter shape in JS).
+    # A nested function monkeypatched onto an object attribute
+    # (client.post = handlePost) is invoked later through that attribute; the
+    # assignment_expression must reference it (MockHTTPRouter shape in JS).
     files = {
         "m.js": (
             "function createMockClient(client) {\n"
@@ -82,9 +82,9 @@ def test_js_function_assigned_to_object_attribute_is_referenced(
 def test_js_module_exports_assignment_in_callless_module_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) `module.exports.run = run` in a file with NO call expressions must still
-    # (H) emit the Module -> REFERENCES edge; the call-driven pass early-returns on
-    # (H) such modules, so the assignment scan has to run before it.
+    # `module.exports.run = run` in a file with NO call expressions must still
+    # emit the Module -> REFERENCES edge; the call-driven pass early-returns on
+    # such modules, so the assignment scan has to run before it.
     files = {
         "m.js": ("function run() { return 1; }\n\nmodule.exports.run = run;\n"),
     }
@@ -95,8 +95,8 @@ def test_js_module_exports_assignment_in_callless_module_is_referenced(
 def test_js_imported_function_assigned_at_module_scope_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) A function defined in one file, imported and re-bound in another
-    # (H) (registryHandler = handleEvent) must reference the ORIGIN function.
+    # A function defined in one file, imported and re-bound in another
+    # (registryHandler = handleEvent) must reference the ORIGIN function.
     files = {
         "handlers.js": "export function handleEvent(evt) { return evt; }\n",
         "registry.js": (
@@ -109,9 +109,9 @@ def test_js_imported_function_assigned_at_module_scope_is_referenced(
 
 
 def test_ts_annotated_const_assignment_is_referenced(tmp_path: Path) -> None:
-    # (H) A TS annotated declarator (const handler: Handler = handleEvent) carries
-    # (H) an extra type child; the walker must reference its value exactly like an
-    # (H) unannotated one.
+    # A TS annotated declarator (const handler: Handler = handleEvent) carries
+    # an extra type child; the walker must reference its value exactly like an
+    # unannotated one.
     files = {
         "m.ts": (
             "type Handler = (evt: string) => string;\n\n"
@@ -124,8 +124,8 @@ def test_ts_annotated_const_assignment_is_referenced(tmp_path: Path) -> None:
 
 
 def test_js_plain_value_assignments_are_not_referenced(tmp_path: Path) -> None:
-    # (H) Non-callable RHS values (literals, plain locals) must not produce
-    # (H) REFERENCES noise.
+    # Non-callable RHS values (literals, plain locals) must not produce
+    # REFERENCES noise.
     files = {
         "m.js": (
             "function setup() {\n"
@@ -141,11 +141,11 @@ def test_js_plain_value_assignments_are_not_referenced(tmp_path: Path) -> None:
 
 
 def test_ts_as_cast_assignment_references_target(tmp_path: Path) -> None:
-    # (H) `export const persist = persistImpl as unknown as Persist` aliases the real
-    # (H) implementation through TS `as` casts. The cast expression is transparent for
-    # (H) reference resolution, so the module must reference persistImpl or it (and
-    # (H) everything only it reaches) reports as dead -- the zustand middleware
-    # (H) pattern where the public export is a cast of the internal impl.
+    # `export const persist = persistImpl as unknown as Persist` aliases the real
+    # implementation through TS `as` casts. The cast expression is transparent for
+    # reference resolution, so the module must reference persistImpl or it (and
+    # everything only it reaches) reports as dead -- the zustand middleware
+    # pattern where the public export is a cast of the internal impl.
     files = {
         "mw.ts": (
             "const persistImpl = (config) => build(config)\n"
@@ -158,7 +158,7 @@ def test_ts_as_cast_assignment_references_target(tmp_path: Path) -> None:
 
 
 def test_ts_non_null_cast_assignment_references_target(tmp_path: Path) -> None:
-    # (H) A non-null assertion (`handler!`) is also a transparent wrapper.
+    # A non-null assertion (`handler!`) is also a transparent wrapper.
     files = {
         "m.ts": (
             "function handleEvent() { return 1 }\n"
@@ -171,8 +171,8 @@ def test_ts_non_null_cast_assignment_references_target(tmp_path: Path) -> None:
 
 
 def test_ts_cast_object_value_is_referenced(tmp_path: Path) -> None:
-    # (H) A cast function in a collection value (`{ onEvent: handler as any }`) must
-    # (H) still be referenced -- the cast wrapper is unwrapped in the value-ref path.
+    # A cast function in a collection value (`{ onEvent: handler as any }`) must
+    # still be referenced -- the cast wrapper is unwrapped in the value-ref path.
     files = {
         "m.ts": (
             "function handler() { return 1 }\n"
@@ -181,8 +181,8 @@ def test_ts_cast_object_value_is_referenced(tmp_path: Path) -> None:
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    # (H) Collection-value handoffs record as CALLS; the point is the cast is unwrapped
-    # (H) so `handler` is reached at all.
+    # Collection-value handoffs record as CALLS; the point is the cast is unwrapped
+    # so `handler` is reached at all.
     assert any(a.endswith("m.reg") and b.endswith("m.handler") for a, _r, b in rels), (
         "cast object value not referenced"
     )

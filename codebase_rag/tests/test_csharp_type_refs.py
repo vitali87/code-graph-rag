@@ -1,6 +1,6 @@
-# (H) Pure-function coverage for the C# type-reference helpers: the CLR-style
-# (H) arity annotation must round-trip through every stored type map, and the
-# (H) arity counter must ignore nested generics and array brackets.
+# Pure-function coverage for the C# type-reference helpers: the CLR-style
+# arity annotation must round-trip through every stored type map, and the
+# arity counter must ignore nested generics and array brackets.
 from codebase_rag.parsers.csharp.utils import (
     annotate_type_ref,
     generic_arity_of_type_text,
@@ -22,5 +22,5 @@ def test_annotate_and_split_round_trip() -> None:
     assert annotate_type_ref("Options<TResult>?") == "Options`1"
     assert split_type_ref("Builder`1") == ("Builder", 1)
     assert split_type_ref("Builder") == ("Builder", 0)
-    # (H) A backtick with a non-numeric tail is not an arity marker.
+    # A backtick with a non-numeric tail is not an arity marker.
     assert split_type_ref("Weird`name") == ("Weird`name", 0)

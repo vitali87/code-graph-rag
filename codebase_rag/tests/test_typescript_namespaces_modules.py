@@ -787,9 +787,9 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 4 merged namespace-related nodes, found {len(merged_namespace_nodes)}"
     )
 
-    # (H) Namespace-exported functions are methods of the namespace node
-    # (H) (Class DEFINES_METHOD Method), matching the tsc containment oracle;
-    # (H) they must not also exist as module-level Function duplicates.
+    # Namespace-exported functions are methods of the namespace node
+    # (Class DEFINES_METHOD Method), matching the tsc containment oracle;
+    # they must not also exist as module-level Function duplicates.
     merged_functions = [
         call
         for call in get_nodes(mock_ingestor, "Method")
@@ -1235,9 +1235,9 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 2 classes/interfaces in modules, found {module_classes_interfaces}"
     )
 
-    # (H) Namespace-exported functions are methods of the namespace node
-    # (H) (Class DEFINES_METHOD Method), matching the tsc containment oracle;
-    # (H) they must not also exist as module-level Function duplicates.
+    # Namespace-exported functions are methods of the namespace node
+    # (Class DEFINES_METHOD Method), matching the tsc containment oracle;
+    # they must not also exist as module-level Function duplicates.
     module_functions = [
         call
         for call in get_nodes(mock_ingestor, "Method")

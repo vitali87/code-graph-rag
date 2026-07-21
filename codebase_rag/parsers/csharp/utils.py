@@ -7,9 +7,9 @@ from ..utils import safe_decode_text
 
 
 def _first_attribute_list(node: Node) -> Node | None:
-    # (H) First attribute_list in document order anywhere under `node` (pre-order
-    # (H) DFS), so an attribute nested in an inner `#if` (a conditional block
-    # (H) inside another) is still found, not only an immediate grandchild.
+    # First attribute_list in document order anywhere under `node` (pre-order
+    # DFS), so an attribute nested in an inner `#if` (a conditional block
+    # inside another) is still found, not only an immediate grandchild.
     if node.type == cs.TS_CSHARP_ATTRIBUTE_LIST:
         return node
     for child in node.children:
@@ -19,14 +19,14 @@ def _first_attribute_list(node: Node) -> Node | None:
 
 
 def definition_start_line(node: Node) -> int:
-    # (H) The 1-based line a declaration truly starts on. When its attributes are
-    # (H) wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
-    # (H) tree-sitter nests a leading preproc_if_in_attribute_list child, so the
-    # (H) declaration's own start_point is the `#if` directive line. Roslyn treats
-    # (H) the directives as trivia and starts the span at the conditional
-    # (H) attribute, so return that attribute's line (else the first non-directive
-    # (H) child's line). Falls back to the node's own start for the common case
-    # (H) with no leading directive.
+    # The 1-based line a declaration truly starts on. When its attributes are
+    # wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
+    # tree-sitter nests a leading preproc_if_in_attribute_list child, so the
+    # declaration's own start_point is the `#if` directive line. Roslyn treats
+    # the directives as trivia and starts the span at the conditional
+    # attribute, so return that attribute's line (else the first non-directive
+    # child's line). Falls back to the node's own start for the common case
+    # with no leading directive.
     for child in node.children:
         if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
             if (attr_list := _first_attribute_list(child)) is not None:
@@ -37,18 +37,18 @@ def definition_start_line(node: Node) -> int:
 
 
 def _normalize_type_name(text: str) -> str:
-    # (H) Strip generic arguments (`List<int>` -> `List`), a nullable suffix
-    # (H) (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
-    # (H) binds), and whitespace, so a parameter signature is stable and matches
-    # (H) the registered, generic-free type names. Array brackets are kept (they
-    # (H) distinguish overloads).
+    # Strip generic arguments (`List<int>` -> `List`), a nullable suffix
+    # (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
+    # binds), and whitespace, so a parameter signature is stable and matches
+    # the registered, generic-free type names. Array brackets are kept (they
+    # distinguish overloads).
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
 def generic_arity_of_type_text(text: str) -> int:
-    # (H) Number of top-level type arguments in a type reference:
-    # (H) `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
-    # (H) disambiguate same-simple-name generic/non-generic type declarations.
+    # Number of top-level type arguments in a type reference:
+    # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
+    # disambiguate same-simple-name generic/non-generic type declarations.
     open_idx = text.find(cs.CHAR_ANGLE_OPEN)
     if open_idx < 0:
         return 0
@@ -72,10 +72,10 @@ GENERIC_ARITY_MARKER = "`"
 
 
 def annotate_type_ref(text: str) -> str:
-    # (H) Normalized type reference carrying its WRITTEN generic arity in CLR
-    # (H) style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
-    # (H) name always means arity 0, so simple-name twins stay distinguishable
-    # (H) through every stored type map without touching method signatures.
+    # Normalized type reference carrying its WRITTEN generic arity in CLR
+    # style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
+    # name always means arity 0, so simple-name twins stay distinguishable
+    # through every stored type map without touching method signatures.
     base = _normalize_type_name(text)
     arity = generic_arity_of_type_text(text)
     return f"{base}{GENERIC_ARITY_MARKER}{arity}" if arity else base
@@ -90,18 +90,18 @@ def split_type_ref(name: str) -> tuple[str, int]:
 
 
 def normalize_csharp_type_name(type_node: Node) -> str | None:
-    # (H) A type node's normalized name (generic-free, nullable-stripped) or
-    # (H) None for unnameable types (`void` callers never chain off it, but a
-    # (H) void return is recorded harmlessly and simply never resolves).
+    # A type node's normalized name (generic-free, nullable-stripped) or
+    # None for unnameable types (`void` callers never chain off it, but a
+    # void return is recorded harmlessly and simply never resolves).
     text = safe_decode_text(type_node)
     return _normalize_type_name(text) if text else None
 
 
 def extract_parameter_type_names(method_node: Node) -> list[str]:
-    # (H) The declared type of each parameter, in order, for the method-qn
-    # (H) signature that keeps C# overloads distinct. A `params object[]` tail is
-    # (H) not wrapped in a `parameter` node (grammar quirk); its `array_type`
-    # (H) sits directly under the parameter_list, so capture that too.
+    # The declared type of each parameter, in order, for the method-qn
+    # signature that keeps C# overloads distinct. A `params object[]` tail is
+    # not wrapped in a `parameter` node (grammar quirk); its `array_type`
+    # sits directly under the parameter_list, so capture that too.
     param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if param_list is None:
         return []
@@ -119,12 +119,12 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
 
 
 def extension_receiver_type(method_node: Node) -> str | None:
-    # (H) For an extension method, the normalized type of its receiver: the first
-    # (H) parameter, whose first modifier is `this` (`static int WordCount(this
-    # (H) string s)` -> "string"). Only extension methods carry `this` on a
-    # (H) parameter, so its presence both identifies the method and names the
-    # (H) receiver type a call binds against (`s.WordCount()`). Returns None for a
-    # (H) non-extension method.
+    # For an extension method, the normalized type of its receiver: the first
+    # parameter, whose first modifier is `this` (`static int WordCount(this
+    # string s)` -> "string"). Only extension methods carry `this` on a
+    # parameter, so its presence both identifies the method and names the
+    # receiver type a call binds against (`s.WordCount()`). Returns None for a
+    # non-extension method.
     param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if param_list is None:
         return None
@@ -151,17 +151,17 @@ def index_extension_method(
     class_qn: str,
     module_qn: str | None,
 ) -> None:
-    # (H) Index an extension method by simple name + receiver type + declaring
-    # (H) namespace so a `recv.Ext()` call binds to the static method even though it
-    # (H) lives on an unrelated static class (not in recv's hierarchy). Shared by the
-    # (H) class-member pass and the `#if`-truncation recovery so both stay in sync.
-    # (H) No-op for a non-extension method (no `this` receiver).
+    # Index an extension method by simple name + receiver type + declaring
+    # namespace so a `recv.Ext()` call binds to the static method even though it
+    # lives on an unrelated static class (not in recv's hierarchy). Shared by the
+    # class-member pass and the `#if`-truncation recovery so both stay in sync.
+    # No-op for a non-extension method (no `this` receiver).
     receiver_type = extension_receiver_type(method_node)
     if not receiver_type:
         return
-    # (H) The receiver's WRITTEN generic arity (`this Builder<TResult>` -> 1),
-    # (H) so a call receiver of known arity never binds an extension declared
-    # (H) for the other twin.
+    # The receiver's WRITTEN generic arity (`this Builder<TResult>` -> 1),
+    # so a call receiver of known arity never binds an extension declared
+    # for the other twin.
     receiver_arity = 0
     param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if param_list is not None:
@@ -173,14 +173,14 @@ def index_extension_method(
             raw = safe_decode_text(type_node) if type_node is not None else None
             if raw:
                 receiver_arity = generic_arity_of_type_text(raw)
-    # (H) Strip the parameter signature BEFORE taking the leaf: a qualified param
-    # (H) type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
-    # (H) on `Widget)` instead of the method name `Poke` and never match.
+    # Strip the parameter signature BEFORE taking the leaf: a qualified param
+    # type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
+    # on `Widget)` instead of the method name `Poke` and never match.
     leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
-    # (H) The extension's declaring namespace (its class's namespace-qualified name
-    # (H) minus the class leaf) so an unqualified `this Widget` can resolve to
-    # (H) `<namespace>.Widget` against a qualified call receiver. Empty for a
-    # (H) top-level (namespace-less) class.
+    # The extension's declaring namespace (its class's namespace-qualified name
+    # minus the class leaf) so an unqualified `this Widget` can resolve to
+    # `<namespace>.Widget` against a qualified call receiver. Empty for a
+    # top-level (namespace-less) class.
     ns_qualified_class = (
         class_qn[len(module_qn) + 1 :]
         if module_qn is not None
@@ -198,10 +198,10 @@ def index_extension_method(
 
 
 def build_field_type_map(class_node: Node) -> dict[str, str]:
-    # (H) {field-or-property name: type name} for members declared directly on
-    # (H) this class body, recorded at ingestion so a receiver typed to a field
-    # (H) (`_w.M()`) resolves -- including a field inherited from a base class in
-    # (H) another file, reached by walking class_inheritance over these maps.
+    # {field-or-property name: type name} for members declared directly on
+    # this class body, recorded at ingestion so a receiver typed to a field
+    # (`_w.M()`) resolves -- including a field inherited from a base class in
+    # another file, reached by walking class_inheritance over these maps.
     body = class_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
         return {}
@@ -236,13 +236,13 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
 
 
 def synthesize_method_name(method_node: Node) -> str | None:
-    # (H) The registered leaf name for a C# member. Operators expose no `name`
-    # (H) field, so synthesize `operator_<symbol>` (binary/unary operators) or
-    # (H) `operator_<target-type>` (conversion operators). A destructor HAS a
-    # (H) `name` field equal to the type name, which would collide with the
-    # (H) constructor, so prefix `~`. Everything else uses the plain `name` leaf.
-    # (H) Kept identical to _csharp_get_name so the FQN scope walk and the node
-    # (H) qn agree.
+    # The registered leaf name for a C# member. Operators expose no `name`
+    # field, so synthesize `operator_<symbol>` (binary/unary operators) or
+    # `operator_<target-type>` (conversion operators). A destructor HAS a
+    # `name` field equal to the type name, which would collide with the
+    # constructor, so prefix `~`. Everything else uses the plain `name` leaf.
+    # Kept identical to _csharp_get_name so the FQN scope walk and the node
+    # qn agree.
     if method_node.type == cs.TS_CSHARP_OPERATOR_DECLARATION:
         op_node = method_node.child_by_field_name(cs.TS_CSHARP_FIELD_OPERATOR)
         symbol = safe_decode_text(op_node) if op_node and op_node.text else None
@@ -255,19 +255,19 @@ def synthesize_method_name(method_node: Node) -> str | None:
     name = safe_decode_text(name_node) if name_node and name_node.text else None
     if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
         return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + name
-    # (H) A reserved keyword as the name means tree-sitter parse-recovered a broken
-    # (H) construct (e.g. a `#if`-split `else if` chain -> local_function named
-    # (H) `if`); it is never a real member, so drop it rather than pollute the graph.
+    # A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # construct (e.g. a `#if`-split `else if` chain -> local_function named
+    # `if`); it is never a real member, so drop it rather than pollute the graph.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
     return name
 
 
 def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
-    # (H) (method name, parameter type names). The name matches the leaf
-    # (H) ingest_method registers (synthesized for operators/destructors), so the
-    # (H) signatured qn stays consistent. Overloaded operators (`operator +` on
-    # (H) two operand types) still get distinct qns via the parameter signature.
+    # (method name, parameter type names). The name matches the leaf
+    # ingest_method registers (synthesized for operators/destructors), so the
+    # signatured qn stays consistent. Overloaded operators (`operator +` on
+    # two operand types) still get distinct qns via the parameter signature.
     return synthesize_method_name(method_node), extract_parameter_type_names(
         method_node
     )

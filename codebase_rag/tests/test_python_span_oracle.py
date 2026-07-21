@@ -1,8 +1,8 @@
-# (H) Covers Python L1 node SPAN (end_line) validation: cgr's end_line for each
-# (H) Class/Function/Method is graded against the ast oracle (node.end_lineno) via
-# (H) the L1 score(), joined on (kind, file, start). Exercises a decorated
-# (H) multi-line def, a property, an async multi-line signature, and a nested
-# (H) function so spans are not trivially single line.
+# Covers Python L1 node SPAN (end_line) validation: cgr's end_line for each
+# Class/Function/Method is graded against the ast oracle (node.end_lineno) via
+# the L1 score(), joined on (kind, file, start). Exercises a decorated
+# multi-line def, a property, an async multi-line signature, and a nested
+# function so spans are not trivially single line.
 from __future__ import annotations
 
 from pathlib import Path
@@ -60,7 +60,7 @@ def test_cgr_matches_ast_oracle_on_python_node_spans(tmp_path: Path) -> None:
         for row in result.rows
         if row["category"] == ec.Category.SPAN.value
     }
-    # (H) score() must now emit graded span rows for Class/Function/Method.
+    # score() must now emit graded span rows for Class/Function/Method.
     assert span_rows, [r["category"] for r in result.rows]
     aggregate = span_rows.get(ec.AGGREGATE_LABEL)
     assert aggregate is not None, span_rows

@@ -24,8 +24,8 @@ from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.vector_store import close_qdrant_client
 
 if TYPE_CHECKING:
-    # (H) starlette is a lazy dependency of the HTTP path only; its canonical
-    # (H) ASGI types are needed solely for annotations
+    # starlette is a lazy dependency of the HTTP path only; its canonical
+    # ASGI types are needed solely for annotations
     from starlette.types import ASGIApp, Receive, Scope, Send
 
 
@@ -191,11 +191,11 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _validate_http_exposure(host: str, auth_token: str | None) -> None:
-    # (H) The StreamableHTTP endpoint's only protection is the bearer token;
-    # (H) refusing a non-loopback bind without one makes accidental network
-    # (H) exposure of the unauthenticated transport impossible (follow-up to
-    # (H) #808: the loopback default protects default deployments, this
-    # (H) protects intentional remote ones).
+    # The StreamableHTTP endpoint's only protection is the bearer token;
+    # refusing a non-loopback bind without one makes accidental network
+    # exposure of the unauthenticated transport impossible (follow-up to
+    # #808: the loopback default protects default deployments, this
+    # protects intentional remote ones).
     if host not in _LOOPBACK_HOSTS and not auth_token:
         raise ValueError(lg.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
 
@@ -214,9 +214,9 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
             if key.lower() == b"authorization":
                 provided = value
                 break
-        # (H) RFC 7235: the SCHEME compares case-insensitively (it is not a
-        # (H) secret, so an ordinary compare is fine); only the token value
-        # (H) needs the constant-time compare_digest
+        # RFC 7235: the SCHEME compares case-insensitively (it is not a
+        # secret, so an ordinary compare is fine); only the token value
+        # needs the constant-time compare_digest
         authorized = False
         if provided is not None:
             scheme, _, credential = provided.partition(b" ")
@@ -267,9 +267,9 @@ async def serve_http(
                 logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
                 yield
 
-    # (H) With a token configured, bearer auth fronts the mount even on
-    # (H) loopback (defense in depth for shared hosts); without one, the
-    # (H) exposure guard above already confined the bind to loopback.
+    # With a token configured, bearer auth fronts the mount even on
+    # loopback (defense in depth for shared hosts); without one, the
+    # exposure guard above already confined the bind to loopback.
     endpoint = session_manager.handle_request
     if auth_token:
         endpoint = _require_bearer_auth(endpoint, auth_token)

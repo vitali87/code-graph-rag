@@ -47,8 +47,8 @@ class JsTypeInferenceEngine:
     ) -> list[Node] | None:
         if self._queries is None:
             return None
-        # (H) sorted: frozenset order varies across runs (str-hash randomization)
-        # (H) and the first language with queries wins, so keep it deterministic.
+        # sorted: frozenset order varies across runs (str-hash randomization)
+        # and the first language with queries wins, so keep it deterministic.
         langs = [language] if language is not None else sorted(cs.JS_TS_LANGUAGES)
         for lang in langs:
             lang_queries = self._queries.get(lang)

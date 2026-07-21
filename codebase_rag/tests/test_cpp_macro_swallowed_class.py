@@ -1,10 +1,10 @@
-# (H) nlohmann's ordered_map.hpp: a bare namespace-opening macro line
-# (H) (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no semicolon) glues onto the following
-# (H) `template <...> struct ordered_map : std::vector<...>` and tree-sitter
-# (H) parses the pair as ONE declaration -- the struct head vanishes into an
-# (H) init_declarator/compound_literal_expression, the class never registers,
-# (H) and every member leaks to module scope. The error is LOCAL (a couple of
-# (H) small ERROR nodes), so the catastrophic whole-file recovery never fires.
+# nlohmann's ordered_map.hpp: a bare namespace-opening macro line
+# (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no semicolon) glues onto the following
+# `template <...> struct ordered_map : std::vector<...>` and tree-sitter
+# parses the pair as ONE declaration -- the struct head vanishes into an
+# init_declarator/compound_literal_expression, the class never registers,
+# and every member leaks to module scope. The error is LOCAL (a couple of
+# small ERROR nodes), so the catastrophic whole-file recovery never fires.
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,7 +65,7 @@ def test_macro_swallowed_struct_registers_as_class(
     assert "msproj.ordered_map.ordered_map.at" in methods, sorted(methods)
     assert "msproj.ordered_map.ordered_map.locate" in methods, sorted(methods)
 
-    # (H) members must not leak to module scope as free functions
+    # members must not leak to module scope as free functions
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "msproj.ordered_map.at" not in functions, sorted(functions)
 
@@ -91,13 +91,13 @@ def test_macro_swallowed_struct_keeps_member_call_edges(
 def test_macro_swallowed_namespace_recovers_qualified_names(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) the marker also swallows a following `namespace detail {` -- the pair
-    # (H) parses as a function_definition literally NAMED `namespace`, erasing
-    # (H) the namespace from every member's qualified name
+    # the marker also swallows a following `namespace detail {` -- the pair
+    # parses as a function_definition literally NAMED `namespace`, erasing
+    # the namespace from every member's qualified name
     root = temp_repo / "mshealthy"
     root.mkdir()
-    # (H) the opening marker carries a trailing line comment: matching must
-    # (H) strip `//` prose first, like the brace counter does
+    # the opening marker carries a trailing line comment: matching must
+    # strip `//` prose first, like the brace counter does
     (root / "scope.hpp").write_text(
         """\
 SOME_NAMESPACE_BEGIN  // opens the library scope
@@ -123,11 +123,11 @@ SOME_NAMESPACE_END
 def test_independent_marker_damage_sites_all_recover(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) two independent glue sites: the scope marker swallows the struct
-    # (H) head, and a bare attribute macro swallows the member after it
-    # (H) (nlohmann json_sax's JSON_HEDLEY_RETURNS_NON_NULL). Greedy
-    # (H) single-marker rounds must fix BOTH, not stop at the first
-    # (H) error-count tie (PR #800 review).
+    # two independent glue sites: the scope marker swallows the struct
+    # head, and a bare attribute macro swallows the member after it
+    # (nlohmann json_sax's JSON_HEDLEY_RETURNS_NON_NULL). Greedy
+    # single-marker rounds must fix BOTH, not stop at the first
+    # error-count tie (PR #800 review).
     root = temp_repo / "msmulti"
     root.mkdir()
     (root / "sax.hpp").write_text(
@@ -172,31 +172,31 @@ def test_marker_retry_guard_shapes() -> None:
         _pytest.skip("cpp parser not available")
     cpp = parsers["cpp"]
 
-    # (H) a clean tree is returned untouched
+    # a clean tree is returned untouched
     clean = b"int x = 1;\n"
     tree = cpp.parse(clean)
     kept, kept_src = _retry_without_macro_markers(cpp, tree, clean)
     assert kept is tree
     assert kept_src is clean
 
-    # (H) an erroring file with no marker line has nothing to blank
+    # an erroring file with no marker line has nothing to blank
     broken = b"void f( {\n"
     tree2 = cpp.parse(broken)
     kept2, _ = _retry_without_macro_markers(cpp, tree2, broken)
     assert kept2 is tree2
 
-    # (H) a marker that does NOT explain the error keeps the original tree via
-    # (H) the strict-improvement guard: the brace garbage errors identically
-    # (H) with or without the marker line
+    # a marker that does NOT explain the error keeps the original tree via
+    # the strict-improvement guard: the brace garbage errors identically
+    # with or without the marker line
     mixed = b"SOME_MARKER_MACRO\n}}}}\n"
     tree3 = cpp.parse(mixed)
     kept3, kept3_src = _retry_without_macro_markers(cpp, tree3, mixed)
     assert kept3 is tree3
     assert kept3_src is mixed
 
-    # (H) smallest subset wins: a marker-shaped line inside a raw string must
-    # (H) survive when blanking the single real offender already explains the
-    # (H) error (all-at-once would corrupt the string as collateral)
+    # smallest subset wins: a marker-shaped line inside a raw string must
+    # survive when blanking the single real offender already explains the
+    # error (all-at-once would corrupt the string as collateral)
     raw = (
         b"SOME_MARKER_MACRO\n"
         b"struct swallowed : base {\n"

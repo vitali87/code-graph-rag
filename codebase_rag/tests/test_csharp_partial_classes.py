@@ -1,8 +1,8 @@
-# (H) C# Phase 3 tail: partial-class member unification. A class split across
-# (H) files with `partial` is one logical type; a typed receiver must resolve to
-# (H) members and bases declared on ANY part, not just the receiver's own part.
-# (H) (Unique-name calls already resolve via the generic fallback; these tests
-# (H) use decoys so only cross-part typed resolution can bind them.)
+# C# Phase 3 tail: partial-class member unification. A class split across
+# files with `partial` is one logical type; a typed receiver must resolve to
+# members and bases declared on ANY part, not just the receiver's own part.
+# (Unique-name calls already resolve via the generic fallback; these tests
+# use decoys so only cross-part typed resolution can bind them.)
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -46,10 +46,10 @@ public class Other { public void Beta() { } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) `Beta` exists on both Widget (part B) and Other, so the generic
-    # (H) name-only resolver is ambiguous and drops it. Only typing `w` to the
-    # (H) Widget partial group and finding Beta on part B binds it correctly --
-    # (H) and it must be Widget's Beta, never Other's.
+    # `Beta` exists on both Widget (part B) and Other, so the generic
+    # name-only resolver is ambiguous and drops it. Only typing `w` to the
+    # Widget partial group and finding Beta on part B binds it correctly --
+    # and it must be Widget's Beta, never Other's.
     assert any(t.endswith(".Widget.Beta") for t in targets), targets
     assert not any(t.endswith(".Other.Beta") for t in targets), targets
 
@@ -80,9 +80,9 @@ public class Decoy { public void Ping() { } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) `Ping` is inherited through the base declared on part 1, but the
-    # (H) receiver may resolve to part 2; spanning the partial group reaches the
-    # (H) base. The Decoy.Ping makes the generic fallback ambiguous.
+    # `Ping` is inherited through the base declared on part 1, but the
+    # receiver may resolve to part 2; spanning the partial group reaches the
+    # base. The Decoy.Ping makes the generic fallback ambiguous.
     assert any(t.endswith(".Base.Ping") for t in targets), targets
     assert not any(t.endswith(".Decoy.Ping") for t in targets), targets
 
@@ -106,9 +106,9 @@ public partial class Widget { private Helper helper; }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) `helper` is a field declared on the OTHER part; typing it requires the
-    # (H) field lookup to span the partial group. The Decoy.Run makes the generic
-    # (H) fallback ambiguous, so only the field-typed receiver can bind Helper.Run.
+    # `helper` is a field declared on the OTHER part; typing it requires the
+    # field lookup to span the partial group. The Decoy.Run makes the generic
+    # fallback ambiguous, so only the field-typed receiver can bind Helper.Run.
     assert any(t.endswith(".Helper.Run") for t in targets), targets
     assert not any(t.endswith(".Decoy.Run") for t in targets), targets
 
@@ -116,10 +116,10 @@ public partial class Widget { private Helper helper; }
 def test_same_name_partial_in_different_projects_not_merged(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Two independent projects (directories) both declare `partial class
-    # (H) Widget` in namespace N. They are DIFFERENT types; grouping them would
-    # (H) resolve a call in one project to the other's member across the assembly
-    # (H) boundary. The group key is directory-scoped so they stay separate.
+    # Two independent projects (directories) both declare `partial class
+    # Widget` in namespace N. They are DIFFERENT types; grouping them would
+    # resolve a call in one project to the other's member across the assembly
+    # boundary. The group key is directory-scoped so they stay separate.
     (csharp_project / "proj1").mkdir()
     (csharp_project / "proj2").mkdir()
     (csharp_project / "proj1" / "A.cs").write_text(
@@ -138,7 +138,7 @@ public class App { public void Run() { var w = new Widget(); w.Beta(); } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) proj1's Widget has no Beta, so any `Widget.Beta` edge would be proj2's,
-    # (H) reached across the project boundary. (Decoy.Beta blocks the generic
-    # (H) fallback, so only the partial-group path could produce it.)
+    # proj1's Widget has no Beta, so any `Widget.Beta` edge would be proj2's,
+    # reached across the project boundary. (Decoy.Beta blocks the generic
+    # fallback, so only the partial-group path could produce it.)
     assert not any(t.endswith(".Widget.Beta") for t in targets), targets

@@ -56,13 +56,13 @@ def _any_resource(flows: list[dict[str, str | None]]) -> bool:
     return any(f["kind"] == FlowKind.RESOURCE.value for f in flows)
 
 
-# (H) Rust
+# Rust
 
 
 def test_rust_env_var_to_println(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A `let` carries the env source into a println! macro sink: ENV -> STDOUT.
+    # A `let` carries the env source into a println! macro sink: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -82,7 +82,7 @@ def test_rust_env_var_to_println(
 def test_rust_inlined_env_in_println(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The env read is inlined directly into the macro args: ENV -> STDOUT.
+    # The env read is inlined directly into the macro args: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -99,9 +99,9 @@ def test_rust_inlined_env_in_println(
 def test_rust_tainted_path_name_no_over_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local named `env` shadows nothing in the fully-qualified `std::env::var`
-    # (H) path, and it is never printed -- only CLEAN is. The bare-identifier scan must
-    # (H) not treat the `env` path segment as the tainted local (over-taint P1).
+    # A local named `env` shadows nothing in the fully-qualified `std::env::var`
+    # path, and it is never printed -- only CLEAN is. The bare-identifier scan must
+    # not treat the `env` path segment as the tainted local (over-taint P1).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -121,8 +121,8 @@ def test_rust_tainted_path_name_no_over_taint(
 def test_rust_inline_format_capture_to_println(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Rust inline format capture: `println!("{secret}")` reads the local through
-    # (H) the format string with no separate identifier token. ENV -> STDOUT.
+    # Rust inline format capture: `println!("{secret}")` reads the local through
+    # the format string with no separate identifier token. ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -142,7 +142,7 @@ def test_rust_inline_format_capture_to_println(
 def test_rust_untainted_println_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A println! of a clean literal produces no resource flow.
+    # A println! of a clean literal produces no resource flow.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -152,13 +152,13 @@ def test_rust_untainted_println_no_flow(
     assert not _any_resource(_flows(memgraph_ingestor))
 
 
-# (H) C++
+# C++
 
 
 def test_cpp_getenv_to_cout(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local carries getenv into a cout stream sink: ENV -> STDOUT.
+    # A local carries getenv into a cout stream sink: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -180,7 +180,7 @@ def test_cpp_getenv_to_cout(
 def test_cpp_inlined_getenv_in_cout(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) getenv inlined directly into the stream insertion: ENV -> STDOUT.
+    # getenv inlined directly into the stream insertion: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -201,7 +201,7 @@ def test_cpp_inlined_getenv_in_cout(
 def test_cpp_untainted_cout_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A cout of a clean literal produces no resource flow.
+    # A cout of a clean literal produces no resource flow.
     _build(
         memgraph_ingestor,
         tmp_path,

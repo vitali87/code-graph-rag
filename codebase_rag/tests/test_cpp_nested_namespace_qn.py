@@ -1,11 +1,11 @@
-# (H) C++17 nested namespace syntax (`namespace a::b {`) must produce the same
-# (H) qualified names as classic nesting (`namespace a { namespace b {`).
-# (H) The namespace walk used to keep the literal `a::b` as one qn segment
-# (H) while the FQN scope path split it into `a.b`, so one class got TWO nodes
-# (H) and out-of-line method callers resolved to the segment variant that the
-# (H) methods were not registered under, dropping their CALLS as phantom
-# (H) free-function callers (issue #652: the dominant remaining family on
-# (H) souffle, which uses `namespace souffle::ast` throughout).
+# C++17 nested namespace syntax (`namespace a::b {`) must produce the same
+# qualified names as classic nesting (`namespace a { namespace b {`).
+# The namespace walk used to keep the literal `a::b` as one qn segment
+# while the FQN scope path split it into `a.b`, so one class got TWO nodes
+# and out-of-line method callers resolved to the segment variant that the
+# methods were not registered under, dropping their CALLS as phantom
+# free-function callers (issue #652: the dominant remaining family on
+# souffle, which uses `namespace souffle::ast` throughout).
 from __future__ import annotations
 
 from pathlib import Path

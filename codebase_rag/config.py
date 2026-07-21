@@ -144,7 +144,7 @@ class ModelConfig:
 
 class AppConfig(BaseSettings):
     """
-    (H) All settings are loaded from environment variables or a .env file.
+    All settings are loaded from environment variables or a .env file.
     """
 
     model_config = SettingsConfigDict(
@@ -190,16 +190,16 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
-    # (H) HYBRID degrades to pure tree-sitter when libclang or a
-    # (H) compile_commands.json is missing, so it is safe as the default and
-    # (H) strictly better (macros, includes, expansion calls) with one.
+    # HYBRID degrades to pure tree-sitter when libclang or a
+    # compile_commands.json is missing, so it is safe as the default and
+    # strictly better (macros, includes, expansion calls) with one.
     CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
-    # (H) Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter
-    # (H) because HYBRID needs a dotnet SDK + a restorable .csproj/.sln; when
-    # (H) either is missing it degrades to tree-sitter, so it is safe to enable
-    # (H) but not to assume. HYBRID augments (base-vs-interface, overload and
-    # (H) extension binding, partial-class identity); tree-sitter stays the
-    # (H) standalone-correct backbone.
+    # Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter
+    # because HYBRID needs a dotnet SDK + a restorable .csproj/.sln; when
+    # either is missing it degrades to tree-sitter, so it is safe to enable
+    # but not to assume. HYBRID augments (base-vs-interface, overload and
+    # extension binding, partial-class identity); tree-sitter stays the
+    # standalone-correct backbone.
     CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
@@ -325,15 +325,15 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
-    # (H) Loopback by default: the StreamableHTTP endpoint has no built-in
-    # (H) auth, so exposing it beyond the host must be an explicit operator
-    # (H) choice via MCP_HTTP_HOST (issue #808).
+    # Loopback by default: the StreamableHTTP endpoint has no built-in
+    # auth, so exposing it beyond the host must be an explicit operator
+    # choice via MCP_HTTP_HOST (issue #808).
     MCP_HTTP_HOST: str = "127.0.0.1"
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
-    # (H) Bearer token required by the HTTP MCP endpoint; unset means
-    # (H) loopback-only operation (serve_http refuses a non-loopback bind
-    # (H) without it).
+    # Bearer token required by the HTTP MCP endpoint; unset means
+    # loopback-only operation (serve_http refuses a non-loopback bind
+    # without it).
     MCP_HTTP_AUTH_TOKEN: str | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
@@ -452,18 +452,18 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
 
 
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
-    # (H) Merged exclude/unignore set for indexing: root .gitignore (gitignored
-    # (H) paths are build artifacts / generated output whose symbols pollute the
-    # (H) graph and the dead-code report) plus .cgrignore, which stays the
-    # (H) authoritative cgr-specific channel. The runtime skip check gives
-    # (H) excludes precedence over unignores, so a negation can only override a
-    # (H) .gitignore exclude by CANCELLING the exact same pattern string here at
-    # (H) load time (`!generated/` drops `generated/`). .cgrignore excludes are
-    # (H) never cancelled by .gitignore negations.
-    # (H) ponytail: root .gitignore only, exact-string cancellation only; a
-    # (H) finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # (H) cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # (H) the upgrade path if real repos need it.
+    # Merged exclude/unignore set for indexing: root .gitignore (gitignored
+    # paths are build artifacts / generated output whose symbols pollute the
+    # graph and the dead-code report) plus .cgrignore, which stays the
+    # authoritative cgr-specific channel. The runtime skip check gives
+    # excludes precedence over unignores, so a negation can only override a
+    # .gitignore exclude by CANCELLING the exact same pattern string here at
+    # load time (`!generated/` drops `generated/`). .cgrignore excludes are
+    # never cancelled by .gitignore negations.
+    # ponytail: root .gitignore only, exact-string cancellation only; a
+    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
+    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
+    # the upgrade path if real repos need it.
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
     git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
     negations = cgr.unignore | git.unignore

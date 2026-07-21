@@ -52,17 +52,17 @@ def test_oracle_captures_first_party_scala_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared, covered = oracle_scala_call_edges(tmp_path)
 
-    # (H) this.helper(), T.make(), Util.free(), t.caller() are first-party calls.
+    # this.helper(), T.make(), Util.free(), t.caller() are first-party calls.
     assert ("T.scala", "helper") in edges
     assert ("Use.scala", "make") in edges
     assert ("Use.scala", "free") in edges
     assert ("Use.scala", "caller") in edges
-    # (H) An infix operator call (t ~> ...) is unambiguously a method call.
+    # An infix operator call (t ~> ...) is unambiguously a method call.
     assert ("Use.scala", "~>") in edges
-    # (H) A bare paren-less select (u.done) is NOT graded: uniform access makes a
-    # (H) nullary call and a field read identical, so it is scoped out on both sides.
+    # A bare paren-less select (u.done) is NOT graded: uniform access makes a
+    # nullary call and a field read identical, so it is scoped out on both sides.
     assert ("Use.scala", "done") not in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("T.scala", "orphan") not in edges
     assert {
         "helper",

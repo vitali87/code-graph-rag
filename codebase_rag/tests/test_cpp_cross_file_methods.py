@@ -1,10 +1,10 @@
-# (H) Tests for C++ cross-file out-of-class method resolution (issue #496).
-# (H)
-# (H) When a class is declared in a header (.h) and methods are implemented
-# (H) out-of-class in a source file (.cpp) using ``ClassName::method`` syntax,
-# (H) the Method nodes must link back to the correct Class node via
-# (H) DEFINES_METHOD edges -- not to a phantom class constructed from the
-# (H) .cpp module's qualified name.
+# Tests for C++ cross-file out-of-class method resolution (issue #496).
+#
+# When a class is declared in a header (.h) and methods are implemented
+# out-of-class in a source file (.cpp) using ``ClassName::method`` syntax,
+# the Method nodes must link back to the correct Class node via
+# DEFINES_METHOD edges -- not to a phantom class constructed from the
+# .cpp module's qualified name.
 
 from __future__ import annotations
 

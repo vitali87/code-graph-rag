@@ -1,8 +1,8 @@
-# (H) Covers Rust closure containment: a closure is DEFINEd by its nearest
-# (H) enclosing function-like scope (impl/trait method -> Method, free fn or outer
-# (H) closure -> Function). cgr routes closures through its free-function path; the
-# (H) syn oracle (evals/oracles/rs_oracle) emits the matching DEFINES via a stack
-# (H) of enclosing function-likes. Joined on (kind, file, line) endpoints.
+# Covers Rust closure containment: a closure is DEFINEd by its nearest
+# enclosing function-like scope (impl/trait method -> Method, free fn or outer
+# closure -> Function). cgr routes closures through its free-function path; the
+# syn oracle (evals/oracles/rs_oracle) emits the matching DEFINES via a stack
+# of enclosing function-likes. Joined on (kind, file, line) endpoints.
 from __future__ import annotations
 
 from pathlib import Path
@@ -68,6 +68,6 @@ def test_cgr_matches_syn_oracle_on_closure_containment(tmp_path: Path) -> None:
     row = by_label.get(cs.RelationshipType.DEFINES.value)
     assert row is not None, (by_label, result.diff)
     assert row["precision"] == 1.0 and row["recall"] == 1.0, (row, result.diff)
-    # (H) The method-nested closures must contribute resolvable DEFINES edges,
-    # (H) not just the free-function one (the gap this fix closes).
+    # The method-nested closures must contribute resolvable DEFINES edges,
+    # not just the free-function one (the gap this fix closes).
     assert row["tp"] >= 5, (row, result.diff)

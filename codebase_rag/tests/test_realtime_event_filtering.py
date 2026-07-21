@@ -162,7 +162,7 @@ class TestMixedEventSequences:
         mock_updater.factory.reset_mock()
         handler.dispatch(FileDeletedEvent(str(f)))
 
-        # (H) After delete, no re-parse or file node creation
+        # After delete, no re-parse or file node creation
         mock_updater.factory.definition_processor.process_file.assert_not_called()
         mock_updater.factory.structure_processor.process_generic_file.assert_not_called()
         assert mock_updater.ingestor.execute_write.call_count == 3

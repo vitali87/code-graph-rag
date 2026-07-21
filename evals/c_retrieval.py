@@ -1,11 +1,11 @@
-# (H) Multi-language retrieval (C). Extends the file-level call-localization
-# (H) benchmark to C: for each first-party C function, which files call it.
-# (H) cgr's C CALLS edges (reduced to (caller_file, callee_simple_name)) are
-# (H) graded against call sites extracted by libclang, over the same first-party
-# (H) name universe. libclang resolves the true translation-unit call graph,
-# (H) independent of cgr's tree-sitter C frontend (cgr parses C with tree-sitter
-# (H) by default; CPP_FRONTEND=libclang is off), so this measures cgr's cross-file
-# (H) C call resolution against ground truth (mirrors evals/lua_retrieval.py).
+# Multi-language retrieval (C). Extends the file-level call-localization
+# benchmark to C: for each first-party C function, which files call it.
+# cgr's C CALLS edges (reduced to (caller_file, callee_simple_name)) are
+# graded against call sites extracted by libclang, over the same first-party
+# name universe. libclang resolves the true translation-unit call graph,
+# independent of cgr's tree-sitter C frontend (cgr parses C with tree-sitter
+# by default; CPP_FRONTEND=libclang is off), so this measures cgr's cross-file
+# C call resolution against ground truth (mirrors evals/lua_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 
@@ -50,7 +50,7 @@ def cgr_c_call_edges(
         if rel_type != _CALLS:
             continue
         path = caller_path.get((str(from_label), str(from_val)))
-        # (H) Grade only files the oracle parsed cleanly (its authoritative set).
+        # Grade only files the oracle parsed cleanly (its authoritative set).
         if path is None or path not in covered:
             continue
         name = str(to_val).split(cs.SEPARATOR_DOT)[-1]

@@ -48,10 +48,10 @@ class JsTsModuleSystemMixin:
     @abstractmethod
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
-    # (H) Span-claim protocol (implemented by FunctionIngestMixin): one source
-    # (H) function must mint exactly one node PER NAME, so every JS/TS
-    # (H) registration path checks the claim before registering and claims
-    # (H) after (deliberate different-name twins still register).
+    # Span-claim protocol (implemented by FunctionIngestMixin): one source
+    # function must mint exactly one node PER NAME, so every JS/TS
+    # registration path checks the claim before registering and claims
+    # after (deliberate different-name twins still register).
     @abstractmethod
     def _span_claimed_for_qn(
         self, module_qn: str, func_node: ASTNode, candidate_qn: str
@@ -189,11 +189,11 @@ class JsTsModuleSystemMixin:
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:
-                # (H) Route through the same deferred verification as every
-                # (H) other IMPORTS edge: an internal target must be a real
-                # (H) module, an external one gets its ExternalModule node at
-                # (H) flush (issue #652: this path emitted directly and was the
-                # (H) last source of phantom import targets).
+                # Route through the same deferred verification as every
+                # other IMPORTS edge: an internal target must be a real
+                # module, an external one gets its ExternalModule node at
+                # flush (issue #652: this path emitted directly and was the
+                # last source of phantom import targets).
                 self.import_processor.defer_import_edge(
                     module_qn, resolved_source_module, language
                 )

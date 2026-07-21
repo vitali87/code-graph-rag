@@ -18,10 +18,10 @@ _MILVUS_VECTOR_FIELD = "embedding"
 _CLIENT: Any | None = None
 _CLIENT_BACKEND: VectorStoreBackend | None = None
 
-# (H) Each name is the real class or None (dependency absent), typed Any via
-# (H) cast so ty does not flag the guarded call sites: the availability gates
-# (H) in _get_vector_store/get_*_client keep the None case from ever being
-# (H) called, and the module-level binding is what the tests patch.
+# Each name is the real class or None (dependency absent), typed Any via
+# cast so ty does not flag the guarded call sites: the availability gates
+# in _get_vector_store/get_*_client keep the None case from ever being
+# called, and the module-level binding is what the tests patch.
 if has_qdrant_client():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -457,8 +457,8 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
         lite_version = version("milvus-lite")
     except PackageNotFoundError:
         return False
-    # (H) Milvus Lite 3.0.0 reports COSINE as distance instead of similarity:
-    # (H) https://github.com/milvus-io/milvus-lite/issues/343
+    # Milvus Lite 3.0.0 reports COSINE as distance instead of similarity:
+    # https://github.com/milvus-io/milvus-lite/issues/343
     return lite_version.startswith("3.0")
 
 

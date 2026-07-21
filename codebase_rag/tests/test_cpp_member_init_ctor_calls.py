@@ -1,11 +1,11 @@
-# (H) A ctor's member initializer list runs base-class ctors (`: buffer(g, 0)`)
-# (H) and delegated ctors (`: widget(0)`), but no call_expression exists for
-# (H) them, so the base ctor of a class only ever constructed through derived
-# (H) classes had zero incoming CALLS and reported dead (fmt's buffer.buffer:
-# (H) every use goes through container_buffer/counting_buffer member-init).
-# (H) Each field_initializer whose head name resolves to a registered class
-# (H) emits CALLS from the ctor to that class's ctors; a plain member field
-# (H) initializer (`c_(g)`) resolves to no class and emits nothing.
+# A ctor's member initializer list runs base-class ctors (`: buffer(g, 0)`)
+# and delegated ctors (`: widget(0)`), but no call_expression exists for
+# them, so the base ctor of a class only ever constructed through derived
+# classes had zero incoming CALLS and reported dead (fmt's buffer.buffer:
+# every use goes through container_buffer/counting_buffer member-init).
+# Each field_initializer whose head name resolves to a registered class
+# emits CALLS from the ctor to that class's ctors; a plain member field
+# initializer (`c_(g)`) resolves to no class and emits nothing.
 from __future__ import annotations
 
 from pathlib import Path
@@ -98,8 +98,8 @@ def test_plain_field_init_emits_no_ctor_call(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(mock_ingestor)
-    # (H) `c_(g)` and `g_(g)` are member field inits; nothing named c_/g_ may
-    # (H) receive a CALLS edge.
+    # `c_(g)` and `g_(g)` are member field inits; nothing named c_/g_ may
+    # receive a CALLS edge.
     assert not any(dst.rsplit(".", 1)[-1] in ("c_", "g_") for _, dst in calls), calls
 
 
@@ -149,9 +149,9 @@ def test_qualified_template_base_member_init_emits_ctor_call(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(mock_ingestor)
-    # (H) `ns::base<int>(1)`: the qualified_identifier CONTAINS the
-    # (H) template_method, so the head's raw text carries the specialization
-    # (H) args; registered class qns are unspecialized (PR #792 review).
+    # `ns::base<int>(1)`: the qualified_identifier CONTAINS the
+    # template_method, so the head's raw text carries the specialization
+    # args; registered class qns are unspecialized (PR #792 review).
     assert any(
         src.endswith(".wrapper.wrapper") and dst.endswith(".base.base")
         for src, dst in calls

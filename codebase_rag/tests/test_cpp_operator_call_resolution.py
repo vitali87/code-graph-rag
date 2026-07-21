@@ -1,8 +1,8 @@
-# (H) C++ operator calls: a user-defined overload must win, and a primitive
-# (H) builtin operator must produce NO call edge. The old table mapped common
-# (H) operators to synthetic `builtin.cpp.operator_*` qns unconditionally,
-# (H) which both shadowed real overloads and emitted edges to nodes that never
-# (H) exist, silently dropped by the database (issue #652: 1,681 on souffle).
+# C++ operator calls: a user-defined overload must win, and a primitive
+# builtin operator must produce NO call edge. The old table mapped common
+# operators to synthetic `builtin.cpp.operator_*` qns unconditionally,
+# which both shadowed real overloads and emitted edges to nodes that never
+# exist, silently dropped by the database (issue #652: 1,681 on souffle).
 from __future__ import annotations
 
 from pathlib import Path

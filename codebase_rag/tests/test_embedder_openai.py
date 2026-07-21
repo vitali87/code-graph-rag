@@ -13,9 +13,9 @@ from codebase_rag.embedder import clear_embedding_cache
 
 
 class RecordingHandler:
-    # (H) MockTransport handler that answers like an OpenAI-compatible
-    # (H) /embeddings endpoint and records every request payload; rows are
-    # (H) returned in reverse index order so callers must sort by index.
+    # MockTransport handler that answers like an OpenAI-compatible
+    # /embeddings endpoint and records every request payload; rows are
+    # returned in reverse index order so callers must sort by index.
     def __init__(self, dim: int = 4, status_code: int = 200) -> None:
         self.dim = dim
         self.status_code = status_code

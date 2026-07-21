@@ -1,8 +1,8 @@
-# (H) Regression tests for the duplicate-qualified-name finding surfaced by the
-# (H) evals/ harness: the `if has_x(): <real impl> else: <stub>` import-fallback
-# (H) idiom defines one qualified name twice. cgr used to collapse the two into a
-# (H) single node (last-writer-wins kept the else-branch stub). Both definitions
-# (H) must survive as distinct nodes, and a call must link to BOTH.
+# Regression tests for the duplicate-qualified-name finding surfaced by the
+# evals/ harness: the `if has_x(): <real impl> else: <stub>` import-fallback
+# idiom defines one qualified name twice. cgr used to collapse the two into a
+# single node (last-writer-wins kept the else-branch stub). Both definitions
+# must survive as distinct nodes, and a call must link to BOTH.
 from __future__ import annotations
 
 from pathlib import Path
@@ -203,9 +203,9 @@ class TestDuplicateQualifiedNameReturnedClosures:
     def test_returned_closure_links_both_duplicate_definitions(
         self, tmp_path: Path
     ) -> None:
-        # (H) `return handler` hands back whichever branch defined handler, so the
-        # (H) producer edge must link BOTH twins; linking one leaves the other
-        # (H) unreachable and falsely dead (django's SET.set_on_delete@60).
+        # `return handler` hands back whichever branch defined handler, so the
+        # producer edge must link BOTH twins; linking one leaves the other
+        # unreachable and falsely dead (django's SET.set_on_delete@60).
         cap = _build(tmp_path, FACTORY_SRC)
         returned_edges = sorted(
             str(target)

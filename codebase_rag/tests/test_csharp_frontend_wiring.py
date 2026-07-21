@@ -1,7 +1,7 @@
-# (H) C# Roslyn hybrid frontend (issue #738), phase B1: the opt-in semantic layer
-# (H) corrects INHERITS-vs-IMPLEMENTS where the parse-time I-prefix heuristic is
-# (H) wrong. The wiring decides which path runs, gated on CSHARP_FRONTEND + a
-# (H) discoverable .csproj + a usable dotnet toolchain.
+# C# Roslyn hybrid frontend (issue #738), phase B1: the opt-in semantic layer
+# corrects INHERITS-vs-IMPLEMENTS where the parse-time I-prefix heuristic is
+# wrong. The wiring decides which path runs, gated on CSHARP_FRONTEND + a
+# discoverable .csproj + a usable dotnet toolchain.
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -22,11 +22,11 @@ from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
 
-# (H) A base list the I-prefix heuristic gets exactly backwards: IWidget is a
-# (H) class (heuristic reads the I-prefix as an interface) and Renderer is an
-# (H) interface (heuristic, seeing no I-prefix on the first base, reads it as the
-# (H) base class). C# requires the base class first, so `Button : IWidget, Renderer`
-# (H) is valid with IWidget the base class.
+# A base list the I-prefix heuristic gets exactly backwards: IWidget is a
+# class (heuristic reads the I-prefix as an interface) and Renderer is an
+# interface (heuristic, seeing no I-prefix on the first base, reads it as the
+# base class). C# requires the base class first, so `Button : IWidget, Renderer`
+# is valid with IWidget the base class.
 _TYPES = """
 namespace N;
 
@@ -76,8 +76,8 @@ _EMPTY_PAYLOAD = '{"types":[],"calls":[],"partials":[],"queries":[]}'
 
 
 def test_find_csharp_project_discovers_slnx_solution(temp_repo: Path) -> None:
-    # (H) Repos migrated to the XML solution format ship a .slnx and no .sln
-    # (H) (e.g. Polly); missing it silently degrades hybrid to one csproj.
+    # Repos migrated to the XML solution format ship a .slnx and no .sln
+    # (e.g. Polly); missing it silently degrades hybrid to one csproj.
     root = temp_repo / "slnxroot"
     _write_project(root)
     (root / "Sample.slnx").write_text(_SLNX, encoding="utf-8")
@@ -89,8 +89,8 @@ def test_find_csharp_project_discovers_slnx_solution(temp_repo: Path) -> None:
 
 
 def test_parse_payload_warns_with_tool_stderr_when_facts_empty() -> None:
-    # (H) A zero-fact run (SDK pin mismatch, unloadable solution) must surface
-    # (H) the tool's stderr diagnostics instead of looking identical to success.
+    # A zero-fact run (SDK pin mismatch, unloadable solution) must surface
+    # the tool's stderr diagnostics instead of looking identical to success.
     from loguru import logger
 
     records: list[str] = []
@@ -123,16 +123,16 @@ def test_parse_payload_stays_quiet_when_facts_present() -> None:
 def test_roslyn_tool_opens_slnx_solution(temp_repo: Path) -> None:
     if not csharp_frontend_available():
         pytest.skip("dotnet not available")
-    # (H) Environment self-gate on a sibling csproj-only project: only when the
-    # (H) plain path provably works may the .slnx path be required to work too,
-    # (H) so a .slnx regression cannot hide behind the skip.
+    # Environment self-gate on a sibling csproj-only project: only when the
+    # plain path provably works may the .slnx path be required to work too,
+    # so a .slnx regression cannot hide behind the skip.
     plain = temp_repo / "plainproj"
     _write_project(plain)
     if not run_csharp_frontend(plain).base_kinds:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
-    # (H) Two projects under one .slnx: the csproj fallback loads exactly one of
-    # (H) them, so facts from BOTH prove the solution itself was opened.
+    # Two projects under one .slnx: the csproj fallback loads exactly one of
+    # them, so facts from BOTH prove the solution itself was opened.
     root = temp_repo / "slnxproj"
     root.mkdir()
     for member in ("A", "B"):
@@ -151,10 +151,10 @@ def test_roslyn_tool_opens_slnx_solution(temp_repo: Path) -> None:
 
 
 def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
-    # (H) Two bases with the same simple name but different kinds (`: A.Widget,
-    # (H) B.Widget`, one class + one interface) cannot be told apart by simple
-    # (H) name, so the name is dropped from the map and the heuristic decides;
-    # (H) a same-kind duplicate is kept.
+    # Two bases with the same simple name but different kinds (`: A.Widget,
+    # B.Widget`, one class + one interface) cannot be told apart by simple
+    # name, so the name is dropped from the map and the heuristic decides;
+    # a same-kind duplicate is kept.
     payload = json.dumps(
         {
             "types": [
@@ -183,16 +183,16 @@ def test_parse_payload_drops_conflicting_duplicate_simple_names() -> None:
     result = _parse_payload(payload).base_kinds
     assert "Widget" not in result[("F.cs", 3)]
     assert result[("F.cs", 3)]["Handler"] == "interface"
-    # (H) A duplicate that agrees on kind is unambiguous, so it survives.
+    # A duplicate that agrees on kind is unambiguous, so it survives.
     assert result[("G.cs", 5)]["Base"] == "class"
 
 
 def test_frontend_off_clears_stale_base_kinds(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) A reused updater (watch mode) that ran hybrid must not keep applying the
-    # (H) old oracle when a later run has the frontend off: the early return still
-    # (H) resets the map to empty so Pass 2 falls back to the heuristic.
+    # A reused updater (watch mode) that ran hybrid must not keep applying the
+    # old oracle when a later run has the frontend off: the early return still
+    # resets the map to empty so Pass 2 falls back to the heuristic.
     from codebase_rag.parser_loader import load_parsers
 
     parsers, queries = load_parsers()
@@ -217,9 +217,9 @@ def test_treesitter_mode_keeps_iprefix_heuristic(temp_repo: Path) -> None:
     run_updater(root, ingestor, skip_if_missing=SKIP)
 
     inherits = _pairs(ingestor, "INHERITS")
-    # (H) In tree-sitter mode (the suite-wide test pin) the frontend never
-    # (H) runs: the heuristic reads the I-prefixed base class IWidget as an
-    # (H) interface, so it is NOT an INHERITS.
+    # In tree-sitter mode (the suite-wide test pin) the frontend never
+    # runs: the heuristic reads the I-prefixed base class IWidget as an
+    # interface, so it is NOT an INHERITS.
     assert not _has(inherits, "N.Button", "N.IWidget"), inherits
 
 
@@ -231,10 +231,10 @@ def test_roslyn_frontend_corrects_base_classification(
     root = temp_repo / "roslynproj"
     _write_project(root)
 
-    # (H) Self-gate on the toolchain actually producing facts: a missing SDK
-    # (H) workload, offline NuGet, or a build failure yields an empty map, in
-    # (H) which case there is nothing to assert (the frontend degraded to
-    # (H) tree-sitter, covered by the default-path test above).
+    # Self-gate on the toolchain actually producing facts: a missing SDK
+    # workload, offline NuGet, or a build failure yields an empty map, in
+    # which case there is nothing to assert (the frontend degraded to
+    # tree-sitter, covered by the default-path test above).
     facts = run_csharp_frontend(root)
     if not facts.base_kinds:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
@@ -245,8 +245,8 @@ def test_roslyn_frontend_corrects_base_classification(
 
     inherits = _pairs(ingestor, "INHERITS")
     implements = _pairs(ingestor, "IMPLEMENTS")
-    # (H) The semantic model fixes both: IWidget is the base class (INHERITS),
-    # (H) Renderer is the interface (IMPLEMENTS), the reverse of the heuristic.
+    # The semantic model fixes both: IWidget is the base class (INHERITS),
+    # Renderer is the interface (IMPLEMENTS), the reverse of the heuristic.
     assert _has(inherits, "N.Button", "N.IWidget"), inherits
     assert _has(implements, "N.Button", "N.Renderer"), implements
     assert not _has(implements, "N.Button", "N.IWidget"), implements
@@ -269,9 +269,9 @@ def _button_facts() -> object:
 
 
 def test_default_csharp_frontend_is_auto() -> None:
-    # (H) The shipped default: hybrid wherever a dotnet toolchain exists,
-    # (H) pure tree-sitter otherwise. Read from the FIELD default because the
-    # (H) test suite pins the live settings instance to tree-sitter.
+    # The shipped default: hybrid wherever a dotnet toolchain exists,
+    # pure tree-sitter otherwise. Read from the FIELD default because the
+    # test suite pins the live settings instance to tree-sitter.
     from codebase_rag.config import AppConfig
 
     assert AppConfig.model_fields["CSHARP_FRONTEND"].default == cs.CSharpFrontend.AUTO

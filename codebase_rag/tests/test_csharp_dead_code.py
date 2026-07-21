@@ -1,4 +1,4 @@
-# (H) C# Phase 4: attribute-driven and IDisposable dead-code reachability roots.
+# C# Phase 4: attribute-driven and IDisposable dead-code reachability roots.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -46,13 +46,13 @@ def _dead(ingestor: FakeIngestor) -> set[str]:
 
 
 def test_attribute_and_dispose_methods_are_roots() -> None:
-    # (H) None of these has an incoming CALLS edge; only the plain private helper
-    # (H) is genuinely dead. [Fact]/[HttpGet] and Dispose are framework/runtime
-    # (H) roots on a .cs file, so they must NOT be reported dead.
+    # None of these has an incoming CALLS edge; only the plain private helper
+    # is genuinely dead. [Fact]/[HttpGet] and Dispose are framework/runtime
+    # roots on a .cs file, so they must NOT be reported dead.
     nodes = [
         _method("proj.Svc.T1", "T1", ["Fact"]),
         _method("proj.Svc.Get", "Get", ['Route("api")']),
-        # (H) A bracketed form must normalize too (robust to the capture shape).
+        # A bracketed form must normalize too (robust to the capture shape).
         _method("proj.Svc.Bracketed", "Bracketed", ["[Theory]"]),
         _method("proj.Svc.Dispose", "Dispose"),
         _method("proj.Svc.Helper", "Helper"),
@@ -67,9 +67,9 @@ def test_attribute_and_dispose_methods_are_roots() -> None:
 
 
 def test_operator_and_finalizer_are_roots() -> None:
-    # (H) An operator overload is invoked by operator syntax (`a + b`) and a
-    # (H) finalizer (`~Svc`) by the GC, never a named call the graph sees, so
-    # (H) neither may be reported dead despite having no incoming CALLS.
+    # An operator overload is invoked by operator syntax (`a + b`) and a
+    # finalizer (`~Svc`) by the GC, never a named call the graph sees, so
+    # neither may be reported dead despite having no incoming CALLS.
     nodes = [
         _method("proj.Svc.operator_+(int, int)", "operator_+"),
         _method("proj.Svc.~Svc", "~Svc"),

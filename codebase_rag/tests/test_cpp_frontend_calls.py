@@ -13,10 +13,10 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# (H) An out-of-line method calling a free function. tree-sitter's cgr path
-# (H) historically dangled the caller qn (PR #47); libclang resolves the call
-# (H) target via cursor.referenced with no name heuristic, and the frontend
-# (H) anchors the caller to the method node itself.
+# An out-of-line method calling a free function. tree-sitter's cgr path
+# historically dangled the caller qn (PR #47); libclang resolves the call
+# target via cursor.referenced with no name heuristic, and the frontend
+# anchors the caller to the method node itself.
 _HEADER = """
 namespace m {
 
@@ -75,7 +75,7 @@ def test_method_calls_free_function(temp_repo: Path) -> None:
     run_cpp_frontend(ingestor, root, root.name, root)
 
     calls = _calls(ingestor)
-    # (H) The caller is the METHOD node (not a dangling free-function/module qn).
+    # The caller is the METHOD node (not a dangling free-function/module qn).
     assert any(
         from_label == "Method"
         and from_qn.endswith(".m.Calc.add")
@@ -85,11 +85,11 @@ def test_method_calls_free_function(temp_repo: Path) -> None:
     ), f"expected Calc.add CALLS helper, got {calls}"
 
 
-# (H) A default member initializer and a namespace-scope global initializer both
-# (H) call compute() with no enclosing function or method. The tree-sitter path
-# (H) attributes such module-load-time calls to the Module node; the libclang
-# (H) frontend previously dropped them (its walk had no enclosing scope to attach
-# (H) the call to), so they must instead fall back to the enclosing Module.
+# A default member initializer and a namespace-scope global initializer both
+# call compute() with no enclosing function or method. The tree-sitter path
+# attributes such module-load-time calls to the Module node; the libclang
+# frontend previously dropped them (its walk had no enclosing scope to attach
+# the call to), so they must instead fall back to the enclosing Module.
 _INIT_SRC = """
 namespace m {
 
@@ -133,8 +133,8 @@ def test_module_scope_initializer_calls_attributed_to_module(temp_repo: Path) ->
     run_cpp_frontend(ingestor, root, root.name, root)
 
     calls = _calls(ingestor)
-    # (H) The two initializer calls collapse to a single Module -> compute edge (the
-    # (H) edge set dedups), matching the caller the tree-sitter path uses.
+    # The two initializer calls collapse to a single Module -> compute edge (the
+    # edge set dedups), matching the caller the tree-sitter path uses.
     assert any(
         from_label == "Module"
         and to_label == "Function"

@@ -1,4 +1,4 @@
-# (H) Per-language FQN scope types and language-spec node tuples.
+# Per-language FQN scope types and language-spec node tuples.
 
 from .ast_cpp import (
     TS_CPP_BINARY_EXPRESSION,
@@ -175,7 +175,7 @@ from .languages import (
     PKG_VCXPROJ_GLOB,
 )
 
-# (H) FQN node type tuples for Python
+# FQN node type tuples for Python
 FQN_PY_SCOPE_TYPES = (
     TS_PY_CLASS_DEFINITION,
     TS_PY_MODULE,
@@ -183,7 +183,7 @@ FQN_PY_SCOPE_TYPES = (
 )
 FQN_PY_FUNCTION_TYPES = (TS_PY_FUNCTION_DEFINITION,)
 
-# (H) FQN node type tuples for JS
+# FQN node type tuples for JS
 FQN_JS_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_PROGRAM,
@@ -199,9 +199,9 @@ FQN_JS_FUNCTION_TYPES = (
     TS_FUNCTION_EXPRESSION,
 )
 
-# (H) FQN node type tuples for TS. The grammar emits `internal_module` for a
-# (H) `namespace`/`module` block; without it a class declared inside a namespace
-# (H) loses the namespace from its qn and collides with a top-level same name.
+# FQN node type tuples for TS. The grammar emits `internal_module` for a
+# `namespace`/`module` block; without it a class declared inside a namespace
+# loses the namespace from its qn and collides with a top-level same name.
 FQN_TS_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
@@ -221,13 +221,13 @@ FQN_TS_FUNCTION_TYPES = (
     TS_FUNCTION_SIGNATURE,
 )
 
-# (H) When climbing a nameless arrow's ancestors to find its binding declarator,
-# (H) crossing one of these means the arrow lives INSIDE another function's body
-# (H) (a JSX event handler, a `.map()` callback), not directly bound to the outer
-# (H) const -- so it must not inherit that const's name. Without this stop the inner
-# (H) arrow becomes `Component.Component`/`utils.getInitials.getInitials`, a
-# (H) double-segment phantom with no incoming edge (dead-code false positive) that
-# (H) also steals the enclosing scope from the real inline handler nodes.
+# When climbing a nameless arrow's ancestors to find its binding declarator,
+# crossing one of these means the arrow lives INSIDE another function's body
+# (a JSX event handler, a `.map()` callback), not directly bound to the outer
+# const -- so it must not inherit that const's name. Without this stop the inner
+# arrow becomes `Component.Component`/`utils.getInitials.getInitials`, a
+# double-segment phantom with no incoming edge (dead-code false positive) that
+# also steals the enclosing scope from the real inline handler nodes.
 JS_ARROW_NAME_CLIMB_BOUNDARY = frozenset(
     {
         TS_STATEMENT_BLOCK,
@@ -237,15 +237,15 @@ JS_ARROW_NAME_CLIMB_BOUNDARY = frozenset(
         TS_METHOD_DEFINITION,
         TS_GENERATOR_FUNCTION_DECLARATION,
         TS_CLASS_BODY,
-        # (H) An OBJECT VALUE (`var pets = { list: function(req, res) {...} }`)
-        # (H) is owned by the pair-key naming path; climbing past it would steal
-        # (H) the enclosing declarator's name and register a phantom function.
+        # An OBJECT VALUE (`var pets = { list: function(req, res) {...} }`)
+        # is owned by the pair-key naming path; climbing past it would steal
+        # the enclosing declarator's name and register a phantom function.
         TS_PY_PAIR,
         TS_OBJECT,
     }
 )
 
-# (H) FQN node type tuples for Rust
+# FQN node type tuples for Rust
 FQN_RS_SCOPE_TYPES = (
     TS_RS_STRUCT_ITEM,
     TS_RS_ENUM_ITEM,
@@ -260,18 +260,18 @@ FQN_RS_FUNCTION_TYPES = (
     TS_RS_CLOSURE_EXPRESSION,
 )
 
-# (H) FQN node type tuples for Java
+# FQN node type tuples for Java
 FQN_JAVA_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_ENUM_DECLARATION,
     TS_PROGRAM,
-    # (H) An enclosing method/constructor is a qn scope for a function nested in its
-    # (H) body (a method-body anonymous class's method): the call pass builds
-    # (H) `Class.method.nested`, so the definition pass must include the method too --
-    # (H) else the two disagree and every edge from the nested function dangles onto a
-    # (H) phantom `Class.method.nested` node, orphaning its callees. A direct method is
-    # (H) the func itself, not an ancestor, so its own qn is unaffected.
+    # An enclosing method/constructor is a qn scope for a function nested in its
+    # body (a method-body anonymous class's method): the call pass builds
+    # `Class.method.nested`, so the definition pass must include the method too --
+    # else the two disagree and every edge from the nested function dangles onto a
+    # phantom `Class.method.nested` node, orphaning its callees. A direct method is
+    # the func itself, not an ancestor, so its own qn is unaffected.
     TS_METHOD_DECLARATION,
     TS_CONSTRUCTOR_DECLARATION,
 )
@@ -280,7 +280,7 @@ FQN_JAVA_FUNCTION_TYPES = (
     TS_CONSTRUCTOR_DECLARATION,
 )
 
-# (H) FQN node type tuples for C++
+# FQN node type tuples for C++
 FQN_CPP_SCOPE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
     TS_STRUCT_SPECIFIER,
@@ -295,10 +295,10 @@ FQN_CPP_FUNCTION_TYPES = (
     TS_CPP_LAMBDA_EXPRESSION,
 )
 
-# (H) FQN node type tuples for C#
-# (H) compilation_unit is a scope so file-scoped namespaces fold in (see
-# (H) _csharp_get_name). An enclosing method/constructor is a scope so a nested
-# (H) local function's qn agrees between the definition and call passes (cf. Java).
+# FQN node type tuples for C#
+# compilation_unit is a scope so file-scoped namespaces fold in (see
+# _csharp_get_name). An enclosing method/constructor is a scope so a nested
+# local function's qn agrees between the definition and call passes (cf. Java).
 FQN_CSHARP_SCOPE_TYPES = (
     TS_CSHARP_COMPILATION_UNIT,
     TS_CSHARP_NAMESPACE_DECLARATION,
@@ -321,15 +321,15 @@ FQN_CSHARP_FUNCTION_TYPES = (
     TS_CSHARP_PROPERTY_DECLARATION,
 )
 
-# (H) FQN node type tuples for Lua
+# FQN node type tuples for Lua
 FQN_LUA_SCOPE_TYPES = (TS_LUA_CHUNK,)
 FQN_LUA_FUNCTION_TYPES = (
     TS_LUA_FUNCTION_DECLARATION,
     TS_LUA_FUNCTION_DEFINITION,
 )
 
-# (H) FQN node type tuples for Dart. Scopes are the class-like declarations plus
-# (H) the file root; a nested function/method's qn is built through these.
+# FQN node type tuples for Dart. Scopes are the class-like declarations plus
+# the file root; a nested function/method's qn is built through these.
 FQN_DART_SCOPE_TYPES = (
     TS_DART_CLASS_DEFINITION,
     TS_DART_MIXIN_DECLARATION,
@@ -347,7 +347,7 @@ FQN_DART_FUNCTION_TYPES = (
     TS_DART_CONSTANT_CONSTRUCTOR_SIGNATURE,
 )
 
-# (H) FQN node type tuples for Go
+# FQN node type tuples for Go
 FQN_GO_SCOPE_TYPES = (
     TS_GO_TYPE_DECLARATION,
     TS_GO_SOURCE_FILE,
@@ -357,7 +357,7 @@ FQN_GO_FUNCTION_TYPES = (
     TS_GO_METHOD_DECLARATION,
 )
 
-# (H) FQN node type tuples for Scala
+# FQN node type tuples for Scala
 FQN_SCALA_SCOPE_TYPES = (
     TS_SCALA_CLASS_DEFINITION,
     TS_SCALA_OBJECT_DEFINITION,
@@ -369,7 +369,7 @@ FQN_SCALA_FUNCTION_TYPES = (
     TS_SCALA_FUNCTION_DECLARATION,
 )
 
-# (H) FQN node type tuples for PHP
+# FQN node type tuples for PHP
 FQN_PHP_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
@@ -384,7 +384,7 @@ FQN_PHP_FUNCTION_TYPES = (
     TS_PHP_ARROW_FUNCTION,
 )
 
-# (H) LANGUAGE_SPECS node type tuples for Python
+# LANGUAGE_SPECS node type tuples for Python
 SPEC_PY_FUNCTION_TYPES = (TS_PY_FUNCTION_DEFINITION,)
 SPEC_PY_CLASS_TYPES = (TS_PY_CLASS_DEFINITION,)
 SPEC_PY_MODULE_TYPES = (TS_PY_MODULE,)
@@ -393,20 +393,20 @@ SPEC_PY_IMPORT_TYPES = (TS_PY_IMPORT_STATEMENT,)
 SPEC_PY_IMPORT_FROM_TYPES = (TS_PY_IMPORT_FROM_STATEMENT,)
 SPEC_PY_PACKAGE_INDICATORS = (PKG_INIT_PY,)
 
-# (H) LANGUAGE_SPECS node type tuples for JS/TS
+# LANGUAGE_SPECS node type tuples for JS/TS
 SPEC_JS_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_JS_CALL_TYPES = (TS_CALL_EXPRESSION, TS_NEW_EXPRESSION)
 
-# (H) Derived node types for _js_get_name
+# Derived node types for _js_get_name
 JS_NAME_NODE_TYPES = (
     TS_FUNCTION_DECLARATION,
     TS_CLASS_DECLARATION,
     TS_METHOD_DEFINITION,
-    # (H) TS `namespace`/`module` block; its `name` field scopes nested classes.
+    # TS `namespace`/`module` block; its `name` field scopes nested classes.
     TS_INTERNAL_MODULE,
 )
 
-# (H) Derived node types for _rust_get_name
+# Derived node types for _rust_get_name
 RS_TYPE_NODE_TYPES = (
     TS_RS_STRUCT_ITEM,
     TS_RS_ENUM_ITEM,
@@ -415,29 +415,29 @@ RS_TYPE_NODE_TYPES = (
 )
 RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
 
-# (H) Derived node types for _cpp_get_name
+# Derived node types for _cpp_get_name
 CPP_NAME_NODE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
     TS_STRUCT_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
 
-# (H) Derived node types for _c_get_name
+# Derived node types for _c_get_name
 C_NAME_NODE_TYPES = (
     TS_STRUCT_SPECIFIER,
     TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
 
-# (H) LANGUAGE_SPECS node type tuples for Rust
+# LANGUAGE_SPECS node type tuples for Rust
 SPEC_RS_FUNCTION_TYPES = (
     TS_RS_FUNCTION_ITEM,
     TS_RS_FUNCTION_SIGNATURE_ITEM,
     TS_RS_CLOSURE_EXPRESSION,
-    # (H) macro_rules! definitions register as Function nodes (the
-    # (H) cross-language decision: C/C++/Rust macros all map onto Function), so
-    # (H) macro_invocation call sites (already in SPEC_RS_CALL_TYPES) have a
-    # (H) first-party definition to resolve to.
+    # macro_rules! definitions register as Function nodes (the
+    # cross-language decision: C/C++/Rust macros all map onto Function), so
+    # macro_invocation call sites (already in SPEC_RS_CALL_TYPES) have a
+    # first-party definition to resolve to.
     TS_RS_MACRO_DEFINITION,
 )
 SPEC_RS_CLASS_TYPES = (
@@ -454,9 +454,9 @@ SPEC_RS_IMPORT_TYPES = (TS_RS_USE_DECLARATION, TS_RS_EXTERN_CRATE_DECLARATION)
 SPEC_RS_IMPORT_FROM_TYPES = (TS_RS_USE_DECLARATION,)
 SPEC_RS_PACKAGE_INDICATORS = (PKG_CARGO_TOML,)
 
-# (H) LANGUAGE_SPECS node type tuples for Dart. No call node types: the grammar
-# (H) has no call-expression node, so cgr emits no Dart CALLS edges (structural
-# (H) support only). Imports cover import/export, part, and part-of directives.
+# LANGUAGE_SPECS node type tuples for Dart. No call node types: the grammar
+# has no call-expression node, so cgr emits no Dart CALLS edges (structural
+# support only). Imports cover import/export, part, and part-of directives.
 SPEC_DART_FUNCTION_TYPES = (
     TS_DART_FUNCTION_SIGNATURE,
     TS_DART_GETTER_SIGNATURE,
@@ -480,14 +480,14 @@ SPEC_DART_IMPORT_TYPES = (
     TS_DART_PART_OF_DIRECTIVE,
 )
 
-# (H) LANGUAGE_SPECS node type tuples for Go
+# LANGUAGE_SPECS node type tuples for Go
 SPEC_GO_FUNCTION_TYPES = (TS_GO_FUNCTION_DECLARATION, TS_GO_METHOD_DECLARATION)
 SPEC_GO_CLASS_TYPES = (TS_GO_TYPE_SPEC, TS_GO_TYPE_ALIAS)
 SPEC_GO_MODULE_TYPES = (TS_GO_SOURCE_FILE,)
 SPEC_GO_CALL_TYPES = (TS_GO_CALL_EXPRESSION,)
 SPEC_GO_IMPORT_TYPES = (TS_GO_IMPORT_DECLARATION,)
 
-# (H) LANGUAGE_SPECS node type tuples for Scala
+# LANGUAGE_SPECS node type tuples for Scala
 SPEC_SCALA_FUNCTION_TYPES = (
     TS_SCALA_FUNCTION_DEFINITION,
     TS_SCALA_FUNCTION_DECLARATION,
@@ -506,7 +506,7 @@ SPEC_SCALA_CALL_TYPES = (
 )
 SPEC_SCALA_IMPORT_TYPES = (TS_SCALA_IMPORT_DECLARATION,)
 
-# (H) LANGUAGE_SPECS node type tuples for Java
+# LANGUAGE_SPECS node type tuples for Java
 SPEC_JAVA_FUNCTION_TYPES = (TS_METHOD_DECLARATION, TS_CONSTRUCTOR_DECLARATION)
 SPEC_JAVA_CLASS_TYPES = (
     TS_CLASS_DECLARATION,
@@ -519,7 +519,7 @@ SPEC_JAVA_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_JAVA_CALL_TYPES = (TS_JAVA_METHOD_INVOCATION, TS_OBJECT_CREATION_EXPRESSION)
 SPEC_JAVA_IMPORT_TYPES = (TS_IMPORT_DECLARATION,)
 
-# (H) LANGUAGE_SPECS node type tuples for C#
+# LANGUAGE_SPECS node type tuples for C#
 SPEC_CSHARP_FUNCTION_TYPES = (
     TS_CSHARP_METHOD_DECLARATION,
     TS_CSHARP_CONSTRUCTOR_DECLARATION,
@@ -548,7 +548,7 @@ SPEC_CSHARP_CALL_TYPES = (
 )
 SPEC_CSHARP_IMPORT_TYPES = (TS_CSHARP_USING_DIRECTIVE,)
 
-# (H) LANGUAGE_SPECS node type tuples for C++
+# LANGUAGE_SPECS node type tuples for C++
 SPEC_CPP_FUNCTION_TYPES = (
     TS_CPP_FUNCTION_DEFINITION,
     TS_CPP_DECLARATION,
@@ -585,7 +585,7 @@ SPEC_CPP_PACKAGE_INDICATORS = (
     PKG_CONANFILE,
 )
 
-# (H) FQN node type tuples for C
+# FQN node type tuples for C
 FQN_C_SCOPE_TYPES = (
     TS_CPP_TRANSLATION_UNIT,
     TS_STRUCT_SPECIFIER,
@@ -594,7 +594,7 @@ FQN_C_SCOPE_TYPES = (
 )
 FQN_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
 
-# (H) LANGUAGE_SPECS node type tuples for C
+# LANGUAGE_SPECS node type tuples for C
 SPEC_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
 SPEC_C_CLASS_TYPES = (
     TS_STRUCT_SPECIFIER,
@@ -605,7 +605,7 @@ SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
 SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
 SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
 
-# (H) LANGUAGE_SPECS node type tuples for PHP
+# LANGUAGE_SPECS node type tuples for PHP
 SPEC_PHP_FUNCTION_TYPES = (
     TS_PHP_FUNCTION_DEFINITION,
     TS_PHP_METHOD_DECLARATION,
@@ -634,7 +634,7 @@ SPEC_PHP_IMPORT_FROM_TYPES = (
     TS_PHP_REQUIRE_ONCE_EXPRESSION,
 )
 
-# (H) LANGUAGE_SPECS node type tuples for Lua
+# LANGUAGE_SPECS node type tuples for Lua
 SPEC_LUA_FUNCTION_TYPES = (TS_LUA_FUNCTION_DECLARATION, TS_LUA_FUNCTION_DEFINITION)
 SPEC_LUA_CLASS_TYPES: tuple[str, ...] = ()
 SPEC_LUA_MODULE_TYPES = (TS_LUA_CHUNK,)

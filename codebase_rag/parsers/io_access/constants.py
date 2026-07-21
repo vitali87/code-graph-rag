@@ -4,10 +4,10 @@ from enum import StrEnum
 
 from ... import constants as cs
 
-# (H) Python nested-scope boundaries. The per-caller IO/flow DFS must not descend
-# (H) into these: a nested def/class is its own caller and is walked separately,
-# (H) so a read/write/flow is attributed to its immediate scope only (matching
-# (H) how CALLS is attributed). Single source of truth for io_access + flow_access.
+# Python nested-scope boundaries. The per-caller IO/flow DFS must not descend
+# into these: a nested def/class is its own caller and is walked separately,
+# so a read/write/flow is attributed to its immediate scope only (matching
+# how CALLS is attributed). Single source of truth for io_access + flow_access.
 PY_SCOPE_BOUNDARIES = (
     cs.TS_PY_FUNCTION_DEFINITION,
     cs.TS_PY_CLASS_DEFINITION,
@@ -32,24 +32,24 @@ class IODirection(StrEnum):
     READ_WRITE = "READ_WRITE"
 
 
-# (H) Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
+# Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
 RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
 
-# (H) Identity used when the accessed target is not a static string literal.
+# Identity used when the accessed target is not a static string literal.
 DYNAMIC_TARGET = "<dynamic>"
 
 KEY_KIND = "kind"
 
-# (H) Python open()-style mode characters that imply writing / read-write.
+# Python open()-style mode characters that imply writing / read-write.
 MODE_WRITE_CHARS = ("w", "a", "x")
 MODE_READ_CHAR = "r"
 MODE_UPDATE_CHAR = "+"
 
-# (H) SQL leading keywords used to refine a DB handle execute() into read vs write.
-# (H) An unlisted first keyword falls back to the method's declared direction
-# (H) (execute -> READ_WRITE), so only add keywords whose direction is unambiguous
-# (H) from the first token. WITH/PRAGMA are intentionally omitted (a CTE or pragma
-# (H) can be either), keeping the fallback rather than guessing.
+# SQL leading keywords used to refine a DB handle execute() into read vs write.
+# An unlisted first keyword falls back to the method's declared direction
+# (execute -> READ_WRITE), so only add keywords whose direction is unambiguous
+# from the first token. WITH/PRAGMA are intentionally omitted (a CTE or pragma
+# can be either), keeping the fallback rather than guessing.
 SQL_READ_KEYWORDS = ("SELECT", "EXPLAIN", "VALUES")
 SQL_WRITE_KEYWORDS = (
     "INSERT",

@@ -1,9 +1,9 @@
-# (H) C# FLOWS_TO taint edges (issue #102 follow-up). C# had READS_FROM/WRITES_TO
-# (H) sinks (#825) and resource handles (#826) but no data-flow taint: a value read
-# (H) from one resource reaching a write sink emits a resource->resource FLOWS_TO.
-# (H) The lean flow walk is descriptor-driven and already ran for C#, but C# wraps
-# (H) every call argument in an `argument` node, so the sink-argument taint reader
-# (H) and the literal-identity resolver had to unwrap it.
+# C# FLOWS_TO taint edges (issue #102 follow-up). C# had READS_FROM/WRITES_TO
+# sinks (#825) and resource handles (#826) but no data-flow taint: a value read
+# from one resource reaching a write sink emits a resource->resource FLOWS_TO.
+# The lean flow walk is descriptor-driven and already ran for C#, but C# wraps
+# every call argument in an `argument` node, so the sink-argument taint reader
+# and the literal-identity resolver had to unwrap it.
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,7 +55,7 @@ def test_csharp_env_flows_to_file_via_variable(tmp_path: Path) -> None:
 
 
 def test_csharp_env_flows_to_file_inline(tmp_path: Path) -> None:
-    # (H) The read source is inlined as the write sink's argument (no variable).
+    # The read source is inlined as the write sink's argument (no variable).
     files = {
         "A.cs": (
             "using System;\n"
@@ -105,7 +105,7 @@ def test_csharp_file_read_flows_to_file_write(tmp_path: Path) -> None:
 
 
 def test_csharp_untainted_value_emits_no_flow(tmp_path: Path) -> None:
-    # (H) A literal argument carries no taint: no FLOWS_TO edge.
+    # A literal argument carries no taint: no FLOWS_TO edge.
     files = {
         "A.cs": (
             "using System.IO;\n"

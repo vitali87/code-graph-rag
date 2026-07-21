@@ -90,11 +90,11 @@ def _build(temp_repo: Path, name: str, source: str) -> set[tuple[str, str]]:
 def test_multi_return_free_fn_binding_dispatches_real_receiver(
     temp_repo: Path,
 ) -> None:
-    # (H) `cm, err := getManager()` must type cm from getManager's FIRST return
-    # (H) (Go's (T, error) idiom), so `cm.Get` binds zmanager.Get instead of
-    # (H) trie-falling back to the enclosing provider.Get (a false SELF edge:
-    # (H) viper's remoteConfigProvider.Get -> Get). zmanager sorts AFTER
-    # (H) provider so an alphabetical trie coincidence cannot fake a pass.
+    # `cm, err := getManager()` must type cm from getManager's FIRST return
+    # (Go's (T, error) idiom), so `cm.Get` binds zmanager.Get instead of
+    # trie-falling back to the enclosing provider.Get (a false SELF edge:
+    # viper's remoteConfigProvider.Get -> Get). zmanager sorts AFTER
+    # provider so an alphabetical trie coincidence cannot fake a pass.
     calls = _build(temp_repo, "multi", _MULTI_RETURN_SRC)
 
     assert any(
@@ -156,11 +156,11 @@ func connect() (thirdparty.Client, error) {
 
 
 def test_flow_return_taint_honors_receiver_typing(temp_repo: Path) -> None:
-    # (H) The flow walk resolves callees for return-taint edges itself; without
-    # (H) the caller's local type map, `cl.Get` on an external-typed receiver
-    # (H) unique-binds back to the enclosing provider.Get and finalize emits
-    # (H) the FLOWS_TO self edge the CALLS pipeline had already correctly
-    # (H) dropped (viper's remoteConfigProvider Get -> Get).
+    # The flow walk resolves callees for return-taint edges itself; without
+    # the caller's local type map, `cl.Get` on an external-typed receiver
+    # unique-binds back to the enclosing provider.Get and finalize emits
+    # the FLOWS_TO self edge the CALLS pipeline had already correctly
+    # dropped (viper's remoteConfigProvider Get -> Get).
     root = temp_repo / "flowmulti"
     root.mkdir()
     (root / "go.mod").write_text(_GO_MOD, encoding="utf-8")
@@ -187,9 +187,9 @@ def test_flow_return_taint_honors_receiver_typing(temp_repo: Path) -> None:
 def test_external_qualified_return_does_not_bind_local_decoy(
     temp_repo: Path,
 ) -> None:
-    # (H) connect() returns an EXTERNAL package's type: `cl` is typed but the
-    # (H) type resolves outside the repo, so `cl.Do()` must not bind the
-    # (H) same-module provider.Do decoy.
+    # connect() returns an EXTERNAL package's type: `cl` is typed but the
+    # type resolves outside the repo, so `cl.Do()` must not bind the
+    # same-module provider.Do decoy.
     calls = _build(temp_repo, "external", _EXTERNAL_RETURN_SRC)
 
     assert not any(

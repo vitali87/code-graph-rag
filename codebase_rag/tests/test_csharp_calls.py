@@ -1,4 +1,4 @@
-# (H) C# Phase 1: intra-file call resolution.
+# C# Phase 1: intra-file call resolution.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -40,8 +40,8 @@ public class Svc {
 def test_static_method_call_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Same-class static helper call, resolved via the trie/simple-name
-    # (H) lookup (typed receiver and new->ctor resolution land in Phase 3).
+    # Same-class static helper call, resolved via the trie/simple-name
+    # lookup (typed receiver and new->ctor resolution land in Phase 3).
     (csharp_project / "Calc.cs").write_text(
         """
 namespace N;
@@ -55,7 +55,7 @@ public class Calc {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) Square takes one parameter, so it registers with a signature (Phase 3).
+    # Square takes one parameter, so it registers with a signature (Phase 3).
     assert any(t.endswith("N.Calc.Square(int)") for t in targets), targets
 
 
@@ -102,12 +102,12 @@ public class Builder {
 def test_generic_bare_call_binds_arity_matched_overload(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Handle<TException>(static _ => true)` in the parameterless overload is
-    # (H) a bare generic_name callee: without stripping the type arguments the
-    # (H) call name never resolves (no edge at all), and a naive bare-name
-    # (H) lookup would bind it to the 2-param LOCAL FUNCTION `Handle` textually
-    # (H) nested under this overload's own qn. Overload dispatch must pick the
-    # (H) arity-1 METHOD (Polly's PredicateBuilder.HandleInner shape).
+    # `Handle<TException>(static _ => true)` in the parameterless overload is
+    # a bare generic_name callee: without stripping the type arguments the
+    # call name never resolves (no edge at all), and a naive bare-name
+    # lookup would bind it to the 2-param LOCAL FUNCTION `Handle` textually
+    # nested under this overload's own qn. Overload dispatch must pick the
+    # arity-1 METHOD (Polly's PredicateBuilder.HandleInner shape).
     (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
@@ -125,12 +125,12 @@ def test_generic_bare_call_binds_arity_matched_overload(
 def test_bare_call_prefers_in_scope_local_function(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The 2-arg `Handle(outcome, predicate)` inside the Func overload's
-    # (H) lambda must bind to the local function declared in the SAME body, not
-    # (H) to the parameterless method overload the trie falls back to (the
-    # (H) enclosing-scope walk cannot see through the caller's `(System.Func)`
-    # (H) signature suffix). That mis-bind left Polly's HandleInner/HandleNested
-    # (H) local functions with zero incoming edges -- flagged dead.
+    # The 2-arg `Handle(outcome, predicate)` inside the Func overload's
+    # lambda must bind to the local function declared in the SAME body, not
+    # to the parameterless method overload the trie falls back to (the
+    # enclosing-scope walk cannot see through the caller's `(System.Func)`
+    # signature suffix). That mis-bind left Polly's HandleInner/HandleNested
+    # local functions with zero incoming edges -- flagged dead.
     (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
@@ -149,13 +149,13 @@ def test_bare_call_prefers_in_scope_local_function(
 def test_sibling_block_local_function_variants_resolve_by_arity(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Two sibling BLOCKS of one method may each declare a same-name local
-    # (H) function; both flatten to the same scope qn, so the second registers
-    # (H) with an `@line` duplicate suffix. The bare-name probe must consult the
-    # (H) registry's duplicate VARIANTS: without that, the arity-2 call misses
-    # (H) the in-scope path, falls to the arity-blind enclosing-scope walk, and
-    # (H) the duplicate fan-out fabricates a phantom CALLS edge onto the
-    # (H) UNCALLED arity-1 declaration.
+    # Two sibling BLOCKS of one method may each declare a same-name local
+    # function; both flatten to the same scope qn, so the second registers
+    # with an `@line` duplicate suffix. The bare-name probe must consult the
+    # registry's duplicate VARIANTS: without that, the arity-2 call misses
+    # the in-scope path, falls to the arity-blind enclosing-scope walk, and
+    # the duplicate fan-out fabricates a phantom CALLS edge onto the
+    # UNCALLED arity-1 declaration.
     (csharp_project / "Blocks.cs").write_text(
         """
 namespace N;
@@ -187,9 +187,9 @@ public class Blocks {
 def test_nested_local_function_calls_keep_resolving(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Guard: a local function calling its own nested local function (and
-    # (H) that one recursing) already resolves via the enclosing-scope walk;
-    # (H) the C# bare-name path must not regress it.
+    # Guard: a local function calling its own nested local function (and
+    # that one recursing) already resolves via the enclosing-scope walk;
+    # the C# bare-name path must not regress it.
     (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
@@ -207,10 +207,10 @@ def test_nested_local_function_calls_keep_resolving(
 def test_method_group_argument_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A method passed as a METHOD GROUP argument (`Retry(3, EmptyHandler)`)
-    # (H) is never an invocation_expression, so it gets no CALLS edge; without a
-    # (H) REFERENCES edge every delegate-style default handler reports dead
-    # (H) (16 of Polly's first C# dead-code findings, the EmptyHandler family).
+    # A method passed as a METHOD GROUP argument (`Retry(3, EmptyHandler)`)
+    # is never an invocation_expression, so it gets no CALLS edge; without a
+    # REFERENCES edge every delegate-style default handler reports dead
+    # (16 of Polly's first C# dead-code findings, the EmptyHandler family).
     (csharp_project / "Grp.cs").write_text(
         """
 namespace N;
@@ -231,11 +231,11 @@ public class Grp {
 def test_method_group_to_external_callee_is_reference_not_call(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A method group handed to an EXTERNAL callee (Array.ForEach) keeps its
-    # (H) target reachable, but the pass is NOT an invocation: emitting CALLS
-    # (H) here polluted the C# call graph with 282 phantom Polly call edges
-    # (H) (retrieval precision 1.0 -> 0.92). C# records the pass as REFERENCES
-    # (H) at every site; only flow languages keep their historical CALLS form.
+    # A method group handed to an EXTERNAL callee (Array.ForEach) keeps its
+    # target reachable, but the pass is NOT an invocation: emitting CALLS
+    # here polluted the C# call graph with 282 phantom Polly call edges
+    # (retrieval precision 1.0 -> 0.92). C# records the pass as REFERENCES
+    # at every site; only flow languages keep their historical CALLS form.
     (csharp_project / "Ext.cs").write_text(
         """
 namespace N;
@@ -257,11 +257,11 @@ public class Ext {
 def test_method_group_references_whole_overload_family(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A method group carries no argument list, so which overload it binds
-    # (H) depends on the delegate type we cannot see; the pass must reference
-    # (H) EVERY same-name overload of the enclosing type, not the one the
-    # (H) arity-blind trie happens to pick (Polly's AsyncRetrySyntax
-    # (H) EmptyHandler family: the arity-3 overload reported dead).
+    # A method group carries no argument list, so which overload it binds
+    # depends on the delegate type we cannot see; the pass must reference
+    # EVERY same-name overload of the enclosing type, not the one the
+    # arity-blind trie happens to pick (Polly's AsyncRetrySyntax
+    # EmptyHandler family: the arity-3 overload reported dead).
     (csharp_project / "Fam.cs").write_text(
         """
 namespace N;
@@ -284,10 +284,10 @@ public class Fam {
 def test_generic_method_group_argument_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Retry(3, Callback<int>)`: the method-group argument carries explicit
-    # (H) type arguments; without stripping them the name resolves to nothing
-    # (H) and the target reports dead (Polly's EmptyHandlerOfT<TResult>, its
-    # (H) ONLY overload, referenced solely in generic form).
+    # `Retry(3, Callback<int>)`: the method-group argument carries explicit
+    # type arguments; without stripping them the name resolves to nothing
+    # and the target reports dead (Polly's EmptyHandlerOfT<TResult>, its
+    # ONLY overload, referenced solely in generic form).
     (csharp_project / "Gen.cs").write_text(
         """
 namespace N;
@@ -308,10 +308,10 @@ public class Gen {
 def test_method_group_prefers_enclosing_type_family(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The bare method-group name binds the ENCLOSING type's method group;
-    # (H) a lexicographically earlier same-name method in a sibling class must
-    # (H) not capture the reference (Polly's EmptyAction: FallbackSyntax's
-    # (H) overload captured refs belonging to FallbackTResultSyntax).
+    # The bare method-group name binds the ENCLOSING type's method group;
+    # a lexicographically earlier same-name method in a sibling class must
+    # not capture the reference (Polly's EmptyAction: FallbackSyntax's
+    # overload captured refs belonging to FallbackTResultSyntax).
     (csharp_project / "Sib.cs").write_text(
         """
 namespace N;
@@ -336,11 +336,11 @@ public class Zzz {
 def test_generic_call_prefers_generic_overload_across_partial_parts(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Polly's ResiliencePipeline: the non-generic partial part declares
-    # (H) `M(X) => M<Void>(x)` while another part declares `M<T>(X)` with the
-    # (H) SAME parameter arity. A call `M<TResult>(x)` must bind the GENERIC
-    # (H) overload, and a plain `M(x)` call the non-generic one; arity alone
-    # (H) cannot tell them apart.
+    # Polly's ResiliencePipeline: the non-generic partial part declares
+    # `M(X) => M<Void>(x)` while another part declares `M<T>(X)` with the
+    # SAME parameter arity. A call `M<TResult>(x)` must bind the GENERIC
+    # overload, and a plain `M(x)` call the non-generic one; arity alone
+    # cannot tell them apart.
     (csharp_project / "PipeCore.cs").write_text(
         """
 namespace N;
@@ -364,12 +364,12 @@ public partial class Pipe {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     pairs = _call_pairs(mock_ingestor)
-    # (H) The generic call in PipeT binds its own part's generic overload.
+    # The generic call in PipeT binds its own part's generic overload.
     assert any(
         "PipeT" in s and s.endswith("N.Pipe.RunT(int)") and "PipeT" in t
         for s, t in pairs
     ), pairs
-    # (H) The plain call in PipeCore binds the non-generic overload.
+    # The plain call in PipeCore binds the non-generic overload.
     assert any(
         "PipeCore" in s and s.endswith("N.Pipe.Run(int)") and "PipeCore" in t
         for s, t in pairs
@@ -379,10 +379,10 @@ public partial class Pipe {
 def test_generic_member_call_on_class_receiver_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Policy.Handle<InvalidOperationException>()`: the member-access NAME
-    # (H) field is a generic_name; without stripping its type arguments the
-    # (H) method name never matches the generic-free registered qn, so Polly's
-    # (H) entire fluent entry point (56 Handle sites) emits no edge.
+    # `Policy.Handle<InvalidOperationException>()`: the member-access NAME
+    # field is a generic_name; without stripping its type arguments the
+    # method name never matches the generic-free registered qn, so Polly's
+    # entire fluent entry point (56 Handle sites) emits no edge.
     (csharp_project / "GM.cs").write_text(
         """
 namespace N;
@@ -405,11 +405,11 @@ public class App {
 def test_base_receiver_binds_base_chain_never_own_override(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `base.X()` inside an override must bind the BASE chain: a first-party
-    # (H) base's member when one exists, and NOTHING when the base is external
-    # (H) (object.Equals) -- the trie fallback was binding the call to the
-    # (H) caller's OWN override (a self-loop false positive on every
-    # (H) hide-object-members region, Polly's PolicyBuilder).
+    # `base.X()` inside an override must bind the BASE chain: a first-party
+    # base's member when one exists, and NOTHING when the base is external
+    # (object.Equals) -- the trie fallback was binding the call to the
+    # caller's OWN override (a self-loop false positive on every
+    # hide-object-members region, Polly's PolicyBuilder).
     (csharp_project / "BaseRecv.cs").write_text(
         """
 namespace N;
@@ -438,10 +438,10 @@ public class Mid : Root {
 def test_unresolvable_type_receiver_does_not_fall_to_name_trie(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Console.WriteLine(x)`: the receiver is a PascalCase identifier that
-    # (H) is no local, field, or registered type -- an external static type.
-    # (H) The name-only trie must not bind the call to an unrelated
-    # (H) first-party `WriteLine`.
+    # `Console.WriteLine(x)`: the receiver is a PascalCase identifier that
+    # is no local, field, or registered type -- an external static type.
+    # The name-only trie must not bind the call to an unrelated
+    # first-party `WriteLine`.
     (csharp_project / "ConsoleLike.cs").write_text(
         """
 namespace N;
@@ -464,10 +464,10 @@ public class App {
 def test_object_virtual_names_never_bind_by_name_only(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `x.GetType()` / `y.ToString()` on untyped receivers resolve to
-    # (H) object's virtuals; binding them BY NAME to whatever first-party
-    # (H) override exists fabricates edges (19 exposed by the semantic
-    # (H) oracle). A typed receiver still binds via the arity path.
+    # `x.GetType()` / `y.ToString()` on untyped receivers resolve to
+    # object's virtuals; binding them BY NAME to whatever first-party
+    # override exists fabricates edges (19 exposed by the semantic
+    # oracle). A typed receiver still binds via the arity path.
     (csharp_project / "ObjVirt.cs").write_text(
         """
 namespace N;
@@ -489,7 +489,7 @@ public class App {
         s.endswith("N.App.Run(object)") and t.endswith("N.Weird.GetType")
         for s, t in pairs
     ), pairs
-    # (H) The TYPED receiver keeps its correct override binding.
+    # The TYPED receiver keeps its correct override binding.
     assert any(
         s.endswith("N.App.Typed(Weird)") and t.endswith("N.Weird.ToString")
         for s, t in pairs
@@ -499,10 +499,10 @@ public class App {
 def test_typed_receiver_object_virtual_miss_is_external(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `severity.ToString()` on a first-party enum binds Enum.ToString
-    # (H) (metadata); when the receiver's own hierarchy declares no override
-    # (H) the call must NOT fall to the trie and land on an unrelated
-    # (H) hide-object-members override (Polly's PolicyBuilder attractor).
+    # `severity.ToString()` on a first-party enum binds Enum.ToString
+    # (metadata); when the receiver's own hierarchy declares no override
+    # the call must NOT fall to the trie and land on an unrelated
+    # hide-object-members override (Polly's PolicyBuilder attractor).
     (csharp_project / "OV.cs").write_text(
         """
 namespace N;
@@ -528,11 +528,11 @@ public class App {
 def test_untyped_member_receiver_never_falls_to_name_trie(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Wrapper.DisposeAsync()` where Wrapper is a property of an
-    # (H) UNREGISTERED (BCL) type: a member call whose receiver cannot be
-    # (H) typed must not be attributed by bare name -- the trie self-looped it
-    # (H) onto the enclosing class's own DisposeAsync (Polly's
-    # (H) RateLimiterResilienceStrategy).
+    # `Wrapper.DisposeAsync()` where Wrapper is a property of an
+    # UNREGISTERED (BCL) type: a member call whose receiver cannot be
+    # typed must not be attributed by bare name -- the trie self-looped it
+    # onto the enclosing class's own DisposeAsync (Polly's
+    # RateLimiterResilienceStrategy).
     (csharp_project / "UM.cs").write_text(
         """
 namespace N;
@@ -557,10 +557,10 @@ public class Strategy {
 def test_bare_delegate_member_invoke_is_external(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Callback();` where Callback is a delegate-typed PROPERTY of the
-    # (H) enclosing type is Action.Invoke, not a method call; the bare-name
-    # (H) trie must not bind it to an unrelated first-party member named
-    # (H) Callback. The property read stays covered by the read pass.
+    # `Callback();` where Callback is a delegate-typed PROPERTY of the
+    # enclosing type is Action.Invoke, not a method call; the bare-name
+    # trie must not bind it to an unrelated first-party member named
+    # Callback. The property read stays covered by the read pass.
     (csharp_project / "DI.cs").write_text(
         """
 namespace N;
@@ -583,9 +583,9 @@ public class Timer {
 def test_delegate_property_on_typed_receiver_not_bound_as_method(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `options.ShouldHandle(args)`: ShouldHandle is a delegate PROPERTY;
-    # (H) the typed-receiver name fallback must not emit a CALLS edge binding
-    # (H) the property as a method (Polly's CircuitBreakerStrategyOptions).
+    # `options.ShouldHandle(args)`: ShouldHandle is a delegate PROPERTY;
+    # the typed-receiver name fallback must not emit a CALLS edge binding
+    # the property as a method (Polly's CircuitBreakerStrategyOptions).
     (csharp_project / "DP.cs").write_text(
         """
 namespace N;
@@ -607,10 +607,10 @@ public class App {
 def test_bcl_typed_member_receiver_with_name_colliding_decoy_is_external(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Wrapper.DisposeAsync()` where Wrapper is typed to BCL RateLimiter:
-    # (H) an unrelated first-party class that merely SHARES the simple name
-    # (H) (Polly's Snippets.Docs.RateLimiter demo) must not defeat the
-    # (H) external gate; the candidate type must actually DECLARE the member.
+    # `Wrapper.DisposeAsync()` where Wrapper is typed to BCL RateLimiter:
+    # an unrelated first-party class that merely SHARES the simple name
+    # (Polly's Snippets.Docs.RateLimiter demo) must not defeat the
+    # external gate; the candidate type must actually DECLARE the member.
     (csharp_project / "Decoy.cs").write_text(
         "namespace N.Docs;\npublic static class RateLimiter {\n"
         "    public static void Snippet() { }\n"
@@ -641,11 +641,11 @@ public class Strategy {
 def test_var_from_plain_twin_ctor_respects_property_guard(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `var options = new Options();` where Options : Options<object> are
-    # (H) simple-name twins: the local's WRITTEN type has generic arity 0, so
-    # (H) receiver typing must pick the non-generic twin, reach the delegate
-    # (H) property guard, and emit no CALLS edge for
-    # (H) `options.ShouldHandle(...)` (Polly's CircuitBreakerStrategyOptions).
+    # `var options = new Options();` where Options : Options<object> are
+    # simple-name twins: the local's WRITTEN type has generic arity 0, so
+    # receiver typing must pick the non-generic twin, reach the delegate
+    # property guard, and emit no CALLS edge for
+    # `options.ShouldHandle(...)` (Polly's CircuitBreakerStrategyOptions).
     (csharp_project / "TwinOpt.cs").write_text(
         """
 namespace N;
@@ -671,10 +671,10 @@ public class App {
 def test_base_call_binds_first_party_base_by_name_when_arity_differs(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `base.Report(1, 2)` with a first-party base declaring only an
-    # (H) optional-parameter overload: the arity pass misses, and the
-    # (H) name-only base-chain pass must still bind the base member rather
-    # (H) than suppress a genuine first-party call.
+    # `base.Report(1, 2)` with a first-party base declaring only an
+    # optional-parameter overload: the arity pass misses, and the
+    # name-only base-chain pass must still bind the base member rather
+    # than suppress a genuine first-party call.
     (csharp_project / "BaseName.cs").write_text(
         """
 namespace N;
@@ -699,9 +699,9 @@ public class Mid2 : Root2 {
 def test_bcl_member_receiver_with_declaring_first_party_candidate_keeps_fallback(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The declares-member refinement must NOT suppress when a first-party
-    # (H) type sharing the receiver type's simple name actually DECLARES the
-    # (H) called member: the trie may then legitimately attribute the call.
+    # The declares-member refinement must NOT suppress when a first-party
+    # type sharing the receiver type's simple name actually DECLARES the
+    # called member: the trie may then legitimately attribute the call.
     (csharp_project / "DK.cs").write_text(
         """
 namespace N;
@@ -724,11 +724,11 @@ public class Holder {
 def test_same_arity_overload_family_all_receive_calls(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Nine switch arms dispatch `FormatExact(value, output)` to nine
-    # (H) same-ARITY overloads differing only by parameter TYPE (Serilog's
-    # (H) JsonValueFormatter): syntax cannot pick the arm's overload, so the
-    # (H) whole same-arity family must receive the CALLS edge or every
-    # (H) sibling but one reports dead.
+    # Nine switch arms dispatch `FormatExact(value, output)` to nine
+    # same-ARITY overloads differing only by parameter TYPE (Serilog's
+    # JsonValueFormatter): syntax cannot pick the arm's overload, so the
+    # whole same-arity family must receive the CALLS edge or every
+    # sibling but one reports dead.
     (csharp_project / "FamArity.cs").write_text(
         """
 namespace N;
@@ -755,11 +755,11 @@ public class Fmt {
 def test_local_function_method_group_argument_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A LOCAL FUNCTION passed as a method-group argument to a target-typed
-    # (H) `new(...)` is stored for later delegate dispatch (Serilog's
-    # (H) CreateLogger hands Dispose/DisposeAsync to the Logger ctor): the
-    # (H) passing scope must reference the in-scope local, never an unrelated
-    # (H) same-name member picked from the trie.
+    # A LOCAL FUNCTION passed as a method-group argument to a target-typed
+    # `new(...)` is stored for later delegate dispatch (Serilog's
+    # CreateLogger hands Dispose/DisposeAsync to the Logger ctor): the
+    # passing scope must reference the in-scope local, never an unrelated
+    # same-name member picked from the trie.
     (csharp_project / "Factory.cs").write_text(
         """
 namespace N;

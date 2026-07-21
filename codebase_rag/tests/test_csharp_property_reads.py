@@ -1,7 +1,7 @@
-# (H) C# property READS: a getter access is a member_access_expression, not an
-# (H) invocation, so without a read pass a heavily-read property has zero
-# (H) inbound edges and dead-code flags it (Polly's Context.WrappedDictionary
-# (H) and ResiliencePipeline<T>.Pipeline).
+# C# property READS: a getter access is a member_access_expression, not an
+# invocation, so without a read pass a heavily-read property has zero
+# inbound edges and dead-code flags it (Polly's Context.WrappedDictionary
+# and ResiliencePipeline<T>.Pipeline).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -30,9 +30,9 @@ def _call_targets(mock_ingestor: MagicMock) -> set[str]:
 def test_receiver_position_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `WrappedDictionary.Keys` reads the property as the RECEIVER of a
-    # (H) member access; the read must land a REFERENCES edge on the property
-    # (H) node (REFERENCES, not CALLS: the call graph stays invocation-only).
+    # `WrappedDictionary.Keys` reads the property as the RECEIVER of a
+    # member access; the read must land a REFERENCES edge on the property
+    # node (REFERENCES, not CALLS: the call graph stays invocation-only).
     (csharp_project / "R.cs").write_text(
         """
 namespace N;
@@ -53,8 +53,8 @@ public class Ctx {
 def test_cast_wrapped_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `((IDictionary<...>)WrappedDictionary).Clear()` wraps the property
-    # (H) read in a cast; the cast VALUE is still a read of the property.
+    # `((IDictionary<...>)WrappedDictionary).Clear()` wraps the property
+    # read in a cast; the cast VALUE is still a read of the property.
     (csharp_project / "C.cs").write_text(
         """
 namespace N;
@@ -74,9 +74,9 @@ public class Ctx {
 def test_invocation_receiver_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Pipeline.Execute(...)`: the invocation edge targets Execute, but the
-    # (H) receiver position is itself a READ of the Pipeline property that must
-    # (H) keep the property reachable.
+    # `Pipeline.Execute(...)`: the invocation edge targets Execute, but the
+    # receiver position is itself a READ of the Pipeline property that must
+    # keep the property reachable.
     (csharp_project / "I.cs").write_text(
         """
 namespace N;
@@ -97,8 +97,8 @@ public class Pipe {
 def test_local_shadow_and_methods_are_not_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Guards: a local variable shadowing a property name is NOT a property
-    # (H) read, and a same-name METHOD receiver stays out of the read pass.
+    # Guards: a local variable shadowing a property name is NOT a property
+    # read, and a same-name METHOD receiver stays out of the read pass.
     (csharp_project / "G.cs").write_text(
         """
 namespace N;
@@ -121,9 +121,9 @@ public class Guard {
 def test_explicit_this_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `this.Size` is always the member (locals can never shadow a
-    # (H) this-qualified read), so the read pass must record the NAME field
-    # (H) when the receiver is `this`.
+    # `this.Size` is always the member (locals can never shadow a
+    # this-qualified read), so the read pass must record the NAME field
+    # when the receiver is `this`.
     (csharp_project / "T.cs").write_text(
         """
 namespace N;
@@ -143,9 +143,9 @@ public class Ctx {
 def test_nested_local_function_shadow_does_not_suppress_outer_read(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A local declared inside a NESTED local function must not shadow the
-    # (H) outer body's property read: the read walk skips nested function
-    # (H) scopes, so the shadow walk must skip them symmetrically.
+    # A local declared inside a NESTED local function must not shadow the
+    # outer body's property read: the read walk skips nested function
+    # scopes, so the shadow walk must skip them symmetrically.
     (csharp_project / "S.cs").write_text(
         """
 namespace N;
@@ -171,9 +171,9 @@ public class Outer {
 def test_simple_lambda_parameter_shadows_property(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A simple (untyped) lambda parameter is a bare identifier, not a
-    # (H) `parameter` node; it still shadows a same-name property for reads
-    # (H) inside the lambda body, which the read walk descends into.
+    # A simple (untyped) lambda parameter is a bare identifier, not a
+    # `parameter` node; it still shadows a same-name property for reads
+    # inside the lambda body, which the read walk descends into.
     (csharp_project / "L.cs").write_text(
         """
 namespace N;
@@ -193,9 +193,9 @@ public class Lam {
 def test_postfix_wrapped_cast_receiver_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The null-forgiving postfix can sit OUTSIDE the parenthesized cast
-    # (H) (`((Component)s)!.Reload()`); the receiver unwrap must peel
-    # (H) interleaved postfix/paren wrappers to a fixpoint before the cast.
+    # The null-forgiving postfix can sit OUTSIDE the parenthesized cast
+    # (`((Component)s)!.Reload()`); the receiver unwrap must peel
+    # interleaved postfix/paren wrappers to a fixpoint before the cast.
     (csharp_project / "P.cs").write_text(
         """
 namespace N;
@@ -215,9 +215,9 @@ public class Component {
 def test_bare_identifier_property_reads_are_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A property read need not be a member access: `return Size;`,
-    # (H) `Use(Size)`, and `var n = Size;` are bare identifier expressions
-    # (H) that read the getter just the same.
+    # A property read need not be a member access: `return Size;`,
+    # `Use(Size)`, and `var n = Size;` are bare identifier expressions
+    # that read the getter just the same.
     (csharp_project / "B.cs").write_text(
         """
 namespace N;
@@ -243,9 +243,9 @@ public class Bare {
 def test_named_argument_label_and_type_position_do_not_reference(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Guards for the bare-identifier read: a named-argument LABEL
-    # (H) (`Use(Size: 3)`) and a TYPE position (`new Size()`) are not reads of
-    # (H) a same-name property.
+    # Guards for the bare-identifier read: a named-argument LABEL
+    # (`Use(Size: 3)`) and a TYPE position (`new Size()`) are not reads of
+    # a same-name property.
     (csharp_project / "NG.cs").write_text(
         """
 namespace N;
@@ -268,9 +268,9 @@ public class Guards {
 def test_lambda_shadow_does_not_suppress_outer_read(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A shadow only covers reads INSIDE its declaring scope: the lambda
-    # (H) parameter must not suppress the OUTER `Size` getter read in the same
-    # (H) expression.
+    # A shadow only covers reads INSIDE its declaring scope: the lambda
+    # parameter must not suppress the OUTER `Size` getter read in the same
+    # expression.
     (csharp_project / "OS.cs").write_text(
         """
 namespace N;
@@ -292,8 +292,8 @@ public class OuterShadow {
 def test_sibling_block_local_does_not_suppress_outer_read(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A local declared in one BLOCK must not suppress a read outside that
-    # (H) block: shadowing is scoped to the declaring block's span.
+    # A local declared in one BLOCK must not suppress a read outside that
+    # block: shadowing is scoped to the declaring block's span.
     (csharp_project / "SB.cs").write_text(
         """
 namespace N;
@@ -316,9 +316,9 @@ public class BlockShadow {
 def test_class_qualified_static_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Cfg.Value` reads a STATIC property through the class name; the NAME
-    # (H) field is the read, resolved against the receiver TYPE rather than
-    # (H) the caller's enclosing class.
+    # `Cfg.Value` reads a STATIC property through the class name; the NAME
+    # field is the read, resolved against the receiver TYPE rather than
+    # the caller's enclosing class.
     (csharp_project / "ST.cs").write_text(
         """
 namespace N;
@@ -338,8 +338,8 @@ public class Cfg {
 def test_typed_receiver_instance_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `w.Inner` on a local whose type is known reads Widget.Inner; resolve
-    # (H) the name field against the receiver's inferred type.
+    # `w.Inner` on a local whose type is known reads Widget.Inner; resolve
+    # the name field against the receiver's inferred type.
     (csharp_project / "TR.cs").write_text(
         """
 namespace N;
@@ -364,9 +364,9 @@ public class App {
 def test_namespace_qualified_static_property_read_is_referenced(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `N.Cfg.Value`: the outer receiver is itself a member access naming a
-    # (H) TYPE through its namespace; the dotted qualifier (all PascalCase
-    # (H) segments) resolves to the class and the name field is the read.
+    # `N.Cfg.Value`: the outer receiver is itself a member access naming a
+    # TYPE through its namespace; the dotted qualifier (all PascalCase
+    # segments) resolves to the class and the name field is the read.
     (csharp_project / "NQ.cs").write_text(
         """
 namespace N;

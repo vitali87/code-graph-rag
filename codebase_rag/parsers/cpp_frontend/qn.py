@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 
 
 def _eligible_rel_files(repo_path: Path) -> list[str]:
-    # (H) Reproduce GraphUpdater._collect_eligible_files' ordering exactly: an
-    # (H) os.walk with dirnames AND filenames sorted, top-down. The module-qn
-    # (H) disambiguation below depends on this order (the file processed LATER in
-    # (H) a basename collision is the one that gets its extension appended), so it
-    # (H) must match cgr's tree-sitter pass to produce identical qualified names.
+    # Reproduce GraphUpdater._collect_eligible_files' ordering exactly: an
+    # os.walk with dirnames AND filenames sorted, top-down. The module-qn
+    # disambiguation below depends on this order (the file processed LATER in
+    # a basename collision is the one that gets its extension appended), so it
+    # must match cgr's tree-sitter pass to produce identical qualified names.
     repo_str = str(repo_path)
     repo_prefix_len = len(repo_str) + 1
     rels: list[str] = []
@@ -47,9 +47,9 @@ def _base_module_qn(rel: str, project_name: str) -> str:
 
 
 def build_module_qn_map(repo_path: Path, project_name: str) -> dict[str, str]:
-    # (H) Mirror DefinitionProcessor._disambiguate_module_qn: a base qn is claimed
-    # (H) by the first file (in walk order); a later file colliding on that base qn
-    # (H) gets its extension appended (foo.cpp -> proj.foo, foo.h -> proj.foo.h).
+    # Mirror DefinitionProcessor._disambiguate_module_qn: a base qn is claimed
+    # by the first file (in walk order); a later file colliding on that base qn
+    # gets its extension appended (foo.cpp -> proj.foo, foo.h -> proj.foo.h).
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
     for rel in _eligible_rel_files(repo_path):
@@ -91,24 +91,24 @@ class CppQnResolver:
         return self._module_qn.get(rel)
 
     def module_qn_for_rel(self, rel: str) -> str | None:
-        # (H) Map lookup only -- for callers that already paid rel_path's
-        # (H) filesystem resolution and must not pay it twice.
+        # Map lookup only -- for callers that already paid rel_path's
+        # filesystem resolution and must not pay it twice.
         return self._module_qn.get(rel)
 
     def _namespace_chain(self, cursor: Cursor) -> list[str]:
         parts: list[str] = []
         parent = cursor.semantic_parent
         while parent is not None and parent.kind.name == fc.KIND_NAMESPACE:
-            if parent.spelling:  # (H) skip anonymous namespaces (no name segment)
+            if parent.spelling:  # skip anonymous namespaces (no name segment)
                 parts.append(parent.spelling)
             parent = parent.semantic_parent
         parts.reverse()
         return parts
 
     def member_name(self, cursor: Cursor) -> str:
-        # (H) Mirror cpp.utils.extract_operator_name / extract_destructor_name:
-        # (H) destructors keep their `~Name` spelling, operators map their symbol
-        # (H) through CPP_OPERATOR_SYMBOL_MAP; everything else is its plain name.
+        # Mirror cpp.utils.extract_operator_name / extract_destructor_name:
+        # destructors keep their `~Name` spelling, operators map their symbol
+        # through CPP_OPERATOR_SYMBOL_MAP; everything else is its plain name.
         spelling = cursor.spelling
         if cursor.kind.name == fc.KIND_DESTRUCTOR:
             return spelling
@@ -123,8 +123,8 @@ class CppQnResolver:
         if not spelling.startswith(prefix):
             return False
         rest = spelling[len(prefix) :]
-        # (H) `operator+`, `operator[]`, `operator int` are operators/conversions;
-        # (H) an identifier like `operatorState` is not (next char is alnum/_).
+        # `operator+`, `operator[]`, `operator int` are operators/conversions;
+        # an identifier like `operatorState` is not (next char is alnum/_).
         return not rest or not (rest[0].isalnum() or rest[0] == cs.CHAR_UNDERSCORE)
 
     def class_qn(self, cursor: Cursor) -> str | None:
@@ -146,9 +146,9 @@ class CppQnResolver:
         return cs.SEPARATOR_DOT.join(parts)
 
     def type_qn(self, cursor: Cursor) -> str | None:
-        # (H) A class-scoped `using`/`typedef` is anchored to its enclosing class
-        # (H) (e.g. proj.Box.Handle); a namespace/file-scoped one mirrors a free
-        # (H) function's qn (module + namespace chain + name).
+        # A class-scoped `using`/`typedef` is anchored to its enclosing class
+        # (e.g. proj.Box.Handle); a namespace/file-scoped one mirrors a free
+        # function's qn (module + namespace chain + name).
         parent = cursor.semantic_parent
         if parent is not None and parent.kind.name in fc.CLASS_KIND_NAMES:
             class_qn = self.class_qn(parent)
@@ -164,9 +164,9 @@ class CppQnResolver:
         return cs.SEPARATOR_DOT.join(parts)
 
     def method_qn(self, cursor: Cursor) -> str | None:
-        # (H) A method's qn is anchored to its CLASS's declaring file (the header),
-        # (H) via semantic_parent, NOT the out-of-line definition file. This mirrors
-        # (H) cgr's deferred out-of-class method resolver.
+        # A method's qn is anchored to its CLASS's declaring file (the header),
+        # via semantic_parent, NOT the out-of-line definition file. This mirrors
+        # cgr's deferred out-of-class method resolver.
         parent = cursor.semantic_parent
         if parent is None:
             return None

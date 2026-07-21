@@ -1,8 +1,8 @@
-# (H) A receiver typed as a NESTED class referenced by its simple name (gson's
-# (H) `RECORD_HELPER` field, typed by the nested `RecordHelper`) failed to resolve:
-# (H) `_resolve_java_type_name("RecordHelper", module)` only tried `module.RecordHelper`
-# (H) (module.Type), never `module.Outer.RecordHelper` (module.Enclosing.Nested), so the
-# (H) method call dropped and the whole nested hierarchy looked dead.
+# A receiver typed as a NESTED class referenced by its simple name (gson's
+# `RECORD_HELPER` field, typed by the nested `RecordHelper`) failed to resolve:
+# `_resolve_java_type_name("RecordHelper", module)` only tried `module.RecordHelper`
+# (module.Type), never `module.Outer.RecordHelper` (module.Enclosing.Nested), so the
+# method call dropped and the whole nested hierarchy looked dead.
 from __future__ import annotations
 
 from pathlib import Path
@@ -44,8 +44,8 @@ def test_nested_class_typed_field_receiver_resolves(
     )
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
     calls = _calls(mock_ingestor)
-    # (H) HELPER is typed by the nested Helper, so HELPER.check must resolve to the
-    # (H) nested Helper.check -- not drop.
+    # HELPER is typed by the nested Helper, so HELPER.check must resolve to the
+    # nested Helper.check -- not drop.
     assert any(
         f.endswith(".M.ok(int)") and t.endswith(".M.Helper.check(int)")
         for f, t in calls

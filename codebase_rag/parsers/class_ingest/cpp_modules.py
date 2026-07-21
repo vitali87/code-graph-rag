@@ -145,9 +145,9 @@ def _process_module_implementation(
         (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
     )
 
-    # (H) The exporting file may not be parsed yet (or may not exist at all);
-    # (H) hold the IMPLEMENTS edge back until every ModuleInterface is known,
-    # (H) so an implementation unit of an absent interface emits no phantom.
+    # The exporting file may not be parsed yet (or may not exist at all);
+    # hold the IMPLEMENTS edge back until every ModuleInterface is known,
+    # so an implementation unit of an absent interface emits no phantom.
     interface_qn = f"{project_name}.{module_name}"
     deferred_impls.append((impl_qn, interface_qn))
 

@@ -8,7 +8,7 @@ from codebase_rag.tests.conftest import run_updater
 
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> list[tuple[str, str, str]]:
-    # (H) edges of a given type as (caller_qn, callee_label, callee_qn).
+    # edges of a given type as (caller_qn, callee_label, callee_qn).
     out: list[tuple[str, str, str]] = []
     for c in mock_ingestor.ensure_relationship_batch.call_args_list:
         if c.args[1] == rel:
@@ -20,8 +20,8 @@ class TestConstructionEdges:
     def test_dataclass_construction_emits_instantiates_not_calls(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) a class with no explicit __init__ is represented by INSTANTIATES to
-        # (H) the class node; CALLS stays function/method-only (never a class).
+        # a class with no explicit __init__ is represented by INSTANTIATES to
+        # the class node; CALLS stays function/method-only (never a class).
         (temp_repo / "app.py").write_text(
             "from dataclasses import dataclass\n"
             "\n"
@@ -53,8 +53,8 @@ class TestConstructionEdges:
     def test_class_with_init_emits_both_instantiates_and_init_call(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # (H) a class WITH __init__ records INSTANTIATES -> class AND CALLS -> the
-        # (H) __init__ method (the constructor runs); still no CALLS -> class.
+        # a class WITH __init__ records INSTANTIATES -> class AND CALLS -> the
+        # __init__ method (the constructor runs); still no CALLS -> class.
         (temp_repo / "app.py").write_text(
             "class Widget:\n"
             "    def __init__(self, n):\n"

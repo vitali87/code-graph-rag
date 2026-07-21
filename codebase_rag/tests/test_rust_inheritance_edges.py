@@ -1,7 +1,7 @@
-# (H) Rust inheritance was uncaptured: `impl Trait for Type` means Type
-# (H) IMPLEMENTS Trait, and a supertrait bound `trait Sub: Super` means Sub
-# (H) INHERITS Super. cgr emitted neither (impl blocks and trait bounds were
-# (H) never turned into inheritance edges).
+# Rust inheritance was uncaptured: `impl Trait for Type` means Type
+# IMPLEMENTS Trait, and a supertrait bound `trait Sub: Super` means Sub
+# INHERITS Super. cgr emitted neither (impl blocks and trait bounds were
+# never turned into inheritance edges).
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,8 +42,8 @@ def test_rust_impl_and_supertrait_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "rs_inh.src.lib"
 
-    # (H) impl Trait for Type -> Type IMPLEMENTS Trait.
+    # impl Trait for Type -> Type IMPLEMENTS Trait.
     assert (f"{base}.Circle", f"{base}.Shape") in implements, implements
     assert (f"{base}.Circle", f"{base}.Drawable") in implements, implements
-    # (H) Supertrait bound -> Sub INHERITS Super.
+    # Supertrait bound -> Sub INHERITS Super.
     assert (f"{base}.Drawable", f"{base}.Shape") in inherits, inherits

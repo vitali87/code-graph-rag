@@ -1,7 +1,7 @@
-# (H) libc I/O for C (previously ZERO flow support) and C++: direct sinks
-# (H) (getenv/printf/perror/scanf), fopen-bound FILE* handles, and the
-# (H) call-shaped handle sinks (`fprintf(f, ...)` carries the handle as an
-# (H) ARGUMENT), including the pre-bound stdout/stderr/stdin globals.
+# libc I/O for C (previously ZERO flow support) and C++: direct sinks
+# (getenv/printf/perror/scanf), fopen-bound FILE* handles, and the
+# call-shaped handle sinks (`fprintf(f, ...)` carries the handle as an
+# ARGUMENT), including the pre-bound stdout/stderr/stdin globals.
 from __future__ import annotations
 
 from pathlib import Path
@@ -116,8 +116,8 @@ def test_c_fprintf_stderr_writes_stderr(tmp_path: Path) -> None:
 
 
 def test_c_comment_before_handle_arg_still_resolves(tmp_path: Path) -> None:
-    # (H) A comment inside the argument list is a named node in some grammars;
-    # (H) it must not shift the handle-argument index.
+    # A comment inside the argument list is a named node in some grammars;
+    # it must not shift the handle-argument index.
     files = {
         "main.c": (
             "#include <stdio.h>\n"
@@ -147,7 +147,7 @@ def test_c_scanf_reads_stdin(tmp_path: Path) -> None:
 
 
 def test_cpp_fopen_bound_fwrite_writes_file(tmp_path: Path) -> None:
-    # (H) Real C++ uses the libc FILE* API too (spdlog's file sinks).
+    # Real C++ uses the libc FILE* API too (spdlog's file sinks).
     files = {
         "main.cpp": (
             "#include <cstdio>\n"
@@ -163,8 +163,8 @@ def test_cpp_fopen_bound_fwrite_writes_file(tmp_path: Path) -> None:
 
 
 def test_c_unknown_handle_fprintf_is_dynamic_file(tmp_path: Path) -> None:
-    # (H) A FILE* parameter is a file by signature even when its origin is
-    # (H) unknown in this function.
+    # A FILE* parameter is a file by signature even when its origin is
+    # unknown in this function.
     files = {
         "main.c": (
             '#include <stdio.h>\nvoid work(FILE *f) {\n    fprintf(f, "x");\n}\n'

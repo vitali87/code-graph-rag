@@ -1,10 +1,10 @@
-# (H) nlohmann's binary_reader ends with a macro access-label
-# (H) (`JSON_PRIVATE_UNLESS_TESTED:`) followed by `const decltype(MACRO_)
-# (H) field = MACRO_;` members. Without the macro definitions tree-sitter
-# (H) recovers that region as a function declaration NAMED `decltype`, and the
-# (H) ingester registers a phantom Method reader.decltype. A C++ reserved
-# (H) keyword can never name a real function or method, so extraction must
-# (H) reject it.
+# nlohmann's binary_reader ends with a macro access-label
+# (`JSON_PRIVATE_UNLESS_TESTED:`) followed by `const decltype(MACRO_)
+# field = MACRO_;` members. Without the macro definitions tree-sitter
+# recovers that region as a function declaration NAMED `decltype`, and the
+# ingester registers a phantom Method reader.decltype. A C++ reserved
+# keyword can never name a real function or method, so extraction must
+# reject it.
 from pathlib import Path
 
 from evals.cgr_graph import _capture
@@ -39,8 +39,8 @@ def test_macro_label_decltype_member_does_not_mint_keyword_method(
 
 
 def test_reserved_keyword_names_never_register(tmp_path: Path) -> None:
-    # (H) The same recovery class can surface other keywords in declarator
-    # (H) position; none may become a definition node.
+    # The same recovery class can surface other keywords in declarator
+    # position; none may become a definition node.
     (tmp_path / "k.hpp").write_text(
         "struct holder {\n"
         "    void real() {}\n"

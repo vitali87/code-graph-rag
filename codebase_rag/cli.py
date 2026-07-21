@@ -192,8 +192,8 @@ def _maybe_start_stack() -> None:
 
 
 def _capture_selection(capture: list[str] | None) -> CaptureSelection:
-    # (H) Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
-    # (H) a single run can override it (later tokens win in the resolver).
+    # Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
+    # a single run can override it (later tokens win in the resolver).
     return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
 
 
@@ -1085,9 +1085,9 @@ def _dead_code_config(
     entry_points: list[str],
     decorator_roots: list[str],
 ) -> DeadCodeConfig:
-    # (H) test_patterns is always set: with tests included it makes test
-    # (H) functions roots; with tests excluded it filters test modules out of the
-    # (H) module-load roots so test-only code is not kept alive.
+    # test_patterns is always set: with tests included it makes test
+    # functions roots; with tests excluded it filters test modules out of the
+    # module-load roots so test-only code is not kept alive.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -1101,10 +1101,10 @@ def _dead_code_config(
 
 
 def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
-    # (H) Drop candidates whose file path matches an exclude glob (generated dirs
-    # (H) like client/core or *.gen.* have no in-repo caller, so every symbol
-    # (H) reports as dead). fnmatch treats '*' as spanning '/', so '*client/core*'
-    # (H) matches at any depth.
+    # Drop candidates whose file path matches an exclude glob (generated dirs
+    # like client/core or *.gen.* have no in-repo caller, so every symbol
+    # reports as dead). fnmatch treats '*' as spanning '/', so '*client/core*'
+    # matches at any depth.
     if not exclude:
         return rows
     return [

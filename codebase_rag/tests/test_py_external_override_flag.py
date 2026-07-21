@@ -1,9 +1,9 @@
-# (H) A Python method overriding a method of an EXTERNAL STDLIB base class
-# (H) (click's `class TextWrapper(textwrap.TextWrapper)` overriding `_wrap_chunks`,
-# (H) `_handle_long_word`) is invoked by the stdlib parent's machinery
-# (H) (`wrap()` calls `self._wrap_chunks(...)`), never by first-party code, so it
-# (H) reported dead. The base's method set IS knowable (stdlib import), so mark such
-# (H) methods `overrides_external` -- the dead-code surfaces root the property.
+# A Python method overriding a method of an EXTERNAL STDLIB base class
+# (click's `class TextWrapper(textwrap.TextWrapper)` overriding `_wrap_chunks`,
+# `_handle_long_word`) is invoked by the stdlib parent's machinery
+# (`wrap()` calls `self._wrap_chunks(...)`), never by first-party code, so it
+# reported dead. The base's method set IS knowable (stdlib import), so mark such
+# methods `overrides_external` -- the dead-code surfaces root the property.
 from __future__ import annotations
 
 from pathlib import Path

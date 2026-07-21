@@ -230,16 +230,16 @@ def format_dependencies(deps: list[str]) -> str:
 
 
 def format_latest_news(news_path: Path, limit: int = 3) -> str:
-    # (H) Render the top `limit` bullet entries from NEWS.md into the README's
-    # (H) "Latest News" section. NEWS.md is the single hand-curated source of
-    # (H) truth (newest first); the generator only syncs it into the README.
+    # Render the top `limit` bullet entries from NEWS.md into the README's
+    # "Latest News" section. NEWS.md is the single hand-curated source of
+    # truth (newest first); the generator only syncs it into the README.
     try:
         content = news_path.read_text(encoding=ENCODING_UTF8)
     except OSError:
         return ""
-    # (H) Group each "- " entry with its wrapped continuation lines; a blank line
-    # (H) closes the entry (Markdown list-item semantics), so trailing prose or a
-    # (H) header list elsewhere in the file is not swept into the news bullets.
+    # Group each "- " entry with its wrapped continuation lines; a blank line
+    # closes the entry (Markdown list-item semantics), so trailing prose or a
+    # header list elsewhere in the file is not swept into the news bullets.
     bullets: list[str] = []
     current: list[str] = []
     for line in content.splitlines():

@@ -187,10 +187,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
     ) -> tuple[str | None, str | None]:
-        # (H) The lexical enclosing function of a specially-ingested function
-        # (H) (prototype assignment, object-literal property): the true parent
-        # (H) when the node is nested, None at top level (module parenting is
-        # (H) already correct there).
+        # The lexical enclosing function of a specially-ingested function
+        # (prototype assignment, object-literal property): the true parent
+        # when the node is nested, None at top level (module parenting is
+        # already correct there).
         if lang_config is None:
             return None, None
         parent_label, parent_qn, _ = self._determine_function_parent(
@@ -254,13 +254,13 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     module_qn, func_node, cs.NodeLabel.FUNCTION.value, method_qn
                 )
 
-                # (H) The assignment target is not always a registered constructor
-                # (H) function: `target.prototype.render = ...` inside a decorator
-                # (H) names a parameter, so the parent qn would be a phantom the
-                # (H) database drops. Defer so it verifies against the registry,
-                # (H) and prefer the lexical enclosing function over the module
-                # (H) when the guess never registers (a prototype assignment
-                # (H) inside a function body belongs to that function).
+                # The assignment target is not always a registered constructor
+                # function: `target.prototype.render = ...` inside a decorator
+                # names a parameter, so the parent qn would be a phantom the
+                # database drops. Defer so it verifies against the registry,
+                # and prefer the lexical enclosing function over the module
+                # when the guess never registers (a prototype assignment
+                # inside a function body belongs to that function).
                 fallback_label, fallback_qn = self._lexical_defines_fallback(
                     func_node, method_qn, module_qn, lang_config, language
                 )
@@ -424,9 +424,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             module_qn, method_func_node, cs.NodeLabel.FUNCTION.value, method_qn
         )
 
-        # (H) An object-literal function nested inside another function takes
-        # (H) its lexical parent, not the module (issue: module-parented
-        # (H) duplicates of correctly-parented nodes on thrift lib/js).
+        # An object-literal function nested inside another function takes
+        # its lexical parent, not the module (issue: module-parented
+        # duplicates of correctly-parented nodes on thrift lib/js).
         fallback_label, fallback_qn = self._lexical_defines_fallback(
             method_func_node, method_qn, module_qn, lang_config, language
         )
@@ -593,10 +593,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             if cs.SEPARATOR_DOT not in member_text:
                 continue
 
-            # (H) `X.prototype.y = function` is handled by the dedicated
-            # (H) prototype-method path (constructor-parented qn `X.y`);
-            # (H) registering it here too minted a SECOND node under a
-            # (H) module-anchored qn for the same source function.
+            # `X.prototype.y = function` is handled by the dedicated
+            # prototype-method path (constructor-parented qn `X.y`);
+            # registering it here too minted a SECOND node under a
+            # module-anchored qn for the same source function.
             if cs.SEPARATOR_PROTOTYPE in member_text:
                 continue
 
@@ -662,9 +662,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self._claim_function_span(
             module_qn, function_node, cs.NodeLabel.FUNCTION.value, function_qn
         )
-        # (H) An assignment function nested inside another function takes its
-        # (H) lexical parent, not the module (issue: module-parented
-        # (H) duplicates of correctly-parented nodes on thrift lib/js).
+        # An assignment function nested inside another function takes its
+        # lexical parent, not the module (issue: module-parented
+        # duplicates of correctly-parented nodes on thrift lib/js).
         fallback_label, fallback_qn = self._lexical_defines_fallback(
             function_node, function_qn, module_qn, lang_config, language
         )
@@ -798,12 +798,12 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return self._js_nameless_binding_name(node)
 
     def _js_nameless_binding_name(self, node: ASTNode) -> str | None:
-        # (H) An arrow/function-expression has no `name` field; its effective name is
-        # (H) the binding it is assigned to (const Cmp = () => {}), the object key it is
-        # (H) a value of, or the lhs of an assignment. Recovering it keeps a callback
-        # (H) nested in an arrow-const component nested under that component
-        # (H) (module.Cmp.onSuccess), consistent with the component's own qn and the
-        # (H) call pass, instead of collapsing to module.onSuccess and dangling.
+        # An arrow/function-expression has no `name` field; its effective name is
+        # the binding it is assigned to (const Cmp = () => {}), the object key it is
+        # a value of, or the lhs of an assignment. Recovering it keeps a callback
+        # nested in an arrow-const component nested under that component
+        # (module.Cmp.onSuccess), consistent with the component's own qn and the
+        # call pass, instead of collapsing to module.onSuccess and dangling.
         parent = node.parent
         if parent is None:
             return None

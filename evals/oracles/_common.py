@@ -24,21 +24,21 @@ from ..types_defs import (
 
 
 def _node_deps_ready(oracle_dir: Path) -> bool:
-    # (H) Both must hold: the marker proves npm completed, node_modules proves a
-    # (H) later cache cleanup did not delete the installed tree under the marker.
+    # Both must hold: the marker proves npm completed, node_modules proves a
+    # later cache cleanup did not delete the installed tree under the marker.
     return (oracle_dir / ec.NODE_DEPS_MARKER).exists() and (
         oracle_dir / ec.NODE_MODULES_DIRNAME
     ).is_dir()
 
 
 def ensure_node_deps(oracle_dir: Path) -> None:
-    # (H) The marker (written only after npm exits 0) is the completion signal;
-    # (H) node_modules existing is not, because npm creates it before populating
-    # (H) it and a concurrent pytest-xdist worker would run the oracle against a
-    # (H) half-installed tree. The mkdir lock is atomic on every platform.
-    # (H) ponytail: a stale lock (installer killed mid-run) is waited out for
-    # (H) TRIES*POLL seconds and then skipped, letting the node run surface the
-    # (H) real error; clean the lock dir manually if that ever happens.
+    # The marker (written only after npm exits 0) is the completion signal;
+    # node_modules existing is not, because npm creates it before populating
+    # it and a concurrent pytest-xdist worker would run the oracle against a
+    # half-installed tree. The mkdir lock is atomic on every platform.
+    # ponytail: a stale lock (installer killed mid-run) is waited out for
+    # TRIES*POLL seconds and then skipped, letting the node run surface the
+    # real error; clean the lock dir manually if that ever happens.
     marker = oracle_dir / ec.NODE_DEPS_MARKER
     if _node_deps_ready(oracle_dir):
         return
@@ -95,8 +95,8 @@ def run_node_oracle_payload(
 
 
 def is_ignored(rel_file: str) -> bool:
-    # (H) Mirror cgr's directory-component ignore (path_utils.should_skip_path)
-    # (H) so an oracle grades the same file set cgr indexes.
+    # Mirror cgr's directory-component ignore (path_utils.should_skip_path)
+    # so an oracle grades the same file set cgr indexes.
     dir_parts = PurePosixPath(rel_file).parent.parts
     return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
 

@@ -10,10 +10,10 @@ from ... import logs as ls
 
 
 def _module_directive(gomod: Path) -> str | None:
-    # (H) The module path is the sole `module <path>` directive; a parenthesized
-    # (H) form does not exist for it, so a line scan suffices.
-    # (H) ValueError covers UnicodeDecodeError on a non-UTF-8 go.mod; skip it
-    # (H) rather than crash indexing.
+    # The module path is the sole `module <path>` directive; a parenthesized
+    # form does not exist for it, so a line scan suffices.
+    # ValueError covers UnicodeDecodeError on a non-UTF-8 go.mod; skip it
+    # rather than crash indexing.
     try:
         text = gomod.read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, ValueError):
@@ -26,11 +26,11 @@ def _module_directive(gomod: Path) -> str | None:
 
 
 def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str]]:
-    # (H) Go import paths are module-path-prefixed (github.com/acme/tool/pkg), so
-    # (H) no local import ever matches a repo-relative qn directly. Map every
-    # (H) go.mod module directive (root module plus nested workspace submodules)
-    # (H) to the dotted directory that anchors it; longest module path first so a
-    # (H) nested module shadows an enclosing one on shared prefixes.
+    # Go import paths are module-path-prefixed (github.com/acme/tool/pkg), so
+    # no local import ever matches a repo-relative qn directly. Map every
+    # go.mod module directive (root module plus nested workspace submodules)
+    # to the dotted directory that anchors it; longest module path first so a
+    # nested module shadows an enclosing one on shared prefixes.
     mappings: list[tuple[str, str]] = []
     for gomod in repo_path.rglob(cs.DEP_FILE_GOMOD):
         rel_dir = gomod.parent.relative_to(repo_path)
@@ -51,9 +51,9 @@ def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str]]:
 def resolve_go_import_path(
     module_paths: list[tuple[str, str]], import_path: str
 ) -> str | None:
-    # (H) Longest module-path prefix wins; the remainder of the import path is the
-    # (H) package directory under that module. Returns the repo-relative dotted
-    # (H) dir ('' when the import IS a module root), or None for external imports.
+    # Longest module-path prefix wins; the remainder of the import path is the
+    # package directory under that module. Returns the repo-relative dotted
+    # dir ('' when the import IS a module root), or None for external imports.
     for module_path, dotted_dir in module_paths:
         if import_path == module_path:
             return dotted_dir

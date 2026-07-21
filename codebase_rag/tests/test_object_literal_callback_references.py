@@ -15,7 +15,7 @@ REFERENCES = cs.RelationshipType.REFERENCES.value
 def _run_rels(
     tmp_path: Path, files: dict[str, str], lang_key: str
 ) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
     parsers, queries = load_parsers()
     if lang_key not in parsers:
         pytest.skip(f"{lang_key} parser not available")
@@ -43,7 +43,7 @@ def _has(
 
 
 def _function_qns(tmp_path: Path, files: dict[str, str], lang_key: str) -> set[str]:
-    # (H) Build the graph and return the qualified names of all FUNCTION nodes.
+    # Build the graph and return the qualified names of all FUNCTION nodes.
     parsers, queries = load_parsers()
     if lang_key not in parsers:
         pytest.skip(f"{lang_key} parser not available")
@@ -63,12 +63,12 @@ def _function_qns(tmp_path: Path, files: dict[str, str], lang_key: str) -> set[s
 
 
 def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> None:
-    # (H) `const mutation = useMutation({...})` binds a call_expression, not a
-    # (H) function. The inner object-literal arrows (mutationFn/onSuccess) must NOT
-    # (H) climb past the pair/call up to the `mutation` declarator and register a
-    # (H) bogus FUNCTION node named after the variable -- that phantom node has no
-    # (H) incoming edge and reports as dead code (~27 of the template's remaining
-    # (H) false positives).
+    # `const mutation = useMutation({...})` binds a call_expression, not a
+    # function. The inner object-literal arrows (mutationFn/onSuccess) must NOT
+    # climb past the pair/call up to the `mutation` declarator and register a
+    # bogus FUNCTION node named after the variable -- that phantom node has no
+    # incoming edge and reports as dead code (~27 of the template's remaining
+    # false positives).
     files = {
         "AddUser.tsx": (
             "import { useMutation } from '@tanstack/react-query'\n\n\n"
@@ -91,12 +91,12 @@ def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> Non
 
 
 def test_inline_arrow_in_component_not_named_after_component(tmp_path: Path) -> None:
-    # (H) An inline arrow inside an arrow-const component's JSX (an onClick handler)
-    # (H) has no declarator of its own, so climbing ancestors for a name must STOP at
-    # (H) the component's function-body boundary -- otherwise it reaches the
-    # (H) `const Appearance = () =>` declarator and registers as
-    # (H) `module.Appearance.Appearance` (a double-segment phantom with no incoming
-    # (H) edge = dead code, and it orphans the real inline handlers from #616).
+    # An inline arrow inside an arrow-const component's JSX (an onClick handler)
+    # has no declarator of its own, so climbing ancestors for a name must STOP at
+    # the component's function-body boundary -- otherwise it reaches the
+    # `const Appearance = () =>` declarator and registers as
+    # `module.Appearance.Appearance` (a double-segment phantom with no incoming
+    # edge = dead code, and it orphans the real inline handlers from #616).
     files = {
         "widget.tsx": (
             "export const Panel = () => {\n"
@@ -117,11 +117,11 @@ def test_inline_arrow_in_component_not_named_after_component(tmp_path: Path) -> 
 
 
 def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
-    # (H) An exported arrow-const whose body contains an inner arrow (`.map(w => ...)`)
-    # (H) must register as `utils.getInitials` (single segment) so a cross-module
-    # (H) call resolves. The inner arrow must not climb to the getInitials declarator
-    # (H) and push the real function to `utils.getInitials.getInitials`, which no call
-    # (H) site matches (the util then reports as dead despite being called).
+    # An exported arrow-const whose body contains an inner arrow (`.map(w => ...)`)
+    # must register as `utils.getInitials` (single segment) so a cross-module
+    # call resolves. The inner arrow must not climb to the getInitials declarator
+    # and push the real function to `utils.getInitials.getInitials`, which no call
+    # site matches (the util then reports as dead despite being called).
     files = {
         "utils.ts": (
             "export const getInitials = (name) => {\n"
@@ -139,7 +139,7 @@ def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
     assert not any(qn.endswith(".getInitials.getInitials") for qn in fns), (
         f"inner arrow mis-named after the getInitials const; fns={fns}"
     )
-    # (H) The real function keeps the single-segment name a call site resolves to.
+    # The real function keeps the single-segment name a call site resolves to.
     assert any(qn.endswith(".utils.getInitials") for qn in fns), (
         f"getInitials not registered at the expected single-segment qn; fns={fns}"
     )
@@ -148,12 +148,12 @@ def test_arrow_const_with_inner_arrow_is_callable(tmp_path: Path) -> None:
 def test_function_expression_assigned_to_property_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
-    # (H) for a library to invoke later (the openapi-ts token provider); the arrow
-    # (H) has no incoming edge. The assigning scope must reference it or it reports
-    # (H) as dead (the last frontend false positive on the template). Span-claim
-    # (H) unification leaves ONE node for the arrow (the property-named TOKEN, no
-    # (H) anonymous twin), so that node is the one that must be referenced.
+    # `OpenAPI.TOKEN = async () => {...}` stores a function on an object property
+    # for a library to invoke later (the openapi-ts token provider); the arrow
+    # has no incoming edge. The assigning scope must reference it or it reports
+    # as dead (the last frontend false positive on the template). Span-claim
+    # unification leaves ONE node for the arrow (the property-named TOKEN, no
+    # anonymous twin), so that node is the one that must be referenced.
     files = {
         "main.tsx": (
             "import { OpenAPI } from './client'\n\n"
@@ -174,11 +174,11 @@ def test_function_expression_assigned_to_property_is_referenced(
 
 
 def test_returned_cleanup_closure_is_referenced(tmp_path: Path) -> None:
-    # (H) A useEffect cleanup (`return () => unsubscribe()`) is a function the hook
-    # (H) hands back for React to invoke; it registers as an anonymous node under the
-    # (H) enclosing hook (the effect arrow is anonymous, so it nests one level up) but
-    # (H) has no incoming edge. The scope that returns it must reference it or every
-    # (H) effect cleanup reports as dead.
+    # A useEffect cleanup (`return () => unsubscribe()`) is a function the hook
+    # hands back for React to invoke; it registers as an anonymous node under the
+    # enclosing hook (the effect arrow is anonymous, so it nests one level up) but
+    # has no incoming edge. The scope that returns it must reference it or every
+    # effect cleanup reports as dead.
     files = {
         "hook.tsx": (
             "export function useThing() {\n"
@@ -200,11 +200,11 @@ def test_returned_cleanup_closure_is_referenced(tmp_path: Path) -> None:
 
 
 def test_object_value_bound_function_is_referenced(tmp_path: Path) -> None:
-    # (H) `onError: handleError.bind(showToast)` hands the bound function
-    # (H) `handleError` to the mutation config; the `.bind(...)` call resolves to the
-    # (H) Function.prototype builtin, so without unwrapping it the real `handleError`
-    # (H) gets no incoming edge and reports as dead (and drags down the private
-    # (H) helper it calls). The enclosing scope must reference the bound function.
+    # `onError: handleError.bind(showToast)` hands the bound function
+    # `handleError` to the mutation config; the `.bind(...)` call resolves to the
+    # Function.prototype builtin, so without unwrapping it the real `handleError`
+    # gets no incoming edge and reports as dead (and drags down the private
+    # helper it calls). The enclosing scope must reference the bound function.
     files = {
         "utils.ts": (
             "function extractErrorMessage(e) { return e.message }\n"
@@ -229,11 +229,11 @@ def test_object_value_bound_function_is_referenced(tmp_path: Path) -> None:
 
 
 def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
-    # (H) useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
-    # (H) inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the
-    # (H) library invokes them, so the enclosing scope must REFERENCE them or every
-    # (H) TanStack Query callback reports as dead (the dominant remaining gap on the
-    # (H) FastAPI full-stack template).
+    # useMutation({ mutationFn: () => {}, onSuccess: () => {} }) registers each
+    # inline arrow as its own node (AddUser.mutationFn / AddUser.onSuccess); the
+    # library invokes them, so the enclosing scope must REFERENCE them or every
+    # TanStack Query callback reports as dead (the dominant remaining gap on the
+    # FastAPI full-stack template).
     files = {
         "AddUser.tsx": (
             "import { useMutation } from '@tanstack/react-query'\n\n\n"
@@ -254,8 +254,8 @@ def test_object_literal_inline_arrow_is_referenced(tmp_path: Path) -> None:
 
 
 def test_object_literal_inline_function_expr_is_referenced(tmp_path: Path) -> None:
-    # (H) A classic function expression as an object value is the same first-class
-    # (H) value handoff and must also be referenced.
+    # A classic function expression as an object value is the same first-class
+    # value handoff and must also be referenced.
     files = {
         "config.ts": (
             "export function build() {\n"
@@ -272,12 +272,12 @@ def test_object_literal_inline_function_expr_is_referenced(tmp_path: Path) -> No
 
 
 def test_arrow_const_component_object_callbacks_referenced(tmp_path: Path) -> None:
-    # (H) The real FastAPI-template shape: the component is an arrow bound to a const
-    # (H) (const AddUser = () => {...}), and useMutation callbacks live inside it. The
-    # (H) definition pass must nest those object-arrows under the component
-    # (H) (module.AddUser.mutationFn), matching the component's own qn and the call
-    # (H) pass, so the REFERENCES edge connects; otherwise every TanStack callback in
-    # (H) an arrow-const component (the whole template) stays dead.
+    # The real FastAPI-template shape: the component is an arrow bound to a const
+    # (const AddUser = () => {...}), and useMutation callbacks live inside it. The
+    # definition pass must nest those object-arrows under the component
+    # (module.AddUser.mutationFn), matching the component's own qn and the call
+    # pass, so the REFERENCES edge connects; otherwise every TanStack callback in
+    # an arrow-const component (the whole template) stays dead.
     files = {
         "AddUser.tsx": (
             "import { useMutation } from '@tanstack/react-query'\n\n\n"
@@ -299,10 +299,10 @@ def test_arrow_const_component_object_callbacks_referenced(tmp_path: Path) -> No
 
 
 def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) -> None:
-    # (H) A string-literal key ({'onSuccess': () => {}}) has no property name, so the
-    # (H) inline arrow registers as scope.anonymous_<row>_<col>, not scope.onSuccess.
-    # (H) The reference must target the actual registered (anonymous) node by the
-    # (H) value's position, or the callback still reports as dead.
+    # A string-literal key ({'onSuccess': () => {}}) has no property name, so the
+    # inline arrow registers as scope.anonymous_<row>_<col>, not scope.onSuccess.
+    # The reference must target the actual registered (anonymous) node by the
+    # value's position, or the callback still reports as dead.
     files = {
         "widget.tsx": (
             "export function Widget() {\n"
@@ -322,11 +322,11 @@ def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) ->
 
 
 def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
-    # (H) An arrow passed DIRECTLY as a call argument (useCallback(() => {}),
-    # (H) setTimeout(() => {}), arr.map(x => ...)) registers as an anonymous node in
-    # (H) the enclosing scope but has no incoming edge -- the call consumes it, so
-    # (H) the scope must REFERENCE it or every inline callback reports as dead (the
-    # (H) dominant remaining false-positive class on the FastAPI template).
+    # An arrow passed DIRECTLY as a call argument (useCallback(() => {}),
+    # setTimeout(() => {}), arr.map(x => ...)) registers as an anonymous node in
+    # the enclosing scope but has no incoming edge -- the call consumes it, so
+    # the scope must REFERENCE it or every inline callback reports as dead (the
+    # dominant remaining false-positive class on the FastAPI template).
     files = {
         "hook.tsx": (
             "export function useCopyToClipboard() {\n"
@@ -339,8 +339,8 @@ def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    # (H) An external callee (useCallback) gets the historical CALLS edge, a
-    # (H) first-party one REFERENCES; either keeps the callback reachable.
+    # An external callee (useCallback) gets the historical CALLS edge, a
+    # first-party one REFERENCES; either keeps the callback reachable.
     edges = {b for a, _r, b in rels if a.endswith("hook.useCopyToClipboard")}
     assert any(".hook.useCopyToClipboard.anonymous_" in b for b in edges), (
         f"inline call-argument arrow not referenced; edges={edges}"
@@ -348,11 +348,11 @@ def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
 
 
 def test_inline_arrow_new_expression_argument_is_referenced(tmp_path: Path) -> None:
-    # (H) A Promise executor (`new Promise((resolve, reject) => {...})`) is an inline
-    # (H) arrow handed to a constructor. JS/TS never treated `new X(...)` as a call
-    # (H) node, so the executor got no incoming edge and reported as dead (the
-    # (H) openapi-ts CancelablePromise/request plumbing is built on this pattern).
-    # (H) Constructing must reference the inline callback the same way a call does.
+    # A Promise executor (`new Promise((resolve, reject) => {...})`) is an inline
+    # arrow handed to a constructor. JS/TS never treated `new X(...)` as a call
+    # node, so the executor got no incoming edge and reported as dead (the
+    # openapi-ts CancelablePromise/request plumbing is built on this pattern).
+    # Constructing must reference the inline callback the same way a call does.
     files = {
         "make.ts": (
             "export function make() {\n"
@@ -362,7 +362,7 @@ def test_inline_arrow_new_expression_argument_is_referenced(tmp_path: Path) -> N
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    # (H) A DEFINES edge always exists; the executor must gain a CALLS/REFERENCES edge.
+    # A DEFINES edge always exists; the executor must gain a CALLS/REFERENCES edge.
     defines = cs.RelationshipType.DEFINES.value
     edges = {b for a, r, b in rels if a.endswith("make.make") and r != defines}
     assert any(".make.make.anonymous_" in b for b in edges), (
@@ -371,8 +371,8 @@ def test_inline_arrow_new_expression_argument_is_referenced(tmp_path: Path) -> N
 
 
 def test_new_first_party_class_records_instantiation(tmp_path: Path) -> None:
-    # (H) Adding new_expression to the JS/TS call query also wires the previously
-    # (H) missing INSTANTIATES edge for `new Foo()` to a first-party class.
+    # Adding new_expression to the JS/TS call query also wires the previously
+    # missing INSTANTIATES edge for `new Foo()` to a first-party class.
     files = {
         "app.ts": (
             "class Widget {\n"
@@ -391,12 +391,12 @@ def test_new_first_party_class_records_instantiation(tmp_path: Path) -> None:
 
 
 def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> None:
-    # (H) An inline `.forEach(v => ...)` inside a NESTED arrow-const (encodePair inside
-    # (H) getQueryString) reported as dead: the call pass built the caller qn from the
-    # (H) ancestor arrow-const's missing `name` field, dropping the outer segment
-    # (H) (request.encodePair instead of request.getQueryString.encodePair), so the
-    # (H) inline-arg candidate never matched the registered node. The whole openapi-ts
-    # (H) query-string encoder is this shape.
+    # An inline `.forEach(v => ...)` inside a NESTED arrow-const (encodePair inside
+    # getQueryString) reported as dead: the call pass built the caller qn from the
+    # ancestor arrow-const's missing `name` field, dropping the outer segment
+    # (request.encodePair instead of request.getQueryString.encodePair), so the
+    # inline-arg candidate never matched the registered node. The whole openapi-ts
+    # query-string encoder is this shape.
     files = {
         "request.ts": (
             "export const getQueryString = (params) => {\n"
@@ -410,10 +410,10 @@ def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> 
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    # (H) A DEFINES edge always exists; require a CALLS/REFERENCES edge to the inner
-    # (H) arrow nested under the fully-qualified encodePair (request.getQueryString.
-    # (H) encodePair.anonymous_*), which only matches once the caller qn keeps the
-    # (H) outer getQueryString segment.
+    # A DEFINES edge always exists; require a CALLS/REFERENCES edge to the inner
+    # arrow nested under the fully-qualified encodePair (request.getQueryString.
+    # encodePair.anonymous_*), which only matches once the caller qn keeps the
+    # outer getQueryString segment.
     defines = cs.RelationshipType.DEFINES.value
     edges = {
         b
@@ -426,11 +426,11 @@ def test_inline_callback_in_nested_arrow_const_is_referenced(tmp_path: Path) -> 
 
 
 def test_promise_executor_in_constructor_is_referenced(tmp_path: Path) -> None:
-    # (H) The openapi-ts CancelablePromise shape: a class constructor builds
-    # (H) `this.promise = new Promise((resolve, reject) => {...})`. The executor arrow
-    # (H) is anonymous and nested inside the constructor, so its qn must keep the full
-    # (H) class.constructor path (not flatten to module.anonymous) for the constructor's
-    # (H) CALLS edge to connect; otherwise the executor is orphaned and reports dead.
+    # The openapi-ts CancelablePromise shape: a class constructor builds
+    # `this.promise = new Promise((resolve, reject) => {...})`. The executor arrow
+    # is anonymous and nested inside the constructor, so its qn must keep the full
+    # class.constructor path (not flatten to module.anonymous) for the constructor's
+    # CALLS edge to connect; otherwise the executor is orphaned and reports dead.
     files = {
         "CancelablePromise.ts": (
             "export class CancelablePromise {\n"
@@ -456,11 +456,11 @@ def test_promise_executor_in_constructor_is_referenced(tmp_path: Path) -> None:
 
 
 def test_defineproperty_getter_in_executor_is_referenced(tmp_path: Path) -> None:
-    # (H) A getter descriptor (`Object.defineProperty(x, 'y', {get: () => ...})`) sits
-    # (H) inside an anonymous Promise-executor arrow that gets no caller pass of its own;
-    # (H) its calls bubble to the enclosing constructor. The constructor's collection
-    # (H) walk must therefore descend into the unowned executor and reference the getter,
-    # (H) or every defineProperty getter/setter reports as dead.
+    # A getter descriptor (`Object.defineProperty(x, 'y', {get: () => ...})`) sits
+    # inside an anonymous Promise-executor arrow that gets no caller pass of its own;
+    # its calls bubble to the enclosing constructor. The constructor's collection
+    # walk must therefore descend into the unowned executor and reference the getter,
+    # or every defineProperty getter/setter reports as dead.
     files = {
         "CancelablePromise.ts": (
             "export class CancelablePromise {\n"
@@ -491,8 +491,8 @@ def test_defineproperty_getter_in_executor_is_referenced(tmp_path: Path) -> None
 def test_inline_arrow_call_argument_function_expr_is_referenced(
     tmp_path: Path,
 ) -> None:
-    # (H) A classic function expression passed directly as a call argument is the
-    # (H) same first-class handoff and must also be referenced.
+    # A classic function expression passed directly as a call argument is the
+    # same first-class handoff and must also be referenced.
     files = {
         "timer.ts": (
             "export function start() {\n"
@@ -503,7 +503,7 @@ def test_inline_arrow_call_argument_function_expr_is_referenced(
         ),
     }
     rels = _run_rels(tmp_path, files, "typescript")
-    # (H) schedule is first-party, so the handoff records as REFERENCES.
+    # schedule is first-party, so the handoff records as REFERENCES.
     refs = {b for a, r, b in rels if r == REFERENCES and a.endswith("timer.start")}
     assert any(".timer.start.anonymous_" in b for b in refs), (
         f"inline call-argument function expression not referenced; refs={refs}"

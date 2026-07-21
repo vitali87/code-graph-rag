@@ -1,11 +1,11 @@
-# (H) Multi-language retrieval (C#). Extends the file-level call-localization
-# (H) benchmark to C#: for each first-party C# symbol, which files call it.
-# (H) cgr's C# CALLS edges (reduced to caller file + callee simple name) are
-# (H) graded against Roslyn invocation sites over the same first-party name
-# (H) universe. The oracle uses Roslyn's own syntax parser, independent of cgr's
-# (H) tree-sitter frontend, so this measures cgr's cross-file C# call resolution
-# (H) against ground truth (mirrors evals/java_retrieval.py). Run with
-# (H) CSHARP_FRONTEND=hybrid to grade the opt-in Roslyn semantic frontend.
+# Multi-language retrieval (C#). Extends the file-level call-localization
+# benchmark to C#: for each first-party C# symbol, which files call it.
+# cgr's C# CALLS edges (reduced to caller file + callee simple name) are
+# graded against Roslyn invocation sites over the same first-party name
+# universe. The oracle uses Roslyn's own syntax parser, independent of cgr's
+# tree-sitter frontend, so this measures cgr's cross-file C# call resolution
+# against ground truth (mirrors evals/java_retrieval.py). Run with
+# CSHARP_FRONTEND=hybrid to grade the opt-in Roslyn semantic frontend.
 from pathlib import Path
 from typing import Annotated
 
@@ -46,17 +46,17 @@ def cgr_csharp_call_edges(
     }
     edges: set[CallEdge] = set()
     for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        # (H) INSTANTIATES counts too (as in the Python retrieval): `new T()`
-        # (H) on a type with no explicit constructor has no ctor node to CALL,
-        # (H) only an INSTANTIATES edge to the class, while the oracle records
-        # (H) the creation site by type name.
+        # INSTANTIATES counts too (as in the Python retrieval): `new T()`
+        # on a type with no explicit constructor has no ctor node to CALL,
+        # only an INSTANTIATES edge to the class, while the oracle records
+        # the creation site by type name.
         if rel_type not in (_CALLS, _INSTANTIATES):
             continue
         path = caller_path.get((str(from_label), str(from_val)))
         if path is None:
             continue
-        # (H) A C# Method qn carries its overload signature (Class.Name(args)),
-        # (H) so strip it to recover the simple callee name the oracle records.
+        # A C# Method qn carries its overload signature (Class.Name(args)),
+        # so strip it to recover the simple callee name the oracle records.
         name = str(to_val).split(cs.SEPARATOR_DOT)[-1].split(cs.CHAR_PAREN_OPEN)[0]
         if name in declared:
             edges.add((path, name))

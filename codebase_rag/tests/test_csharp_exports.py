@@ -1,5 +1,5 @@
-# (H) C# Phase 4: is_exported follows C# visibility (public/internal/protected
-# (H) are API surface; a member with no visibility modifier is private).
+# C# Phase 4: is_exported follows C# visibility (public/internal/protected
+# are API surface; a member with no visibility modifier is private).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -54,19 +54,19 @@ public class C {
     assert flag("N.C.Intern") is True
     assert flag("N.C.Prot") is True
     assert flag("N.C.Priv") is False
-    # (H) No visibility modifier on a class member defaults to private.
+    # No visibility modifier on a class member defaults to private.
     assert flag("N.C.Implicit") is False
 
 
 def test_interface_members_are_implicitly_public(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) C# interface members carry NO visibility modifier and are implicitly
-    # (H) public: they ARE the type's API surface. The modifier scan alone
-    # (H) leaves them is_exported=False, which turned every interface member
-    # (H) into a dead-code candidate (all 190 findings of the first Polly
-    # (H) dead-code dogfood, dominated by IAsyncPolicy.ExecuteAsync overloads
-    # (H) and IPolicyWrap properties).
+    # C# interface members carry NO visibility modifier and are implicitly
+    # public: they ARE the type's API surface. The modifier scan alone
+    # leaves them is_exported=False, which turned every interface member
+    # into a dead-code candidate (all 190 findings of the first Polly
+    # dead-code dogfood, dominated by IAsyncPolicy.ExecuteAsync overloads
+    # and IPolicyWrap properties).
     (csharp_project / "I.cs").write_text(
         """
 namespace N;
@@ -91,11 +91,11 @@ public interface IPolicy {
 def test_explicit_interface_implementations_are_exported(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) An explicit interface implementation (`IThing IThing.WithKey(...)`)
-    # (H) carries no modifier and lives in a class, but it is invocable from
-    # (H) outside through the interface -- API surface, not a private member
-    # (H) (Polly's AsyncPolicy `IAsyncPolicy.WithPolicyKey` and the
-    # (H) Context.Dictionary `IDictionary.Keys` family, all flagged dead).
+    # An explicit interface implementation (`IThing IThing.WithKey(...)`)
+    # carries no modifier and lives in a class, but it is invocable from
+    # outside through the interface -- API surface, not a private member
+    # (Polly's AsyncPolicy `IAsyncPolicy.WithPolicyKey` and the
+    # Context.Dictionary `IDictionary.Keys` family, all flagged dead).
     (csharp_project / "E.cs").write_text(
         """
 namespace N;
@@ -117,7 +117,7 @@ public class C : IThing {
         return next(v for qn, v in exported.items() if qn.endswith(suffix))
 
     assert flag("N.C.WithKey(string)") is True
-    # (H) A plain modifier-less class member stays private.
+    # A plain modifier-less class member stays private.
     assert flag("N.C.Plain") is False
 
 
@@ -147,12 +147,12 @@ public class Exposed {}
     def flag(suffix: str) -> bool:
         return next(v for qn, v in exported.items() if qn.endswith(suffix))
 
-    # (H) A top-level type with no modifier is internal (API surface); a nested
-    # (H) type with no modifier is private; an explicit `public` is exported.
+    # A top-level type with no modifier is internal (API surface); a nested
+    # type with no modifier is private; an explicit `public` is exported.
     assert flag("N.TopLevel") is True
     assert flag("N.TopLevel.Nested") is False
     assert flag("N.Exposed") is True
-    # (H) Sanity: the nested type actually registered.
+    # Sanity: the nested type actually registered.
     assert any(
         qn.endswith("N.TopLevel.Nested")
         for qn in get_node_names(mock_ingestor, NodeType.CLASS)

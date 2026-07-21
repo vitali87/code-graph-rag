@@ -1,8 +1,8 @@
-# (H) Follow-up to #808/#809: the loopback default made the unauthenticated
-# (H) StreamableHTTP endpoint safe by default, but intentional remote exposure
-# (H) still had NO auth at all. serve_http now refuses a non-loopback bind
-# (H) without a configured token, and a configured token puts bearer-auth
-# (H) middleware (constant-time compare) in front of the mount.
+# Follow-up to #808/#809: the loopback default made the unauthenticated
+# StreamableHTTP endpoint safe by default, but intentional remote exposure
+# still had NO auth at all. serve_http now refuses a non-loopback bind
+# without a configured token, and a configured token puts bearer-auth
+# middleware (constant-time compare) in front of the mount.
 from __future__ import annotations
 
 import asyncio
@@ -56,8 +56,8 @@ def test_correct_bearer_passes_through() -> None:
 
 
 def test_scheme_is_case_insensitive() -> None:
-    # (H) RFC 7235: the auth SCHEME compares case-insensitively; the token
-    # (H) itself stays case-sensitive
+    # RFC 7235: the auth SCHEME compares case-insensitively; the token
+    # itself stays case-sensitive
     app = _require_bearer_auth(_inner_app, "sekrit")
     status, _ = _drive(app, [(b"authorization", b"bearer sekrit")])
     assert status == 200

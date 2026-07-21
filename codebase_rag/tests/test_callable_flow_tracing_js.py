@@ -88,9 +88,9 @@ JS_PASS_THROUGH = (
 
 
 def test_js_callback_passed_through_wrapper_is_traced(tmp_path: Path) -> None:
-    # (H) target flows into wrapper's cb param, which wrapper hands to apply; the
-    # (H) fixpoint must propagate target through the pass-through param so apply,
-    # (H) the function that actually invokes cb, gets a CALLS edge to target.
+    # target flows into wrapper's cb param, which wrapper hands to apply; the
+    # fixpoint must propagate target through the pass-through param so apply,
+    # the function that actually invokes cb, gets a CALLS edge to target.
     calls = _run_calls(tmp_path, {"m.js": JS_PASS_THROUGH}, "javascript")
     assert _has(calls, "m.apply", "m.target")
 
@@ -105,9 +105,9 @@ JS_EXTERNAL_CALLBACK = (
 
 
 def test_js_callback_handed_to_external_callee_is_referenced(tmp_path: Path) -> None:
-    # (H) setTimeout is not first-party, so the chain cannot be followed into it,
-    # (H) but target is handed to it to be invoked; a reference edge from the
-    # (H) enclosing scope must keep target reachable (matching the Python path).
+    # setTimeout is not first-party, so the chain cannot be followed into it,
+    # but target is handed to it to be invoked; a reference edge from the
+    # enclosing scope must keep target reachable (matching the Python path).
     calls = _run_calls(tmp_path, {"m.js": JS_EXTERNAL_CALLBACK}, "javascript")
     assert _has(calls, "m.liveEntry", "m.target")
 
@@ -124,9 +124,9 @@ JS_FACTORY_ALIAS = (
 
 
 def test_js_factory_returned_closure_flows_callback(tmp_path: Path) -> None:
-    # (H) const run = makeRunner(); run(target): run holds the closure makeRunner
-    # (H) returns, and invoking it hands target to the closure's cb param, so the
-    # (H) closure that invokes cb must get a CALLS edge to target.
+    # const run = makeRunner(); run(target): run holds the closure makeRunner
+    # returns, and invoking it hands target to the closure's cb param, so the
+    # closure that invokes cb must get a CALLS edge to target.
     calls = _run_calls(tmp_path, {"m.js": JS_FACTORY_ALIAS}, "javascript")
     assert _has(calls, "m.makeRunner.runner", "m.target")
 
@@ -140,9 +140,9 @@ JS_DISPATCH_TABLE = (
 
 
 def test_js_object_dispatch_table_keeps_handlers_reachable(tmp_path: Path) -> None:
-    # (H) Handlers stored only in an object/array dispatch table are wired to be
-    # (H) invoked later (HANDLERS[key](...)); the enclosing scope must reference them
-    # (H) so they are not reported dead, matching the Python dispatch-table behaviour.
+    # Handlers stored only in an object/array dispatch table are wired to be
+    # invoked later (HANDLERS[key](...)); the enclosing scope must reference them
+    # so they are not reported dead, matching the Python dispatch-table behaviour.
     calls = _run_calls(tmp_path, {"m.js": JS_DISPATCH_TABLE}, "javascript")
     assert _has(calls, "m", "m._handleA")
     assert _has(calls, "m", "m._handleB")

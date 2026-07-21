@@ -54,7 +54,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 def test_go_env_flows_to_stdout(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A `:=` local carries the env source to a later Println: ENV -> STDOUT.
+    # A `:=` local carries the env source to a later Println: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -151,8 +151,8 @@ def test_go_untainted_value_no_flow(
 def test_go_return_taint_flows_across_call(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) getSecret() returns os.Getenv(...); the caller assigns and logs it, so the
-    # (H) return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
+    # getSecret() returns os.Getenv(...); the caller assigns and logs it, so the
+    # return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -177,8 +177,8 @@ def test_go_return_taint_flows_across_call(
 def test_go_two_value_assignment_flows(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `resp, err := http.Get(url)` is the idiomatic form: the single call feeds
-    # (H) both LHS names, so the network source still reaches the file sink via resp.
+    # `resp, err := http.Get(url)` is the idiomatic form: the single call feeds
+    # both LHS names, so the network source still reaches the file sink via resp.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -201,8 +201,8 @@ def test_go_two_value_assignment_flows(
 def test_go_local_shadows_source_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local `os` shadows the imported package, so os.Getenv here is not the env
-    # (H) source and nothing must flow to the Println sink.
+    # A local `os` shadows the imported package, so os.Getenv here is not the env
+    # source and nothing must flow to the Println sink.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -221,8 +221,8 @@ def test_go_local_shadows_source_no_flow(
 def test_go_later_shadow_does_not_suppress_earlier_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Go has no hoisting: a `os := load()` AFTER the read must not retroactively
-    # (H) shadow the earlier real os.Getenv, so the direct ENV -> STDOUT flow stands.
+    # Go has no hoisting: a `os := load()` AFTER the read must not retroactively
+    # shadow the earlier real os.Getenv, so the direct ENV -> STDOUT flow stands.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -245,8 +245,8 @@ def test_go_later_shadow_does_not_suppress_earlier_source(
 def test_go_later_shadow_keeps_prior_variable_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A read bound to `secret`, THEN a later `os := load()` shadow, then a log of
-    # (H) secret: the import was in scope at the read, so ENV -> STDOUT must survive.
+    # A read bound to `secret`, THEN a later `os := load()` shadow, then a log of
+    # secret: the import was in scope at the read, so ENV -> STDOUT must survive.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -270,8 +270,8 @@ def test_go_later_shadow_keeps_prior_variable_flow(
 def test_go_parallel_assignment_preserves_rhs_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Go evaluates every RHS before any LHS update; `_, copy := "safe", secret`
-    # (H) must read `secret` as still tainted, so logging copy keeps ENV -> STDOUT.
+    # Go evaluates every RHS before any LHS update; `_, copy := "safe", secret`
+    # must read `secret` as still tainted, so logging copy keeps ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -295,7 +295,7 @@ def test_go_parallel_assignment_preserves_rhs_taint(
 def test_go_reassignment_kills_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Re-binding the tainted var to a constant kills its taint before the sink.
+    # Re-binding the tainted var to a constant kills its taint before the sink.
     _build(
         memgraph_ingestor,
         tmp_path,

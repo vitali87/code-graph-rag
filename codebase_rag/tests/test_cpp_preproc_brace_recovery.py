@@ -1,11 +1,11 @@
-# (H) nlohmann's binary_reader.hpp (3,125 lines) collapsed into ONE whole-file
-# (H) ERROR node: a preprocessor branch opens a brace that a LATER branch
-# (H) closes (`#ifdef __cpp_lib_byteswap ... else { #endif` ... `#ifdef
-# (H) __cpp_lib_byteswap } #endif`), and tree-sitter -- which keeps EVERY
-# (H) branch's tokens -- sees unbalanced braces. Query recovery inside the
-# (H) ERROR still surfaced most method NAMES but lost the class structure
-# (H) (methods registered as free functions, five definitions dropped
-# (H) entirely), orphaning the 41-node binary_reader dead-code cluster.
+# nlohmann's binary_reader.hpp (3,125 lines) collapsed into ONE whole-file
+# ERROR node: a preprocessor branch opens a brace that a LATER branch
+# closes (`#ifdef __cpp_lib_byteswap ... else { #endif` ... `#ifdef
+# __cpp_lib_byteswap } #endif`), and tree-sitter -- which keeps EVERY
+# branch's tokens -- sees unbalanced braces. Query recovery inside the
+# ERROR still surfaced most method NAMES but lost the class structure
+# (methods registered as free functions, five definitions dropped
+# entirely), orphaning the 41-node binary_reader dead-code cluster.
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,8 +55,8 @@ class binary_reader
     }
 """
 
-# (H) the collapse needs parse mass after the unbalanced branch; a handful of
-# (H) switch-bearing template methods reproduces the real file's behaviour
+# the collapse needs parse mass after the unbalanced branch; a handful of
+# switch-bearing template methods reproduces the real file's behaviour
 _BULK_METHOD = """
     template<typename NumberType>
     bool helper_{i}(const input_format_t format, NumberType& result)
@@ -111,8 +111,8 @@ def test_conditional_brace_file_keeps_class_structure(
     run_updater(root, mock_ingestor, skip_if_missing="cpp")
 
     methods = get_qualified_names(get_nodes(mock_ingestor, "Method"))
-    # (H) every method after the unbalanced branch must stay a MEMBER of
-    # (H) binary_reader, not degrade to a module-level free function
+    # every method after the unbalanced branch must stay a MEMBER of
+    # binary_reader, not degrade to a module-level free function
     assert "brproj.reader.detail.binary_reader.helper_0" in methods, sorted(methods)
     assert "brproj.reader.detail.binary_reader.helper_9" in methods, sorted(methods)
     assert "brproj.reader.detail.binary_reader.read_one" in methods, sorted(methods)
@@ -120,14 +120,14 @@ def test_conditional_brace_file_keeps_class_structure(
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "brproj.reader.helper_0" not in functions, sorted(functions)
 
-    # (H) an UNRELATED leaf branch whose only textual imbalance is a brace in
-    # (H) a comment must survive the recovery -- only the branch that causes
-    # (H) the collapse may be blanked
+    # an UNRELATED leaf branch whose only textual imbalance is a brace in
+    # a comment must survive the recovery -- only the branch that causes
+    # the collapse may be blanked
     assert "brproj.reader.detail.binary_reader.doc_helper" in methods, sorted(methods)
 
-    # (H) `const decltype(SOME_MACRO_) field = ...` is a FIELD whose type uses
-    # (H) an unexpandable macro; the declarator must not register a phantom
-    # (H) method named after the reserved keyword
+    # `const decltype(SOME_MACRO_) field = ...` is a FIELD whose type uses
+    # an unexpandable macro; the declarator must not register a phantom
+    # method named after the reserved keyword
     assert not any(q.endswith(".decltype") for q in methods), sorted(methods)
 
 
@@ -159,19 +159,19 @@ def test_blank_helper_edge_shapes() -> None:
         _unbalanced_leaf_branches,
     )
 
-    # (H) balanced-only conditionals produce no candidates
+    # balanced-only conditionals produce no candidates
     balanced = b"#if A\nint x = 1;\n#endif\n".split(b"\n")
     assert _unbalanced_leaf_branches(balanced) == []
 
-    # (H) a stray #endif with no open conditional is ignored, not a crash
+    # a stray #endif with no open conditional is ignored, not a crash
     assert _unbalanced_leaf_branches(b"#endif\nint x;\n".split(b"\n")) == []
 
-    # (H) a brace after // is prose, not structure
+    # a brace after // is prose, not structure
     commented = b"#if DOC\n// { see design\nint y = 1;\n#endif\n".split(b"\n")
     assert _unbalanced_leaf_branches(commented) == []
 
-    # (H) an #else split: only the unbalanced branch is a candidate (the
-    # (H) empty #if branch is skipped), and blanking is position-preserving
+    # an #else split: only the unbalanced branch is a candidate (the
+    # empty #if branch is skipped), and blanking is position-preserving
     split_src = b"#if A\n#else\nvoid f() {\n#endif\nint keep = 1;\n"
     split = split_src.split(b"\n")
     candidates = _unbalanced_leaf_branches(split)
@@ -196,8 +196,8 @@ def test_parse_recovery_passthrough_shapes() -> None:
     if "cpp" not in parsers or "python" not in parsers:
         _pytest.skip("parsers not available")
 
-    # (H) a non-C-family language never enters the recovery path, even for
-    # (H) unparseable content
+    # a non-C-family language never enters the recovery path, even for
+    # unparseable content
     py = parsers["python"]
     tree = parse_with_preproc_recovery(
         py, b"def broken(:\n", cs.SupportedLanguage.PYTHON
@@ -205,18 +205,18 @@ def test_parse_recovery_passthrough_shapes() -> None:
     assert tree.root_node is not None
 
     cpp = parsers["cpp"]
-    # (H) a clean C++ file returns the first parse untouched
+    # a clean C++ file returns the first parse untouched
     clean = parse_with_preproc_recovery(cpp, b"int x = 1;\n", cs.SupportedLanguage.CPP)
     assert not clean.root_node.has_error
 
-    # (H) a catastrophic file with NO conditional directives has nothing to
-    # (H) blank and keeps the original tree
+    # a catastrophic file with NO conditional directives has nothing to
+    # blank and keeps the original tree
     garbage = b"}}}} class {{{{\n" * 4
     kept = parse_with_preproc_recovery(cpp, garbage, cs.SupportedLanguage.CPP)
     assert kept.root_node.has_error
 
-    # (H) a catastrophic file whose unbalanced branch is NOT the cause keeps
-    # (H) the original tree via the strict-improvement guard
+    # a catastrophic file whose unbalanced branch is NOT the cause keeps
+    # the original tree via the strict-improvement guard
     unrelated = b"#if A\nvoid g() {\n#endif\n" + b"}}}} class {{{{\n" * 4
     kept2 = parse_with_preproc_recovery(cpp, unrelated, cs.SupportedLanguage.CPP)
     assert kept2.root_node.has_error

@@ -28,9 +28,9 @@ def main(
         Path, typer.Option(help="Directory for cpp_scores.csv and cpp_diff.json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    # (H) The L1 structure eval grades the TREE-SITTER extraction against the
-    # (H) libclang oracle; the default HYBRID frontend would add macro Function
-    # (H) nodes the oracle does not model (the required compdb triggers it).
+    # The L1 structure eval grades the TREE-SITTER extraction against the
+    # libclang oracle; the default HYBRID frontend would add macro Function
+    # nodes the oracle does not model (the required compdb triggers it).
     from codebase_rag.config import settings
 
     settings.CPP_FRONTEND = cs.CppFrontend.TREESITTER
@@ -51,10 +51,10 @@ def main(
     oracle = run_cpp_oracle(target)
     logger.success(ls.CPP_ORACLE_DONE.format(count=len(oracle.nodes)))
 
-    # (H) The compile_commands.json defines the gradeable universe: the oracle only
-    # (H) sees files its compiled TUs reach, so scope cgr to those files before
-    # (H) scoring. Without this, cgr's whole-tree index (bundled test deps,
-    # (H) uncompiled sources) is graded as false positives against a partial oracle.
+    # The compile_commands.json defines the gradeable universe: the oracle only
+    # sees files its compiled TUs reach, so scope cgr to those files before
+    # scoring. Without this, cgr's whole-tree index (bundled test deps,
+    # uncompiled sources) is graded as false positives against a partial oracle.
     cgr = restrict_to_files(cgr, {key.file for key in oracle.nodes})
     logger.success(ls.CPP_CGR_SCOPED.format(count=len(cgr.nodes)))
 

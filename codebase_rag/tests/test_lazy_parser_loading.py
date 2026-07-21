@@ -1,7 +1,7 @@
-# (H) Issue #68: a repo in one language paid for all 14 grammars anyway --
-# (H) every load_parsers() call imported every grammar module and compiled
-# (H) every language's query set up front (and re-compiled them on EVERY
-# (H) call). Grammars must load on first use per language, once per process.
+# Issue #68: a repo in one language paid for all 14 grammars anyway --
+# every load_parsers() call imported every grammar module and compiled
+# every language's query set up front (and re-compiled them on EVERY
+# call). Grammars must load on first use per language, once per process.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -18,14 +18,14 @@ def test_load_parsers_defers_grammar_work() -> None:
     COMBINED_FUNC_CLASS_QUERIES.clear()
     try:
         parsers, queries = load_parsers()
-        # (H) nothing is compiled until a language is actually used
+        # nothing is compiled until a language is actually used
         assert cs.SupportedLanguage.PYTHON not in COMBINED_FUNC_CLASS_QUERIES
         assert cs.SupportedLanguage.RUST not in COMBINED_FUNC_CLASS_QUERIES
 
         lang_queries = queries[cs.SupportedLanguage.PYTHON]
         assert lang_queries[cs.KEY_PARSER] is parsers[cs.SupportedLanguage.PYTHON]
         assert COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON) is not None
-        # (H) touching python must not have loaded rust
+        # touching python must not have loaded rust
         assert cs.SupportedLanguage.RUST not in COMBINED_FUNC_CLASS_QUERIES
     finally:
         _reset_parser_cache()
@@ -39,8 +39,8 @@ def test_membership_check_loads_on_demand() -> None:
     COMBINED_FUNC_CLASS_QUERIES.clear()
     try:
         parsers, _ = load_parsers()
-        # (H) conftest-style availability probe (`lang in parsers`) must load
-        # (H) that one language and answer truthfully
+        # conftest-style availability probe (`lang in parsers`) must load
+        # that one language and answer truthfully
         assert cs.SupportedLanguage.RUST in parsers
         assert COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.RUST) is not None
         assert cs.SupportedLanguage.PYTHON not in COMBINED_FUNC_CLASS_QUERIES
@@ -51,8 +51,8 @@ def test_membership_check_loads_on_demand() -> None:
 
 
 def test_loaded_grammars_are_shared_across_calls() -> None:
-    # (H) parsers must be process-cached: a second load_parsers() reuses the
-    # (H) same Parser objects instead of recompiling every query set
+    # parsers must be process-cached: a second load_parsers() reuses the
+    # same Parser objects instead of recompiling every query set
     first_parsers, _ = load_parsers()
     first = first_parsers[cs.SupportedLanguage.PYTHON]
     second_parsers, _ = load_parsers()
@@ -67,10 +67,10 @@ def test_unknown_language_stays_absent() -> None:
 
 
 def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
-    # (H) An MCP server can probe the same language from several request
-    # (H) threads at once; the mid-load window (attempted but not yet loaded)
-    # (H) must not make a later thread see the language as unavailable
-    # (H) (PR #802 review).
+    # An MCP server can probe the same language from several request
+    # threads at once; the mid-load window (attempted but not yet loaded)
+    # must not make a later thread see the language as unavailable
+    # (PR #802 review).
     import threading
     import time
 
@@ -115,10 +115,10 @@ def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
 
 
 def test_mid_load_window_never_exposes_a_partial_language() -> None:
-    # (H) _process_language writes the parser BEFORE the queries; the ensure
-    # (H) fast path must not treat a present parser as a completed load, or a
-    # (H) concurrent queries[lang] in that window raises KeyError
-    # (H) (PR #802 review round 3).
+    # _process_language writes the parser BEFORE the queries; the ensure
+    # fast path must not treat a present parser as a completed load, or a
+    # concurrent queries[lang] in that window raises KeyError
+    # (PR #802 review round 3).
     from unittest.mock import MagicMock
 
     from codebase_rag import parser_loader
@@ -130,8 +130,8 @@ def test_mid_load_window_never_exposes_a_partial_language() -> None:
 
 
 def test_failed_load_leaves_no_orphan_parser(monkeypatch) -> None:
-    # (H) a query-compilation failure after the parser insert must not leave a
-    # (H) parser entry without its queries twin
+    # a query-compilation failure after the parser insert must not leave a
+    # parser entry without its queries twin
     from codebase_rag import parser_loader
 
     store = parser_loader._LazyGrammarStore()
@@ -145,8 +145,8 @@ def test_failed_load_leaves_no_orphan_parser(monkeypatch) -> None:
 
 
 def test_full_views_still_cover_every_available_language() -> None:
-    # (H) a consumer that iterates the mapping gets the complete availability
-    # (H) picture, not just what happens to be loaded already
+    # a consumer that iterates the mapping gets the complete availability
+    # picture, not just what happens to be loaded already
     parsers, queries = load_parsers()
     assert cs.SupportedLanguage.PYTHON in set(parsers)
     assert len(parsers) == len(queries)

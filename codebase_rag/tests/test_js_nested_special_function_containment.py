@@ -1,11 +1,11 @@
-# (H) The special JS ingestion paths (object-literal property functions,
-# (H) prototype-method assignments, assignment functions) hardcoded their
-# (H) DEFINES parent to the module, or deferred onto a constructor guess whose
-# (H) failure fell back to the module. For a function NESTED inside another
-# (H) function that parent is wrong: the lexical parent rule (the same one
-# (H) plain nested functions follow) applies. On thrift's lib/js this
-# (H) surfaced as module-parented duplicates of correctly-parented nodes once
-# (H) the dangling-edge campaign made the fallback edges real.
+# The special JS ingestion paths (object-literal property functions,
+# prototype-method assignments, assignment functions) hardcoded their
+# DEFINES parent to the module, or deferred onto a constructor guess whose
+# failure fell back to the module. For a function NESTED inside another
+# function that parent is wrong: the lexical parent rule (the same one
+# plain nested functions follow) applies. On thrift's lib/js this
+# surfaced as module-parented duplicates of correctly-parented nodes once
+# the dangling-edge campaign made the fallback edges real.
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,7 +62,7 @@ def test_nested_special_functions_take_their_lexical_parent(
         if to in nested_children:
             assert frm == creator, (frm, to)
 
-    # (H) The top-level prototype method keeps its registered constructor
-    # (H) parent (Widget is a real Function node).
+    # The top-level prototype method keeps its registered constructor
+    # parent (Widget is a real Function node).
     grow_parents = {frm for frm, to in defines if to.endswith(".grow")}
     assert grow_parents == {f"{module_qn}.Widget"}, defines

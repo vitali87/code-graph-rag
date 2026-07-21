@@ -1,7 +1,7 @@
-# (H) The dead-code CLI must compute reachability client-side: two linear fetch
-# (H) queries (nodes, rels) feed the Python engine. The previous single Cypher
-# (H) query expanded *BFS from every root and hit memgraph's 600s query timeout
-# (H) on big projects (django: 31k roots, 101k CALLS edges).
+# The dead-code CLI must compute reachability client-side: two linear fetch
+# queries (nodes, rels) feed the Python engine. The previous single Cypher
+# query expanded *BFS from every root and hit memgraph's 600s query timeout
+# on big projects (django: 31k roots, 101k CALLS edges).
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -54,8 +54,8 @@ def _rel(from_label: str, from_qn: str, rel_type: str, to_qn: str) -> ResultRow:
 
 
 def _seeded_ingestor() -> FakeIngestor:
-    # (H) module calls main (import-time root), main calls called; orphan has no
-    # (H) incoming edge, so it is the only dead symbol.
+    # module calls main (import-time root), main calls called; orphan has no
+    # incoming edge, so it is the only dead symbol.
     nodes = [
         _node(_MODULE, "proj.mod", "mod"),
         _node(_FUNCTION, "proj.mod.main", "main"),
@@ -104,8 +104,8 @@ class TestCollectDeadCode:
 
 class TestFetchQueriesScale:
     def test_fetch_queries_are_linear_scans(self) -> None:
-        # (H) No per-root BFS expansion in Cypher: that shape is O(roots x graph)
-        # (H) and times out on big projects; reachability belongs in Python.
+        # No per-root BFS expansion in Cypher: that shape is O(roots x graph)
+        # and times out on big projects; reachability belongs in Python.
         assert "*BFS" not in cq.CYPHER_DEAD_CODE_NODES
         assert "*BFS" not in cq.CYPHER_DEAD_CODE_RELS
 

@@ -57,9 +57,9 @@ void leak(const char* name) {
 def test_cpp_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) std::getenv reads ENV::SECRET; printf writes STDOUT; std::cout / std::cerr `<<`
-    # (H) insertion writes STDOUT. First C++ increment of issue #714 -- direct calls +
-    # (H) stream insertion, no fstream/FILE* handles (deferred).
+    # std::getenv reads ENV::SECRET; printf writes STDOUT; std::cout / std::cerr `<<`
+    # insertion writes STDOUT. First C++ increment of issue #714 -- direct calls +
+    # stream insertion, no fstream/FILE* handles (deferred).
     _build(memgraph_ingestor, tmp_path, _CPP_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
@@ -69,7 +69,7 @@ def test_cpp_direct_io_sinks(
 def test_cpp_unqualified_getenv(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A C-style unqualified `getenv("X")` (no std::) also reads ENV::X.
+    # A C-style unqualified `getenv("X")` (no std::) also reads ENV::X.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -89,9 +89,9 @@ def test_cpp_unqualified_getenv(
 def test_cpp_putchar_and_wide_streams(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path, body: str
 ) -> None:
-    # (H) putchar (call) and the wide-char streams wcout/wcerr (`<<` insertion) each
-    # (H) write STDOUT, same as puts / cout. Isolated so the STDOUT edge can only come
-    # (H) from the sink under test.
+    # putchar (call) and the wide-char streams wcout/wcerr (`<<` insertion) each
+    # write STDOUT, same as puts / cout. Isolated so the STDOUT edge can only come
+    # from the sink under test.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -103,8 +103,8 @@ def test_cpp_putchar_and_wide_streams(
 def test_cpp_nested_lambda_not_credited(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A sink inside a nested lambda is not the enclosing function's I/O; the walk
-    # (H) prunes nested scopes, and the lambda is not a registered caller here.
+    # A sink inside a nested lambda is not the enclosing function's I/O; the walk
+    # prunes nested scopes, and the lambda is not a registered caller here.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -119,8 +119,8 @@ def test_cpp_nested_lambda_not_credited(
 def test_cpp_fstream_handles(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) issue #714 handle walk: ifstream/ofstream declarations bind FILE
-    # (H) handles; `>>` reads, `<<` and .write() write.
+    # issue #714 handle walk: ifstream/ofstream declarations bind FILE
+    # handles; `>>` reads, `<<` and .write() write.
     _build(
         memgraph_ingestor,
         tmp_path,

@@ -7,17 +7,17 @@ from .utils import _selector_member_name, dart_body_node
 
 
 class DartTypeInferenceEngine:
-    # (H) Dart receiver typing (analog of the C#/Java engines): type function
-    # (H) parameters and body locals so the generic local-type resolution can
-    # (H) bind `g.greet()` to the receiver's class method instead of leaving
-    # (H) it to the suffix trie's arbitrary pick among same-named candidates.
+    # Dart receiver typing (analog of the C#/Java engines): type function
+    # parameters and body locals so the generic local-type resolution can
+    # bind `g.greet()` to the receiver's class method instead of leaving
+    # it to the suffix trie's arbitrary pick among same-named candidates.
 
     def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
-        # (H) caller_node is the SIGNATURE (the grammar splits the body off as
-        # (H) a sibling): parameters come from the signature's parameter list,
-        # (H) locals from the sibling body. Conflicting redefinitions of one
-        # (H) name (sibling blocks reusing a binding) drop, mirroring the C#
-        # (H) engine's conservative rule.
+        # caller_node is the SIGNATURE (the grammar splits the body off as
+        # a sibling): parameters come from the signature's parameter list,
+        # locals from the sibling body. Conflicting redefinitions of one
+        # name (sibling blocks reusing a binding) drop, mirroring the C#
+        # engine's conservative rule.
         types: dict[str, str] = {}
         conflicts: set[str] = set()
         self._collect_parameters(caller_node, types, conflicts)
@@ -29,19 +29,19 @@ class DartTypeInferenceEngine:
     def collect_static_call_bindings(
         self, caller_node: Node
     ) -> dict[str, tuple[str, str]]:
-        # (H) Locals bound from a class-qualified call (`var s =
-        # (H) Base.member(args)`, an UpperCamelCase base): the construction
-        # (H) heuristic types them as Base, but a registered member's RECORDED
-        # (H) return type should win (a `static String describe()` local is a
-        # (H) String, not the class). The hub enrichment consumes this map.
-        # (H) OWN-scope only (PR #807 review): a nested function's same-named
-        # (H) binding must never retype the outer local, and since the
-        # (H) enrichment cannot tell which scope produced a var_types entry, a
-        # (H) nested binding is never collected at all -- nested locals simply
-        # (H) keep the construction heuristic. A definition with an EXPLICIT
-        # (H) declared type is skipped entirely: the declaration statically
-        # (H) fixes the type and the initializer's return must not override
-        # (H) or untype it.
+        # Locals bound from a class-qualified call (`var s =
+        # Base.member(args)`, an UpperCamelCase base): the construction
+        # heuristic types them as Base, but a registered member's RECORDED
+        # return type should win (a `static String describe()` local is a
+        # String, not the class). The hub enrichment consumes this map.
+        # OWN-scope only (PR #807 review): a nested function's same-named
+        # binding must never retype the outer local, and since the
+        # enrichment cannot tell which scope produced a var_types entry, a
+        # nested binding is never collected at all -- nested locals simply
+        # keep the construction heuristic. A definition with an EXPLICIT
+        # declared type is skipped entirely: the declaration statically
+        # fixes the type and the initializer's return must not override
+        # or untype it.
         bindings: dict[str, tuple[str, str]] = {}
         body = dart_body_node(caller_node)
         if body is None:
@@ -69,10 +69,10 @@ class DartTypeInferenceEngine:
                 _record_static_call(part.named_children, bindings)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
-        # (H) `String name;` in a class_body is declaration(type_identifier,
-        # (H) initialized_identifier_list); record {name: String} so a
-        # (H) field-typed receiver (`buddy.greet()`, `this.buddy.hail()`)
-        # (H) resolves through the field's declared type.
+        # `String name;` in a class_body is declaration(type_identifier,
+        # initialized_identifier_list); record {name: String} so a
+        # field-typed receiver (`buddy.greet()`, `this.buddy.hail()`)
+        # resolves through the field's declared type.
         fields: dict[str, str] = {}
         for child in class_node.named_children:
             if child.type != cs.TS_DART_CLASS_BODY:
@@ -117,14 +117,14 @@ class DartTypeInferenceEngine:
     def _collect_locals(
         self, body: Node, types: dict[str, str], conflicts: set[str]
     ) -> None:
-        # (H) Two passes with precedence (PR #806 review): the caller's OWN
-        # (H) scope first, with full conflict semantics; then nested
-        # (H) function/lambda scopes, fill-in only. Nested locals must still
-        # (H) be collected -- a Dart test body is a lambda argument
-        # (H) (`test('x', () { var p = ArgParser(); p.addFlag(...); })`) whose
-        # (H) calls flat-attribute to the enclosing caller -- but an inner
-        # (H) same-named local must never conflict-drop or overwrite the
-        # (H) outer binding.
+        # Two passes with precedence (PR #806 review): the caller's OWN
+        # scope first, with full conflict semantics; then nested
+        # function/lambda scopes, fill-in only. Nested locals must still
+        # be collected -- a Dart test body is a lambda argument
+        # (`test('x', () { var p = ArgParser(); p.addFlag(...); })`) whose
+        # calls flat-attribute to the enclosing caller -- but an inner
+        # same-named local must never conflict-drop or overwrite the
+        # outer binding.
         nested: list[Node] = []
         stack = list(body.named_children)
         while stack:
@@ -151,17 +151,17 @@ class DartTypeInferenceEngine:
 
     @staticmethod
     def _record_local(node: Node, types: dict[str, str], conflicts: set[str]) -> None:
-        # (H) Two typable shapes: a DECLARED type (`Greeter t = ...` puts a
-        # (H) type_identifier before the name) and a CONSTRUCTION initializer
-        # (H) (`var b = Greeter('x')` / `final n = Greeter.named('y')`: the
-        # (H) initializer's base identifier, UpperCamelCase by Dart
-        # (H) convention, names the constructed class; a lowercase base is an
-        # (H) ordinary call whose return type is unknown, so the local stays
-        # (H) untyped). The FIRST variable's name and initializer are direct
-        # (H) children; each ADDITIONAL variable of a multi-declaration
-        # (H) (`var a = X(), b = Y();`) nests as an initialized_identifier
-        # (H) carrying the same name-plus-initializer shape, with a declared
-        # (H) type (if any) shared by every binding.
+        # Two typable shapes: a DECLARED type (`Greeter t = ...` puts a
+        # type_identifier before the name) and a CONSTRUCTION initializer
+        # (`var b = Greeter('x')` / `final n = Greeter.named('y')`: the
+        # initializer's base identifier, UpperCamelCase by Dart
+        # convention, names the constructed class; a lowercase base is an
+        # ordinary call whose return type is unknown, so the local stays
+        # untyped). The FIRST variable's name and initializer are direct
+        # children; each ADDITIONAL variable of a multi-declaration
+        # (`var a = X(), b = Y();`) nests as an initialized_identifier
+        # carrying the same name-plus-initializer shape, with a declared
+        # type (if any) shared by every binding.
         declared_type = _declared_type_name(node)
         _record_binding(node.named_children, declared_type, types, conflicts)
         for part in node.named_children:
@@ -177,8 +177,8 @@ def _declared_type_name(node: Node) -> str | None:
 
 
 def _record_field_names(id_list: Node, type_name: str, fields: dict[str, str]) -> None:
-    # (H) only an entry's FIRST identifier is the field name; later
-    # (H) identifiers belong to its initializer
+    # only an entry's FIRST identifier is the field name; later
+    # identifiers belong to its initializer
     for entry in id_list.named_children:
         if entry.type != cs.TS_DART_INITIALIZED_IDENTIFIER:
             continue
@@ -194,9 +194,9 @@ def _record_binding(
     types: dict[str, str],
     conflicts: set[str],
 ) -> None:
-    # (H) One name-plus-initializer run: the first identifier is the variable,
-    # (H) a second identifier followed by an argument selector is a
-    # (H) construction base typing the variable when no declared type applies.
+    # One name-plus-initializer run: the first identifier is the variable,
+    # a second identifier followed by an argument selector is a
+    # construction base typing the variable when no declared type applies.
     var_name: str | None = None
     init_base: str | None = None
     has_argument_selector = False
@@ -222,8 +222,8 @@ def _record_binding(
 def _record_static_call(
     parts: list[Node], bindings: dict[str, tuple[str, str]]
 ) -> None:
-    # (H) shape: identifier var, identifier Base, selector(.member),
-    # (H) selector(argument_part); anything else is not a class-qualified call
+    # shape: identifier var, identifier Base, selector(.member),
+    # selector(argument_part); anything else is not a class-qualified call
     var_name: str | None = None
     base: str | None = None
     member: str | None = None

@@ -46,12 +46,12 @@ def test_oracle_captures_first_party_ts_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared = oracle_ts_call_edges(tmp_path)
 
-    # (H) this.helper(), free(), dbl(), t.caller() are first-party calls.
+    # this.helper(), free(), dbl(), t.caller() are first-party calls.
     assert ("t.ts", "helper") in edges
     assert ("use.ts", "free") in edges
     assert ("use.ts", "dbl") in edges
     assert ("use.ts", "caller") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("t.ts", "orphan") not in edges
     assert {"helper", "caller", "orphan", "free", "dbl", "useIt"} <= declared
 

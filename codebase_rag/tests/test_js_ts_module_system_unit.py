@@ -75,9 +75,9 @@ def mock_language_queries() -> dict[cs.SupportedLanguage, MagicMock]:
 
 
 class TestProcessCommonjsImport:
-    # (H) The CommonJS fallback no longer emits IMPORTS edges directly; every
-    # (H) edge is deferred to the import processor so internal targets verify
-    # (H) against the real module qns before emission (issue #652).
+    # The CommonJS fallback no longer emits IMPORTS edges directly; every
+    # edge is deferred to the import processor so internal targets verify
+    # against the real module qns before emission (issue #652).
 
     def test_defers_external_import_edge(
         self,

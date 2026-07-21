@@ -1,7 +1,7 @@
-# (H) L3 finding from the evals/ harness: accessing an @property getter runs the
-# (H) getter method at runtime, but cgr saw a plain attribute access and emitted no
-# (H) CALLS edge. A property access must produce a CALLS edge to the getter method,
-# (H) while a normal attribute / method reference must not.
+# L3 finding from the evals/ harness: accessing an @property getter runs the
+# getter method at runtime, but cgr saw a plain attribute access and emitted no
+# CALLS edge. A property access must produce a CALLS edge to the getter method,
+# while a normal attribute / method reference must not.
 from __future__ import annotations
 
 from pathlib import Path
@@ -92,11 +92,11 @@ class TestPropertyGetterCalls:
 
     def test_property_access_only_emits_the_getter_edge(self, tmp_path: Path) -> None:
         calls = _calls(tmp_path)
-        # (H) `use` only reads e.status; no spurious edge to the unrelated _compute.
+        # `use` only reads e.status; no spurious edge to the unrelated _compute.
         from_use = {to for (frm, to) in calls if frm == "proj.m.use"}
         assert from_use == {"proj.m.Engine.status"}, from_use
 
     def test_regular_method_call_is_unaffected(self, tmp_path: Path) -> None:
         calls = _calls(tmp_path)
-        # (H) plain() calls a normal method, resolved by the existing call path.
+        # plain() calls a normal method, resolved by the existing call path.
         assert ("proj.m.plain", "proj.m.Engine._compute") in calls, calls

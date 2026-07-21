@@ -75,8 +75,8 @@ def test_go_direct_io_sinks(
 def test_go_aliased_import_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `import h "net/http"` aliases the package; h.Get must still match http.Get
-    # (H) via the resolved package name (last path segment of net/http).
+    # `import h "net/http"` aliases the package; h.Get must still match http.Get
+    # via the resolved package name (last path segment of net/http).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -91,8 +91,8 @@ def test_go_aliased_import_emits(
 def test_third_party_go_package_named_http_no_edge(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A third-party package whose path ends in `http` is NOT net/http; keying on
-    # (H) the full import path keeps it from matching the stdlib http.Get sink.
+    # A third-party package whose path ends in `http` is NOT net/http; keying on
+    # the full import path keeps it from matching the stdlib http.Get sink.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -107,8 +107,8 @@ def test_third_party_go_package_named_http_no_edge(
 def test_go_local_shadows_package(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Go allows a local to shadow an imported package name; `os` bound locally
-    # (H) is not the stdlib package, so os.Getenv here must not emit an ENV read.
+    # Go allows a local to shadow an imported package name; `os` bound locally
+    # is not the stdlib package, so os.Getenv here must not emit an ENV read.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -121,7 +121,7 @@ def test_go_local_shadows_package(
 def test_go_short_var_shadows_package(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A `:=` local named `os` shadows the package within the function.
+    # A `:=` local named `os` shadows the package within the function.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -134,7 +134,7 @@ def test_go_short_var_shadows_package(
 def test_go_var_and_range_shadow_package(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `var os = ...` and a `range` binding also shadow the package name.
+    # `var os = ...` and a `range` binding also shadow the package name.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -155,9 +155,9 @@ def test_go_var_and_range_shadow_package(
 def test_go_self_referential_init_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Go scope starts AFTER the declaration (unlike Java), so in `os := os.Getenv(..)`
-    # (H) the RHS os is still the imported package -- the ENV read must emit; the new
-    # (H) local os shadows only the statements that follow.
+    # Go scope starts AFTER the declaration (unlike Java), so in `os := os.Getenv(..)`
+    # the RHS os is still the imported package -- the ENV read must emit; the new
+    # local os shadows only the statements that follow.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -170,9 +170,9 @@ def test_go_self_referential_init_emits(
 def test_go_handle_methods_attribute_to_constructor_resource(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) issue #714 handle walk: os.OpenFile binds a FILE handle (no direct sink,
-    # (H) direction depends on flags) and sql.Open a DATABASE one; the method calls
-    # (H) carry the I/O.
+    # issue #714 handle walk: os.OpenFile binds a FILE handle (no direct sink,
+    # direction depends on flags) and sql.Open a DATABASE one; the method calls
+    # carry the I/O.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -193,8 +193,8 @@ def test_go_handle_methods_attribute_to_constructor_resource(
 def test_go_unimported_package_name_no_edge(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A package-scope `var os` (NOT an import of stdlib os) must not match the
-    # (H) os.Getenv sink; Go stdlib packages are always imported.
+    # A package-scope `var os` (NOT an import of stdlib os) must not match the
+    # os.Getenv sink; Go stdlib packages are always imported.
     _build(
         memgraph_ingestor,
         tmp_path,

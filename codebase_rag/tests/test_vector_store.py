@@ -372,9 +372,9 @@ def test_milvus_lite_30_cosine_workaround_versions(
 
 
 def _has_milvus_lite() -> bool:
-    # (H) A LOCAL Milvus uri needs the embedded milvus-lite server, which ships
-    # (H) no Windows wheels: pymilvus alone installs there and the connect
-    # (H) raises ConnectionConfigException (Windows CI).
+    # A LOCAL Milvus uri needs the embedded milvus-lite server, which ships
+    # no Windows wheels: pymilvus alone installs there and the connect
+    # raises ConnectionConfigException (Windows CI).
     import importlib.util
 
     return importlib.util.find_spec("milvus_lite") is not None

@@ -1,10 +1,10 @@
-# (H) Polyglot (cross-language) ingestion eval. Every other eval indexes a
-# (H) single-language (or Python-dominant) corpus, so none checks what happens
-# (H) when cgr builds ONE graph over files from every supported language at
-# (H) once -- the mixed-language repo it is actually pointed at in the wild.
-# (H) This ingests a corpus spanning all 14 SupportedLanguages (including a
-# (H) deliberate same-basename collision across three languages) and grades
-# (H) cross-language integrity invariants that need no external oracle:
+# Polyglot (cross-language) ingestion eval. Every other eval indexes a
+# single-language (or Python-dominant) corpus, so none checks what happens
+# when cgr builds ONE graph over files from every supported language at
+# once -- the mixed-language repo it is actually pointed at in the wild.
+# This ingests a corpus spanning all 14 SupportedLanguages (including a
+# deliberate same-basename collision across three languages) and grades
+# cross-language integrity invariants that need no external oracle:
 #   1. every language contributes at least one module and one definition
 #      (no language silently dropped when mixed in),
 #   2. two files that strip to the same module qn get DISTINCT qns
@@ -36,9 +36,9 @@ _DEFINITION_LABELS = frozenset(
         cs.NodeLabel.UNION.value,
     }
 )
-# (H) Semantic def-to-def edges that must never cross a language boundary.
-# (H) IMPORTS/CONTAINS/DEFINES are excluded: an import can legitimately point at
-# (H) an external stub, and CONTAINS/DEFINES are module-internal by construction.
+# Semantic def-to-def edges that must never cross a language boundary.
+# IMPORTS/CONTAINS/DEFINES are excluded: an import can legitimately point at
+# an external stub, and CONTAINS/DEFINES are module-internal by construction.
 _CODE_EDGES = frozenset(
     {
         cs.RelationshipType.CALLS.value,
@@ -49,10 +49,10 @@ _CODE_EDGES = frozenset(
     }
 )
 
-# (H) A tiny, self-contained module per language: each declares a module plus at
-# (H) least one definition and one intra-file call, so "language present" and the
-# (H) cross-language-edge check both have material. shapes.{rs,cpp,ts} share a
-# (H) basename on purpose -- they are THE collision the disambiguation must split.
+# A tiny, self-contained module per language: each declares a module plus at
+# least one definition and one intra-file call, so "language present" and the
+# cross-language-edge check both have material. shapes.{rs,cpp,ts} share a
+# basename on purpose -- they are THE collision the disambiguation must split.
 _RS_SHAPES = """pub trait Shape {
     fn area(&self) -> f64;
 }
@@ -204,32 +204,32 @@ POLYGLOT_SOURCES: dict[str, str] = {
         "  return helper(1);\n"
         "}\n"
     ),
-    # (H) the cross-language collision trio -- same basename, three languages.
+    # the cross-language collision trio -- same basename, three languages.
     "shapes.rs": _RS_SHAPES,
     "shapes.cpp": _CPP_SHAPES,
     "shapes.ts": _TS_SHAPES,
 }
 
-# (H) The languages the corpus is meant to exercise -- one per SupportedLanguage.
+# The languages the corpus is meant to exercise -- one per SupportedLanguage.
 EXPECTED_LANGUAGES: frozenset[cs.SupportedLanguage] = frozenset(cs.SupportedLanguage)
 
-# (H) Basenames that appear under more than one file in the corpus: the
-# (H) disambiguation must give each colliding file its own module qn.
+# Basenames that appear under more than one file in the corpus: the
+# disambiguation must give each colliding file its own module qn.
 COLLIDING_BASENAMES: frozenset[str] = frozenset({"shapes"})
 
 
 class PolyglotReport(NamedTuple):
-    # (H) language -> set of that language's module qns.
+    # language -> set of that language's module qns.
     modules_by_language: dict[cs.SupportedLanguage, frozenset[str]]
-    # (H) language -> set of that language's definition qns.
+    # language -> set of that language's definition qns.
     defs_by_language: dict[cs.SupportedLanguage, frozenset[str]]
-    # (H) SupportedLanguages with zero modules in the graph.
+    # SupportedLanguages with zero modules in the graph.
     missing_languages: frozenset[cs.SupportedLanguage]
-    # (H) rel_type, src_qn, dst_qn for every code edge whose endpoints resolve
-    # (H) to modules of DIFFERENT languages (should always be empty).
+    # rel_type, src_qn, dst_qn for every code edge whose endpoints resolve
+    # to modules of DIFFERENT languages (should always be empty).
     cross_language_edges: frozenset[tuple[str, str, str]]
-    # (H) source relative path -> the module qn cgr assigned it, for files whose
-    # (H) basename collides (should be all-distinct across a collision group).
+    # source relative path -> the module qn cgr assigned it, for files whose
+    # basename collides (should be all-distinct across a collision group).
     collision_qns: dict[str, str]
 
 
@@ -253,7 +253,7 @@ def _language_of_path(path: str) -> cs.SupportedLanguage | None:
 def cgr_polyglot(target: Path, project: str) -> PolyglotReport:
     ingestor = _capture(target, project)
 
-    # (H) module qn -> language, from each Module node's recorded path.
+    # module qn -> language, from each Module node's recorded path.
     module_language: dict[str, cs.SupportedLanguage] = {}
     module_qns_by_lang: dict[cs.SupportedLanguage, set[str]] = {}
     path_of_module: dict[str, str] = {}
@@ -271,9 +271,9 @@ def cgr_polyglot(target: Path, project: str) -> PolyglotReport:
         module_qns_by_lang.setdefault(lang, set()).add(qn)
         path_of_module[qn] = path
 
-    # (H) The longest module-qn that prefixes a given qn is the module it lives
-    # (H) in. ponytail: linear scan per qn; the corpus is ~15 modules, not worth
-    # (H) a trie.
+    # The longest module-qn that prefixes a given qn is the module it lives
+    # in. ponytail: linear scan per qn; the corpus is ~15 modules, not worth
+    # a trie.
     def owning_module(qn: str) -> str | None:
         best: str | None = None
         for m in module_language:

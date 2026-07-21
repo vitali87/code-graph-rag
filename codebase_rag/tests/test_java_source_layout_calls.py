@@ -26,7 +26,7 @@ MAIN = (
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
-    # (H) Build the graph for `files` (repo-relative paths) and return CALLS edges.
+    # Build the graph for `files` (repo-relative paths) and return CALLS edges.
     parsers, queries = load_parsers()
     if "java" not in parsers:
         pytest.skip("java parser not available")
@@ -56,9 +56,9 @@ def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def test_flat_layout_static_call(tmp_path: Path) -> None:
-    # (H) Package dirs at the repo root: the import is judged local and resolves to
-    # (H) the MODULE qn (…util.Helper) instead of the class qn (…util.Helper.Helper),
-    # (H) so the method search misses and the cross-package call is dropped.
+    # Package dirs at the repo root: the import is judged local and resolves to
+    # the MODULE qn (…util.Helper) instead of the class qn (…util.Helper.Helper),
+    # so the method search misses and the cross-package call is dropped.
     calls = _run_calls(
         tmp_path,
         {
@@ -70,7 +70,7 @@ def test_flat_layout_static_call(tmp_path: Path) -> None:
 
 
 def test_flat_layout_instance_call(tmp_path: Path) -> None:
-    # (H) Same flat-layout failure through the declared-variable type path.
+    # Same flat-layout failure through the declared-variable type path.
     calls = _run_calls(
         tmp_path,
         {
@@ -82,7 +82,7 @@ def test_flat_layout_instance_call(tmp_path: Path) -> None:
 
 
 def test_maven_layout_calls(tmp_path: Path) -> None:
-    # (H) Regression: the standard src/main/java layout already resolves.
+    # Regression: the standard src/main/java layout already resolves.
     calls = _run_calls(
         tmp_path,
         {
@@ -95,7 +95,7 @@ def test_maven_layout_calls(tmp_path: Path) -> None:
 
 
 def test_nested_unmarked_root_calls(tmp_path: Path) -> None:
-    # (H) Regression: a package root nested under an unmarked directory (lib/).
+    # Regression: a package root nested under an unmarked directory (lib/).
     calls = _run_calls(
         tmp_path,
         {
@@ -107,7 +107,7 @@ def test_nested_unmarked_root_calls(tmp_path: Path) -> None:
 
 
 def test_gradle_multimodule_calls(tmp_path: Path) -> None:
-    # (H) Regression: cross-module call between two Gradle-style modules.
+    # Regression: cross-module call between two Gradle-style modules.
     calls = _run_calls(
         tmp_path,
         {
@@ -136,9 +136,9 @@ ENUM_MAIN = (
 
 
 def test_flat_layout_enum_static_call(tmp_path: Path) -> None:
-    # (H) An imported enum's static method: enums register as NodeType.ENUM, so the
-    # (H) imported-class normalization must accept them, or the flat-layout call is
-    # (H) still dropped.
+    # An imported enum's static method: enums register as NodeType.ENUM, so the
+    # imported-class normalization must accept them, or the flat-layout call is
+    # still dropped.
     calls = _run_calls(
         tmp_path,
         {

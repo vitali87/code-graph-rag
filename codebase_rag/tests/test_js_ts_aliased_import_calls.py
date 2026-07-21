@@ -26,9 +26,9 @@ def _make(root: Path) -> None:
         "export function notImplemented(m: string): never { throw new Error(m); }\n",
         encoding="utf-8",
     )
-    # (H) A non-relative specifier (here a deno-style `ext:` alias; a tsconfig
-    # (H) `paths` alias like `@/util` behaves identically) does not resolve to a
-    # (H) file-path module qn, so the import target is unregistered.
+    # A non-relative specifier (here a deno-style `ext:` alias; a tsconfig
+    # `paths` alias like `@/util` behaves identically) does not resolve to a
+    # file-path module qn, so the import target is unregistered.
     (root / "a.ts").write_text(
         'import { notImplemented } from "ext:alias/util.ts";\n'
         "export function useAlias() { return notImplemented('x'); }\n",
@@ -39,8 +39,8 @@ def _make(root: Path) -> None:
         "export function useRel() { return notImplemented('y'); }\n",
         encoding="utf-8",
     )
-    # (H) A genuine external package import whose name collides with a first-party
-    # (H) symbol must NOT be rebound by the trie fallback (regression guard).
+    # A genuine external package import whose name collides with a first-party
+    # symbol must NOT be rebound by the trie fallback (regression guard).
     (root / "collide.ts").write_text(
         "export function externalCollide(): number { return 1; }\n",
         encoding="utf-8",
@@ -54,10 +54,10 @@ def _make(root: Path) -> None:
 
 @needs_ts_grammar
 def test_call_via_non_relative_aliased_import_resolves(tmp_path: Path) -> None:
-    # (H) A call to a first-party function imported via a non-relative specifier was
-    # (H) dropped: the unresolvable target looked external and suppressed the
-    # (H) simple-name trie fallback. It must resolve to the indexed first-party
-    # (H) function, exactly as the relative-import call already does.
+    # A call to a first-party function imported via a non-relative specifier was
+    # dropped: the unresolvable target looked external and suppressed the
+    # simple-name trie fallback. It must resolve to the indexed first-party
+    # function, exactly as the relative-import call already does.
     _make(tmp_path)
     ingestor = _capture(tmp_path, "proj")
     calls = {
@@ -67,6 +67,6 @@ def test_call_via_non_relative_aliased_import_resolves(tmp_path: Path) -> None:
     }
     assert ("proj.a.useAlias", "proj.util.notImplemented") in calls
     assert ("proj.b.useRel", "proj.util.notImplemented") in calls
-    # (H) `some-npm-pkg` is a real external package (no custom scheme), so its
-    # (H) import stays suppressed and must not rebind to the first-party collision.
+    # `some-npm-pkg` is a real external package (no custom scheme), so its
+    # import stays suppressed and must not rebind to the first-party collision.
     assert ("proj.c.useExternal", "proj.collide.externalCollide") not in calls

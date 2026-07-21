@@ -1,9 +1,9 @@
-# (H) The syn Rust oracle must build its binary ONCE (serialized across parallel
-# (H) pytest-xdist workers by a file lock) and then exec that binary directly.
-# (H) The old code shelled out to `cargo run` on every call, which re-links
-# (H) target/release/rs_oracle each time; concurrent workers raced the link step
-# (H) (one exec'd the binary while another rewrote it -> ETXTBSY, cargo exit 101),
-# (H) an intermittent CI flake on the macos-py3.12 runner. This pins the fix.
+# The syn Rust oracle must build its binary ONCE (serialized across parallel
+# pytest-xdist workers by a file lock) and then exec that binary directly.
+# The old code shelled out to `cargo run` on every call, which re-links
+# target/release/rs_oracle each time; concurrent workers raced the link step
+# (one exec'd the binary while another rewrote it -> ETXTBSY, cargo exit 101),
+# an intermittent CI flake on the macos-py3.12 runner. This pins the fix.
 from __future__ import annotations
 
 import types
@@ -19,8 +19,8 @@ def test_oracle_builds_once_then_execs_binary_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     binary = tmp_path / ec.RS_ORACLE_BIN
-    # (H) Bypass `cargo metadata` resolution and the mtime guard so the test pins
-    # (H) only the build-once/exec-directly contract, deterministically.
+    # Bypass `cargo metadata` resolution and the mtime guard so the test pins
+    # only the build-once/exec-directly contract, deterministically.
     monkeypatch.setattr(ro, "_binary_path", lambda: binary)
     monkeypatch.setattr(ro, "_BUILD_LOCK", tmp_path / ec.RS_ORACLE_BUILD_LOCK)
     monkeypatch.setattr(ro, "_sources_newer_than", lambda _binary: False)
@@ -30,7 +30,7 @@ def test_oracle_builds_once_then_execs_binary_directly(
     def fake_run(cmd: list[str], **_kwargs: object) -> types.SimpleNamespace:
         commands.append(cmd)
         if cmd[:2] == [ec.CARGO_BIN, ec.CARGO_BUILD]:
-            binary.write_text("built", encoding="utf-8")  # (H) simulate built binary
+            binary.write_text("built", encoding="utf-8")  # simulate built binary
             return types.SimpleNamespace(stdout="", returncode=0)
         assert cmd[0] == str(binary), f"must exec the binary directly, got {cmd}"
         return types.SimpleNamespace(stdout="{}", returncode=0)
@@ -56,6 +56,6 @@ def test_oracle_builds_once_then_execs_binary_directly(
 def test_binary_path_uses_platform_exe_suffix(
     os_name: str, expected_suffix: str
 ) -> None:
-    # (H) Cargo emits rs_oracle.exe on Windows; direct exec must target the real
-    # (H) filename or Windows workers build then fail to exec a nonexistent path.
+    # Cargo emits rs_oracle.exe on Windows; direct exec must target the real
+    # filename or Windows workers build then fail to exec a nonexistent path.
     assert ro._exe_suffix(os_name) == expected_suffix

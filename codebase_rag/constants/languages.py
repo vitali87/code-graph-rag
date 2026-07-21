@@ -1,4 +1,4 @@
-# (H) Supported languages, file extensions, metadata, and grammar modules.
+# Supported languages, file extensions, metadata, and grammar modules.
 
 from enum import StrEnum
 from typing import NamedTuple
@@ -17,7 +17,7 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-# (H) Source file extensions by language
+# Source file extensions by language
 EXT_PY = ".py"
 EXT_JS = ".js"
 EXT_JSX = ".jsx"
@@ -49,7 +49,7 @@ EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
 
-# (H) File extension tuples by language
+# File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_MJS, EXT_CJS)
 TS_EXTENSIONS = (EXT_TS, EXT_MTS, EXT_CTS)
@@ -86,7 +86,7 @@ LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
 DART_EXTENSIONS = (EXT_DART,)
 
-# (H) Package indicator files
+# Package indicator files
 PKG_INIT_PY = "__init__.py"
 PKG_CARGO_TOML = "Cargo.toml"
 PKG_CMAKE_LISTS = "CMakeLists.txt"
@@ -103,26 +103,26 @@ class CppFrontend(StrEnum):
 
 
 class CSharpFrontend(StrEnum):
-    # (H) AUTO resolves at run time: HYBRID wherever a dotnet toolchain is on
-    # (H) PATH, TREESITTER otherwise (resolve_csharp_frontend). The parser
-    # (H) fingerprint records the RESOLVED mode, so graphs built with and
-    # (H) without dotnet never share an identity.
+    # AUTO resolves at run time: HYBRID wherever a dotnet toolchain is on
+    # PATH, TREESITTER otherwise (resolve_csharp_frontend). The parser
+    # fingerprint records the RESOLVED mode, so graphs built with and
+    # without dotnet never share an identity.
     AUTO = "auto"
     TREESITTER = "treesitter"
     ROSLYN = "roslyn"
     HYBRID = "hybrid"
 
 
-# (H) JS/TS import specifier schemes that name genuinely external code (node
-# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
-# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
+# JS/TS import specifier schemes that name genuinely external code (node
+# builtins, package registries, URLs). A specifier with any OTHER scheme
+# (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
+# code under a non-file-path name, so its unresolved calls defer to the trie.
 JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
     {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
 )
-# (H) Module file extensions stripped when turning a tsconfig `paths` target into a
-# (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
-# (H) compound suffixes are handled before the bare `.ts`.
+# Module file extensions stripped when turning a tsconfig `paths` target into a
+# module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
+# compound suffixes are handled before the bare `.ts`.
 JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".d.mts",
     ".d.cts",
@@ -141,9 +141,9 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.base.json",
     "jsconfig.json",
 )
-# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
-# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# (H) unrelated aliases and there can be thousands of them under node_modules.
+# When searching subdirectories for tsconfig files (monorepo `frontend/`,
+# `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
+# unrelated aliases and there can be thousands of them under node_modules.
 TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
     {"node_modules", "dist", "build", "out", ".git"}
 )
@@ -258,19 +258,19 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
 }
 
-# (H) Index file names
+# Index file names
 INDEX_INIT = "__init__"
 INDEX_INDEX = "index"
 INDEX_MOD = "mod"
 INDEX_LUA_INIT = "init"
 
-# (H) File stems whose module is importable through the CONTAINING directory's
-# (H) name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
+# File stems whose module is importable through the CONTAINING directory's
+# name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
 
-# (H) Parser loader paths and args
+# Parser loader paths and args
 GRAMMARS_DIR = "grammars"
 TREE_SITTER_PREFIX = "tree-sitter-"
 TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
@@ -300,12 +300,12 @@ class TreeSitterModule(StrEnum):
     DART = "tree_sitter_dart"
 
 
-# (H) Directory names with a context-dependent ignore: `bin` is build output
-# (H) everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
+# Directory names with a context-dependent ignore: `bin` is build output
+# everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
 DIR_BIN = "bin"
 DIR_SRC = "src"
 
-# (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
+# Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(
     {
         ".cache",
@@ -357,5 +357,5 @@ IGNORE_SUFFIXES = frozenset(
     {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
 )
 
-# (H) pathspec style for .cgrignore / --exclude patterns (#495).
+# pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"

@@ -10,7 +10,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
-    # (H) Build the graph for `files` and return CALLS edges as (caller_qn, callee_qn).
+    # Build the graph for `files` and return CALLS edges as (caller_qn, callee_qn).
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -34,8 +34,8 @@ def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def test_direct_call_to_nested_function_is_traced(tmp_path: Path) -> None:
-    # (H) get_metadata defines traverse() and invokes it directly by name. The edge
-    # (H) get_metadata -> get_metadata.traverse must exist so traverse is not dead.
+    # get_metadata defines traverse() and invokes it directly by name. The edge
+    # get_metadata -> get_metadata.traverse must exist so traverse is not dead.
     src = (
         "def get_metadata(root):\n"
         "    def traverse(node):\n"
@@ -48,7 +48,7 @@ def test_direct_call_to_nested_function_is_traced(tmp_path: Path) -> None:
 
 
 def test_recursive_nested_function_self_call_is_traced(tmp_path: Path) -> None:
-    # (H) traverse calls itself; the self-recursive edge must resolve to the nested def.
+    # traverse calls itself; the self-recursive edge must resolve to the nested def.
     src = (
         "def get_metadata(root):\n"
         "    def traverse(node):\n"
@@ -61,8 +61,8 @@ def test_recursive_nested_function_self_call_is_traced(tmp_path: Path) -> None:
 
 
 def test_method_nested_function_call_is_traced(tmp_path: Path) -> None:
-    # (H) A nested def inside a method, called by name; the edge from the method to
-    # (H) the nested function must exist (OperationResult.get_metadata.traverse shape).
+    # A nested def inside a method, called by name; the edge from the method to
+    # the nested function must exist (OperationResult.get_metadata.traverse shape).
     src = (
         "class OperationResult:\n"
         "    def get_metadata(self):\n"
@@ -79,8 +79,8 @@ def test_method_nested_function_call_is_traced(tmp_path: Path) -> None:
 
 
 def test_nested_function_passed_to_builtin_filter_is_traced(tmp_path: Path) -> None:
-    # (H) filter_date_fn is defined locally and passed to filter(); the enclosing
-    # (H) scope must reference it so it is not reported dead (filter_runs shape).
+    # filter_date_fn is defined locally and passed to filter(); the enclosing
+    # scope must reference it so it is not reported dead (filter_runs shape).
     src = (
         "def filter_runs(items):\n"
         "    def filter_date_fn(run):\n"
@@ -92,10 +92,10 @@ def test_nested_function_passed_to_builtin_filter_is_traced(tmp_path: Path) -> N
 
 
 def test_sibling_methods_resolve_own_nested_function(tmp_path: Path) -> None:
-    # (H) Two methods each define a nested traverse and call it. Each call must bind to
-    # (H) ITS OWN enclosing scope's nested function, not the first same-named sibling,
-    # (H) or the other method's traverse gets no inbound edge (OperationResult shape:
-    # (H) get_llm_results.traverse and get_metadata.traverse both exist).
+    # Two methods each define a nested traverse and call it. Each call must bind to
+    # ITS OWN enclosing scope's nested function, not the first same-named sibling,
+    # or the other method's traverse gets no inbound edge (OperationResult shape:
+    # get_llm_results.traverse and get_metadata.traverse both exist).
     src = (
         "class Op:\n"
         "    def get_a(self):\n"
@@ -115,8 +115,8 @@ def test_sibling_methods_resolve_own_nested_function(tmp_path: Path) -> None:
 def test_sibling_module_functions_resolve_own_nested_function(
     tmp_path: Path,
 ) -> None:
-    # (H) Two module-level functions each define a nested helper of the same name; each
-    # (H) call must bind to its own (run_determination/run_determinations._get_param).
+    # Two module-level functions each define a nested helper of the same name; each
+    # call must bind to its own (run_determination/run_determinations._get_param).
     src = (
         "def run_one(kwargs):\n"
         "    def _get_param(name):\n"
@@ -133,10 +133,10 @@ def test_sibling_module_functions_resolve_own_nested_function(
 
 
 def test_sibling_callback_args_resolve_own_nested_function(tmp_path: Path) -> None:
-    # (H) Two sibling functions each define a nested worker and pass it as a callback to
-    # (H) a consumer that invokes it. Each callback arg must resolve to ITS OWN nested
-    # (H) worker, so both workers are reached (create_context-as-kwarg shape). Without
-    # (H) threading the caller scope into callback resolution, both bind to the first.
+    # Two sibling functions each define a nested worker and pass it as a callback to
+    # a consumer that invokes it. Each callback arg must resolve to ITS OWN nested
+    # worker, so both workers are reached (create_context-as-kwarg shape). Without
+    # threading the caller scope into callback resolution, both bind to the first.
     src = (
         "def consume(cb):\n"
         "    return cb()\n\n\n"

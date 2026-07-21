@@ -1,12 +1,12 @@
-# (H) Provider logs
+# Provider logs
 PROVIDER_REGISTERED = "Registered provider: {name}"
 
-# (H) Graph loading logs
+# Graph loading logs
 LOADING_GRAPH = "Loading graph from {path}"
 LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
 ENSURING_PROJECT = "Ensuring Project: {name}"
 
-# (H) Pass logs
+# Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
 PASS_2_FILES = (
     "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
@@ -66,7 +66,7 @@ GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
 
-# (H) Analysis logs
+# Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
 REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolution"
 INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
@@ -76,13 +76,13 @@ REMOVED_FROM_CACHE = "  - Removed from ast_cache"
 REMOVING_QNS = "  - Removing {count} QNs from function_registry"
 CLEANED_SIMPLE_NAME = "  - Cleaned simple_name '{name}'"
 
-# (H) Function ingest logs
+# Function ingest logs
 FUNC_FOUND = "  Found Function: {name} (qn: {qn})"
 FUNC_EXPECTED_NODE = "Expected Node but got {actual_type}: {value}"
 METHOD_FOUND = "    Found Method: {name} (qn: {qn})"
 EXPORT_FOUND = "  Found {export_type}: {name} (qn: {qn})"
 
-# (H) Definition processor logs
+# Definition processor logs
 DEF_PARSING_AST = "Parsing and Caching AST for {language}: {path}"
 DEF_UNSUPPORTED_LANGUAGE = "Unsupported language '{language}' for {path}"
 DEF_NO_PARSER = "No parser available for {language}"
@@ -90,7 +90,7 @@ DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
 
-# (H) Semantic/embedding logs
+# Semantic/embedding logs
 SEMANTIC_NOT_AVAILABLE = (
     "Semantic search dependencies not available, skipping embedding generation"
 )
@@ -152,12 +152,12 @@ EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path
 EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
 EMBEDDING_CACHE_LOAD_FAILED = "Failed to load embedding cache from {path}: {error}"
 
-# (H) Multimodal attachment logs
+# Multimodal attachment logs
 MULTIMODAL_ATTACHED = "Attached multimodal content: {path}"
 MULTIMODAL_NOT_FOUND = "Multimodal path referenced but not found: {path}"
 MULTIMODAL_READ_FAILED = "Failed to read multimodal file '{path}': {error}"
 
-# (H) Protobuf service logs
+# Protobuf service logs
 PROTOBUF_INIT = "ProtobufFileIngestor initialized to write to: {path}"
 PROTOBUF_NO_MESSAGE_CLASS = (
     "No Protobuf message class found for label '{label}'. Skipping node."
@@ -174,7 +174,7 @@ PROTOBUF_INVALID_REL = (
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
 
-# (H) Parser loader logs
+# Parser loader logs
 BUILDING_BINDINGS = "Building Python bindings for {lang}..."
 BUILD_FAILED = "Failed to build {lang} bindings: stdout={stdout}, stderr={stderr}"
 BUILD_SUCCESS = "Successfully built {lang} bindings"
@@ -192,7 +192,7 @@ GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
 
-# (H) Ignore pattern logs
+# Ignore pattern logs
 CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
@@ -201,7 +201,7 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
 
-# (H) File watcher logs
+# File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
 WATCHER_DEBOUNCE_ACTIVE = (
     "File watcher active with debouncing (debounce={debounce}s, max_wait={max_wait}s)"
@@ -230,7 +230,7 @@ INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
 LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
 
-# (H) Build logs
+# Build logs
 BUILD_BINARY = "Building binary: {name}"
 BUILD_PROGRESS = "This may take a few minutes..."
 BUILD_READY = "Binary is ready for distribution!"
@@ -239,13 +239,7 @@ BINARY_SIZE = "Size: {size:.1f} MB"
 BUILD_STDOUT = "STDOUT: {stdout}"
 BUILD_STDERR = "STDERR: {stderr}"
 
-# (H) No-docs check logs
-NO_DOCS_VIOLATIONS_FOUND = (
-    "No-docs violations found (module docstrings or inline comments):"
-)
-NO_DOCS_ERROR = "  {error}"
-
-# (H) Graph summary logs
+# Graph summary logs
 GRAPH_SUMMARY = "Graph Summary:"
 GRAPH_TOTAL_NODES = "   Total nodes: {count:,}"
 GRAPH_TOTAL_RELS = "   Total relationships: {count:,}"
@@ -263,19 +257,19 @@ GRAPH_ANALYSIS_COMPLETE = "Analysis complete!"
 GRAPH_ANALYSIS_ERROR = "Error analyzing graph: {error}"
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 
-# (H) FQN logs
+# FQN logs
 FQN_RESOLVE_FAILED = "Failed to resolve FQN for node at {path}: {error}"
 FQN_FIND_FAILED = "Failed to find function by FQN {fqn} in {path}: {error}"
 FQN_EXTRACT_FAILED = "Failed to extract function FQNs from {path}: {error}"
 
-# (H) Source extraction logs
+# Source extraction logs
 SOURCE_FILE_NOT_FOUND = "Source file not found: {path}"
 SOURCE_INVALID_RANGE = "Invalid line range: {start}-{end}"
 SOURCE_RANGE_EXCEEDS = "Line range {start}-{end} exceeds file length {length} in {path}"
 SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
-# (H) Memgraph logs
+# Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
@@ -332,12 +326,12 @@ MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
 MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
 
-# (H) LLM/Cypher logs
+# LLM/Cypher logs
 CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"
 CYPHER_GENERATED = "  [CypherGenerator] Generated Cypher: {query}"
 CYPHER_ERROR = "  [CypherGenerator] Error: {error}"
 
-# (H) Tool file logs
+# Tool file logs
 TOOL_FILE_READ = "[FileReader] Attempting to read file: {path}"
 TOOL_FILE_READ_SUCCESS = "[FileReader] Successfully read text from {path}"
 TOOL_FILE_BINARY = "[FileReader] {message}"
@@ -370,13 +364,13 @@ TOOL_SHELL_ALREADY_TERMINATED = (
 )
 TOOL_SHELL_ERROR = "An error occurred while executing command: {error}"
 
-# (H) Shell timing log
+# Shell timing log
 SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
 
-# (H) Generic function timing log
+# Generic function timing log
 FUNC_TIMING = "{func} completed in {time:.2f}ms"
 
-# (H) File editor logs
+# File editor logs
 EDITOR_NO_PARSER = "No parser available for {path}"
 EDITOR_NO_LANG_CONFIG = "No language config found for extension {ext}"
 EDITOR_FUNC_NOT_FOUND_AT_LINE = "No function '{name}' found at line {line}"
@@ -406,11 +400,11 @@ EDITOR_NO_CHANGES_IDENTICAL = (
 EDITOR_SURGICAL_FAILED = "Surgical patches failed to apply cleanly"
 EDITOR_SURGICAL_ERROR = "Error during surgical block replacement: {error}"
 
-# (H) Directory lister logs
+# Directory lister logs
 DIR_LISTING = "Listing contents of directory: {path}"
 DIR_LIST_ERROR = "Error listing directory {path}: {error}"
 
-# (H) Semantic search logs
+# Semantic search logs
 SEMANTIC_NO_MATCH = "No semantic matches found for query: {query}"
 SEMANTIC_FOUND = "Found {count} semantic matches for: {query}"
 SEMANTIC_FAILED = "Semantic search failed for query '{query}': {error}"
@@ -420,29 +414,29 @@ SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
 SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
 SEMANTIC_TOOL_SOURCE = "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"
 
-# (H) Code retrieval logs
+# Code retrieval logs
 CODE_RETRIEVER_INIT = "CodeRetriever initialized with root: {root}"
 CODE_RETRIEVER_SEARCH = "[CodeRetriever] Searching for: {name}"
 CODE_RETRIEVER_ERROR = "[CodeRetriever] Error: {error}"
 CODE_TOOL_RETRIEVE = "[Tool:GetCode] Retrieving code for: {name}"
 
-# (H) Tool init logs
+# Tool init logs
 FILE_EDITOR_INIT = "FileEditor initialized with root: {root}"
 FILE_READER_INIT = "FileReader initialized with root: {root}"
 SHELL_COMMANDER_INIT = "ShellCommander initialized with root: {root}"
 
-# (H) Tool error logs
+# Tool error logs
 FILE_EDITOR_WARN = "[FileEditor] {msg}"
 FILE_EDITOR_ERR = "[FileEditor] {msg}"
 FILE_EDITOR_ERR_EDIT = "[FileEditor] Error editing file {path}: {error}"
 FILE_READER_ERR = "Error reading file {path}: {error}"
 
-# (H) File writer logs
+# File writer logs
 FILE_WRITER_INIT = "FileWriter initialized with root: {root}"
 FILE_WRITER_CREATE = "[FileWriter] Creating file: {path}"
 FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {path}"
 
-# (H) Error logs (used with logger.error/warning)
+# Error logs (used with logger.error/warning)
 UNEXPECTED = "An unexpected error occurred: {error}"
 EXPORT_ERROR = "Export error: {error}"
 STATS_ERROR = "Stats error: {error}"
@@ -454,7 +448,7 @@ PATH_NOT_IN_QUESTION = (
 )
 FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of project root."
 
-# (H) Call processor logs
+# Call processor logs
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
 CALL_FOUND_NODES = "Found {count} call nodes in {language} for {caller}"
@@ -503,7 +497,7 @@ CALL_UNEXPECTED_PARENT = (
     "Unexpected parent type for node {node}: {parent_type}. Skipping."
 )
 
-# (H) Dependency parser logs
+# Dependency parser logs
 DEP_PARSE_ERROR_PYPROJECT = "Error parsing pyproject.toml {path}: {error}"
 DEP_PARSE_ERROR_REQUIREMENTS = "Error parsing requirements.txt {path}: {error}"
 DEP_PARSE_ERROR_PACKAGE_JSON = "Error parsing package.json {path}: {error}"
@@ -514,7 +508,7 @@ DEP_PARSE_ERROR_COMPOSER = "Error parsing composer.json {path}: {error}"
 DEP_PARSE_ERROR_CSPROJ = "Error parsing .csproj {path}: {error}"
 DEP_PARSE_ERROR_PUBSPEC = "Error parsing pubspec.yaml {path}: {error}"
 
-# (H) Import processor logs
+# Import processor logs
 IMP_TOOL_NOT_AVAILABLE = "External tool '{tool}' not available for stdlib introspection"
 IMP_CACHE_LOADED = "Loaded stdlib cache from {path}"
 IMP_CACHE_LOAD_ERROR = "Could not load stdlib cache: {error}"
@@ -556,11 +550,11 @@ IMP_CPP_PARTITION = "C++20 module partition import: {partition} -> {full}"
 IMP_GENERIC = "Generic import parsing for {language}: {node_type}"
 IMP_PY_SOURCE_ROOT = "Python source root: {name} -> {path}"
 
-# (H) Structure processor logs
+# Structure processor logs
 STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"
 STRUCT_IDENTIFIED_FOLDER = "  Identified Folder: '{relative_root}'"
 
-# (H) Class ingest logs
+# Class ingest logs
 CLASS_CPP_MODULE_INTERFACE = "  Found C++ Module Interface: {qn}"
 CLASS_CPP_MODULE_IMPL = "  Found C++ Module Implementation: {qn}"
 CLASS_FOUND_INTERFACE = "  Found Interface: {name} (qn: {qn})"
@@ -579,7 +573,7 @@ CLASS_PASS_4 = "--- Pass 4: Processing Method Override Relationships ---"
 CLASS_METHOD_OVERRIDE = "Method override: {method_qn} OVERRIDES {parent_method_qn}"
 CLASS_CPP_INHERITANCE = "Found C++ inheritance: {parent_name} -> {parent_qn}"
 
-# (H) Java type inference logs
+# Java type inference logs
 JAVA_VAR_TYPE_MAP_BUILT = "Built Java variable type map with {count} entries"
 JAVA_VAR_TYPE_MAP_FAILED = "Failed to build Java variable type map: {error}"
 JAVA_PARAM = "Parameter: {name} -> {type}"
@@ -601,7 +595,7 @@ JAVA_INSTANCE_NOT_FOUND = "Instance method not found: {type}.{method}"
 JAVA_ENHANCED_FOR_VAR = "Enhanced for loop variable: {name} -> {type}"
 JAVA_ENHANCED_FOR_VAR_ALT = "Enhanced for loop variable (alt): {name} -> {type}"
 
-# (H) JS type inference logs
+# JS type inference logs
 JS_VAR_DECLARATOR_FOUND = "Found variable declarator: {var_name} in {module_qn}"
 JS_VAR_INFERRED = "Inferred JS variable: {var_name} -> {var_type}"
 JS_VAR_INFER_FAILED = "Could not infer type for variable: {var_name}"
@@ -628,14 +622,14 @@ JS_METHOD_RETURN_ERROR = (
     "Error inferring JS method return type for {method_call}: {error}"
 )
 
-# (H) Lua type inference logs
+# Lua type inference logs
 LUA_VAR_TYPE_MAP_BUILT = "Built Lua variable type map with {count} variables"
 LUA_VAR_INFERRED = "Inferred Lua variable: {var_name} -> {var_type}"
 LUA_TYPE_INFERENCE_RETURN = (
     "Lua type inference: {class_name}:{method_name}() returns {class_qn}"
 )
 
-# (H) Python type inference logs
+# Python type inference logs
 PY_BUILD_VAR_MAP_FAILED = "Failed to build local variable type map: {error}"
 PY_PARAM_TYPE_INFERRED = "Inferred parameter type: {param} -> {type}"
 PY_TYPE_INFER_ATTEMPT = (
@@ -670,7 +664,7 @@ PY_FOUND_METHOD = "      Found method: {name}"
 PY_FOUND_INIT_METHOD = "      Found __init__ method!"
 PY_INIT_NOT_FOUND = "  No __init__ method found in class body"
 
-# (H) JS/TS ingest logs
+# JS/TS ingest logs
 JS_PROTOTYPE_INHERITANCE = "Prototype inheritance: {child_qn} INHERITS {parent_qn}"
 JS_PROTOTYPE_INHERITANCE_FAILED = "Failed to detect prototype inheritance: {error}"
 JS_PROTOTYPE_METHOD_FOUND = "  Found Prototype Method: {method_name} (qn: {method_qn})"
@@ -695,7 +689,7 @@ JS_ASSIGNMENT_ARROW_DETECT_FAILED = (
     "Failed to detect assignment arrow functions: {error}"
 )
 
-# (H) JS/TS module system logs
+# JS/TS module system logs
 JS_COMMONJS_DESTRUCTURE_FAILED = (
     "Failed to process CommonJS destructuring pattern: {error}"
 )
@@ -712,7 +706,7 @@ JS_COMMONJS_EXPORTS_DETECT_FAILED = "Failed to detect CommonJS exports: {error}"
 JS_ES6_EXPORTS_QUERY_FAILED = "Failed to process ES6 exports query: {error}"
 JS_ES6_EXPORTS_DETECT_FAILED = "Failed to detect ES6 exports: {error}"
 
-# (H) MCP tool logs
+# MCP tool logs
 MCP_INDEXING_REPO = "[MCP] Indexing repository at: {path}"
 MCP_CLEARING_DB = "[MCP] Clearing existing database to avoid conflicts..."
 MCP_DB_CLEARED = "[MCP] Database cleared. Starting fresh indexing..."
@@ -746,7 +740,7 @@ MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"
 MCP_ASK_AGENT = "[MCP] ask_agent: {question}"
 MCP_ASK_AGENT_ERROR = "[MCP] Error running ask_agent: {error}"
 
-# (H) MCP server logs
+# MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"
 MCP_SERVER_NO_ROOT = (
     "[GraphCode MCP] No project root configured, using current directory: {path}"
@@ -774,7 +768,7 @@ MCP_HTTP_SERVER_READY = (
     "[GraphCode MCP] HTTP server ready. MCP endpoint: http://{host}:{port}/mcp"
 )
 
-# (H) Incremental update logs
+# Incremental update logs
 HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
@@ -791,7 +785,7 @@ PARSER_FINGERPRINT_MISMATCH = (
     "stale. Run 'cgr start --clean' to rebuild it from scratch."
 )
 
-# (H) Orphan pruning logs
+# Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"
@@ -805,20 +799,20 @@ FILE_UNREADABLE = (
 )
 INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
 
-# (H) Exclude prompt logs
+# Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
 EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 
-# (H) Model switching logs
+# Model switching logs
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
 
-# (H) Progress bar logs
+# Progress bar logs
 PROGRESS_INDEXING_LABEL = "[bold blue]Indexing files..."
 PROGRESS_FILES_PROCESSED = "{count} processed"
 
-# (H) Capture selection logs
+# Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "

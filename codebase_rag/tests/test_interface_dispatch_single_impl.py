@@ -16,12 +16,12 @@ def _calls(tmp_path: Path, name: str, body: str) -> set[tuple[str, str]]:
 def test_single_implementer_interface_call_dispatches_to_concrete(
     tmp_path: Path,
 ) -> None:
-    # (H) `s.run()` on an interface-typed receiver: the STATIC callee is the
-    # (H) interface method (removing its declaration breaks the call), and with
-    # (H) exactly ONE implementer the concrete SvcImpl.run is what runs. Emit
-    # (H) BOTH edges: interface-only binding orphaned the sole impl in Rust (no
-    # (H) OVERRIDES there), impl-only binding orphaned the interface stub
-    # (H) (gson's FieldNamingStrategy.translateName reported dead).
+    # `s.run()` on an interface-typed receiver: the STATIC callee is the
+    # interface method (removing its declaration breaks the call), and with
+    # exactly ONE implementer the concrete SvcImpl.run is what runs. Emit
+    # BOTH edges: interface-only binding orphaned the sole impl in Rust (no
+    # OVERRIDES there), impl-only binding orphaned the interface stub
+    # (gson's FieldNamingStrategy.translateName reported dead).
     calls = _calls(
         tmp_path,
         "Svc.java",
@@ -34,8 +34,8 @@ def test_single_implementer_interface_call_dispatches_to_concrete(
 
 
 def test_multi_implementer_interface_call_stays_on_interface(tmp_path: Path) -> None:
-    # (H) Two implementers -> ambiguous -> no concrete fan-out; the call stays on
-    # (H) the interface method (no wrong-impl edge). Recall preserved.
+    # Two implementers -> ambiguous -> no concrete fan-out; the call stays on
+    # the interface method (no wrong-impl edge). Recall preserved.
     calls = _calls(
         tmp_path,
         "Svc.java",
@@ -50,9 +50,9 @@ def test_multi_implementer_interface_call_stays_on_interface(tmp_path: Path) -> 
 
 
 def test_rust_single_trait_impl_dispatches_to_concrete(tmp_path: Path) -> None:
-    # (H) The Rust `impl Trait for Type` path must also feed the implementers map:
-    # (H) a trait-typed call keeps its static edge to the trait method AND fans
-    # (H) out to the sole concrete impl (Rust has no OVERRIDES edges to revive it).
+    # The Rust `impl Trait for Type` path must also feed the implementers map:
+    # a trait-typed call keeps its static edge to the trait method AND fans
+    # out to the sole concrete impl (Rust has no OVERRIDES edges to revive it).
     calls = _calls(
         tmp_path,
         "m.rs",
@@ -66,10 +66,10 @@ def test_rust_single_trait_impl_dispatches_to_concrete(tmp_path: Path) -> None:
 
 
 def test_sole_impl_targets_guard_branches() -> None:
-    # (H) Contract guards of interface_sole_impl_targets: a dot-less callee qn
-    # (H) has no interface component, and a mapped sole implementer that neither
-    # (H) defines nor inherits the method offers no concrete target -- both
-    # (H) return empty rather than fabricating an edge.
+    # Contract guards of interface_sole_impl_targets: a dot-less callee qn
+    # has no interface component, and a mapped sole implementer that neither
+    # defines nor inherits the method offers no concrete target -- both
+    # return empty rather than fabricating an edge.
     registry = FunctionRegistryTrie()
     registry["m.Svc.run"] = NodeType.METHOD
     resolver = CallResolver(
@@ -84,12 +84,12 @@ def test_sole_impl_targets_guard_branches() -> None:
 
 
 def test_cross_file_interface_field_keeps_interface_edge(tmp_path: Path) -> None:
-    # (H) The gson regression shape: a field declared with a CROSS-FILE interface
-    # (H) type (`private final FieldNamingStrategy fieldNamingPolicy;`) whose sole
-    # (H) implementer is an enum. #665's deferred-inherits resolver keys
-    # (H) interface_implementers by the RESOLVED interface qn, so the sole-impl
-    # (H) redirect started firing and stole the interface stub's only CALLS edge
-    # (H) -> FieldNamingStrategy.translateName reported dead. Both edges must exist.
+    # The gson regression shape: a field declared with a CROSS-FILE interface
+    # type (`private final FieldNamingStrategy fieldNamingPolicy;`) whose sole
+    # implementer is an enum. #665's deferred-inherits resolver keys
+    # interface_implementers by the RESOLVED interface qn, so the sole-impl
+    # redirect started firing and stole the interface stub's only CALLS edge
+    # -> FieldNamingStrategy.translateName reported dead. Both edges must exist.
     pkg = tmp_path / "com" / "example"
     pkg.mkdir(parents=True)
     (pkg / "Namer.java").write_text(

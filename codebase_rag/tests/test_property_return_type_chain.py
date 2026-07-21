@@ -1,8 +1,8 @@
-# (H) L3 finding from the evals/ harness: a method calls self.prop.method(), where
-# (H) self.prop is an @property whose declared return type names the class owning
-# (H) the real method. The property's return type must seed self.prop's type so the
-# (H) chained call resolves to the correct class instead of an ambiguous same-class
-# (H) method of the same name.
+# L3 finding from the evals/ harness: a method calls self.prop.method(), where
+# self.prop is an @property whose declared return type names the class owning
+# the real method. The property's return type must seed self.prop's type so the
+# chained call resolves to the correct class instead of an ambiguous same-class
+# method of the same name.
 from __future__ import annotations
 
 from pathlib import Path

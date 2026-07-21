@@ -854,7 +854,7 @@ void demonstrateComprehensiveLambdas() {
         if "comprehensive_lambdas" in call.args[0][2]
     ]
 
-    # (H) builtin operator edges no longer emitted (#652)
+    # builtin operator edges no longer emitted (#652)
     assert len(comprehensive_calls) >= 1, (
         f"Expected at least 2 comprehensive lambda calls, found {len(comprehensive_calls)}"
     )

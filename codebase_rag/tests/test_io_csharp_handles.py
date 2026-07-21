@@ -1,11 +1,11 @@
-# (H) C# I/O handles (issue #102 follow-up, second increment). The first C# I/O
-# (H) increment covered direct BCL sinks (Console/Environment/File); this adds
-# (H) `new`-shaped resource handles whose later method calls are attributed to the
-# (H) same resource: StreamReader/StreamWriter/FileStream (FILE), HttpClient
-# (H) (NETWORK) and ADO.NET SqlConnection/SqlCommand (DATABASE, incl. the
-# (H) `conn.CreateCommand()` derive). C# binds a declarator's initializer as the
-# (H) last UNFIELDED named child (no `value` field), so the binding walk needed
-# (H) that plumbing.
+# C# I/O handles (issue #102 follow-up, second increment). The first C# I/O
+# increment covered direct BCL sinks (Console/Environment/File); this adds
+# `new`-shaped resource handles whose later method calls are attributed to the
+# same resource: StreamReader/StreamWriter/FileStream (FILE), HttpClient
+# (NETWORK) and ADO.NET SqlConnection/SqlCommand (DATABASE, incl. the
+# `conn.CreateCommand()` derive). C# binds a declarator's initializer as the
+# last UNFIELDED named child (no `value` field), so the binding walk needed
+# that plumbing.
 from __future__ import annotations
 
 from pathlib import Path
@@ -165,10 +165,10 @@ def test_csharp_sqlcommand_execute_non_query_writes_database(tmp_path: Path) -> 
 
 
 def test_csharp_new_sqlcommand_inherits_connection_identity(tmp_path: Path) -> None:
-    # (H) A command constructed directly (`new SqlCommand(sql, conn)`) is a DATABASE
-    # (H) handle whose resource is the connection's, not the SQL text: when the
-    # (H) connection arg (arg1) is a locally-bound handle, the command inherits its
-    # (H) identity.
+    # A command constructed directly (`new SqlCommand(sql, conn)`) is a DATABASE
+    # handle whose resource is the connection's, not the SQL text: when the
+    # connection arg (arg1) is a locally-bound handle, the command inherits its
+    # identity.
     files = {
         "A.cs": (
             "using Microsoft.Data.SqlClient;\n"
@@ -188,8 +188,8 @@ def test_csharp_new_sqlcommand_inherits_connection_identity(tmp_path: Path) -> N
 
 
 def test_csharp_new_sqlcommand_unknown_connection_is_dynamic(tmp_path: Path) -> None:
-    # (H) When the connection arg is not a locally-bound handle (a parameter of
-    # (H) unknown origin), the command's resource identity is honestly <dynamic>.
+    # When the connection arg is not a locally-bound handle (a parameter of
+    # unknown origin), the command's resource identity is honestly <dynamic>.
     files = {
         "A.cs": (
             "using Microsoft.Data.SqlClient;\n"

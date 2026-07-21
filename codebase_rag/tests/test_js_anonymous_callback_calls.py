@@ -7,8 +7,8 @@ from evals.cgr_graph import _capture
 
 
 def _js_grammar_available() -> bool:
-    # (H) Skip when cgr's optional JavaScript tree-sitter grammar is not installed
-    # (H) (cgr would index zero .js functions), rather than hard-fail.
+    # Skip when cgr's optional JavaScript tree-sitter grammar is not installed
+    # (cgr would index zero .js functions), rather than hard-fail.
     from codebase_rag.parser_loader import load_parsers
 
     try:
@@ -45,12 +45,12 @@ def _make(root: Path) -> None:
 def test_call_inside_anonymous_callback_attributes_to_enclosing_method(
     tmp_path: Path,
 ) -> None:
-    # (H) A call inside an anonymous arrow passed as an argument
-    # (H) (`register('x', (c) => { helper() })`) has no name and no binding, so the
-    # (H) call loop skipped the arrow AND _calls_owned_by excluded its calls from
-    # (H) the enclosing method, dropping the call entirely. It must instead bubble
-    # (H) up to the nearest named scope (Plugin.apply). This callback pattern is
-    # (H) pervasive in real JS (e.g. webpack's hooks.tap(name, (x) => {...})).
+    # A call inside an anonymous arrow passed as an argument
+    # (`register('x', (c) => { helper() })`) has no name and no binding, so the
+    # call loop skipped the arrow AND _calls_owned_by excluded its calls from
+    # the enclosing method, dropping the call entirely. It must instead bubble
+    # up to the nearest named scope (Plugin.apply). This callback pattern is
+    # pervasive in real JS (e.g. webpack's hooks.tap(name, (x) => {...})).
     _make(tmp_path)
     ingestor = _capture(tmp_path, "proj")
     calls = {

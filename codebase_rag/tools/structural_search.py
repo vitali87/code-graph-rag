@@ -1,4 +1,4 @@
-# (H) Agentic tool wrapper for ast-grep structural search (#415).
+# Agentic tool wrapper for ast-grep structural search (#415).
 from __future__ import annotations
 
 import asyncio
@@ -14,8 +14,8 @@ from .ast_grep_service import AstGrepService
 
 def format_matches(matches: list[StructuralSearchMatch]) -> str:
     lines = [f"{m['file']}:{m['line']}:{m['column']}  {m['text']}" for m in matches]
-    # (H) make the result cap visible to the caller: without this the agent sees
-    # (H) a truncated list and assumes it is complete.
+    # make the result cap visible to the caller: without this the agent sees
+    # a truncated list and assumes it is complete.
     if len(matches) >= cs.AST_GREP_MAX_RESULTS:
         lines.append(cs.AST_GREP_TRUNCATED.format(limit=cs.AST_GREP_MAX_RESULTS))
     return "\n".join(lines)
@@ -26,13 +26,13 @@ def create_structural_search_tool(service: AstGrepService) -> Tool:
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:
-            # (H) offload to a thread: search does blocking os.walk + file reads
-            # (H) and CPU-bound AST parsing, which would stall the event loop.
+            # offload to a thread: search does blocking os.walk + file reads
+            # and CPU-bound AST parsing, which would stall the event loop.
             matches = await asyncio.to_thread(
                 service.search, pattern, language=language
             )
-        # (H) catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
-        # (H) (RuntimeError and others); report it rather than crash the turn.
+        # catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
+        # (RuntimeError and others); report it rather than crash the turn.
         except Exception as e:
             return str(e)
         if not matches:

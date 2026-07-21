@@ -1,9 +1,9 @@
-# (H) Switch-family path-sensitivity for the lean non-Python flow walk: Go
-# (H) switch/type-switch/select and Rust match arms are EXCLUSIVE (no
-# (H) fallthrough), while C-family switches (JS/TS, Java colon groups, C++)
-# (H) may fall through, so each case entry unions the previous case's exit.
-# (H) MAY semantics throughout: a kill counts only when it happens on every
-# (H) path through the statement.
+# Switch-family path-sensitivity for the lean non-Python flow walk: Go
+# switch/type-switch/select and Rust match arms are EXCLUSIVE (no
+# fallthrough), while C-family switches (JS/TS, Java colon groups, C++)
+# may fall through, so each case entry unions the previous case's exit.
+# MAY semantics throughout: a kill counts only when it happens on every
+# path through the statement.
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,9 +40,9 @@ def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
 
 
 def test_python_match_arm_kill_does_not_erase_other_arms(tmp_path: Path) -> None:
-    # (H) Python's own match statement needs the same arm isolation the other
-    # (H) languages' switches got: a kill in one case must not erase the
-    # (H) other arms' (or the no-match path's) taint.
+    # Python's own match statement needs the same arm isolation the other
+    # languages' switches got: a kill in one case must not erase the
+    # other arms' (or the no-match path's) taint.
     files = {
         "m.py": (
             "import os\n\n"
@@ -61,8 +61,8 @@ def test_python_match_arm_kill_does_not_erase_other_arms(tmp_path: Path) -> None
 
 
 def test_python_match_kill_on_every_arm_with_wildcard_kills(tmp_path: Path) -> None:
-    # (H) An unguarded `case _` always matches, so a kill on every arm
-    # (H) including it kills on every path: no edge.
+    # An unguarded `case _` always matches, so a kill on every arm
+    # including it kills on every path: no edge.
     files = {
         "m.py": (
             "import os\n\n"
@@ -81,9 +81,9 @@ def test_python_match_kill_on_every_arm_with_wildcard_kills(tmp_path: Path) -> N
 
 
 def test_python_match_bare_capture_is_irrefutable(tmp_path: Path) -> None:
-    # (H) `case other:` is a CAPTURE pattern (a bare name binds, it never
-    # (H) compares), so it always matches like `case _`: a kill on every arm
-    # (H) including it kills on every path.
+    # `case other:` is a CAPTURE pattern (a bare name binds, it never
+    # compares), so it always matches like `case _`: a kill on every arm
+    # including it kills on every path.
     files = {
         "m.py": (
             "import os\n\n"
@@ -102,7 +102,7 @@ def test_python_match_bare_capture_is_irrefutable(tmp_path: Path) -> None:
 
 
 def test_python_match_as_wildcard_is_irrefutable(tmp_path: Path) -> None:
-    # (H) `case _ as y:` wraps an irrefutable pattern: still always matches.
+    # `case _ as y:` wraps an irrefutable pattern: still always matches.
     files = {
         "m.py": (
             "import os\n\n"
@@ -121,8 +121,8 @@ def test_python_match_as_wildcard_is_irrefutable(tmp_path: Path) -> None:
 def test_python_match_or_pattern_with_wildcard_is_irrefutable(
     tmp_path: Path,
 ) -> None:
-    # (H) `case 1 | _:` covers everything through its wildcard alternative
-    # (H) (only the LAST alternative may legally be irrefutable).
+    # `case 1 | _:` covers everything through its wildcard alternative
+    # (only the LAST alternative may legally be irrefutable).
     files = {
         "m.py": (
             "import os\n\n"
@@ -173,8 +173,8 @@ def test_python_match_refutable_or_pattern_keeps_skip_path(tmp_path: Path) -> No
 
 
 def test_python_match_refutable_patterns_keep_skip_path(tmp_path: Path) -> None:
-    # (H) A dotted value pattern (`case Color.RED`) and a sequence pattern
-    # (H) compare rather than bind: the no-match path survives their kills.
+    # A dotted value pattern (`case Color.RED`) and a sequence pattern
+    # compare rather than bind: the no-match path survives their kills.
     files = {
         "m.py": (
             "import os\n\n"
@@ -191,8 +191,8 @@ def test_python_match_refutable_patterns_keep_skip_path(tmp_path: Path) -> None:
 
 
 def test_python_match_guarded_wildcard_keeps_skip_path(tmp_path: Path) -> None:
-    # (H) `case _ if cond` can fail its guard, so the no-match path survives
-    # (H) even when every listed arm kills.
+    # `case _ if cond` can fail its guard, so the no-match path survives
+    # even when every listed arm kills.
     files = {
         "m.py": (
             "import os\n\n"
@@ -209,7 +209,7 @@ def test_python_match_guarded_wildcard_keeps_skip_path(tmp_path: Path) -> None:
 
 
 def test_python_match_arms_are_exclusive(tmp_path: Path) -> None:
-    # (H) Taint bound in one arm must not reach a sink in another arm.
+    # Taint bound in one arm must not reach a sink in another arm.
     files = {
         "m.py": (
             "import os\n\n"
@@ -248,8 +248,8 @@ def test_go_switch_case_kill_does_not_erase_other_arms(tmp_path: Path) -> None:
 
 
 def test_go_switch_kill_on_every_arm_with_default_kills(tmp_path: Path) -> None:
-    # (H) With a default present some arm always runs, so a kill on EVERY arm
-    # (H) (including default) kills on every path: no edge.
+    # With a default present some arm always runs, so a kill on EVERY arm
+    # (including default) kills on every path: no edge.
     files = {
         "main.go": (
             "package main\n\n"
@@ -271,8 +271,8 @@ def test_go_switch_kill_on_every_arm_with_default_kills(tmp_path: Path) -> None:
 
 
 def test_go_switch_arms_are_exclusive(tmp_path: Path) -> None:
-    # (H) Go has no implicit fallthrough: taint bound in case 1 must not reach
-    # (H) a sink in case 2.
+    # Go has no implicit fallthrough: taint bound in case 1 must not reach
+    # a sink in case 2.
     files = {
         "main.go": (
             "package main\n\n"
@@ -293,9 +293,9 @@ def test_go_switch_arms_are_exclusive(tmp_path: Path) -> None:
 
 
 def test_go_explicit_fallthrough_carries_case_taint(tmp_path: Path) -> None:
-    # (H) Go's `fallthrough` keyword (legal only as an arm's last statement)
-    # (H) transfers control into the next case: the taint bound in case 1 must
-    # (H) reach the sink in case 2.
+    # Go's `fallthrough` keyword (legal only as an arm's last statement)
+    # transfers control into the next case: the taint bound in case 1 must
+    # reach the sink in case 2.
     files = {
         "main.go": (
             "package main\n\n"
@@ -404,10 +404,10 @@ def test_java_arrow_switch_rule_kill_does_not_erase_other_rules(
 
 
 def test_java_stacked_default_label_kills_skip_path(tmp_path: Path) -> None:
-    # (H) `case 1: default:` stacks both labels on ONE group: the arm is the
-    # (H) default target, so some arm always runs and the kill inside it kills
-    # (H) on every path. Only the first label being `case` must not hide the
-    # (H) default.
+    # `case 1: default:` stacks both labels on ONE group: the arm is the
+    # default target, so some arm always runs and the kill inside it kills
+    # on every path. Only the first label being `case` must not hide the
+    # default.
     files = {
         "A.java": (
             "class A {\n"
@@ -429,9 +429,9 @@ def test_java_stacked_default_label_kills_skip_path(tmp_path: Path) -> None:
 
 
 def test_java_conditional_break_before_kill_keeps_taint(tmp_path: Path) -> None:
-    # (H) `if (c) break;` exits the switch BEFORE the kill, so the break path
-    # (H) carries the taint out even though every arm ends with a kill: the
-    # (H) exit state must be captured AT the break, not at the arm's end.
+    # `if (c) break;` exits the switch BEFORE the kill, so the break path
+    # carries the taint out even though every arm ends with a kill: the
+    # exit state must be captured AT the break, not at the arm's end.
     files = {
         "A.java": (
             "class A {\n"
@@ -456,8 +456,8 @@ def test_java_conditional_break_before_kill_keeps_taint(tmp_path: Path) -> None:
 
 
 def test_java_break_in_nested_loop_does_not_exit_switch(tmp_path: Path) -> None:
-    # (H) A break inside a loop nested in the arm targets the LOOP: the arm
-    # (H) still ends with the kill on every switch-exiting path, so no edge.
+    # A break inside a loop nested in the arm targets the LOOP: the arm
+    # still ends with the kill on every switch-exiting path, so no edge.
     files = {
         "A.java": (
             "class A {\n"
@@ -482,9 +482,9 @@ def test_java_break_in_nested_loop_does_not_exit_switch(tmp_path: Path) -> None:
 
 
 def test_java_trailing_break_does_not_fall_through(tmp_path: Path) -> None:
-    # (H) An arm ending in an UNCONDITIONAL break has no fall-through path:
-    # (H) its end state must not union into the next arm's entry, or taint
-    # (H) bound in case 1 fabricates a flow into case 2's sink.
+    # An arm ending in an UNCONDITIONAL break has no fall-through path:
+    # its end state must not union into the next arm's entry, or taint
+    # bound in case 1 fabricates a flow into case 2's sink.
     files = {
         "A.java": (
             "class A {\n"
@@ -507,8 +507,8 @@ def test_java_trailing_break_does_not_fall_through(tmp_path: Path) -> None:
 
 
 def test_java_colon_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
-    # (H) No break between the groups: taint bound in case 1 falls through to
-    # (H) the sink in case 2.
+    # No break between the groups: taint bound in case 1 falls through to
+    # the sink in case 2.
     files = {
         "A.java": (
             "class A {\n"
@@ -591,8 +591,8 @@ def test_js_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
 
 
 def test_js_do_while_loop_carried_taint(tmp_path: Path) -> None:
-    # (H) The sink precedes the bind in source order; a later iteration
-    # (H) carries the taint back: needs the mandatory-loop second pass.
+    # The sink precedes the bind in source order; a later iteration
+    # carries the taint back: needs the mandatory-loop second pass.
     files = {
         "m.js": (
             "export function work(x) {\n"

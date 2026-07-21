@@ -1,8 +1,8 @@
-# (H) Covers JavaScript node SPAN (end_line) validation: cgr's end_line for each
-# (H) node is graded against the TS-compiler-API oracle run over .js (which emits
-# (H) each node's full-span end line), joined on (kind, file, start). Exercises a
-# (H) class with a multi-line method signature, a multi-line arrow assigned to a
-# (H) const, and a nested arrow so spans are not trivially single line.
+# Covers JavaScript node SPAN (end_line) validation: cgr's end_line for each
+# node is graded against the TS-compiler-API oracle run over .js (which emits
+# each node's full-span end line), joined on (kind, file, start). Exercises a
+# class with a multi-line method signature, a multi-line arrow assigned to a
+# const, and a nested arrow so spans are not trivially single line.
 from __future__ import annotations
 
 from pathlib import Path

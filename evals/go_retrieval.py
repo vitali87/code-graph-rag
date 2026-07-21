@@ -1,9 +1,9 @@
-# (H) Multi-language retrieval (Go). Extends the file-level call-localization
-# (H) benchmark to a second language: for each first-party Go symbol, which files
-# (H) call it. cgr's Go CALLS edges (reduced to caller file + callee simple name)
-# (H) are graded against go/ast call sites over the same first-party name universe.
-# (H) The oracle uses Go's own parser, independent of cgr's tree-sitter frontend,
-# (H) so this measures cgr's cross-file Go call resolution against ground truth.
+# Multi-language retrieval (Go). Extends the file-level call-localization
+# benchmark to a second language: for each first-party Go symbol, which files
+# call it. cgr's Go CALLS edges (reduced to caller file + callee simple name)
+# are graded against go/ast call sites over the same first-party name universe.
+# The oracle uses Go's own parser, independent of cgr's tree-sitter frontend,
+# so this measures cgr's cross-file Go call resolution against ground truth.
 from pathlib import Path
 from typing import Annotated
 

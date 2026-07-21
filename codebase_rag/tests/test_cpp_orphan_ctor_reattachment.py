@@ -1,13 +1,13 @@
-# (H) Parse recovery that destroys a class specifier orphans the class's
-# (H) out-of-line ctors at module scope as TYPE-LESS plain-identifier
-# (H) definitions. Registering them as module Functions (a) steals the class's
-# (H) qualified name when the ctor precedes the class pass (the CLASS node gets
-# (H) a `@line` dedup suffix, breaking type resolution), and (b) leaves the
-# (H) ctor with no reachable qn: construction sites resolve to the CLASS and
-# (H) emit INSTANTIATES only, so the ctor reports dead (fmt base.basic_appender
-# (H) et al.). The fix: a name-matching registered class reattaches the orphan
-# (H) as a METHOD under the class, and C++ construction sites redirect a CALLS
-# (H) edge to the class's ctor methods exactly as Java/C# construction does.
+# Parse recovery that destroys a class specifier orphans the class's
+# out-of-line ctors at module scope as TYPE-LESS plain-identifier
+# definitions. Registering them as module Functions (a) steals the class's
+# qualified name when the ctor precedes the class pass (the CLASS node gets
+# a `@line` dedup suffix, breaking type resolution), and (b) leaves the
+# ctor with no reachable qn: construction sites resolve to the CLASS and
+# emit INSTANTIATES only, so the ctor reports dead (fmt base.basic_appender
+# et al.). The fix: a name-matching registered class reattaches the orphan
+# as a METHOD under the class, and C++ construction sites redirect a CALLS
+# edge to the class's ctor methods exactly as Java/C# construction does.
 from __future__ import annotations
 
 from pathlib import Path
@@ -86,9 +86,9 @@ def test_named_param_orphan_ctor_registers_as_class_method(
 
     methods = _nodes(mock_ingestor, cs.NodeLabel.METHOD)
     assert any(qn.endswith(".file.file") for qn in methods), methods
-    # (H) The class must keep its plain qualified name: the old module-Function
-    # (H) registration ran before the class pass and stole it, leaving the
-    # (H) CLASS node with a `@line` dedup suffix.
+    # The class must keep its plain qualified name: the old module-Function
+    # registration ran before the class pass and stole it, leaving the
+    # CLASS node with a `@line` dedup suffix.
     classes = _nodes(mock_ingestor, cs.NodeLabel.CLASS)
     assert any(qn.endswith(".file") and cs.DUP_QN_MARKER not in qn for qn in classes), (
         classes
@@ -126,8 +126,8 @@ def test_construction_call_emits_calls_to_ctor(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(mock_ingestor)
-    # (H) `auto w = widget(1)` runs the ctor; INSTANTIATES to the class alone
-    # (H) leaves the ctor unreachable (the fmt buffer.buffer dead-list class).
+    # `auto w = widget(1)` runs the ctor; INSTANTIATES to the class alone
+    # leaves the ctor unreachable (the fmt buffer.buffer dead-list class).
     assert any(
         src.endswith(".use_widget") and dst.endswith(".widget.widget")
         for src, dst in calls
@@ -165,6 +165,6 @@ def test_named_param_orphan_without_class_stays_module_function(
     run_updater(temp_repo, mock_ingestor)
 
     functions = _nodes(mock_ingestor, cs.NodeLabel.FUNCTION)
-    # (H) Named parameters prove the definition real even when no class bears
-    # (H) the name (a free function whose return type recovery destroyed).
+    # Named parameters prove the definition real even when no class bears
+    # the name (a free function whose return type recovery destroyed).
     assert any(qn.endswith(".write2digits") for qn in functions), functions

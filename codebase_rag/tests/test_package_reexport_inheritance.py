@@ -1,10 +1,10 @@
-# (H) A base written as a PACKAGE attribute (`forms.ModelForm` via `from django
-# (H) import forms`) names the re-exporting package, not the defining module
-# (H) (django.forms.models.ModelForm re-exported by django/forms/__init__'s
-# (H) star import). The deferred-INHERITS suffix match cannot bridge the missing
-# (H) `.models` segment, so the edge was dropped -- and with it every OVERRIDES
-# (H) relationship of the subclass (django BaseUserCreationForm._post_clean
-# (H) reported dead).
+# A base written as a PACKAGE attribute (`forms.ModelForm` via `from django
+# import forms`) names the re-exporting package, not the defining module
+# (django.forms.models.ModelForm re-exported by django/forms/__init__'s
+# star import). The deferred-INHERITS suffix match cannot bridge the missing
+# `.models` segment, so the edge was dropped -- and with it every OVERRIDES
+# relationship of the subclass (django BaseUserCreationForm._post_clean
+# reported dead).
 from __future__ import annotations
 
 from pathlib import Path
@@ -83,10 +83,10 @@ def test_override_of_reexported_base_method_is_recorded(
 def test_same_named_function_under_package_is_not_an_inheritance_target(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A factory FUNCTION with the base's simple name under the written
-    # (H) package must not be picked as the re-export target; with no class
-    # (H) candidate the base stays unresolved rather than corrupting the
-    # (H) hierarchy with an INHERITS edge onto a Function node.
+    # A factory FUNCTION with the base's simple name under the written
+    # package must not be picked as the re-export target; with no class
+    # candidate the base stays unresolved rather than corrupting the
+    # hierarchy with an INHERITS edge onto a Function node.
     project = temp_repo / "reexp2"
     (project / "pkg" / "formslib").mkdir(parents=True)
     (project / "pkg" / "__init__.py").write_text("", encoding="utf-8")
@@ -113,8 +113,8 @@ def test_same_named_function_under_package_is_not_an_inheritance_target(
 def test_non_exported_internal_class_is_not_an_inheritance_target(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The package __init__ exports nothing, so `forms.ModelForm` cannot
-    # (H) refer to the internal class; no INHERITS edge may be minted to it.
+    # The package __init__ exports nothing, so `forms.ModelForm` cannot
+    # refer to the internal class; no INHERITS edge may be minted to it.
     project = temp_repo / "reexp3"
     (project / "pkg" / "formslib").mkdir(parents=True)
     (project / "pkg" / "__init__.py").write_text("", encoding="utf-8")

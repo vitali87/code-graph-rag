@@ -8,8 +8,8 @@ from loguru import logger
 from . import constants as cs
 from . import logs as ls
 
-# (H) Relationships that are usually meaningless without a companion still
-# (H) enabled. Dropping the companion is obeyed, but warned about.
+# Relationships that are usually meaningless without a companion still
+# enabled. Dropping the companion is obeyed, but warned about.
 _SOFT_DEPENDENCIES: dict[cs.RelationshipType, cs.RelationshipType] = {
     cs.RelationshipType.OVERRIDES: cs.RelationshipType.INHERITS,
 }
@@ -86,10 +86,10 @@ def _base_rels(groups: Iterable[cs.CaptureGroup]) -> set[cs.RelationshipType]:
 
 
 def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
-    # (H) Tokens apply left-to-right so later ones win: a `none`/`all` base
-    # (H) clears everything before it, and group/rel add-drops after a base
-    # (H) survive. This makes `--capture none` override an inherited
-    # (H) `CGR_CAPTURE=io`, not just re-add whichever groups the set held.
+    # Tokens apply left-to-right so later ones win: a `none`/`all` base
+    # clears everything before it, and group/rel add-drops after a base
+    # survive. This makes `--capture none` override an inherited
+    # `CGR_CAPTURE=io`, not just re-add whichever groups the set held.
     enabled = _base_rels(cs.DEFAULT_CAPTURE_GROUPS)
     for token in tokens:
         token = token.strip()

@@ -1,9 +1,9 @@
-# (H) L3 finding from the evals/ harness: Python operator syntax dispatches to dunder
-# (H) methods at runtime: `k in reg` -> reg.__contains__, `reg[k]` -> reg.__getitem__,
-# (H) `reg[k] = v` -> reg.__setitem__, `len(reg)` -> reg.__len__. cgr only extracts
-# (H) call expressions, so these first-party method calls were never captured. They are
-# (H) emitted only when the operand's type resolves to a first-party class that defines
-# (H) the dunder, so builtin containers (dict/list) produce no spurious edges.
+# L3 finding from the evals/ harness: Python operator syntax dispatches to dunder
+# methods at runtime: `k in reg` -> reg.__contains__, `reg[k]` -> reg.__getitem__,
+# `reg[k] = v` -> reg.__setitem__, `len(reg)` -> reg.__len__. cgr only extracts
+# call expressions, so these first-party method calls were never captured. They are
+# emitted only when the operand's type resolves to a first-party class that defines
+# the dunder, so builtin containers (dict/list) produce no spurious edges.
 from __future__ import annotations
 
 from pathlib import Path

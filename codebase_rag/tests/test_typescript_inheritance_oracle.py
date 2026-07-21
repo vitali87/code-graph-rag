@@ -1,6 +1,6 @@
-# (H) Covers TypeScript inheritance-edge validation: cgr's INHERITS (class &
-# (H) interface extends) and IMPLEMENTS (class implements) edges are graded
-# (H) against the TypeScript-compiler-API oracle, by (source node, base name).
+# Covers TypeScript inheritance-edge validation: cgr's INHERITS (class &
+# interface extends) and IMPLEMENTS (class implements) edges are graded
+# against the TypeScript-compiler-API oracle, by (source node, base name).
 from __future__ import annotations
 
 from pathlib import Path

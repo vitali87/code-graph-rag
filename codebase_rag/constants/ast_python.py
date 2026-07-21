@@ -1,6 +1,6 @@
-# (H) Python tree-sitter node types and language constants.
+# Python tree-sitter node types and language constants.
 
-# (H) Python tree-sitter node types for type inference
+# Python tree-sitter node types for type inference
 TS_PY_IDENTIFIER = "identifier"
 TS_PY_TYPED_PARAMETER = "typed_parameter"
 TS_PY_TYPED_DEFAULT_PARAMETER = "typed_default_parameter"
@@ -45,19 +45,19 @@ TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
-# (H) Match statement: arms are exclusive; an UNGUARDED `case _` (empty
-# (H) case_pattern) always matches, removing the implicit no-match path.
+# Match statement: arms are exclusive; an UNGUARDED `case _` (empty
+# case_pattern) always matches, removing the implicit no-match path.
 TS_PY_MATCH_STATEMENT = "match_statement"
 TS_PY_CASE_CLAUSE = "case_clause"
 TS_PY_CASE_PATTERN = "case_pattern"
 TS_PY_FIELD_GUARD = "guard"
 FIELD_SUBJECT = "subject"
-# (H) A bare name in a case pattern parses as dotted_name with ONE identifier
-# (H) and is a CAPTURE (irrefutable); multi-part dotted names are value
-# (H) patterns that compare.
+# A bare name in a case pattern parses as dotted_name with ONE identifier
+# and is a CAPTURE (irrefutable); multi-part dotted names are value
+# patterns that compare.
 TS_PY_DOTTED_NAME = "dotted_name"
-# (H) `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
-# (H) node, invisible to named_children.
+# `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
+# node, invisible to named_children.
 TS_PY_UNION_PATTERN = "union_pattern"
 TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
@@ -72,8 +72,8 @@ TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 
-# (H) Python operator syntax dispatches to dunder methods at runtime; these names
-# (H) let the call extractor synthesize the implied <operand>.__dunder__ call.
+# Python operator syntax dispatches to dunder methods at runtime; these names
+# let the call extractor synthesize the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
 PY_BUILTIN_LEN = "len"
 PY_BUILTIN_GETATTR = "getattr"
@@ -83,57 +83,57 @@ PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
-# (H) Operands with these characters are not simple attribute/name chains (calls,
-# (H) nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
+# Operands with these characters are not simple attribute/name chains (calls,
+# nested subscripts, whitespace), so the operator-dispatch synthesizer skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
-# (H) Optional annotation handling: X | None names a single concrete class.
+# Optional annotation handling: X | None names a single concrete class.
 PY_UNION_SEPARATOR = "|"
 PY_NONE = "None"
-# (H) `-> Self` names the enclosing class, not a class called Self.
+# `-> Self` names the enclosing class, not a class called Self.
 PY_ANNOTATION_SELF = "Self"
 
-# (H) Python keyword identifiers
+# Python keyword identifiers
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"
-# (H) Visibility by naming convention: a leading underscore marks a private
-# (H) symbol, while a dunder (__x__) is public API invoked by the runtime.
+# Visibility by naming convention: a leading underscore marks a private
+# symbol, while a dunder (__x__) is public API invoked by the runtime.
 PY_NAME_UNDERSCORE = "_"
 PY_NAME_DUNDER = "__"
-# (H) typing.Protocol base name and the conventional XxxProtocol class suffix
-# (H) used to map a Protocol to its concrete implementer.
+# typing.Protocol base name and the conventional XxxProtocol class suffix
+# used to map a Protocol to its concrete implementer.
 PY_PROTOCOL = "Protocol"
 PY_METHOD_INIT = "__init__"
 DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 
-# (H) Eager builtins that invoke a callable argument synchronously within the
-# (H) caller's own stack frame; a function passed to one is invoked there, so the
-# (H) trace attributes the call to the enclosing function (no Python frame exists
-# (H) for the builtin). Lazy higher-order builtins (map/filter) are excluded:
-# (H) they defer invocation until the result is consumed, which may be elsewhere.
+# Eager builtins that invoke a callable argument synchronously within the
+# caller's own stack frame; a function passed to one is invoked there, so the
+# trace attributes the call to the enclosing function (no Python frame exists
+# for the builtin). Lazy higher-order builtins (map/filter) are excluded:
+# they defer invocation until the result is consumed, which may be elsewhere.
 HIGHER_ORDER_BUILTINS: frozenset[str] = frozenset({"sorted", "min", "max", "reduce"})
 
-# (H) Python attribute prefixes
+# Python attribute prefixes
 PY_SELF_PREFIX = "self."
 PY_CLS_PREFIX = "cls."
 
-# (H) Python type inference patterns
+# Python type inference patterns
 PY_VAR_PATTERN_ALL = "all_"
 PY_VAR_SUFFIX_PLURAL = "s"
 PY_CLASS_REPOSITORY = "Repository"
 PY_MODELS_BASE_PATH = ".models.base."
 PY_METHOD_CREATE = "create"
 
-# (H) Type inference scoring
+# Type inference scoring
 PY_SCORE_EXACT_MATCH = 100
 PY_SCORE_SUFFIX_MATCH = 90
 PY_SCORE_CONTAINS_BASE = 80
 
-# (H) Type inference defaults
+# Type inference defaults
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
-# (H) Recursion guard attributes
+# Recursion guard attributes
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
 GUARD_INHERITED_METHOD = "_inherited_method_guard"

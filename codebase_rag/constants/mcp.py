@@ -1,9 +1,9 @@
-# (H) MCP server tool names, schema fields, and messages.
+# MCP server tool names, schema fields, and messages.
 
 from enum import StrEnum
 
 
-# (H) MCP tool names
+# MCP tool names
 class MCPToolName(StrEnum):
     LIST_PROJECTS = "list_projects"
     DELETE_PROJECT = "delete_project"
@@ -22,20 +22,20 @@ class MCPToolName(StrEnum):
     ASK_AGENT = "ask_agent"
 
 
-# (H) MCP transport selection
+# MCP transport selection
 class MCPTransport(StrEnum):
     STDIO = "stdio"
     HTTP = "http"
 
 
-# (H) MCP environment variables
+# MCP environment variables
 class MCPEnvVar(StrEnum):
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
     CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
     PWD = "PWD"
 
 
-# (H) MCP schema types
+# MCP schema types
 class MCPSchemaType(StrEnum):
     OBJECT = "object"
     STRING = "string"
@@ -43,7 +43,7 @@ class MCPSchemaType(StrEnum):
     BOOLEAN = "boolean"
 
 
-# (H) MCP schema fields
+# MCP schema fields
 class MCPSchemaField(StrEnum):
     TYPE = "type"
     PROPERTIES = "properties"
@@ -52,7 +52,7 @@ class MCPSchemaField(StrEnum):
     DEFAULT = "default"
 
 
-# (H) MCP parameter names
+# MCP parameter names
 class MCPParamName(StrEnum):
     PROJECT_NAME = "project_name"
     CONFIRM = "confirm"
@@ -73,7 +73,7 @@ class MCPParamName(StrEnum):
     DRY_RUN = "dry_run"
 
 
-# (H) MCP server constants
+# MCP server constants
 MCP_SERVER_NAME = "code-graph-rag"
 MCP_CONTENT_TYPE_TEXT = "text"
 MCP_DEFAULT_DIRECTORY = "."
@@ -82,7 +82,7 @@ MCP_LOG_LEVEL_INFO = "INFO"
 MCP_LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
 
-# (H) MCP response messages
+# MCP response messages
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
 MCP_INDEX_SUCCESS_PROJECT = "Successfully indexed repository at {path}. Project '{project_name}' has been updated."
 MCP_INDEX_ERROR = "Error indexing repository: {error}"
@@ -100,7 +100,7 @@ MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
 MCP_WIPE_ERROR = "Error wiping database: {error}"
 
-# (H) MCP dict keys and values
+# MCP dict keys and values
 MCP_KEY_RESULTS = "results"
 MCP_KEY_ERROR = "error"
 MCP_KEY_FOUND = "found"

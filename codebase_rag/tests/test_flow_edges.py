@@ -14,7 +14,7 @@ from codebase_rag.parsers.flow_access import FlowKind
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
-# (H) One FLOWS_TO edge as (from_qn, to_qn, properties).
+# One FLOWS_TO edge as (from_qn, to_qn, properties).
 FlowEdge = tuple[str, str, dict[str, str]]
 
 
@@ -114,9 +114,9 @@ def test_return_value_flows_from_callee_to_caller(tmp_path: Path) -> None:
 
 
 def test_direct_return_of_tainted_callee_emits_return_edge(tmp_path: Path) -> None:
-    # (H) `return inner()` consumes inner's tainted return just as `v = inner()`
-    # (H) does, so the callee->caller return edge must fire at the direct-return
-    # (H) site too, not only at assignment sites.
+    # `return inner()` consumes inner's tainted return just as `v = inner()`
+    # does, so the callee->caller return edge must fire at the direct-return
+    # site too, not only at assignment sites.
     files = {
         "m.py": (
             "import os\n\n"
@@ -129,8 +129,8 @@ def test_direct_return_of_tainted_callee_emits_return_edge(tmp_path: Path) -> No
 
 
 def test_return_parenthesized_tainted_value_emits_flow(tmp_path: Path) -> None:
-    # (H) A returned value wrapped in parentheses is still the same tainted value;
-    # (H) the return edge and downstream resource flow must survive the wrapper.
+    # A returned value wrapped in parentheses is still the same tainted value;
+    # the return edge and downstream resource flow must survive the wrapper.
     files = {
         "m.py": (
             "import os\n\n"
@@ -149,8 +149,8 @@ def test_return_parenthesized_tainted_value_emits_flow(tmp_path: Path) -> None:
 
 
 def test_return_tuple_with_tainted_element_emits_flow(tmp_path: Path) -> None:
-    # (H) `return a, b` wraps the values in an expression_list; a tainted element
-    # (H) must still be seen as a returned tainted value.
+    # `return a, b` wraps the values in an expression_list; a tainted element
+    # must still be seen as a returned tainted value.
     files = {
         "m.py": (
             "import os\n\n"
@@ -163,8 +163,8 @@ def test_return_tuple_with_tainted_element_emits_flow(tmp_path: Path) -> None:
 
 
 def test_return_taint_reaches_resource_sink(tmp_path: Path) -> None:
-    # (H) A value returned from a tainted callee carries its source resource, so a
-    # (H) later sink emits the full resource->resource flow, not just the return edge.
+    # A value returned from a tainted callee carries its source resource, so a
+    # later sink emits the full resource->resource flow, not just the return edge.
     files = {
         "m.py": (
             "import os\n\n"
@@ -198,7 +198,7 @@ def test_taint_propagates_through_plain_assignment(tmp_path: Path) -> None:
 
 
 def test_untainted_arg_emits_no_flow(tmp_path: Path) -> None:
-    # (H) Co-occurrence of a read source and an unrelated call is not flow.
+    # Co-occurrence of a read source and an unrelated call is not flow.
     files = {
         "m.py": (
             "import os\n\n"
@@ -211,8 +211,8 @@ def test_untainted_arg_emits_no_flow(tmp_path: Path) -> None:
 
 
 def test_overwrite_with_literal_kills_taint(tmp_path: Path) -> None:
-    # (H) Reassigning a tainted local to a safe literal kills its taint; the later
-    # (H) sink must not emit a resource->resource flow (no stale-taint false positive).
+    # Reassigning a tainted local to a safe literal kills its taint; the later
+    # sink must not emit a resource->resource flow (no stale-taint false positive).
     files = {
         "m.py": (
             "import os\n\n"
@@ -227,7 +227,7 @@ def test_overwrite_with_literal_kills_taint(tmp_path: Path) -> None:
 
 
 def test_overwrite_with_untainted_name_kills_taint(tmp_path: Path) -> None:
-    # (H) Reassigning a tainted local from an untainted variable also kills taint.
+    # Reassigning a tainted local from an untainted variable also kills taint.
     files = {
         "m.py": (
             "import os\n\n"
@@ -248,8 +248,8 @@ def test_default_capture_emits_no_flow(tmp_path: Path) -> None:
 
 
 def test_flow_only_capture_still_ensures_resource_nodes(tmp_path: Path) -> None:
-    # (H) FLOWS_TO enabled, READS_FROM/WRITES_TO dropped: the resource endpoints of a
-    # (H) FLOWS_TO edge must still be ensured so no edge dangles to a missing node.
+    # FLOWS_TO enabled, READS_FROM/WRITES_TO dropped: the resource endpoints of a
+    # FLOWS_TO edge must still be ensured so no edge dangles to a missing node.
     capture = resolve_capture(
         [cs.CAPTURE_TOKEN_NONE, f"{cs.CAPTURE_ADD_PREFIX}{FLOWS_TO}"]
     )
@@ -274,8 +274,8 @@ def test_flow_only_capture_still_ensures_resource_nodes(tmp_path: Path) -> None:
 
 
 def test_multiple_returns_distinct_sources_all_flow(tmp_path: Path) -> None:
-    # (H) A callee returning DIFFERENT tainted sources on different branches must
-    # (H) carry ALL origins to the caller's sink, not just the first-seen one.
+    # A callee returning DIFFERENT tainted sources on different branches must
+    # carry ALL origins to the caller's sink, not just the first-seen one.
     files = {
         "m.py": (
             "import os\n\n"

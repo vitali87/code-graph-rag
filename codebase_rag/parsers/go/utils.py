@@ -27,9 +27,9 @@ def extract_receiver_type_name(node: Node) -> str | None:
 
 
 def extract_return_type_name(node: Node) -> str | None:
-    # (H) Bare name of a Go function/method's single return type (`Root() *Command`
-    # (H) -> "Command"), for chained-call resolution. A parameter_list result
-    # (H) (multiple/named returns) is ambiguous for chaining, so it is skipped.
+    # Bare name of a Go function/method's single return type (`Root() *Command`
+    # -> "Command"), for chained-call resolution. A parameter_list result
+    # (multiple/named returns) is ambiguous for chaining, so it is skipped.
     result = node.child_by_field_name(cs.FIELD_RESULT)
     if result is None or result.type == cs.TS_GO_PARAMETER_LIST:
         return None
@@ -37,12 +37,12 @@ def extract_return_type_name(node: Node) -> str | None:
 
 
 def extract_first_return_type_name(node: Node) -> str | None:
-    # (H) FIRST return type of a Go function, for typing `v, err := f()`
-    # (H) bindings under the (T, error) idiom. Unlike extract_return_type_name
-    # (H) (chaining, where a multi-return callee is uncallable so the skip is
-    # (H) correct), a parameter_list result contributes its first declared
-    # (H) type, and a qualified `pkg.T` keeps its dotted text so a local bound
-    # (H) to an external package's type stays typed rather than trie-guessed.
+    # FIRST return type of a Go function, for typing `v, err := f()`
+    # bindings under the (T, error) idiom. Unlike extract_return_type_name
+    # (chaining, where a multi-return callee is uncallable so the skip is
+    # correct), a parameter_list result contributes its first declared
+    # type, and a qualified `pkg.T` keeps its dotted text so a local bound
+    # to an external package's type stays typed rather than trie-guessed.
     result = node.child_by_field_name(cs.FIELD_RESULT)
     if result is None:
         return None
@@ -67,11 +67,11 @@ def _first_return_identifier(type_node: Node) -> str | None:
 
 
 def _return_type_identifier(type_node: Node) -> str | None:
-    # (H) Like type_identifier_text but does NOT unwrap composite types: a
-    # (H) `[]Command`/`map[k]Command`/`chan Command` return is a container, and a
-    # (H) chained call lands on the container, not the element, so it must not be
-    # (H) unwrapped to "Command" (which would emit a false edge). Only a plain
-    # (H) type_identifier, a pointer to one (`*Command`), or a generic base resolves.
+    # Like type_identifier_text but does NOT unwrap composite types: a
+    # `[]Command`/`map[k]Command`/`chan Command` return is a container, and a
+    # chained call lands on the container, not the element, so it must not be
+    # unwrapped to "Command" (which would emit a false edge). Only a plain
+    # type_identifier, a pointer to one (`*Command`), or a generic base resolves.
     if type_node.type in cs.TS_GO_CONTAINER_TYPES:
         return None
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
@@ -86,7 +86,7 @@ def _return_type_identifier(type_node: Node) -> str | None:
 def type_identifier_text(type_node: Node) -> str | None:
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
         return safe_decode_text(type_node)
-    # (H) Unwrap pointer (*T) and generic (T[P]) receivers down to the base name.
+    # Unwrap pointer (*T) and generic (T[P]) receivers down to the base name.
     for child in type_node.children:
         if name := type_identifier_text(child):
             return name

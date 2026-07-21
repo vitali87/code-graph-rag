@@ -1,5 +1,5 @@
-# (H) Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
-# (H) and Cypher deletion in _process_files for hash-cache-detected deletions.
+# Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
+# and Cypher deletion in _process_files for hash-cache-detected deletions.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

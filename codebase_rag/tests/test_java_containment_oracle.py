@@ -1,8 +1,8 @@
-# (H) Covers Java containment-edge validation: cgr's DEFINES (file module ->
-# (H) every named type, including nested) and DEFINES_METHOD (class/interface/
-# (H) enum -> method) edges are graded against the independent JDK Compiler Tree
-# (H) API oracle, joined on (kind, file, line). Exercises an interface method, an
-# (H) enum method, and a nested class (cgr keeps type containment flat).
+# Covers Java containment-edge validation: cgr's DEFINES (file module ->
+# every named type, including nested) and DEFINES_METHOD (class/interface/
+# enum -> method) edges are graded against the independent JDK Compiler Tree
+# API oracle, joined on (kind, file, line). Exercises an interface method, an
+# enum method, and a nested class (cgr keeps type containment flat).
 from __future__ import annotations
 
 from pathlib import Path
