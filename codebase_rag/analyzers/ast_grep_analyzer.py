@@ -134,9 +134,12 @@ class FindingAnalyzer:
             if lang_rules is None:
                 continue
             try:
-                source = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                raw = file_path.read_bytes()
+            except OSError:
                 continue
+            # (H) decode with replacement so a few malformed bytes don't skip the
+            # (H) whole file; ast-grep tolerates U+FFFD in the source.
+            source = raw.decode("utf-8", errors="replace")
             try:
                 root = SgRoot(source, lang_rules.ast_grep_id).root()
             except (RuntimeError, ValueError) as exc:
