@@ -42,7 +42,7 @@ _DEFAULT_ROUTE_METHOD = "GET"
 # AST walk. The literal must open the argument list (a leading quote), which
 # rejects computed paths like (prefix + "/users").
 _DECORATOR_CALL_RE = re.compile(
-    r"^@[\w.]*?(?P<name>\w+)\(\s*(?P<quote>['\"])(?P<path>/[^'\"]*)(?P=quote)",
+    r"^@(?:\w+\.)*(?P<name>\w+)\(\s*(?P<quote>['\"])(?P<path>/[^'\"]*)(?P=quote)",
 )
 _METHODS_KWARG_RE = re.compile(r"methods\s*=\s*[\[({](?P<items>[^\])}]*)[\])}]")
 _METHOD_ITEM_RE = re.compile(r"['\"](\w+)['\"]")
@@ -133,17 +133,11 @@ def emit_endpoints(
             )
 
 
-def link_endpoints(ingestor: QueryProtocol) -> int:
-    """Resolve literal client request URLs to matching ENDPOINT resources.
-
-    Endpoint identities are ``METHOD /path/template``; a NETWORK resource
-    links to every endpoint whose template matches its URL path. Matching
-    is method-agnostic: the request method lives on the sink edge, not in
-    the Resource identity. Returns the number of edges emitted.
-    """
+def _collect_live_resources(
+    ingestor: QueryProtocol,
+) -> tuple[dict[str, str], dict[str, str]]:
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
-    ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks: dict[str, str] = {}
     endpoints: dict[str, str] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
@@ -157,6 +151,19 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
                 networks[qn] = name
             elif kind == ResourceKind.ENDPOINT.value:
                 endpoints[qn] = name
+    return networks, endpoints
+
+
+def link_endpoints(ingestor: QueryProtocol) -> int:
+    """Resolve literal client request URLs to matching ENDPOINT resources.
+
+    Endpoint identities are ``METHOD /path/template``; a NETWORK resource
+    links to every endpoint whose template matches its URL path. Matching
+    is method-agnostic: the request method lives on the sink edge, not in
+    the Resource identity. Returns the number of edges emitted.
+    """
+    ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
+    networks, endpoints = _collect_live_resources(ingestor)
 
     # The live ingestor both queries and writes; QueryProtocol alone types
     # the read side, so the single write goes through an ingestor view.
