@@ -21,7 +21,8 @@ rules:
                 any:
                   - kind: binary_expression
                   - kind: interpolated_string_expression
-        # cmd.CommandText = "SELECT " + x;
+        # cmd.CommandText = "SELECT * FROM ..." + x;  (require a real SQL shape so
+        # an unrelated obj.CommandText = "Choose " + x is not misflagged)
         - kind: assignment_expression
           all:
             - has: { regex: 'CommandText', stopBy: end }
@@ -30,6 +31,9 @@ rules:
                 any:
                   - kind: binary_expression
                   - kind: interpolated_string_expression
+            - has:
+                stopBy: end
+                regex: '(?i)(select\b.*\bfrom\b|insert\b.*\binto\b|update\b.*\bset\b|delete\b.*\bfrom\b)'
   - id: hardcoded_secret
     # Security rule: favour recall. A credential-named field, property, or
     # assignment target bound to a non-trivial (>=8 char) plain string literal.

@@ -405,7 +405,7 @@ _POSITIVE_FIXTURES = {
         "    dynamic x = 5;\n"
         "    if (y == null) {}\n"
         '    Process.run("ls", []);\n'
-        '    var q = "SELECT " + name;\n'
+        '    var q = "SELECT * FROM t WHERE id=" + name;\n'
         '    var password = "supersecretvalue";\n'
         "  }\n"
         "}\n"
@@ -567,6 +567,18 @@ def test_multilang_security_rules_avoid_common_false_positives(
         ("e.java", 'class A { void f(){ myExecutor.exec("job"); } }\n', "runtime_exec"),
         ("e.scala", "object O { def f() { list.exec() } }\n", "os_command_exec"),
         ("d.dart", 'void f(x){ var b = "Please select one " + x; }\n', "sqli_concat"),
+        # keyword-in-text must not read as a SQL sink without a real query shape
+        ("u.dart", 'void f(x){ var label = "Select " + option; }\n', "sqli_concat"),
+        (
+            "r.java",
+            'class A { void f(){ executor.exec("Runtime configuration"); } }\n',
+            "runtime_exec",
+        ),
+        (
+            "c.cs",
+            'class A { void f(){ request.CommandText = "Choose " + option; } }\n',
+            "sql_injection",
+        ),
     ]
     for name, src, rule_id in cases:
         names = [p[cs.KEY_NAME] for p in _fire(tmp_path, name, src)]

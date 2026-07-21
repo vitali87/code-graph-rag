@@ -11,7 +11,9 @@ rules:
       kind: method_invocation
       all:
         - has: { field: name, regex: '^exec$' }
-        - has: { regex: '(?i)runtime', stopBy: end }
+        # Constrain to the receiver so a string arg mentioning "runtime" or an
+        # unrelated obj.exec() is not misflagged.
+        - has: { field: object, regex: '(?i)runtime', stopBy: end }
   - id: process_builder
     message: "ProcessBuilder spawns an external process; validate its input"
     rule:
