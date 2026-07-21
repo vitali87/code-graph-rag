@@ -982,9 +982,7 @@ class GraphUpdater:
                 {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
             )
             return frozenset(
-                path
-                for row in rows
-                if isinstance(path := row.get(cs.KEY_PATH), str)
+                path for row in rows if isinstance(path := row.get(cs.KEY_PATH), str)
             )
         except Exception:
             return frozenset()

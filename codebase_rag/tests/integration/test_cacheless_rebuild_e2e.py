@@ -48,7 +48,9 @@ class TestCachelessRebuild:
         source = repo / "main.py"
         source.write_text("def old_name():\n    return 1\n", encoding="utf-8")
         _index(memgraph_ingestor, repo)
-        assert any(qn.endswith(".old_name") for qn in _function_names(memgraph_ingestor))
+        assert any(
+            qn.endswith(".old_name") for qn in _function_names(memgraph_ingestor)
+        )
 
         # A fresh clone: same repo content evolves, but the cache files are
         # gone while the database still holds the previous parse.
