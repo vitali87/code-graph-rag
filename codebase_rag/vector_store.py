@@ -339,9 +339,7 @@ class QdrantVectorStore:
         # onto unrelated nodes, so the whole collection must go.
         try:
             client = get_qdrant_client()
-            client.delete_collection(
-                collection_name=settings.QDRANT_COLLECTION_NAME
-            )
+            client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
             client.create_collection(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 vectors_config=VectorParams(

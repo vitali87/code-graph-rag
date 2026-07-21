@@ -419,9 +419,7 @@ def test_clear_all_embeddings_qdrant_drops_and_recreates_collection(
     import codebase_rag.vector_store as vs
 
     mock_client = MagicMock()
-    with patch(
-        "codebase_rag.vector_store.get_qdrant_client", return_value=mock_client
-    ):
+    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
         vs.QdrantVectorStore().clear_all_embeddings()
 
     mock_client.delete_collection.assert_called_once_with(
@@ -437,12 +435,8 @@ def test_clear_all_embeddings_milvus_drops_and_recreates_collection(
 
     mock_client = MagicMock()
     with (
-        patch(
-            "codebase_rag.vector_store.get_milvus_client", return_value=mock_client
-        ),
-        patch(
-            "codebase_rag.vector_store._ensure_milvus_collection"
-        ) as mock_ensure,
+        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vector_store._ensure_milvus_collection") as mock_ensure,
     ):
         vs.MilvusVectorStore().clear_all_embeddings()
 
