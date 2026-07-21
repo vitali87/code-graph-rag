@@ -82,7 +82,9 @@ class TestFindSnippetAcrossProjects:
         ]
         retriever = CodeRetriever(str(current_repo), ingestor)
 
-        result = await retriever.find_code_snippet("order-service.src.handlers.get_user")
+        result = await retriever.find_code_snippet(
+            "order-service.src.handlers.get_user"
+        )
 
         assert result.found is True
         assert result.source_code == _SOURCE
