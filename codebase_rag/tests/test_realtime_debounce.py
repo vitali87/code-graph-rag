@@ -1,7 +1,5 @@
-# Tests for the realtime_updater debouncing functionality.
-#
-# These tests verify the hybrid debounce strategy that prevents redundant
-# graph updates during rapid file saves.
+# Tests for realtime_updater debouncing: the hybrid strategy that prevents
+# redundant graph updates during rapid file saves.
 
 from __future__ import annotations
 
@@ -133,8 +131,7 @@ class TestCodeChangeEventHandlerDebounce:
         )
 
         event = FileModifiedEvent(str(tmp_path / "some_dir"))
-        # The is_directory property is set by watchdog based on the event type
-        # For FileModifiedEvent, we need to check is_directory attribute
+        # watchdog derives is_directory from the event type; force it True here.
         object.__setattr__(event, "is_directory", True)
 
         handler.dispatch(event)

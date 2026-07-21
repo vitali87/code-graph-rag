@@ -1,0 +1,31 @@
+# ast-grep design-pattern rules for Lua (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: lua
+extensions: [.lua]
+rules:
+  - id: metatable_oop
+    message: "Metatable OOP: setmetatable() wires a table to its class table"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^setmetatable$' }
+  - id: index_metatable
+    message: "Class table: __index assigned for prototype-style inheritance"
+    rule:
+      kind: assignment_statement
+      has:
+        kind: dot_index_expression
+        has: { field: field, regex: '^__index$' }
+        stopBy: end
+  - id: factory_function
+    message: "Factory function: name starts with new/create/make"
+    rule:
+      kind: function_declaration
+      has: { kind: identifier, regex: '^(new|create|make)', stopBy: end }
+  - id: module_return
+    message: "Module pattern: chunk returns a single table variable"
+    rule:
+      kind: return_statement
+      has:
+        kind: expression_list
+        has: { kind: identifier, nthChild: 1 }

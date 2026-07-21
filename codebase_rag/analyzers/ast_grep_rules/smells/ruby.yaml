@@ -1,0 +1,31 @@
+# ast-grep code-smell rules for Ruby (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: ruby
+extensions: [.rb]
+rules:
+  - id: debug_print
+    message: "Leftover debug output (puts/p/pp/print)"
+    rule:
+      kind: call
+      has:
+        field: method
+        regex: '^(puts|pp|print|p)$'
+  - id: swallowed_rescue
+    message: "rescue that is empty or only returns nil hides errors"
+    rule:
+      kind: rescue
+      any:
+        # rescue with no handler body at all
+        - not:
+            has:
+              kind: then
+        # rescue whose body is just nil
+        - has:
+            kind: then
+            has:
+              kind: nil
+              stopBy: end
+  - id: global_variable
+    message: "Global variable ($var) couples code to shared mutable state"
+    rule:
+      kind: global_variable

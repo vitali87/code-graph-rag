@@ -95,11 +95,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 
 ## Comment Policy
 
-No inline comments are allowed unless they:
-
-1. Appear before any code at the top of the file
-2. Contain the `(H)` marker (intentional, human-written comment)
-3. Are type annotations (`type:`, `noqa`, `pyright`, `ty:`)
+Write comments that explain why and how, not what. A comment that only restates the adjacent code adds no value.
 
 ## Questions?
 

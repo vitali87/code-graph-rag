@@ -1,0 +1,34 @@
+# ast-grep design-pattern rules for C++ (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: cpp
+extensions: [.cpp, .cc, .cxx, .hpp, .hh]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static getInstance accessor"
+    rule:
+      kind: function_definition
+      all:
+        - has: { kind: storage_class_specifier, regex: '^static$', stopBy: end }
+        - has:
+            kind: function_declarator
+            has: { field: declarator, regex: '^getInstance$' }
+            stopBy: end
+  - id: factory_function
+    message: "Factory function: name starts with create/make/build"
+    rule:
+      kind: function_definition
+      has:
+        kind: function_declarator
+        has: { field: declarator, regex: '^(create|make|build)' }
+        stopBy: end
+  - id: abstract_class
+    message: "Abstract class: declares a pure virtual method (= 0)"
+    rule:
+      kind: class_specifier
+      has:
+        kind: field_declaration
+        all:
+          - has: { regex: '^virtual$', stopBy: end }
+          - regex: '=\s*0\s*;'
+        stopBy: end

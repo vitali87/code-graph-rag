@@ -129,6 +129,25 @@ def test_rules_load_and_meet_acceptance_counts() -> None:
         assert len(_labelled(js, cs.NodeLabel.SECURITY_ISSUE)) >= 3
 
 
+def test_every_language_has_all_three_categories() -> None:
+    # (H) Each supported grammar must ship patterns + smells + security with at
+    # (H) least 3 rules apiece, so a language never regresses to partial coverage.
+    from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
+
+    by_grammar: dict[str, dict] = {}
+    for lang in load_finding_rules().values():
+        counts = by_grammar.setdefault(lang.ast_grep_id, {})
+        for r in lang.rules:
+            counts[r.node_label] = counts.get(r.node_label, 0) + 1
+    for gid, counts in sorted(by_grammar.items()):
+        for label in (
+            cs.NodeLabel.PATTERN,
+            cs.NodeLabel.CODE_SMELL,
+            cs.NodeLabel.SECURITY_ISSUE,
+        ):
+            assert counts.get(label, 0) >= 3, f"{gid} has <3 {label}: {counts}"
+
+
 def test_analyzer_emits_node_and_edge_directly(tmp_path: Path) -> None:
     from codebase_rag.analyzers import FindingAnalyzer
 
@@ -155,8 +174,8 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
 
 
 def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
-    # `!=` coerces types exactly like `==`, so the loose_equality smell must
-    # catch it too; the strict `===`/`!==` forms must stay clean.
+    # (H) `!=` coerces types exactly like `==`, so the loose_equality smell must
+    # (H) catch it too; the strict `===`/`!==` forms must stay clean.
     from codebase_rag.analyzers import FindingAnalyzer
 
     src = tmp_path / "eq.js"
@@ -179,15 +198,10 @@ def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
     assert lines == [3, 4], lines
 
 
-def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
-    # Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
-    # ast-grep's bundled grammar silently matches nothing (the f_string class of
-    # bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
-    # future typo that zeroes a rule fails here instead of shipping dead.
-    from codebase_rag.analyzers import FindingAnalyzer
-    from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
-
-    py = (
+# Positive fixtures keyed by ast-grep grammar id. Each string is crafted to
+# trigger every rule shipped for that grammar; test_every_rule_fires asserts so.
+_POSITIVE_FIXTURES = {
+    "python": (
         "from mod import *\n"
         "class Config:\n    _instance = None\n"
         "class Ctx:\n    def __enter__(self): return self\n"
@@ -210,8 +224,8 @@ def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
         '    os.system("rm " + u)\n'
         "    subprocess.run(u, shell=True)\n"
         "    yaml.load(u); pickle.loads(u)\n"
-    )
-    js = (
+    ),
+    "javascript": (
         "class A { getInstance() { return 1; } }\n"
         "const p = new Promise((res) => res(1));\n"
         "function createThing() { return {}; }\n"
@@ -223,19 +237,223 @@ def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
         "eval(userInput);\n"
         "document.write(userInput);\n"
         'const password = "supersecretvalue123";\n'
-    )
-    # Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
-    # share the javascript grammar and rule set, so one fixture covers them.
-    by_grammar = {"python": py, "javascript": js, "typescript": js, "tsx": js}
+    ),
+    "rust": (
+        "struct S;\n"
+        "impl S { fn new() -> Self { S } }\n"
+        "trait Greet { fn hi(&self); }\n"
+        "impl Greet for S { fn hi(&self) {} }\n"
+        "fn build_it(conn: &Conn) -> i32 {\n"
+        "    let x: Option<i32> = None;\n"
+        "    let a = x.unwrap();\n"
+        '    let b = x.expect("no");\n'
+        "    dbg!(a);\n"
+        '    panic!("boom");\n'
+        "    unsafe { }\n"
+        '    let password = "supersecretvalue";\n'
+        '    std::process::Command::new("ls");\n'
+        '    conn.execute(format!("SELECT {}", a));\n'
+        "    b\n"
+        "}\n"
+    ),
+    "go": (
+        "package main\n"
+        'import ("fmt"; "os/exec"; "sync")\n'
+        "type Server struct { once sync.Once }\n"
+        "type Greeter interface { Hi() }\n"
+        "func NewServer() *Server { return nil }\n"
+        "func run(db DB) {\n"
+        '    fmt.Println("hi")\n'
+        '    panic("x")\n'
+        "    result, _ := doThing()\n"
+        "    _ = other()\n"
+        "    _ = result\n"
+        '    exec.Command("ls")\n'
+        '    db.Query("SELECT " + err)\n'
+        '    password := "supersecretvalue"\n'
+        "    _ = password\n"
+        "}\n"
+    ),
+    "java": (
+        "class FooBuilder {\n"
+        "    static Foo getInstance() { return null; }\n"
+        "    Foo createFoo() { return null; }\n"
+        "    FooBuilder self() { return this; }\n"
+        "    void go() {\n"
+        '        System.out.println("x");\n'
+        "        try { risky(); } catch (Exception e) {}\n"
+        "        try { risky(); } catch (IOException e) { e.printStackTrace(); }\n"
+        '        Runtime.getRuntime().exec("ls");\n'
+        '        new ProcessBuilder("ls");\n'
+        '        stmt.executeQuery("SELECT " + x);\n'
+        '        String password = "supersecretval";\n'
+        '        MessageDigest.getInstance("MD5");\n'
+        "    }\n"
+        "}\n"
+    ),
+    "c": (
+        "#include <stdio.h>\n"
+        "void* create_obj() { return 0; }\n"
+        "void init_sys() {}\n"
+        "void free_obj(void* p) {}\n"
+        "void run(char* src) {\n"
+        "    goto done;\n"
+        '    printf("dbg");\n'
+        "    while (1) { break; }\n"
+        "    char buf[10];\n"
+        "    strcpy(buf, src);\n"
+        '    system("ls");\n'
+        '    char *password = "supersecretvalue";\n'
+        "done: ;\n"
+        "}\n"
+    ),
+    "cpp": (
+        "#include <iostream>\n"
+        "using namespace std;\n"
+        "class Base { public: virtual void f() = 0; };\n"
+        "class Mgr {\n"
+        "  public:\n"
+        "    static Mgr& getInstance() { static Mgr m; return m; }\n"
+        "    static Mgr* create() { return nullptr; }\n"
+        "};\n"
+        "void run(char* src) {\n"
+        '    std::cout << "dbg";\n'
+        "    int* p = new int(5);\n"
+        "    char buf[10];\n"
+        '    system("ls");\n'
+        "    strcpy(buf, src);\n"
+        '    const char* password = "supersecretval";\n'
+        "}\n"
+    ),
+    "csharp": (
+        "abstract class FooBuilder {\n"
+        "    static Foo Instance;\n"
+        "    public Foo CreateFoo() { return null; }\n"
+        "    public void Dispose() {}\n"
+        "    public void Go() {\n"
+        '        Console.WriteLine("x");\n'
+        "        try { Risky(); } catch (Exception e) {}\n"
+        "        Thread.Sleep(100);\n"
+        '        Process.Start("ls");\n'
+        '        var cmd = new SqlCommand("SELECT " + x);\n'
+        '        string password = "supersecretvalue";\n'
+        "    }\n"
+        "}\n"
+    ),
+    "php": (
+        "<?php\n"
+        "abstract class Widget {\n"
+        "    public static function getInstance() { return null; }\n"
+        "    public function createThing() { return null; }\n"
+        "}\n"
+        "function build_widget() { return null; }\n"
+        "function run($db) {\n"
+        "    var_dump($x);\n"
+        '    @file_get_contents("x");\n'
+        "    if ($a == $b) {}\n"
+        "    global $conf;\n"
+        "    eval($code);\n"
+        '    system("ls");\n'
+        '    $db->query("SELECT " . $x);\n'
+        '    $password = "supersecretvalue";\n'
+        "}\n"
+    ),
+    "lua": (
+        "local M = {}\n"
+        "function new_obj()\n"
+        "    local self = setmetatable({}, M)\n"
+        "    return self\n"
+        "end\n"
+        "M.__index = M\n"
+        "function big(a, b, c, d, e, f, g, h) end\n"
+        "function run()\n"
+        '    print("dbg")\n'
+        "    counter = 5\n"
+        "    goto done\n"
+        '    load("code")\n'
+        '    os.execute("ls")\n'
+        '    dofile("x.lua")\n'
+        '    local password = "supersecretvalue"\n'
+        "    ::done::\n"
+        "end\n"
+        "return M\n"
+    ),
+    "scala": (
+        "object Registry {\n"
+        "  def apply(): Registry = new Registry()\n"
+        "  def create(): Registry = new Registry()\n"
+        "  var count = 0\n"
+        "  val x: String = null\n"
+        "  def run(): Unit = {\n"
+        '    println("dbg")\n'
+        "    val s = obj.asInstanceOf[String]\n"
+        '    Runtime.getRuntime.exec("ls")\n'
+        '    val q = "SELECT x" + name\n'
+        '    val password = "supersecretvalue1"\n'
+        "  }\n"
+        "}\n"
+        "case class Point(x: Int, y: Int)\n"
+        "class Registry\n"
+    ),
+    "dart": (
+        "abstract class ShapeBuilder {\n"
+        "  static final ShapeBuilder instance = ShapeBuilder._();\n"
+        "  factory ShapeBuilder.of() => instance;\n"
+        "  void run() {\n"
+        '    print("dbg");\n'
+        "    try { risky(); } catch (e) {}\n"
+        "    dynamic x = 5;\n"
+        "    if (y == null) {}\n"
+        '    Process.run("ls", []);\n'
+        '    db.rawQuery("SELECT * FROM t WHERE id=" + name);\n'
+        '    var password = "supersecretvalue";\n'
+        "  }\n"
+        "}\n"
+    ),
+    "ruby": (
+        "class Registry\n"
+        "  include Singleton\n"
+        "  def self.create\n"
+        "  end\n"
+        "  def run\n"
+        '    puts "dbg"\n'
+        "    begin\n"
+        "      risky\n"
+        "    rescue\n"
+        "    end\n"
+        "    $global = 5\n"
+        "    eval(code)\n"
+        '    system("ls")\n'
+        '    execute("SELECT #{x}")\n'
+        '    password = "supersecretvalue"\n'
+        "  end\n"
+        "end\n"
+    ),
+}
+_POSITIVE_FIXTURES["typescript"] = _POSITIVE_FIXTURES["javascript"]
+_POSITIVE_FIXTURES["tsx"] = _POSITIVE_FIXTURES["javascript"]
+
+
+def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
+    # (H) Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
+    # (H) ast-grep's bundled grammar silently matches nothing (the f_string class of
+    # (H) bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
+    # (H) future typo that zeroes a rule fails here instead of shipping dead.
+    from codebase_rag.analyzers import FindingAnalyzer
+    from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
+
+    # (H) Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
+    # (H) share the javascript grammar and rule set, so one fixture covers them.
+    by_grammar = _POSITIVE_FIXTURES
     for ext, lang in load_finding_rules().items():
-        # A new language with rules but no fixture would silently skip firing
-        # coverage; force a fixture mapping to exist for every loaded grammar.
+        # (H) A new language with rules but no fixture would silently skip firing
+        # (H) coverage; force a fixture mapping to exist for every loaded grammar.
         assert lang.ast_grep_id in by_grammar, (
             f"{ext}: no fixture for {lang.ast_grep_id}"
         )
         ids = [r.rule_id for r in lang.rules]
-        # The set comparison below is only sound if ids are unique per ext; a
-        # duplicate id could let one rule fire while its twin stays dead.
+        # (H) The set comparison below is only sound if ids are unique per ext; a
+        # (H) duplicate id could let one rule fire while its twin stays dead.
         assert len(ids) == len(set(ids)), f"{ext} duplicate rule ids: {ids}"
         stem = ext.replace(".", "")
         f = tmp_path / f"probe{stem}{ext}"
@@ -261,7 +479,7 @@ def _fire(tmp_path: Path, name: str, src: str) -> list:
 
 
 def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
-    # `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
+    # (H) `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
     src = (
         "a.innerHTML = x;\n"
         "b.innerHTML += y;\n"
@@ -278,9 +496,9 @@ def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
 
 
 def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
-    # `execute("... %s" % params)` is the classic printf-style injection, as
-    # dangerous as `+` concatenation; a parametrized query stays clean, and a
-    # numeric modulo (line 4) must NOT be mistaken for string formatting.
+    # (H) `execute("... %s" % params)` is the classic printf-style injection, as
+    # (H) dangerous as `+` concatenation; a parametrized query stays clean, and a
+    # (H) numeric modulo (line 4) must NOT be mistaken for string formatting.
     src = (
         'db.execute("SELECT " + u)\n'
         'db.execute("SELECT %s" % u)\n'
@@ -296,9 +514,9 @@ def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
 
 
 def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
-    # Modern factories are usually `const createX = () => {}` (arrow), a
-    # function expression, or a generator function expression, not a `function`
-    # declaration; catch all four. A non-factory name stays clean.
+    # (H) Modern factories are usually `const createX = () => {}` (arrow), a
+    # (H) function expression, or a generator function expression, not a `function`
+    # (H) declaration; catch all four. A non-factory name stays clean.
     src = (
         "function createA() { return {}; }\n"
         "const createB = () => ({});\n"
@@ -312,6 +530,70 @@ def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
         if p[cs.KEY_NAME] == "factory_function"
     )
     assert names == [1, 2, 3, 4], names
+
+
+def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> None:
+    # (H) In Go, `_, err := f()` keeps the error and is idiomatic; only a trailing
+    # (H) `_` (discarding the conventionally-last error) is the smell. The rule
+    # (H) must flag line 4 (result, _) and leave line 3 (_, err) clean.
+    src = (
+        "package main\n"
+        "func f() {\n"
+        "    _, err := doThing()\n"
+        "    result, _ := doThing()\n"
+        "    _ = err\n"
+        "    _ = result\n"
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "x.go", src)
+        if p[cs.KEY_NAME] == "ignored_error_shortvar"
+    )
+    assert lines == [4], lines
+
+
+def test_multilang_security_rules_avoid_common_false_positives(
+    tmp_path: Path,
+) -> None:
+    # (H) Precision guards for the widened multi-language rules: each benign
+    # (H) construct must NOT emit its neighbouring finding.
+    cases = [
+        (
+            "q.php",
+            '<?php build_query("a" . $x); $o->query_posts("z" . $w);\n',
+            "sqli_concat",
+        ),
+        ("e.java", 'class A { void f(){ myExecutor.exec("job"); } }\n', "runtime_exec"),
+        ("e.scala", "object O { def f() { list.exec() } }\n", "os_command_exec"),
+        # prose containing SQL keyword pairs must not read as a query without a
+        # real database sink around the concatenation
+        (
+            "d.dart",
+            'void f(x){ var b = "Please select a file from the list: " + x; }\n',
+            "sqli_concat",
+        ),
+        ("u.dart", 'void f(x){ var label = "Select " + option; }\n', "sqli_concat"),
+        # `== nullValue` is a normal comparison, not an explicit null check
+        (
+            "n.dart",
+            "void f(x, nullValue){ if (x == nullValue) {} }\n",
+            "double_equals_null",
+        ),
+        (
+            "r.java",
+            'class A { void f(){ executor.exec("Runtime configuration"); } }\n',
+            "runtime_exec",
+        ),
+        (
+            "c.cs",
+            'class A { void f(){ request.CommandText = "Choose " + option; } }\n',
+            "sql_injection",
+        ),
+    ]
+    for name, src, rule_id in cases:
+        names = [p[cs.KEY_NAME] for p in _fire(tmp_path, name, src)]
+        assert rule_id not in names, (name, rule_id, names)
 
 
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:

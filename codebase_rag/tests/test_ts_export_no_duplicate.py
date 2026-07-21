@@ -20,8 +20,8 @@ def _make(root: Path) -> None:
 def test_ts_exported_function_not_duplicated(tmp_path: Path) -> None:
     # An exported function / const-arrow is already ingested by the definition
     # pass at its natural qn (p.util.parsedType). The ES6-export pass must not
-    # re-register it -- doing so makes a spurious `qn@line` duplicate node and
-    # splits CALLS edges onto that duplicate, mangling the callee qn.
+    # re-register it: doing so makes a spurious `qn@line` duplicate that splits
+    # CALLS edges onto it, mangling the callee qn.
     _make(tmp_path)
     ingestor = _capture(tmp_path, "p")
     fn_qns = {str(uid) for (label, uid) in ingestor.nodes if label == "Function"}

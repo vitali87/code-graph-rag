@@ -42,8 +42,8 @@ def test_rust_impl_and_supertrait_edges(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "rs_inh.src.lib"
 
-    # impl Trait for Type -> Type IMPLEMENTS Trait.
+    # impl Trait for Type means Type IMPLEMENTS Trait.
     assert (f"{base}.Circle", f"{base}.Shape") in implements, implements
     assert (f"{base}.Circle", f"{base}.Drawable") in implements, implements
-    # Supertrait bound -> Sub INHERITS Super.
+    # Supertrait bound means Sub INHERITS Super.
     assert (f"{base}.Drawable", f"{base}.Shape") in inherits, inherits

@@ -1,7 +1,7 @@
 # L3 finding from the evals/ harness: accessing an @property getter runs the
-# getter method at runtime, but cgr saw a plain attribute access and emitted no
-# CALLS edge. A property access must produce a CALLS edge to the getter method,
-# while a normal attribute / method reference must not.
+# getter at runtime, but cgr saw a plain attribute access and emitted no CALLS
+# edge. A property access must produce a CALLS edge to the getter; a normal
+# attribute or method reference must not.
 from __future__ import annotations
 
 from pathlib import Path

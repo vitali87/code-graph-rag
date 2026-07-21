@@ -1,0 +1,29 @@
+# ast-grep code-smell rules for Dart (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: dart
+extensions: [.dart]
+rules:
+  - id: debug_print
+    message: "Leftover print() debug statement"
+    rule:
+      kind: call_expression
+      regex: '^print\s*\('
+  - id: empty_catch
+    message: "Empty catch block swallows the exception"
+    rule:
+      kind: block
+      regex: '^\{\s*\}$'
+      inside: { kind: try_statement, stopBy: end }
+      follows: { kind: catch_clause }
+  - id: dynamic_type
+    message: "dynamic type defeats static type checking"
+    rule:
+      kind: type_identifier
+      regex: '^dynamic$'
+  - id: double_equals_null
+    # Catch both orders: `x == null` and the Yoda form `null == x`.
+    message: "Prefer null-aware operators over explicit == null checks scattered in code"
+    rule:
+      kind: equality_expression
+      # Word boundaries so `null` matches only the literal, not `nullValue` etc.
+      regex: '(?:==\s*\bnull\b|\bnull\b\s*==)'

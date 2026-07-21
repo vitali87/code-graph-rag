@@ -1,0 +1,27 @@
+# ast-grep design-pattern rules for Rust (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: rust
+extensions: [.rs]
+rules:
+  - id: constructor_new
+    message: "Constructor: associated fn new returning Self"
+    rule:
+      kind: function_item
+      all:
+        - has: { field: name, regex: '^new$' }
+        - has: { field: return_type, regex: '^Self$' }
+  - id: factory_function
+    message: "Factory function: name starts with new/build/create/make"
+    rule:
+      kind: function_item
+      has: { field: name, regex: '^(new|build|create|make)' }
+  - id: trait_impl
+    message: "Trait implementation: impl Trait for Type"
+    rule:
+      kind: impl_item
+      has: { field: trait, regex: '.' }
+  - id: trait_definition
+    message: "Trait definition declares an interface"
+    rule:
+      kind: trait_item

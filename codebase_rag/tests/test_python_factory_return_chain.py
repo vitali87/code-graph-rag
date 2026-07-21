@@ -1,10 +1,9 @@
 # A Python chained call on a free-function factory receiver
-# (`get_resolver()._is_callback(name)`, django's urls/base.py) has the return of
-# a factory function as its receiver. Without inferring that return type the
-# final method binds to nothing and the returned class's methods report as dead
-# (django URLResolver._is_callback). cgr must infer the factory's return type
-# (annotation first, then return-statement analysis, transitively through
-# factory-calls-factory hops) and resolve the chained method on it.
+# (`get_resolver()._is_callback(name)`, django's urls/base.py) uses the factory's
+# return as its receiver. Without inferring that return type the final method
+# binds to nothing and the class's methods report dead (django
+# URLResolver._is_callback). cgr must infer the return type (annotation first,
+# then return-statement analysis, transitively through factory hops).
 from pathlib import Path
 
 from evals.cgr_graph import _capture
@@ -31,9 +30,9 @@ _DECOY = "class Aaa:\n    def run(self):\n        pass\n"
 
 
 def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # `make_widget().run()` where make_widget returns Widget() must reach
-    # Widget.run. Aaa.run is an alphabetical decoy: a bare trie fallback would
-    # pick it, so a passing test proves real return typing.
+    # `make_widget().run()` (make_widget returns Widget()) must reach Widget.run.
+    # Aaa.run is an alphabetical decoy a bare trie fallback would pick, so passing
+    # proves real return typing.
     _make(
         tmp_path,
         {
@@ -59,9 +58,9 @@ def test_free_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_imported_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # The factory and the returned class live in another module; the call site
-    # imports only the factory. The return type must resolve in the FACTORY's
-    # module scope, not the caller's.
+    # Factory and returned class live in another module; the call site imports
+    # only the factory, so the return type resolves in the FACTORY's module
+    # scope, not the caller's.
     _make(
         tmp_path,
         {
@@ -244,10 +243,9 @@ def test_local_var_factory_assignment_types_receiver(tmp_path: Path) -> None:
 
 
 def test_reexported_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # django imports get_resolver through package re-exports (`from
-    # django.urls import get_resolver` -> __init__ -> .resolvers): the import
-    # target is the package qn, not the registered function qn, so the
-    # resolution must follow the re-export hops.
+    # django imports get_resolver through package re-exports (`from django.urls
+    # import get_resolver` -> __init__ -> .resolvers): the import target is the
+    # package qn, not the function qn, so resolution follows the re-export hops.
     _make(
         tmp_path,
         {

@@ -70,8 +70,8 @@ public class Oracle {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    // (H) Simple name of an extends/implements type: drop generics and any
-    // (H) package/outer qualifier, matching how cgr resolves bases by simple name.
+    // Simple name of an extends/implements type: drop generics and any
+    // package/outer qualifier, matching how cgr resolves bases by simple name.
     static String simpleName(Object typeTree) {
         String s = typeTree.toString();
         int lt = s.indexOf('<');
@@ -92,9 +92,9 @@ public class Oracle {
             + "},\"target_name\":\"" + esc(targetName) + "\"}");
     }
 
-    // (H) A file-level call site: caller file + callee simple name (the method
-    // (H) identifier). The Python side keeps only callees whose name is a declared
-    // (H) first-party Method/Function, mirroring the Go/Rust call oracles.
+    // A file-level call site: caller file + callee simple name (the method
+    // identifier). The Python side keeps only callees whose name is a declared
+    // first-party Method/Function, mirroring the Go/Rust call oracles.
     static void emitCall(String file, String name) {
         calls.add("{\"file\":\"" + esc(file) + "\",\"name\":\"" + esc(name) + "\"}");
     }
@@ -119,7 +119,7 @@ public class Oracle {
                 return "Interface";
             case ENUM:
                 return "Enum";
-            // (H) cgr models an annotation type (@interface) as a Class.
+            // cgr models an annotation type (@interface) as a Class.
             default:
                 return "Class";
         }
@@ -162,23 +162,23 @@ public class Oracle {
             new TreePathScanner<Void, Void>() {
                 public Void visitClass(ClassTree node, Void p) {
                     long pos = sp.getStartPosition(unit, node);
-                    // (H) Anonymous classes have an empty name and no cgr node.
+                    // Anonymous classes have an empty name and no cgr node.
                     if (pos >= 0 && node.getSimpleName().length() > 0) {
                         long line = lm.getLineNumber(pos);
                         long endLine = lm.getLineNumber(sp.getEndPosition(unit, node));
                         String kind = classKind(node);
                         emit(kind, rel, line, endLine, node.getSimpleName().toString());
-                        // (H) Every named type is DEFINEd by the file module,
-                        // (H) including nested types (cgr keeps this flat).
+                        // Every named type is DEFINEd by the file module,
+                        // including nested types (cgr keeps this flat).
                         emitEdge("DEFINES", rel, "Module", MODULE_LINE, kind, line);
-                        // (H) extends superclass -> INHERITS (a class only).
+                        // extends superclass -> INHERITS (a class only).
                         if (node.getExtendsClause() != null) {
                             emitNameEdge("INHERITS", rel, kind, line,
                                 simpleName(node.getExtendsClause()));
                         }
-                        // (H) The implements clause holds a class/enum's interfaces
-                        // (H) (-> IMPLEMENTS) but an interface's superinterfaces
-                        // (H) (-> INHERITS, like cgr).
+                        // The implements clause holds a class/enum's interfaces
+                        // (-> IMPLEMENTS) but an interface's superinterfaces
+                        // (-> INHERITS, like cgr).
                         String hrel = node.getKind() == Tree.Kind.INTERFACE
                             ? "INHERITS" : "IMPLEMENTS";
                         for (Tree it : node.getImplementsClause()) {
@@ -191,10 +191,10 @@ public class Oracle {
                 public Void visitMethod(MethodTree node, Void p) {
                     long pos = sp.getStartPosition(unit, node);
                     if (pos >= 0) {
-                        // (H) cgr labels a member a Method only when its nearest
-                        // (H) enclosing named class precedes any enclosing method or
-                        // (H) lambda body; members of an anonymous class (declared in
-                        // (H) a method body) are modelled as standalone Functions.
+                        // cgr labels a member a Method only when its nearest
+                        // enclosing named class precedes any enclosing method or
+                        // lambda body; members of an anonymous class (declared in
+                        // a method body) are modelled as standalone Functions.
                         String kind = "Function";
                         ClassTree owner = null;
                         for (TreePath up = getCurrentPath().getParentPath();
@@ -213,11 +213,11 @@ public class Oracle {
                         long line = lm.getLineNumber(pos);
                         long endLine = lm.getLineNumber(sp.getEndPosition(unit, node));
                         emit(kind, rel, line, endLine, node.getName().toString());
-                        // (H) A Method binds to its enclosing named type; an
-                        // (H) anonymous-class member (Function) has no owner node,
-                        // (H) so cgr anchors it to the module with DEFINES (the
-                        // (H) orphan-prevention fallback) and the oracle models
-                        // (H) the same containment.
+                        // A Method binds to its enclosing named type; an
+                        // anonymous-class member (Function) has no owner node,
+                        // so cgr anchors it to the module with DEFINES (the
+                        // orphan-prevention fallback) and the oracle models
+                        // the same containment.
                         if (owner != null) {
                             long opos = sp.getStartPosition(unit, owner);
                             if (opos >= 0) {
@@ -233,11 +233,11 @@ public class Oracle {
                 }
 
                 public Void visitMethodInvocation(MethodInvocationTree node, Void p) {
-                    // (H) The callee simple name: the trailing identifier of a
-                    // (H) member-select (`obj.foo()`, `Type.bar()`) or a bare
-                    // (H) identifier (`foo()`, same-class or static-imported). A
-                    // (H) `super()`/`this()` constructor call yields "super"/"this"
-                    // (H) and is dropped downstream (never a declared method name).
+                    // The callee simple name: the trailing identifier of a
+                    // member-select (`obj.foo()`, `Type.bar()`) or a bare
+                    // identifier (`foo()`, same-class or static-imported). A
+                    // `super()`/`this()` constructor call yields "super"/"this"
+                    // and is dropped downstream (never a declared method name).
                     ExpressionTree sel = node.getMethodSelect();
                     String name = null;
                     if (sel instanceof MemberSelectTree) {

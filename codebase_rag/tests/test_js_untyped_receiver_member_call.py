@@ -1,10 +1,9 @@
 # A JS member call on an UNTYPED receiver (`view.render(opts, cb)` inside
-# `tryRender(view, cb)` -- the instance was constructed in the CALLER, so the
-# param has no inferred type) fell to the bare-name trie and mis-bound to the
-# same-module free function `render` (express's application.render): a false
-# edge AND the real prototype method View.render reported dead. A member call
-# targets a MEMBER: resolve to the unique member-like candidate (its parent qn
-# is itself registered) or drop; never rebind to a free function.
+# `tryRender(view, cb)`, the instance built in the CALLER) fell to the bare-name
+# trie and mis-bound to the same-module free function `render` (express's
+# application.render): a false edge, and the real View.render reported dead.
+# A member call targets a MEMBER: resolve to the unique member-like candidate
+# or drop; never rebind to a free function.
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,9 +55,9 @@ def test_var_require_visibility_disambiguates_member_call(
 ) -> None:
     # With a same-named prototype method in an UNRELATED module (express's
     # examples GithubView.render), uniqueness needs the import-visibility
-    # filter -- and express binds View with `var View = require('./view')`,
-    # a variable_declaration the require-mapping walk did not visit (it only
-    # handled const/let lexical_declarations).
+    # filter, and express binds View with `var View = require('./view')`, a
+    # variable_declaration the require-mapping walk did not visit (it handled
+    # only const/let lexical_declarations).
     root = temp_repo / "exvis"
     root.mkdir(parents=True)
     (root / "view.js").write_text(
@@ -108,10 +107,10 @@ def test_invisible_singleton_member_is_not_bound(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # An untyped member call in a file that neither defines nor imports the
-    # candidate's module (`client.render()` in an unrelated file) must NOT
-    # bind the repo's sole same-named member: visibility is required even
-    # for a singleton, else external-object calls grow false edges that hide
-    # real dead code.
+    # candidate's module (`client.render()` in an unrelated file) must NOT bind
+    # the repo's sole same-named member: visibility is required even for a
+    # singleton, else external-object calls grow false edges hiding real dead
+    # code.
     root = temp_repo / "exinv"
     root.mkdir(parents=True)
     (root / "view.js").write_text(

@@ -19,10 +19,10 @@ def _make_crate(root: Path) -> None:
 
 
 def test_rust_generic_impl_method_caller_qn_strips_generics(tmp_path: Path) -> None:
-    # A method in a generic impl block (`impl<'a> Thing for Chars<'a>`) is
-    # registered on the bare type node (crate.lib.Chars.go). The call inside it
-    # must be attributed to that bare-type caller qn, not a generic-bearing
-    # crate.lib.Chars<'a>.go that matches no node (which drops the CALLS edge).
+    # A method in a generic impl block (`impl<'a> Thing for Chars<'a>`) registers
+    # on the bare type node (crate.lib.Chars.go). The call inside must attribute
+    # to that bare-type caller qn, not a generic-bearing crate.lib.Chars<'a>.go
+    # that matches no node and drops the CALLS edge.
     _make_crate(tmp_path)
     ingestor = _capture(tmp_path, "crate")
     calls = {
@@ -48,11 +48,10 @@ def _make_super_import_crate(root: Path) -> None:
 
 
 def test_rust_super_imported_free_fn_call_resolves(tmp_path: Path) -> None:
-    # A free function imported by a Rust relative path (`use super::b::helper`)
-    # and called bare must resolve to the sibling-module function node
-    # (crate.b.helper). The import target is recorded as raw `super::b::helper`
-    # (`::`-separated, not project-prefixed), so the external-import guard must
-    # not mistake it for an external symbol and suppress the trie fallback.
+    # A free function imported by a relative path (`use super::b::helper`) and
+    # called bare must resolve to the sibling-module node (crate.b.helper). Its
+    # raw import target `super::b::helper` is `::`-separated and not project-prefixed,
+    # so the external-import guard must not suppress the trie fallback.
     _make_super_import_crate(tmp_path)
     ingestor = _capture(tmp_path, "crate")
     calls = {

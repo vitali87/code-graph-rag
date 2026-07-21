@@ -1,11 +1,10 @@
-# Cross-language / polyglot ingestion regression guard. Drives the
-# evals.polyglot corpus (one file per SupportedLanguage, plus a three-way
-# same-basename collision) through a single cgr graph build and asserts the
-# cross-language integrity invariants: every available language is
-# represented, basename collisions are disambiguated rather than
-# overwritten, no semantic edge crosses a language boundary, the recorded
-# graph is dangling/orphan free, and the whole thing is deterministic. No
-# eval before this one indexed more than one language at a time.
+# Cross-language polyglot ingestion regression guard. Drives the evals.polyglot
+# corpus (one file per SupportedLanguage, plus a three-way same-basename
+# collision) through a single cgr build and asserts the cross-language
+# invariants: every available language is represented, basename collisions are
+# disambiguated not overwritten, no semantic edge crosses a language boundary,
+# the graph is dangling/orphan free, and the build is deterministic. No eval
+# before this one indexed more than one language at once.
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,9 +23,9 @@ from evals.polyglot import (
 
 
 def _available_languages() -> frozenset[cs.SupportedLanguage]:
-    # Only grade languages whose parser actually loaded, so a missing
-    # optional grammar skips that language instead of failing the suite --
-    # but any loaded language that drops out of the graph is a real bug.
+    # Only grade languages whose parser actually loaded, so a missing optional
+    # grammar skips that language instead of failing the suite; any loaded
+    # language that drops out of the graph is a real bug.
     parsers, _ = load_parsers()
     return EXPECTED_LANGUAGES & frozenset(parsers)
 
@@ -46,10 +45,10 @@ def test_every_available_language_is_represented(polyglot_corpus: Path) -> None:
         "languages dropped from the polyglot graph: "
         f"{sorted(lang.value for lang in dropped)}"
     )
-    # each present language must also contribute at least one definition,
-    # not just an empty module node.
-    # sorted() so iteration order is deterministic across runs (StrEnum
-    # members hash by string, whose order varies with hash randomization).
+    # each present language must contribute at least one definition, not just
+    # an empty module node. sorted() so iteration order is deterministic across
+    # runs (StrEnum members hash by string, whose order varies with hash
+    # randomisation).
     empty = [
         lang.value
         for lang in sorted(available)
@@ -97,9 +96,9 @@ def test_no_edge_crosses_a_language_boundary(polyglot_corpus: Path) -> None:
 
 def test_polyglot_graph_is_dangling_and_orphan_free(polyglot_corpus: Path) -> None:
     # create_and_run_updater runs the structural integrity audit (schema,
-    # orphans, dangling relationships) over the recorded batches; a
-    # violation raises. This proves mixing every language in one build does
-    # not produce an edge with a phantom endpoint.
+    # orphans, dangling relationships) over the recorded batches; a violation
+    # raises. Proves mixing every language in one build produces no edge with
+    # a phantom endpoint.
     mock_ingestor = MagicMock()
     mock_ingestor.ensure_node_batch = MagicMock()
     mock_ingestor.ensure_relationship_batch = MagicMock()

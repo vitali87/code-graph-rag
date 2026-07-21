@@ -1,8 +1,8 @@
-# `this.method()` inside a prototype-assigned function dispatches to a
-# sibling method of the same prototype target (Date.prototype.strftime
-# calling this.getTwoDigitMonth(), django admin's core.js). Binding `this`
-# only to module-level functions (the CommonJS pattern) leaves every such
-# sibling call unresolved and the methods falsely dead.
+# `this.method()` inside a prototype-assigned function dispatches to a sibling
+# method of the same prototype target (Date.prototype.strftime calling
+# this.getTwoDigitMonth(), django admin's core.js). Binding `this` only to
+# module-level functions (the CommonJS pattern) leaves such sibling calls
+# unresolved and the methods falsely dead.
 from __future__ import annotations
 
 from pathlib import Path

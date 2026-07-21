@@ -1,7 +1,7 @@
 # A NAMED function expression passed as a call argument (express's
 # `this.on('mount', function onmount(parent) {...})`, `defineGetter(req,
 # 'path', function path() {...})`) registers by its own NAME, but the inline
-# argument reference is built from the arg's POSITION only -- so the named
+# argument reference is built from the arg's POSITION only, so the named
 # node never matches and reports dead. Name candidates must be tried too.
 from __future__ import annotations
 
