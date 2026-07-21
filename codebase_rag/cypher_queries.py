@@ -82,6 +82,22 @@ WHERE c.name = 'UserService'
 RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
+# (H) ast-grep findings (issue #413): Pattern/CodeSmell/SecurityIssue nodes hang
+# (H) off a Module via IMPLEMENTS_PATTERN/HAS_SMELL/HAS_VULNERABILITY. The finding
+# (H) node's name is the rule id; start_line locates the site.
+CYPHER_EXAMPLE_FIND_PATTERN = f"""MATCH (m:Module)-[:IMPLEMENTS_PATTERN]->(p:Pattern)
+WHERE p.name = 'singleton'
+RETURN m.path AS path, p.name AS pattern, p.start_line AS line, p.message AS message
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
+CYPHER_EXAMPLE_SECURITY_ISSUES = f"""MATCH (m:Module)-[:HAS_VULNERABILITY]->(s:SecurityIssue)
+RETURN m.path AS path, s.name AS rule, s.start_line AS line, s.message AS message
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
+CYPHER_EXAMPLE_CODE_SMELLS = f"""MATCH (m:Module)-[:HAS_SMELL]->(c:CodeSmell)
+RETURN m.path AS path, c.name AS smell, c.start_line AS line, c.message AS message
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
 CYPHER_EXPORT_NODES = """
 MATCH (n)
 RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties

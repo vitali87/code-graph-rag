@@ -87,6 +87,7 @@ codebase_rag = [
     "parsers/csharp_frontend/roslyn/*.cs",
     "parsers/csharp_frontend/roslyn/*.csproj",
     "parsers/ast_grep_patterns/*.yaml",
+    "analyzers/ast_grep_rules/*/*.yaml",
 ]
 
 [project.optional-dependencies]

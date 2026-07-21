@@ -689,6 +689,12 @@ class RelationshipSchema(NamedTuple):
     targets: tuple[NodeLabel, ...]
 
 
+# (H) shared property string for the ast-grep finding node labels (issue #413)
+_FINDING_NODE_PROPS = (
+    "{qualified_name: string, name: string, message: string, "
+    "start_line: int, end_line: int, path: string, snippet: string?}"
+)
+
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PROJECT, "{name: string}"),
     NodeSchema(
@@ -749,6 +755,9 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.RESOURCE,
         "{qualified_name: string, name: string, kind: string}",
     ),
+    NodeSchema(NodeLabel.PATTERN, _FINDING_NODE_PROPS),
+    NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
+    NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
 )
 
 
@@ -889,5 +898,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
         RelationshipType.FLOWS_TO,
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.IMPLEMENTS_PATTERN,
+        (NodeLabel.PATTERN,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_SMELL,
+        (NodeLabel.CODE_SMELL,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_VULNERABILITY,
+        (NodeLabel.SECURITY_ISSUE,),
     ),
 )

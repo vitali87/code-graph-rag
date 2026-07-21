@@ -1,0 +1,23 @@
+# ast-grep security rules for JavaScript (issue #413).
+ast_grep_id: javascript
+extensions: [.js, .jsx, .mjs, .cjs]
+rules:
+  - id: innerhtml_xss
+    message: "Possible XSS: assignment to innerHTML"
+    rule:
+      pattern: "$EL.innerHTML = $X"
+  - id: eval_use
+    message: "eval() executes arbitrary code"
+    rule:
+      pattern: "eval($$$)"
+  - id: document_write
+    message: "document.write() can enable XSS"
+    rule:
+      pattern: "document.write($$$)"
+  - id: hardcoded_secret
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: variable_declarator
+      all:
+        - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { field: value, kind: string }

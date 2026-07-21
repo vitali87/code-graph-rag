@@ -44,6 +44,9 @@ KEY_PROJECT_PREFIX = "project_prefix"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# (H) ast-grep finding node properties (issue #413)
+KEY_MESSAGE = "message"
+KEY_SNIPPET = "snippet"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
@@ -97,6 +100,11 @@ class NodeLabel(StrEnum):
     EXTERNAL_PACKAGE = "ExternalPackage"
     EXTERNAL_MODULE = "ExternalModule"
     RESOURCE = "Resource"
+    # (H) ast-grep findings (issue #413): quality/security signals attached to a
+    # (H) Module. Opt-in via CaptureGroup.FINDINGS.
+    PATTERN = "Pattern"
+    CODE_SMELL = "CodeSmell"
+    SECURITY_ISSUE = "SecurityIssue"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -117,6 +125,9 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
     NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.RESOURCE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.PATTERN: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CODE_SMELL: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.SECURITY_ISSUE: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -148,6 +159,9 @@ class RelationshipType(StrEnum):
     READS_FROM = "READS_FROM"
     WRITES_TO = "WRITES_TO"
     FLOWS_TO = "FLOWS_TO"
+    IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
+    HAS_SMELL = "HAS_SMELL"
+    HAS_VULNERABILITY = "HAS_VULNERABILITY"
 
 
 class CaptureGroup(StrEnum):
@@ -156,6 +170,7 @@ class CaptureGroup(StrEnum):
     TYPES = "types"
     IMPORTS = "imports"
     IO = "io"
+    FINDINGS = "findings"
 
 
 # (H) Each relationship type belongs to exactly one capture group. The guard
@@ -202,6 +217,13 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.FLOWS_TO,
         }
     ),
+    CaptureGroup.FINDINGS: frozenset(
+        {
+            RelationshipType.IMPLEMENTS_PATTERN,
+            RelationshipType.HAS_SMELL,
+            RelationshipType.HAS_VULNERABILITY,
+        }
+    ),
 }
 
 # (H) Node labels a group exclusively owns; the label is captured only while the
@@ -209,6 +231,9 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
 # (H) group are always captured.
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
+    CaptureGroup.FINDINGS: frozenset(
+        {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
+    ),
 }
 
 # (H) Groups enabled when the user configures nothing. Add-ons (io) are opt-in.

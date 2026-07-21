@@ -1,0 +1,18 @@
+# ast-grep design-pattern rules for TypeScript (issue #413).
+ast_grep_id: typescript
+extensions: [.ts, .mts, .cts]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static getInstance()"
+    rule:
+      kind: method_definition
+      has: { field: name, regex: '^getInstance$' }
+  - id: promise_constructor
+    message: "Promise constructor: manual new Promise usage"
+    rule:
+      pattern: "new Promise($$$)"
+  - id: factory_function
+    message: "Factory function: name starts with create/make/build"
+    rule:
+      kind: function_declaration
+      has: { field: name, regex: '^(create|make|build)' }

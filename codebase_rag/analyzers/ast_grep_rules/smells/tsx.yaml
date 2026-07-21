@@ -1,0 +1,20 @@
+# ast-grep code-smell rules for TSX (issue #413).
+ast_grep_id: tsx
+extensions: [.tsx]
+rules:
+  - id: var_usage
+    message: "var declaration; prefer let/const"
+    rule:
+      kind: variable_declaration
+  - id: loose_equality
+    message: "Loose equality (==); prefer strict ==="
+    rule:
+      pattern: "$A == $B"
+  - id: console_log
+    message: "Leftover console.log"
+    rule:
+      pattern: "console.log($$$)"
+  - id: debugger_statement
+    message: "Leftover debugger statement"
+    rule:
+      kind: debugger_statement
