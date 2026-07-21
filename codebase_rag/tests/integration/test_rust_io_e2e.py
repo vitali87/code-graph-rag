@@ -60,7 +60,7 @@ def test_rust_direct_io_sinks(
 ) -> None:
     # std::env::var reads ENV::SECRET; println!/print!/eprintln!/eprint! macros
     # write STDOUT; std::fs::write / create_dir / read_to_string are direct FILE
-    # write/read. First Rust increment of issue #714 -- direct calls + print
+    # write/read. First Rust increment of issue #714: direct calls plus print
     # macros, no handles.
     _build(memgraph_ingestor, tmp_path, _RUST_CODE)
     edges = _io_edges(memgraph_ingestor)
@@ -74,8 +74,8 @@ def test_rust_direct_io_sinks(
 def test_rust_call_inside_print_macro_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # A sink call written INLINE in macro args -- `println!("{}", env::var("X"))`
-    # -- must still emit its READS_FROM. tree-sitter flattens macro bodies into a
+    # A sink call written INLINE in macro args, e.g. `println!("{}", env::var("X"))`,
+    # must still emit its READS_FROM. tree-sitter flattens macro bodies into a
     # token_tree of raw tokens (no call_expression node), so the walk reconstructs
     # scoped calls from the token stream. The canonical "log a secret" taint case.
     _build(

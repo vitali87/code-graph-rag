@@ -88,8 +88,8 @@ def test_method_calls_free_function(temp_repo: Path) -> None:
 # A default member initializer and a namespace-scope global initializer both
 # call compute() with no enclosing function or method. The tree-sitter path
 # attributes such module-load-time calls to the Module node; the libclang
-# frontend previously dropped them (its walk had no enclosing scope to attach
-# the call to), so they must instead fall back to the enclosing Module.
+# frontend previously dropped them (no enclosing scope to attach to), so they
+# must fall back to the enclosing Module.
 _INIT_SRC = """
 namespace m {
 

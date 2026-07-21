@@ -1,7 +1,7 @@
-# The dead-code CLI must compute reachability client-side: two linear fetch
+# The dead-code CLI computes reachability client-side: two linear fetch
 # queries (nodes, rels) feed the Python engine. The previous single Cypher
-# query expanded *BFS from every root and hit memgraph's 600s query timeout
-# on big projects (django: 31k roots, 101k CALLS edges).
+# query expanded *BFS from every root and hit memgraph's 600s timeout on
+# big projects (django: 31k roots, 101k CALLS edges).
 from __future__ import annotations
 
 from codebase_rag import constants as cs

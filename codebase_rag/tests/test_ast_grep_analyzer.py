@@ -155,8 +155,8 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
 
 
 def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
-    # (H) `!=` coerces types exactly like `==`, so the loose_equality smell must
-    # (H) catch it too; the strict `===`/`!==` forms must stay clean.
+    # `!=` coerces types exactly like `==`, so the loose_equality smell must
+    # catch it too; the strict `===`/`!==` forms must stay clean.
     from codebase_rag.analyzers import FindingAnalyzer
 
     src = tmp_path / "eq.js"
@@ -180,10 +180,10 @@ def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
 
 
 def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
-    # (H) Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
-    # (H) ast-grep's bundled grammar silently matches nothing (the f_string class of
-    # (H) bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
-    # (H) future typo that zeroes a rule fails here instead of shipping dead.
+    # Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
+    # ast-grep's bundled grammar silently matches nothing (the f_string class of
+    # bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
+    # future typo that zeroes a rule fails here instead of shipping dead.
     from codebase_rag.analyzers import FindingAnalyzer
     from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
 
@@ -224,18 +224,18 @@ def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
         "document.write(userInput);\n"
         'const password = "supersecretvalue123";\n'
     )
-    # (H) Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
-    # (H) share the javascript grammar and rule set, so one fixture covers them.
+    # Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
+    # share the javascript grammar and rule set, so one fixture covers them.
     by_grammar = {"python": py, "javascript": js, "typescript": js, "tsx": js}
     for ext, lang in load_finding_rules().items():
-        # (H) A new language with rules but no fixture would silently skip firing
-        # (H) coverage; force a fixture mapping to exist for every loaded grammar.
+        # A new language with rules but no fixture would silently skip firing
+        # coverage; force a fixture mapping to exist for every loaded grammar.
         assert lang.ast_grep_id in by_grammar, (
             f"{ext}: no fixture for {lang.ast_grep_id}"
         )
         ids = [r.rule_id for r in lang.rules]
-        # (H) The set comparison below is only sound if ids are unique per ext; a
-        # (H) duplicate id could let one rule fire while its twin stays dead.
+        # The set comparison below is only sound if ids are unique per ext; a
+        # duplicate id could let one rule fire while its twin stays dead.
         assert len(ids) == len(set(ids)), f"{ext} duplicate rule ids: {ids}"
         stem = ext.replace(".", "")
         f = tmp_path / f"probe{stem}{ext}"
@@ -261,7 +261,7 @@ def _fire(tmp_path: Path, name: str, src: str) -> list:
 
 
 def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
-    # (H) `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
+    # `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
     src = (
         "a.innerHTML = x;\n"
         "b.innerHTML += y;\n"
@@ -278,9 +278,9 @@ def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
 
 
 def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
-    # (H) `execute("... %s" % params)` is the classic printf-style injection, as
-    # (H) dangerous as `+` concatenation; a parametrized query stays clean, and a
-    # (H) numeric modulo (line 4) must NOT be mistaken for string formatting.
+    # `execute("... %s" % params)` is the classic printf-style injection, as
+    # dangerous as `+` concatenation; a parametrized query stays clean, and a
+    # numeric modulo (line 4) must NOT be mistaken for string formatting.
     src = (
         'db.execute("SELECT " + u)\n'
         'db.execute("SELECT %s" % u)\n'
@@ -296,9 +296,9 @@ def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
 
 
 def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
-    # (H) Modern factories are usually `const createX = () => {}` (arrow), a
-    # (H) function expression, or a generator function expression, not a `function`
-    # (H) declaration; catch all four. A non-factory name stays clean.
+    # Modern factories are usually `const createX = () => {}` (arrow), a
+    # function expression, or a generator function expression, not a `function`
+    # declaration; catch all four. A non-factory name stays clean.
     src = (
         "function createA() { return {}; }\n"
         "const createB = () => ({});\n"

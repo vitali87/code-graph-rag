@@ -73,10 +73,10 @@ def test_dead_code_flags_uncalled_function() -> None:
 
 
 def test_go_init_and_main_are_roots() -> None:
-    # Go `func init()` is auto-run by the runtime at package load and `func
-    # main()` is the program entry; neither is ever called explicitly, so both
-    # are reachability roots (like Python dunders). A same-file helper with no
-    # caller is still dead -- the exemption is name-scoped to init/main.
+    # Go `func init()` is auto-run at package load and `func main()` is the
+    # program entry; neither is called explicitly, so both are reachability
+    # roots (like Python dunders). A same-file helper with no caller is still
+    # dead; the exemption is name-scoped to init/main.
     nodes = dict(
         [
             (
@@ -101,7 +101,7 @@ def test_go_init_and_main_are_roots() -> None:
 def test_rust_trait_methods_and_main_are_roots() -> None:
     # Rust trait-impl methods (Display::fmt, PartialEq::eq, Iterator::next) are
     # dispatched by the language (format!, ==, for), never called explicitly, and
-    # `fn main()` is the program entry -- all reachability roots (like Python
+    # `fn main()` is the program entry; all reachability roots (like Python
     # dunders), gated by the .rs extension. A custom method (push_int) is not a
     # trait name, so it stays dead.
     nodes = dict(
@@ -155,7 +155,7 @@ def test_cpp_operator_overloads_are_roots() -> None:
     assert "proj.json.Json.operator_subscript" not in dead
     assert "proj.json.operator_left_shift" not in dead
     assert 'proj.json.operator_""_json' not in dead
-    # A regular method with no caller is still dead -- rooting is prefix-scoped
+    # A regular method with no caller is still dead; rooting is prefix-scoped
     # to `operator`, not a blanket C++ exemption.
     assert "proj.json.Json.push_back" in dead
     # The `operator` prefix only roots on a C++ file; a .py symbol stays dead.
@@ -187,7 +187,7 @@ def test_java_serialization_hooks_are_roots() -> None:
     assert "proj.S.S.readObject(ObjectInputStream)" not in dead
     assert "proj.S.S.writeReplace()" not in dead
     assert "proj.S.S.readResolve()" not in dead
-    # A regular uncalled method is still dead -- rooting is name-scoped to the
+    # A regular uncalled method is still dead; rooting is name-scoped to the
     # reserved serialization hooks, not a blanket Java exemption.
     assert "proj.S.S.helper()" in dead
     # The hook names only root on a .java file; a .py symbol stays dead.
@@ -221,7 +221,7 @@ def test_override_of_reachable_method_is_reachable() -> None:
     rels = [
         (_FUNCTION, "proj.m.entry", _CALLS, _MTD, "proj.m.Base.run(int)"),
         (_MTD, "proj.m.Sub.run(int)", _OVERRIDES, _MTD, "proj.m.Base.run(int)"),
-        # multi-level: SubSub overrides Sub overrides Base -- all must revive.
+        # multi-level: SubSub overrides Sub overrides Base; all must revive.
         (_MTD, "proj.m.SubSub.run(int)", _OVERRIDES, _MTD, "proj.m.Sub.run(int)"),
         (_MTD, "proj.m.DeadSub.gone()", _OVERRIDES, _MTD, "proj.m.DeadBase.gone()"),
     ]
@@ -1140,6 +1140,6 @@ def test_duplicate_variant_leaf_still_matches_name_roots() -> None:
     assert "proj.register.init" not in dead
     assert "proj.register.init@51" not in dead
     assert "proj.frame.Frame.fmt@12" not in dead
-    # a non-root name keeps its variant dead -- stripping the marker must
+    # a non-root name keeps its variant dead; stripping the marker must
     # not accidentally widen any rule
     assert "proj.register.helper@60" in dead

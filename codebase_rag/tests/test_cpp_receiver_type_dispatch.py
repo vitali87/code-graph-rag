@@ -12,12 +12,10 @@ from codebase_rag.tests.conftest import (
 
 # Two classes define a method of the same name; only the receiver's type tells
 # which one a call `z->run()` / `z.run()` targets. cgr resolved C++ member calls
-# by the bare method name (the field_expression yielded only `run`), so the
-# name-only trie fallback bound every `run()` call to whichever `run` sorted
-# first (`Alpha.run`), regardless of the receiver. With receiver type inference
-# (parameter/local var -> bare class name), `z` is a `Zeta`, so the call must
-# resolve to `Zeta.run`. `Alpha` sorts before `Zeta`, so the wrong (old) answer
-# is deterministic and this test is a real RED.
+# by the bare method name, so the name-only trie fallback bound every `run()` to
+# whichever `run` sorted first (`Alpha.run`), regardless of receiver. With
+# receiver type inference `z` is a `Zeta`, so the call must resolve to `Zeta.run`;
+# `Alpha` sorts first, so the old wrong answer is deterministic and this is a real RED.
 CPP_SOURCE = """
 namespace ns {
 
@@ -89,11 +87,10 @@ def _first_function_node(source: str):
 
 
 # A C++ reference parameter (`Alpha& ar`) parses as a `reference_declarator` that
-# holds its identifier as a POSITIONAL child, not under the `declarator` field the
-# way `pointer_declarator` does. The field-only unwrap in `_declarator_name` stalled
-# on it, so reference parameters/locals never entered the type map and their member
-# calls fell back to bare-name resolution. References are pervasive in C++, so this
-# is a real coverage hole.
+# holds its identifier as a POSITIONAL child, not under the `declarator` field like
+# `pointer_declarator` does. The field-only unwrap in `_declarator_name` stalled on
+# it, so reference parameters never entered the type map and their member calls fell
+# back to bare-name resolution. References are pervasive in C++, so a real coverage hole.
 def test_cpp_reference_parameter_maps_to_type() -> None:
     node = _first_function_node("void f(Alpha& ar, Zeta* zp) { }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -143,11 +140,10 @@ def test_cpp_local_reference_receiver_resolves(
 
 # The type map is keyed by name with no call-position context, so it cannot model
 # true lexical scope: it cannot tell an outer `Zeta z` from an inner-block `Alpha z`
-# that shadows it. Picking either write order emits a confidently wrong typed edge
-# for one of the two scopes. Instead a name declared with conflicting types is NOT
-# inferred at all -- the call falls back to name-only resolution rather than getting
-# a wrong edge. An inner-block local whose name does NOT collide is still recorded,
-# so recall for the common case is preserved.
+# that shadows it. Either write order emits a confidently wrong typed edge for one
+# scope, so a name with conflicting types is NOT inferred at all; the call falls back
+# to name-only resolution. An inner-block local whose name does NOT collide is still
+# recorded, so common-case recall is preserved.
 def test_cpp_conflicting_shadow_type_is_not_inferred() -> None:
     node = _first_function_node("void f() { Zeta z; { Alpha z; } }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -165,10 +161,9 @@ def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
 
 
 # One C++ declaration statement can declare several variables (`Zeta a, b;`), each
-# exposed as its own `declarator` field child. Recording only the first left `b`
-# unmapped, so `b.run()` fell back to bare-name resolution. Every declarator in the
-# statement shares the leading type and must be recorded, including mixed
-# pointer/plain forms (`Foo* p, q;`).
+# its own `declarator` field child. Recording only the first left `b` unmapped, so
+# `b.run()` fell back to bare-name resolution. Every declarator shares the leading
+# type and must be recorded, including mixed pointer/plain forms (`Foo* p, q;`).
 def test_cpp_multi_declarator_declaration_maps_all_names() -> None:
     node = _first_function_node("void f() { Zeta a, b; Foo* p, q; }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
@@ -217,10 +212,10 @@ def test_cpp_second_declarator_receiver_resolves(
     )
 
 
-# A lambda body opens its own scope. A same-named variable declared inside it must
-# not leak into the enclosing function's map: without the scope guard the inner
-# `Alpha z` conflicts with the outer `Zeta z`, so drop-on-conflict would discard
-# `z` entirely and the outer `z.run()` would fall back to name-only (Alpha.run).
+# A lambda body opens its own scope. A same-named variable inside it must not leak
+# into the enclosing function's map: without the scope guard the inner `Alpha z`
+# conflicts with the outer `Zeta z`, so drop-on-conflict would discard `z` and the
+# outer `z.run()` would fall back to name-only (Alpha.run).
 def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
     node = _first_function_node("void f() { Zeta z; auto g = [](){ Alpha z; }; }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")

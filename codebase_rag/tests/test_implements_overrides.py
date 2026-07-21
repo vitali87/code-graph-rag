@@ -2,13 +2,12 @@
 # (relationships.py stores only the superclass; interfaces feed
 # interface_implementers and the IMPLEMENTS edge), so Pass-4 override
 # detection walked past every interface and NO interface/trait
-# implementation ever got an OVERRIDES edge -- named Java classes, enum
-# constant bodies, and Rust trait impls alike (anonymous classes had their
-# own dedicated pass). Dead-code override expansion walks overridden ->
-# overriders, so with >1 implementers (no sole-impl CALLS fan-out) a live
-# interface/trait method revived nothing and non-public impl methods
-# (Rust trait impls) reported dead. The override walk must include the
-# implemented interfaces.
+# implementation got an OVERRIDES edge (named Java classes, enum constant
+# bodies, and Rust trait impls alike; anonymous classes had their own pass).
+# Dead-code override expansion walks overridden to overriders, so with >1
+# implementers (no sole-impl CALLS fan-out) a live interface/trait method
+# revived nothing and non-public impl methods reported dead. The override
+# walk must include the implemented interfaces.
 from __future__ import annotations
 
 from pathlib import Path

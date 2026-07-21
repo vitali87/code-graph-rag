@@ -89,9 +89,8 @@ def test_cpp_unqualified_getenv(
 def test_cpp_putchar_and_wide_streams(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path, body: str
 ) -> None:
-    # putchar (call) and the wide-char streams wcout/wcerr (`<<` insertion) each
-    # write STDOUT, same as puts / cout. Isolated so the STDOUT edge can only come
-    # from the sink under test.
+    # putchar and the wide streams wcout/wcerr (`<<`) each write STDOUT, like
+    # puts / cout. Isolated so the STDOUT edge can only come from the sink.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -103,8 +102,8 @@ def test_cpp_putchar_and_wide_streams(
 def test_cpp_nested_lambda_not_credited(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # A sink inside a nested lambda is not the enclosing function's I/O; the walk
-    # prunes nested scopes, and the lambda is not a registered caller here.
+    # A sink inside a nested lambda is not the enclosing function's I/O: the walk
+    # prunes nested scopes and the lambda is not a registered caller.
     _build(
         memgraph_ingestor,
         tmp_path,

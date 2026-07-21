@@ -72,8 +72,8 @@ def test_bare_name_calls_do_not_leak_into_another_project(
     caller.mkdir()
     (caller / "app.py").write_text(CALLER_CODE, encoding="utf-8")
 
-    # Index the collider first so its symbols are already in the DB when the
-    # caller's run rehydrates the registry from the graph.
+    # Index the collider first so its symbols are in the DB when the caller's
+    # run rehydrates the registry from the graph.
     _index(memgraph_ingestor, collide, io=True)
     _index(memgraph_ingestor, caller, io=True)
 

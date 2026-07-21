@@ -1,7 +1,7 @@
 # A method call on a cast receiver `((T) x).m()` (gson's
 # `((JsonTreeReader) in).nextJsonElement()`) dropped: the object extractor ignored
 # cast/parenthesized receivers, so the call fell to the unqualified path and never
-# resolved m on T (cross-file/sibling T). The cast's target type is the receiver.
+# resolved m on T. The cast's target type is the receiver.
 from __future__ import annotations
 
 from pathlib import Path
@@ -116,9 +116,9 @@ def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # A fully-qualified cast target `((com.other.Reader) in).m()` must NOT resolve to
-    # a same-package `Reader` decoy. Stripping the package off the cast type collapses
-    # `com.other.Reader` to `Reader` and binds it to the wrong same-package class;
-    # keeping the qualified name prevents that wrong edge.
+    # a same-package `Reader` decoy: stripping the package off the cast type collapses
+    # `com.other.Reader` to `Reader` and binds the wrong same-package class. Keeping
+    # the qualified name prevents that wrong edge.
     root = temp_repo / "jqcast"
     (root / "com" / "other").mkdir(parents=True)
     (root / "com" / "example").mkdir(parents=True)

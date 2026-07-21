@@ -438,10 +438,10 @@ public class Mid : Root {
 def test_unresolvable_type_receiver_does_not_fall_to_name_trie(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # `Console.WriteLine(x)`: the receiver is a PascalCase identifier that
-    # is no local, field, or registered type -- an external static type.
-    # The name-only trie must not bind the call to an unrelated
-    # first-party `WriteLine`.
+    # `Console.WriteLine(x)`: the receiver is a PascalCase identifier that is
+    # no local, field, or registered type but an external static type. The
+    # name-only trie must not bind the call to an unrelated first-party
+    # `WriteLine`.
     (csharp_project / "ConsoleLike.cs").write_text(
         """
 namespace N;

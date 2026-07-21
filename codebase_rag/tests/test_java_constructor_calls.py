@@ -1,7 +1,7 @@
 # Java collected only `method_invocation` as call nodes, never
-# `object_creation_expression`, so `new X(...)` produced no INSTANTIATES edge to the
-# class and no CALLS edge to the constructor. Every constructor reached only via
-# `new` therefore looked dead (45 of gson's 114 false positives). A `new X(...)` must
+# `object_creation_expression`, so `new X(...)` produced no INSTANTIATES edge to
+# the class and no CALLS edge to the constructor. Every constructor reached only
+# via `new` looked dead (45 of gson's 114 false positives). A `new X(...)` must
 # instantiate the class and call its constructor, mirroring Python/JS class calls.
 from __future__ import annotations
 

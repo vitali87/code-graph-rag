@@ -48,7 +48,7 @@ public class Other { public void Beta() { } }
     targets = _call_targets(mock_ingestor)
     # `Beta` exists on both Widget (part B) and Other, so the generic
     # name-only resolver is ambiguous and drops it. Only typing `w` to the
-    # Widget partial group and finding Beta on part B binds it correctly --
+    # Widget partial group and finding Beta on part B binds it correctly,
     # and it must be Widget's Beta, never Other's.
     assert any(t.endswith(".Widget.Beta") for t in targets), targets
     assert not any(t.endswith(".Other.Beta") for t in targets), targets

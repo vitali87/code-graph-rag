@@ -1,9 +1,9 @@
 # A Java anonymous class (`new Base(){ @Override m(){} }`) is not modelled as a
 # subclass, so its override methods register under the enclosing class with no
 # OVERRIDES edge and look dead even though the base method is called and dispatch
-# can land on them (gson's JavaTimeTypeAdapters `create`/`integerValues`). Recording
-# the anon override and emitting OVERRIDES to the base, plus override-reachability,
-# keeps them live when the base is reachable.
+# can land on them (gson's JavaTimeTypeAdapters `create`/`integerValues`).
+# Recording the anon override, emitting OVERRIDES to the base, plus
+# override-reachability keeps them live when the base is reachable.
 from __future__ import annotations
 
 from pathlib import Path
@@ -77,7 +77,6 @@ def test_anon_override_edge_source_label_matches_node(tmp_path: Path) -> None:
         pytest.skip("java parser not available")
     ing = MagicMock()
     GraphUpdater(ingestor=ing, repo_path=root, parsers=parsers, queries=queries).run()
-    # node label per qn
     label_of = {
         c.args[1].get("qualified_name"): c.args[0]
         for c in ing.ensure_node_batch.call_args_list

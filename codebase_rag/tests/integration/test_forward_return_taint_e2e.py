@@ -103,7 +103,7 @@ def test_untainted_forward_callee_emits_no_flow(
 ) -> None:
     # compute() (defined later) returns nothing tainted. Deferring caller's
     # taint must NOT fabricate a return edge or an arg edge once the fixpoint
-    # resolves compute() to untainted -- no FLOWS_TO edge may exist at all.
+    # resolves compute() to untainted; no FLOWS_TO edge may exist at all.
     project = tmp_path / "clean_project"
     project.mkdir()
     (project / "mod.py").write_text(

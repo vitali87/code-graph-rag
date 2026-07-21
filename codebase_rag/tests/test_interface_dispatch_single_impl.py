@@ -68,7 +68,7 @@ def test_rust_single_trait_impl_dispatches_to_concrete(tmp_path: Path) -> None:
 def test_sole_impl_targets_guard_branches() -> None:
     # Contract guards of interface_sole_impl_targets: a dot-less callee qn
     # has no interface component, and a mapped sole implementer that neither
-    # defines nor inherits the method offers no concrete target -- both
+    # defines nor inherits the method offers no concrete target; both
     # return empty rather than fabricating an edge.
     registry = FunctionRegistryTrie()
     registry["m.Svc.run"] = NodeType.METHOD

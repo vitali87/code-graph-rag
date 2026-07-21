@@ -1,9 +1,9 @@
-# L3 finding from the evals/ harness: GraphUpdater.run calls
-# self.factory.definition_processor.process_all_method_overrides(), a three-level
-# chain where factory is an instance attribute (ProcessorFactory), definition_processor
-# is a @property returning DefinitionProcessor, and the method is inherited from a
-# mixin base. A module-level function of the same name makes the bare-name trie
-# fallback ambiguous, so the chain types must be walked to land on the mixin method.
+# L3 finding from the evals/ harness: GraphUpdater.run calls the three-level chain
+# self.factory.definition_processor.process_all_method_overrides(), where factory
+# is an instance attribute, definition_processor a @property, and the method is
+# inherited from a mixin base. A same-named module-level function makes the
+# bare-name trie fallback ambiguous, so the chain types must be walked to land on
+# the mixin method.
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,9 +18,9 @@ PROJECT = "proj"
 FILES = {
     "pkg/__init__.py": "",
     # OverrideMixin is re-exported through the package __init__, so the subclass
-    # records its base as the re-export QN (pkg.overrides.OverrideMixin) rather than
-    # the real definition (pkg.overrides.mixin.OverrideMixin); inherited-method
-    # lookup must follow the re-export. A same-named module-level function competes.
+    # records its base as the re-export QN (pkg.overrides.OverrideMixin), not the
+    # real definition (pkg.overrides.mixin.OverrideMixin); inherited-method lookup
+    # must follow the re-export. A same-named module-level function competes.
     "pkg/overrides/__init__.py": (
         "from .mixin import OverrideMixin, process_all\n\n"
         "__all__ = ['OverrideMixin', 'process_all']\n"

@@ -48,9 +48,9 @@ def test_cpp_function_pointer_callback_is_traced(tmp_path: Path) -> None:
 
 def test_cpp_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
     # auto run = makeRunner(); run(target): run is unresolved (holds a returned
-    # std::function), so target is kept reachable by the reference edge from the
-    # calling scope. The precise closure edge needs the lambda to be a registered
-    # function, which C++ does not provide, but the callback must not be dropped.
+    # std::function), so target stays reachable via the reference edge. The
+    # precise closure edge needs the lambda registered as a function, which C++
+    # lacks, but the callback must not be dropped.
     src = (
         "#include <functional>\n"
         "std::function<int(std::function<int()>)> makeRunner() {\n"
@@ -67,10 +67,10 @@ def test_cpp_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
 
 
 def test_cpp_nested_lambda_shadowing_suppresses_forbidden_edge(tmp_path: Path) -> None:
-    # shadow's own cb parameter is never invoked; the nested lambda has its own
-    # cb parameter that shadows it, and only that inner cb is called. The flow
-    # tracer must subtract the lambda's bound names before descending, so it must
-    # NOT conclude shadow invokes its cb and emit shadow -> target.
+    # shadow's own cb is never invoked; the nested lambda's own cb parameter
+    # shadows it and only that inner cb is called. The flow tracer must subtract
+    # the lambda's bound names before descending, so it must NOT emit
+    # shadow -> target.
     src = (
         "int target() { return 1; }\n"
         "int shadow(int (*cb)()) {\n"

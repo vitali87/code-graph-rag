@@ -120,9 +120,9 @@ def test_conditional_brace_file_keeps_class_structure(
     functions = get_qualified_names(get_nodes(mock_ingestor, "Function"))
     assert "brproj.reader.helper_0" not in functions, sorted(functions)
 
-    # an UNRELATED leaf branch whose only textual imbalance is a brace in
-    # a comment must survive the recovery -- only the branch that causes
-    # the collapse may be blanked
+    # an UNRELATED leaf branch whose only textual imbalance is a brace in a
+    # comment must survive the recovery; only the branch that causes the
+    # collapse may be blanked
     assert "brproj.reader.detail.binary_reader.doc_helper" in methods, sorted(methods)
 
     # `const decltype(SOME_MACRO_) field = ...` is a FIELD whose type uses

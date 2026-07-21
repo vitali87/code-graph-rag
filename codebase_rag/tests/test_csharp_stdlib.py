@@ -40,7 +40,7 @@ def test_namespace_is_not_folded_as_a_type() -> None:
     # C# namespaces are PascalCase like types, so a bare namespace reference
     # must not be folded into its parent (a `using System.Text.Json;` names a
     # namespace, not a `Json` type). Only recognized BCL types fold, so an
-    # unknown PascalCase leaf -- including under Microsoft.* -- stays whole.
+    # unknown PascalCase leaf, including under Microsoft.*, stays whole.
     assert _path("System.Text.Json") == "System.Text.Json"
     assert _path("System.Collections.Generic") == "System.Collections.Generic"
     assert _path("System.Threading.Tasks") == "System.Threading.Tasks"

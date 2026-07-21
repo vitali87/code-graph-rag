@@ -64,9 +64,9 @@ def test_go_callback_invoked_in_closure_is_traced(tmp_path: Path) -> None:
 
 def test_go_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
     # run := makeRunner(); run(target): run is unresolved (holds a returned func
-    # value), so target is kept reachable by the reference edge from the calling
-    # scope. The precise closure edge needs the func literal to be a registered
-    # function, which Go does not provide, but the callback must not be dropped.
+    # value), so target stays reachable via the reference edge. The precise
+    # closure edge needs the func literal registered as a function, which Go
+    # lacks, but the callback must not be dropped.
     src = (
         "package m\n\n"
         "func makeRunner() func(func() int) int {\n"

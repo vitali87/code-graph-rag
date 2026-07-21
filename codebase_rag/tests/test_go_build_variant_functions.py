@@ -60,8 +60,8 @@ def test_external_test_package_sibling_is_not_fanned_out(tmp_path: Path) -> None
     # Guard: Go allows an external test package `package p_test` in the SAME
     # directory as `package p` (both compile from the same dir but are distinct
     # packages). Production code can never call a function defined in a `_test.go`
-    # file, so a same-directory `_test.go` sibling must NOT receive a fan-out edge
-    # -- otherwise a genuinely test-only dead function is masked as live.
+    # file, so a same-directory `_test.go` sibling must NOT receive a fan-out edge;
+    # otherwise a genuinely test-only dead function is masked as live.
     (tmp_path / "a.go").write_text(
         "package p\nfunc validate(x int) int { return x }\n"
         "func caller() int { return validate(1) }\n",

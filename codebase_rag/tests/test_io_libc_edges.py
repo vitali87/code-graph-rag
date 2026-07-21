@@ -1,7 +1,7 @@
 # libc I/O for C (previously ZERO flow support) and C++: direct sinks
-# (getenv/printf/perror/scanf), fopen-bound FILE* handles, and the
-# call-shaped handle sinks (`fprintf(f, ...)` carries the handle as an
-# ARGUMENT), including the pre-bound stdout/stderr/stdin globals.
+# (getenv/printf/perror/scanf), fopen-bound FILE* handles, and call-shaped
+# handle sinks (`fprintf(f, ...)` carries the handle as an ARGUMENT),
+# including the pre-bound stdout/stderr/stdin globals.
 from __future__ import annotations
 
 from pathlib import Path

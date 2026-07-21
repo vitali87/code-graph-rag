@@ -96,7 +96,7 @@ def test_local_from_field_method_chain_resolves(tmp_path: Path) -> None:
     # The gin router shape: `root := engine.trees.get(method)` then
     # `root.addRoute(...)`. `engine.trees` is a struct-field hop (needs Go field
     # types), `.get()` returns *node, so root.addRoute must resolve to
-    # node.addRoute -- NOT mis-resolve to the enclosing Engine.addRoute.
+    # node.addRoute, NOT mis-resolve to the enclosing Engine.addRoute.
     calls = _calls(
         tmp_path,
         "package p\n"
