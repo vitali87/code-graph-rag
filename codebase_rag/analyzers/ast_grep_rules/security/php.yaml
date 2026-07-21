@@ -27,11 +27,11 @@ rules:
       any:
         - kind: function_call_expression
           all:
-            - has: { field: function, regex: '(?i)query' }
+            - has: { field: function, regex: '(?i)^(mysqli_query|pg_query|sqlsrv_query|db_query)$' }
             - has: { kind: binary_expression, stopBy: end }
         - kind: member_call_expression
           all:
-            - has: { field: name, regex: '(?i)query' }
+            - has: { field: name, regex: '(?i)^query$' }
             - has: { kind: binary_expression, stopBy: end }
   - id: hardcoded_secret
     # Security rule: favour recall. Value must be a non-trivial literal (>=10

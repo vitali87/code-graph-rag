@@ -11,10 +11,15 @@ rules:
   - id: factory_method
     message: "Factory: class method named create/build/make"
     rule:
-      kind: singleton_method
-      has:
-        field: name
-        regex: '^(create|build|make)'
+      any:
+        # def self.create ...
+        - kind: singleton_method
+          has: { field: name, regex: '^(create|build|make)' }
+        # class << self; def create ...
+        - kind: method
+          all:
+            - has: { field: name, regex: '^(create|build|make)' }
+            - inside: { kind: singleton_class, stopBy: end }
   - id: module_mixin
     message: "Module mixin: behavior shared via include/extend"
     rule:

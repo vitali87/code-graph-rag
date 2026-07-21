@@ -21,7 +21,8 @@ rules:
       kind: type_identifier
       regex: '^dynamic$'
   - id: double_equals_null
+    # Catch both orders: `x == null` and the Yoda form `null == x`.
     message: "Prefer null-aware operators over explicit == null checks scattered in code"
     rule:
       kind: equality_expression
-      regex: '==\s*null$'
+      regex: '(?:==\s*null|null\s*==)'

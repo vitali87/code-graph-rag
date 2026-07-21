@@ -8,9 +8,10 @@ rules:
     message: "Possible command injection: external process launched from code"
     rule:
       any:
-        - pattern: "$X.exec($$$)"
-        - pattern: "Process($$$)"
+        # A bare $X.exec matched any method named exec; require a Runtime receiver.
         - pattern: "Runtime.getRuntime.exec($$$)"
+        - pattern: "Process($$$)"
+        - pattern: "scala.sys.process.Process($$$)"
   - id: sql_string_concat
     # Security rule: favour recall. A SQL keyword string literal joined with +
     # is a classic injection shape.

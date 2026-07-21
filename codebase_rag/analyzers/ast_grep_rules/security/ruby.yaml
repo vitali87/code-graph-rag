@@ -29,7 +29,7 @@ rules:
       all:
         - has:
             field: method
-            regex: '^(execute|exec_query|select_all|find_by_sql|query)$'
+            regex: '^(execute|exec_query|select_all|find_by_sql|query|where|find_by)$'
         - has:
             stopBy: end
             any:

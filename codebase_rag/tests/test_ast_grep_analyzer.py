@@ -265,8 +265,9 @@ _POSITIVE_FIXTURES = {
         "func run(db DB) {\n"
         '    fmt.Println("hi")\n'
         '    panic("x")\n'
-        "    _, err := doThing()\n"
+        "    result, _ := doThing()\n"
         "    _ = other()\n"
+        "    _ = result\n"
         '    exec.Command("ls")\n'
         '    db.Query("SELECT " + err)\n'
         '    password := "supersecretvalue"\n'
@@ -529,6 +530,47 @@ def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
         if p[cs.KEY_NAME] == "factory_function"
     )
     assert names == [1, 2, 3, 4], names
+
+
+def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> None:
+    # (H) In Go, `_, err := f()` keeps the error and is idiomatic; only a trailing
+    # (H) `_` (discarding the conventionally-last error) is the smell. The rule
+    # (H) must flag line 4 (result, _) and leave line 3 (_, err) clean.
+    src = (
+        "package main\n"
+        "func f() {\n"
+        "    _, err := doThing()\n"
+        "    result, _ := doThing()\n"
+        "    _ = err\n"
+        "    _ = result\n"
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "x.go", src)
+        if p[cs.KEY_NAME] == "ignored_error_shortvar"
+    )
+    assert lines == [4], lines
+
+
+def test_multilang_security_rules_avoid_common_false_positives(
+    tmp_path: Path,
+) -> None:
+    # (H) Precision guards for the widened multi-language rules: each benign
+    # (H) construct must NOT emit its neighbouring finding.
+    cases = [
+        (
+            "q.php",
+            '<?php build_query("a" . $x); $o->query_posts("z" . $w);\n',
+            "sqli_concat",
+        ),
+        ("e.java", 'class A { void f(){ myExecutor.exec("job"); } }\n', "runtime_exec"),
+        ("e.scala", "object O { def f() { list.exec() } }\n", "os_command_exec"),
+        ("d.dart", 'void f(x){ var b = "Please select one " + x; }\n', "sqli_concat"),
+    ]
+    for name, src, rule_id in cases:
+        names = [p[cs.KEY_NAME] for p in _fire(tmp_path, name, src)]
+        assert rule_id not in names, (name, rule_id, names)
 
 
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:

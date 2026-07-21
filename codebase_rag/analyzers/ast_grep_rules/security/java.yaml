@@ -5,10 +5,13 @@ ast_grep_id: java
 extensions: [.java]
 rules:
   - id: runtime_exec
+    # Require a Runtime receiver so an unrelated obj.exec() is not misflagged.
     message: "Runtime.exec() can enable command injection"
     rule:
       kind: method_invocation
-      has: { field: name, regex: '^exec$' }
+      all:
+        - has: { field: name, regex: '^exec$' }
+        - has: { regex: '(?i)runtime', stopBy: end }
   - id: process_builder
     message: "ProcessBuilder spawns an external process; validate its input"
     rule:
@@ -18,7 +21,7 @@ rules:
     rule:
       kind: method_invocation
       all:
-        - has: { field: name, regex: '^(executeQuery|executeUpdate|execute)$' }
+        - has: { field: name, regex: '^(executeQuery|executeUpdate|execute|prepareStatement)$' }
         - has:
             kind: binary_expression
             has: { kind: string_literal, stopBy: end }
@@ -44,6 +47,9 @@ rules:
                     - regex: '\{[^{}]*\}'
                     - regex: '%[sdrifeEgGxXoc(]'
   - id: md5_digest
+    # Both the uppercase and lowercase spellings are common in the wild.
     message: "Weak hash algorithm (MD5) requested"
     rule:
-      pattern: 'MessageDigest.getInstance("MD5")'
+      any:
+        - pattern: 'MessageDigest.getInstance("MD5")'
+        - pattern: 'MessageDigest.getInstance("md5")'

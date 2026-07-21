@@ -46,8 +46,10 @@ rules:
             - has:
                 field: right
                 has:
-                  kind: interpreted_string_literal
                   all:
+                    - any:
+                        - kind: interpreted_string_literal
+                        - kind: raw_string_literal
                     - regex: '^.{10,}$'
                     - not:
                         any:
@@ -60,8 +62,10 @@ rules:
             - has:
                 field: right
                 has:
-                  kind: interpreted_string_literal
                   all:
+                    - any:
+                        - kind: interpreted_string_literal
+                        - kind: raw_string_literal
                     - regex: '^.{10,}$'
                     - not:
                         any:
@@ -72,8 +76,10 @@ rules:
           all:
             - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
-                kind: interpreted_string_literal
                 all:
+                  - any:
+                      - kind: interpreted_string_literal
+                      - kind: raw_string_literal
                   - regex: '^.{10,}$'
                   - not:
                       any:
@@ -84,8 +90,10 @@ rules:
           all:
             - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
-                kind: interpreted_string_literal
                 all:
+                  - any:
+                      - kind: interpreted_string_literal
+                      - kind: raw_string_literal
                   - regex: '^.{10,}$'
                   - not:
                       any:

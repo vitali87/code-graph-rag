@@ -19,7 +19,9 @@ rules:
       kind: additive_expression
       has:
         kind: string_literal
-        regex: '(?i)(select|insert|update|delete)\s'
+        # Anchor the SQL verb to the start of the literal so ordinary prose that
+        # merely contains a word like "select" is not misflagged.
+        regex: '(?i)^["'']?\s*(select|insert|update|delete|drop)\b'
         stopBy: end
   - id: hardcoded_secret
     # Security rule: favour recall. A field or local variable whose name matches

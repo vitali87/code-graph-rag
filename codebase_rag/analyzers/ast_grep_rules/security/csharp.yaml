@@ -11,14 +11,25 @@ rules:
   - id: sql_injection
     message: "Possible SQL injection: SqlCommand text built with concatenation or interpolation"
     rule:
-      kind: object_creation_expression
-      all:
-        - has: { kind: identifier, regex: 'SqlCommand', stopBy: end }
-        - has:
-            stopBy: end
-            any:
-              - kind: binary_expression
-              - kind: interpolated_string_expression
+      any:
+        # new SqlCommand("SELECT " + x)
+        - kind: object_creation_expression
+          all:
+            - has: { kind: identifier, regex: 'SqlCommand', stopBy: end }
+            - has:
+                stopBy: end
+                any:
+                  - kind: binary_expression
+                  - kind: interpolated_string_expression
+        # cmd.CommandText = "SELECT " + x;
+        - kind: assignment_expression
+          all:
+            - has: { regex: 'CommandText', stopBy: end }
+            - has:
+                stopBy: end
+                any:
+                  - kind: binary_expression
+                  - kind: interpolated_string_expression
   - id: hardcoded_secret
     # Security rule: favour recall. A credential-named field, property, or
     # assignment target bound to a non-trivial (>=8 char) plain string literal.

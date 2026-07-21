@@ -6,13 +6,14 @@ rules:
   - id: using_namespace_std
     message: "using namespace std pollutes the global namespace"
     rule:
-      kind: using_declaration
-      regex: 'using\s+namespace\s+std'
+      pattern: "using namespace std;"
   - id: cout_debug_output
+    # Match both std::cout and the bare cout common under `using namespace std`.
     message: "Debug output via std::cout left in source"
     rule:
-      kind: qualified_identifier
-      regex: '^std::cout$'
+      any:
+        - pattern: "std::cout"
+        - pattern: "cout"
   - id: raw_new
     message: "Raw new expression; prefer smart pointers"
     rule:

@@ -57,7 +57,7 @@ rules:
       all:
         - has:
             kind: field_expression
-            has: { field: field, regex: '^execute$' }
+            has: { field: field, regex: '^(execute|query|fetch)' }
         - has:
             kind: macro_invocation
             has: { field: macro, regex: '^format$' }

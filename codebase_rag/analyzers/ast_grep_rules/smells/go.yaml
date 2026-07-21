@@ -22,9 +22,9 @@ rules:
     message: "Return value discarded with blank identifier in := declaration"
     rule:
       kind: short_var_declaration
-      has: { field: left, regex: '\b_\b' }
+      has: { field: left, regex: '_\s*$' }
   - id: ignored_error_assign
     message: "Return value discarded with blank identifier in = assignment"
     rule:
       kind: assignment_statement
-      has: { field: left, regex: '\b_\b' }
+      has: { field: left, regex: '_\s*$' }
