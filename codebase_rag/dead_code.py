@@ -83,6 +83,19 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _is_c_cpp_entry_root(name: str, is_method: bool, path: str) -> bool:
+    # A C/C++ program entry (`main`, Windows' `wWinMain`/`WinMain`/`wmain`, a
+    # DLL's `DllMain`) is invoked by the OS runtime, never by a call the graph
+    # sees, so it roots its whole call tree (an unrooted wWinMain reported all
+    # 34 windows/runner symbols of a Flutter desktop shim dead). Free
+    # functions only; a method named main is not an entry.
+    return (
+        not is_method
+        and name in cs.C_CPP_ENTRY_FUNCTION_NAMES
+        and (path.endswith(cs.CPP_EXTENSIONS) or path.endswith(cs.EXT_C))
+    )
+
+
 def _is_cpp_operator_root(name: str, path: str) -> bool:
     # A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
     # `operator""_json`) is invoked by operator/literal SYNTAX, not a named call
@@ -274,6 +287,8 @@ def dead_code_from_graph(
         elif _is_rust_runtime_root(leaf, qn in method_qns, path):
             roots.add(qn)
         elif _is_cpp_operator_root(leaf, path):
+            roots.add(qn)
+        elif _is_c_cpp_entry_root(leaf, qn in method_qns, path):
             roots.add(qn)
         elif _is_java_serialization_root(
             leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
