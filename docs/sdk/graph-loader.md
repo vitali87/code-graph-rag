@@ -44,7 +44,7 @@ classes = graph.find_nodes_by_label("Class")
 modules = graph.find_nodes_by_label("Module")
 ```
 
-### Analyze Relationships
+### Analyse Relationships
 
 ```python
 for func in functions[:5]:

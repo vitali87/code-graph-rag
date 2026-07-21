@@ -1,6 +1,6 @@
 # Code-Graph-RAG
 
-A graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs in Memgraph, and enables natural language querying, editing, and optimization.
+A graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs in Memgraph, and enables natural language querying, editing, and optimisation.
 
 ## Install
 
@@ -61,7 +61,7 @@ cgr index -o ./index-output --repo-path ./my-project
 cgr export -o graph.json
 ```
 
-**AI-guided optimization:**
+**AI-guided optimisation:**
 
 ```bash
 cgr optimize python --repo-path ./my-project

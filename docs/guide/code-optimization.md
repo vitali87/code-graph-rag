@@ -1,10 +1,10 @@
 ---
-description: "AI-powered codebase optimization with language-specific best practices and interactive approval."
+description: "AI-powered codebase optimisation with language-specific best practices and interactive approval."
 ---
 
-# Code Optimization
+# Code Optimisation
 
-Code-Graph-RAG provides AI-powered codebase optimization with best practices guidance and an interactive approval workflow.
+Code-Graph-RAG provides AI-powered codebase optimisation with best practices guidance and an interactive approval workflow.
 
 ## Basic Usage
 
@@ -14,7 +14,7 @@ cgr optimize python --repo-path /path/to/your/repo
 
 ## With Reference Documentation
 
-Guide the optimization process using your own coding standards:
+Guide the optimisation process using your own coding standards:
 
 ```bash
 cgr optimize python \
@@ -32,7 +32,7 @@ cgr optimize rust \
   --reference-document ./docs/performance_guide.md
 ```
 
-The agent incorporates guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
+The agent incorporates guidance from your reference documents when suggesting optimisations, ensuring they align with your project's standards and architectural decisions.
 
 ## Using Specific Models
 
@@ -53,10 +53,10 @@ All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `ja
 
 ## How It Works
 
-1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
+1. **Analysis Phase**: The agent analyses your codebase structure using the knowledge graph
 2. **Pattern Recognition**: Identifies common anti-patterns, performance issues, and improvement opportunities
 3. **Best Practices Application**: Applies language-specific best practices and patterns
-4. **Interactive Approval**: Presents each optimization suggestion for your approval before implementation
+4. **Interactive Approval**: Presents each optimisation suggestion for your approval before implementation
 5. **Guided Implementation**: Implements approved changes with detailed explanations
 
 ## Example Session

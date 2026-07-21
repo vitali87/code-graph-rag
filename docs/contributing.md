@@ -78,7 +78,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 ## Technical Requirements
 
 - **PydanticAI Only**: Do not introduce other agentic frameworks (LangChain, CrewAI, AutoGen, etc.)
-- **Heavy Pydantic Usage**: Use Pydantic models for data validation, serialization, and configuration
+- **Heavy Pydantic Usage**: Use Pydantic models for data validation, serialisation, and configuration
 - **Package Management**: Use `uv` for all dependency management
 - **Code Quality**: Use `ruff` for linting and formatting
 - **Type Safety**: Use type hints everywhere and run `uv run ty check`

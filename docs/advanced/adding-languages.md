@@ -28,7 +28,7 @@ cgr language add-grammar kotlin
 
 ## Custom Grammar Repositories
 
-For languages hosted outside the standard tree-sitter organization:
+For languages hosted outside the standard tree-sitter organisation:
 
 ```bash
 cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
@@ -40,7 +40,7 @@ When you add a language, the tool automatically:
 
 1. **Downloads the Grammar**: Clones the tree-sitter grammar repository as a git submodule
 2. **Detects Configuration**: Auto-extracts language metadata from `tree-sitter.json`
-3. **Analyzes Node Types**: Automatically identifies AST node types for functions/methods, classes/structs, modules/files, and function calls
+3. **Analyses Node Types**: Automatically identifies AST node types for functions/methods, classes/structs, modules/files, and function calls
 4. **Compiles Bindings**: Builds Python bindings from the grammar source
 5. **Updates Configuration**: Adds the language to `codebase_rag/language_config.py`
 6. **Enables Parsing**: Makes the language immediately available for codebase analysis

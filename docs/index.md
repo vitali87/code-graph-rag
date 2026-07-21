@@ -1,5 +1,5 @@
 ---
-description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying, editing, and optimization."
+description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying, editing, and optimisation."
 ---
 
 # Code-Graph-RAG
@@ -12,7 +12,7 @@ description: "Graph-based RAG system that parses multi-language codebases with T
 
 ## What is Code-Graph-RAG?
 
-Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs in Memgraph, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
+Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that analyses multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs in Memgraph, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
 ## Key Features
 
@@ -24,8 +24,8 @@ Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that a
 - **Code Snippet Retrieval** with actual source code for found functions and methods
 - **Advanced File Editing** with AST-based function targeting and visual diff previews
 - **Shell Command Execution** for running tests and CLI tools
-- **Interactive Code Optimization** with language-specific best practices
-- **Reference-Guided Optimization** using your own coding standards
+- **Interactive Code Optimisation** with language-specific best practices
+- **Reference-Guided Optimisation** using your own coding standards
 - **Dead Code Detection** to find functions unreachable from any entry point
 - **Dependency Analysis** from `pyproject.toml`
 - **Semantic Code Search** using UniXcoder embeddings to find functions by intent
@@ -44,6 +44,6 @@ See the [Installation](getting-started/installation.md) guide for full setup ins
 
 ## Enterprise Services
 
-Code-Graph-RAG is open source and free to use. For organizations that need more, we offer **fully managed cloud-hosted solutions** and **on-premise deployments**.
+Code-Graph-RAG is open source and free to use. For organisations that need more, we offer **fully managed cloud-hosted solutions** and **on-premise deployments**.
 
 [View plans & pricing at code-graph-rag.com](https://code-graph-rag.com/enterprise){ .md-button }

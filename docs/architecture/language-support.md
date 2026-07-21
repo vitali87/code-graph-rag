@@ -29,7 +29,7 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 
 ## Language-Agnostic Design
 
-All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analyzing polyglot repositories.
+All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.
 
 ## Adding New Languages
 

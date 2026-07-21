@@ -54,7 +54,7 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimize that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="demo">
@@ -77,7 +77,7 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 - Ask questions about the codebase in natural language and get answers grounded in the real structure.
 - Retrieve the actual source of any function, class, or method by name or by intent.
 - Edit code through the agent with AST-based surgical patching and a diff preview before anything changes.
-- Optimize code against language best practices or your own coding standards.
+- Optimise code against language best practices or your own coding standards.
 - Find dead code by walking call and reference edges from entry points.
 - Search and rewrite structurally by AST pattern with ast-grep.
 
@@ -86,7 +86,7 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 The system has two components:
 
 1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema.
-2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimization.
+2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
 ```
 Source Code -> Tree-sitter Parser -> AST Analysis -> Memgraph Knowledge Graph
@@ -141,7 +141,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 **User Guide**
 - [CLI Reference](docs/guide/cli-reference.md)
 - [Interactive Querying](docs/guide/interactive-querying.md)
-- [Code Optimization](docs/guide/code-optimization.md)
+- [Code Optimisation](docs/guide/code-optimization.md)
 - [Dead Code Detection](docs/guide/dead-code.md)
 - [Graph Export](docs/guide/graph-export.md)
 - [Real-Time Updates](docs/guide/realtime-updates.md)
@@ -167,10 +167,10 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 
 ## Enterprise Services
 
-Code-Graph-RAG is open source and free to use. For organizations that need more, we offer **fully managed cloud-hosted solutions** and **on-premise deployments**:
+Code-Graph-RAG is open source and free to use. For organisations that need more, we offer **fully managed cloud-hosted solutions** and **on-premise deployments**:
 
 - **Cloud-Hosted Deployment**: Managed cloud infrastructure for both the graph database and the AI agent connection. Zero infrastructure overhead, so we handle scaling, updates, and availability while your team focuses on building.
-- **On-Premise & Air-Gapped Deployment**: Deploy Code-Graph-RAG entirely within your own environment, including air-gapped networks. Full data sovereignty for regulated industries and security-sensitive organizations.
+- **On-Premise & Air-Gapped Deployment**: Deploy Code-Graph-RAG entirely within your own environment, including air-gapped networks. Full data sovereignty for regulated industries and security-sensitive organisations.
 
 We also offer custom development, integration consulting, technical support contracts, and team training.
 

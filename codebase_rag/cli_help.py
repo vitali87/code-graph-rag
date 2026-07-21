@@ -21,7 +21,7 @@ class CLICommandName(StrEnum):
 
 
 APP_DESCRIPTION = (
-    "Analyze source code with Tree-sitter, store its structure in a shared "
+    "Analyse source code with Tree-sitter, store its structure in a shared "
     "knowledge graph, and query it in natural language."
 )
 APP_EPILOG = "Run 'cgr help COMMAND' for details about a command."
@@ -34,7 +34,7 @@ PANEL_HELP = "Help"
 CMD_START = "Open the code assistant for a repository or workspace"
 CMD_INDEX = "Write an offline protobuf index for a repository"
 CMD_EXPORT = "Export the shared graph database to JSON"
-CMD_OPTIMIZE = "Run a language-focused code optimization session"
+CMD_OPTIMIZE = "Run a language-focused code optimisation session"
 CMD_MCP_SERVER = "Serve cgr tools over stdio or HTTP"
 CMD_GRAPH_LOADER = "Summarize an exported graph JSON file"
 CMD_LANGUAGE = "Manage language grammars and parser metadata"
@@ -108,7 +108,7 @@ HELP_DAEMON_LOGS_SERVICE = (
     "Show only SERVICE logs (memgraph, qdrant, or lab). By default, show all services."
 )
 HELP_NO_START_STACK = "Do not start the shared stack automatically."
-HELP_NO_SYNC = "Do not synchronize the graph before starting the assistant."
+HELP_NO_SYNC = "Do not synchronise the graph before starting the assistant."
 HELP_NO_EMBEDDINGS = (
     "Do not generate semantic embeddings during sync. Graph nodes and relationships "
     "are still updated. Equivalent env: CGR_SKIP_EMBEDDINGS=1."
@@ -134,7 +134,7 @@ HELP_NO_INSTRUCTIONS = (
 
 HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current directory."
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
-HELP_REPO_PATH_OPTIMIZE = "Repository to optimize. Defaults to the current directory."
+HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
 HELP_REPO_PATH_WATCH = "Repository to watch."
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
@@ -154,8 +154,8 @@ HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_OUTPUT_PROTO_DIR = "Write protobuf index files under DIRECTORY."
 HELP_SPLIT_INDEX = "Write separate nodes.bin and relationships.bin files."
 HELP_FORMAT_JSON = "Use JSON output. Other export formats are not supported."
-HELP_LANGUAGE_ARG = "Language to optimize, such as python, java, javascript, or cpp."
-HELP_REFERENCE_DOC = "Reference document to use during optimization."
+HELP_LANGUAGE_ARG = "Language to optimise, such as python, java, javascript, or cpp."
+HELP_REFERENCE_DOC = "Reference document to use during optimisation."
 HELP_GRAPH_FILE = "Exported graph JSON file to load."
 HELP_EXPORTED_GRAPH_FILE = "Path to the exported_graph.json file."
 

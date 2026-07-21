@@ -17,7 +17,7 @@
 Drop-in dependency swap. Replace `import json` with `import orjson` in graph_loader.py, graph_updater.py, services/graph_service.py, embedder.py, stdlib_extractor.py.
 
 ### Integration Overhead
-- **Serialization boundary:** Zero. orjson is a direct Python C extension. No FFI marshalling.
+- **Serialisation boundary:** Zero. orjson is a direct Python C extension. No FFI marshalling.
 - **API difference:** `orjson.dumps()` returns `bytes` not `str`. Every `json.dumps()` call site that feeds the result to something expecting `str` needs `.decode()`. In this codebase, the `_write_graph_json` function in `main.py` uses `json.dump(graph_data, f, indent=2, ensure_ascii=False)` which would need adjustment since orjson's `OPT_INDENT_2` flag replaces the `indent` parameter.
 - **Protobuf service:** `services/protobuf_service.py` does not use JSON. No impact.
 - **Hash cache I/O:** `_save_hash_cache` and `_load_hash_cache` use `json.dump/load` with file objects. orjson does not support file-object streaming; need to call `orjson.dumps()` then `f.write()`.
@@ -46,9 +46,9 @@ NOT APPLICABLE. This codebase uses **Memgraph** via `pymgclient` (mgclient C lib
 
 ### Alternative for Memgraph Driver
 - pymgclient is already a C extension wrapping Memgraph's C client library. It is already compiled code.
-- The actual overhead is in Python-side batch construction (building `list[RelBatchRow]` and `list[NodeBatchRow]` dicts), Cypher query string formatting, and result deserialization in `_cursor_to_results`.
+- The actual overhead is in Python-side batch construction (building `list[RelBatchRow]` and `list[NodeBatchRow]` dicts), Cypher query string formatting, and result deserialisation in `_cursor_to_results`.
 - The `_cursor_to_results` method iterates cursor results and builds `list[ResultRow]` via `dict(zip(column_names, row))`. This is pure Python overhead.
-- Potential optimization: Use cursor iteration in C rather than Python, but this requires pymgclient changes, not neo4j-rust-ext.
+- Potential optimisation: Use cursor iteration in C rather than Python, but this requires pymgclient changes, not neo4j-rust-ext.
 
 ### Net Projected Gain
 - **Net gain:** 0x. This recommendation is inapplicable.
@@ -61,7 +61,7 @@ NOT APPLICABLE. This codebase uses **Memgraph** via `pymgclient` (mgclient C lib
 Drop-in hash function replacement in `EmbeddingCache._content_hash()` and `_hash_file()` in `graph_updater.py`.
 
 ### Integration Overhead
-- **Serialization boundary:** Zero. blake3 Python package is a C extension.
+- **Serialisation boundary:** Zero. blake3 Python package is a C extension.
 - **API change:** `hashlib.sha256(content.encode()).hexdigest()` becomes `blake3.blake3(content.encode()).hexdigest()`. One-line change per call site.
 - **Cache invalidation:** Existing embedding caches (`.qdrant_code_embeddings/embedding_cache.json`) and file hash caches (`.file_hashes.json`) will be invalidated because hash values change. This forces a full re-index on first run after the change.
 - **Build system change:** Add `blake3>=1.0.0` to dependencies. blake3 publishes pre-built wheels.
@@ -184,17 +184,17 @@ Expose a Rust-backed trie as a Python class via PyO3, bundled in the same crate 
 ## Candidate 6: File Processing Parallelism (Python)
 
 ### Integration Strategy
-Use `concurrent.futures.ProcessPoolExecutor` to parallelize per-file processing in `GraphUpdater._process_files()`.
+Use `concurrent.futures.ProcessPoolExecutor` to parallelise per-file processing in `GraphUpdater._process_files()`.
 
 ### Integration Overhead Assessment
 
-**Serialization at boundary:**
-- Each worker process needs: file path (Path, serializable), language queries (NOT serializable: contains tree-sitter Parser, Query, Language objects which are C pointers).
-- **Critical problem:** `LanguageQueries` contains `Parser`, `Query`, and `Language` objects from tree-sitter, which are C-level objects that cannot be serialized across process boundaries.
+**Serialisation at boundary:**
+- Each worker process needs: file path (Path, serialisable), language queries (NOT serialisable: contains tree-sitter Parser, Query, Language objects which are C pointers).
+- **Critical problem:** `LanguageQueries` contains `Parser`, `Query`, and `Language` objects from tree-sitter, which are C-level objects that cannot be serialised across process boundaries.
 - Each worker would need to call `load_parsers()` independently, loading all language grammars (~50ms startup cost per worker).
-- Results (function definitions, call relationships) are Python dicts/tuples that serialize easily.
+- Results (function definitions, call relationships) are Python dicts/tuples that serialise easily.
 
-**State synchronization:**
+**State synchronisation:**
 - `FunctionRegistryTrie` is shared mutable state. Workers write to it during function registration, and readers need it during call resolution.
 - With multiprocessing, each worker would have its own trie. Merging tries after parallel processing adds complexity.
 - `import_mapping` in `ImportProcessor` is similarly shared mutable state.
@@ -202,14 +202,14 @@ Use `concurrent.futures.ProcessPoolExecutor` to parallelize per-file processing 
 
 **GIL considerations:**
 - `threading.Thread` would not help because call resolution is CPU-bound Python code held by the GIL.
-- `ProcessPoolExecutor` bypasses GIL but introduces serialization overhead.
-- Estimated per-file serialization overhead for results: ~0.1ms per file.
-- For 1000 files on 4 cores: ~25ms total serialization overhead vs ~5000ms saved.
+- `ProcessPoolExecutor` bypasses GIL but introduces serialisation overhead.
+- Estimated per-file serialisation overhead for results: ~0.1ms per file.
+- For 1000 files on 4 cores: ~25ms total serialisation overhead vs ~5000ms saved.
 
 ### Net Projected Gain
 - **Raw gain:** 2x to 4x (limited by sequential passes and Amdahl's law)
-- **Serialization overhead:** ~5ms for 1000 files (minimal)
-- **Worker initialization overhead:** ~50ms per worker (grammar loading), amortized across files
+- **Serialisation overhead:** ~5ms for 1000 files (minimal)
+- **Worker initialisation overhead:** ~50ms per worker (grammar loading), amortised across files
 - **Architecture complexity:** High. Requires restructuring the three-pass processing pipeline, managing shared state (trie, import maps), and handling errors across processes.
 - **Net gain:** 1.5x to 3x after accounting for sequential bottlenecks (pass dependencies)
 - **Recommendation:** Medium priority. Worth doing after Candidate 4 (Rust extension) is evaluated. If Candidate 4 makes per-file processing fast enough, parallelism becomes less critical.
@@ -252,7 +252,7 @@ This validates the principle: **a function 10x faster but with 8x overhead at th
 
 **Candidate 2 is completely inapplicable** due to incorrect driver assumption.
 
-**Candidate 3 optimizes a non-bottleneck** (microsecond-level operations).
+**Candidate 3 optimises a non-bottleneck** (microsecond-level operations).
 
 The only candidates with clear positive ROI accounting for integration overhead are:
 1. **orjson** (zero overhead, significant JSON gains)
@@ -291,7 +291,7 @@ The CPU profiling report (cProfile, 31.2s total, 179M function calls on 352 Pyth
 2. **Build a suffix index:** Create a `dict[str, set[QualifiedName]]` mapping the last dot-separated segment of every qualified name to its full name. This converts O(n) scans to O(1) lookups.
 3. **Cache negative results:** If a suffix has been scanned and yielded no results, cache that fact to avoid re-scanning.
 
-**Integration overhead:** Zero. This is a bugfix/optimization within existing Python code.
+**Integration overhead:** Zero. This is a bugfix/optimisation within existing Python code.
 **Projected gain:** Eliminating 15.07s (48.3% of total) would reduce total runtime from 31.2s to ~16.1s. Even a 90% reduction (fixing most misses) saves ~13.5s.
 **Net gain:** ~1.9x total speedup from a pure Python fix.
 **Risk:** Very low.
@@ -311,7 +311,7 @@ The CPU profiling report (cProfile, 31.2s total, 179M function calls on 352 Pyth
 
 #### NEW CANDIDATE C: Cache `build_local_variable_type_map` Results
 
-**Integration strategy:** Memoize results keyed by (file_path, function_start_line, function_end_line).
+**Integration strategy:** Memoise results keyed by (file_path, function_start_line, function_end_line).
 
 **Root cause:** Called 5,228 times, re-traversing AST nodes that have already been parsed. Multiple functions in the same file trigger independent traversals.
 
@@ -378,7 +378,7 @@ The Rust AST extension only becomes worthwhile AFTER all pure Python fixes are a
 |----------|-----------|------|---------------------------|--------|---------------------|
 | **1** | **A: Fix find_ending_with** | **Python bugfix** | **~1.9x (13.5s saved)** | **Low** | **Zero** |
 | **2** | **B: String path ops** | **Python refactor** | **~1.15x (4.0s saved)** | **Low** | **Zero** |
-| **3** | **C: Cache type inference** | **Python memoization** | **~1.07x (2.0s saved)** | **Low** | **Zero** |
+| **3** | **C: Cache type inference** | **Python memoisation** | **~1.07x (2.0s saved)** | **Low** | **Zero** |
 | **4** | **D: Suppress debug logging** | **Config change** | **~1.06x (1.7s saved)** | **Trivial** | **Zero** |
 | **5** | **E: Deduplicate FS traversal** | **Python refactor** | **~1.05x (1.5s saved)** | **Low** | **Zero** |
 | 6 | 1: orjson | Dependency swap | Marginal on indexing | Trivial | Zero |
@@ -387,6 +387,6 @@ The Rust AST extension only becomes worthwhile AFTER all pure Python fixes are a
 
 ### Conclusion
 
-**The top 5 optimizations require zero language rewrites and zero integration overhead.** They fix algorithmic inefficiencies (linear scan), unnecessary object creation (pathlib), redundant computation (uncached type inference, duplicate traversal), and avoidable overhead (debug logging). Together they provide ~3.7x speedup.
+**The top 5 optimisations require zero language rewrites and zero integration overhead.** They fix algorithmic inefficiencies (linear scan), unnecessary object creation (pathlib), redundant computation (uncached type inference, duplicate traversal), and avoidable overhead (debug logging). Together they provide ~3.7x speedup.
 
 The Rust AST extension (previously the headline recommendation) addresses only 3.1% of actual CPU time and is demoted to priority 7. It should only be reconsidered after Python-level fixes are applied and the workload scales to repositories an order of magnitude larger than the current test case.
