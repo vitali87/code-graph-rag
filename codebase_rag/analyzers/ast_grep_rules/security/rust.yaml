@@ -9,14 +9,23 @@ rules:
     # Command::new fires. The old `stopBy: end` searched every descendant, so a
     # call that merely wraps a Command::new argument (`foo(Command::new(x))`) or
     # any ancestor in a builder chain matched too, emitting a phantom finding on
-    # the outer call. std::process::Command::new still matches (substring regex).
+    # the outer call. A parenthesized callee (`(Command::new)("ls")`) is a
+    # parenthesized_expression, so accept that shape too (recall). A method-chain
+    # callee is a field_expression, which is deliberately NOT matched, so
+    # `.arg(...)` ancestors do not re-fire. std::process::Command::new still
+    # matches via the substring regex.
     message: "Spawning an external process (Command::new) can enable command injection"
     rule:
       kind: call_expression
       has:
         field: function
-        kind: scoped_identifier
-        regex: 'Command\s*::\s*new'
+        any:
+          - kind: scoped_identifier
+            regex: 'Command\s*::\s*new'
+          - kind: parenthesized_expression
+            has:
+              kind: scoped_identifier
+              regex: 'Command\s*::\s*new'
   - id: unsafe_block
     message: "unsafe block bypasses Rust memory-safety guarantees"
     rule:

@@ -777,12 +777,15 @@ def test_rust_command_new_only_flags_the_spawn_call(tmp_path: Path) -> None:
     # every descendant, so a call that merely WRAPS a Command::new argument
     # (`foo(Command::new("x"))`) matched too, emitting a phantom finding on the
     # outer `foo(...)` call. Only the call whose callee IS Command::new should
-    # fire. Line 2 must yield exactly one finding (the inner spawn, not foo), and
-    # line 3's std::process::Command::new stays a true positive (recall kept).
+    # fire. Line 2 must yield exactly one finding (the inner spawn, not foo).
+    # Line 3's std::process::Command::new stays a true positive; the chained
+    # `.arg(...)` (a field_expression callee) must NOT re-fire. Line 4's
+    # parenthesized callee `(Command::new)(...)` stays caught (recall).
     src = (
         "fn a() {\n"
         '    foo(Command::new("wrapped"));\n'
         '    let _ = std::process::Command::new("ls").arg("-l");\n'
+        '    let _ = (Command::new)("paren");\n'
         "}\n"
     )
     lines = sorted(
@@ -790,26 +793,29 @@ def test_rust_command_new_only_flags_the_spawn_call(tmp_path: Path) -> None:
         for p in _fire(tmp_path, "m.rs", src)
         if p[cs.KEY_NAME] == "command_new"
     )
-    assert lines == [2, 3], lines
+    assert lines == [2, 3, 4], lines
 
 
 def test_ruby_swallowed_rescue_ignores_buried_nil(tmp_path: Path) -> None:
     # Dogfood FP (sinatra): the old nil-branch `has: {nil, stopBy: end}` matched
     # any nil anywhere in the rescue body, so a real recovery `app, data = nil`
     # (line 4) and a `log(nil)` call (line 9) were mis-flagged as swallowed. Only
-    # a body that IS bare nil (line 14) or an empty rescue (line 18) hides errors.
+    # a body that IS bare nil (line 14), a parenthesized nil `(nil)` (line 19),
+    # or an empty rescue (line 23) hides errors; `(app = nil)` (line 9-style,
+    # here line 4) must stay clean.
     src = (
         "begin\n a\nrescue Errno::ENOENT\n app, data = nil\nend\n"
         "begin\n b\nrescue\n log(nil)\nend\n"
         "begin\n c\nrescue\n nil\nend\n"
-        "begin\n d\nrescue\nend\n"
+        "begin\n d\nrescue\n (nil)\nend\n"
+        "begin\n e\nrescue\nend\n"
     )
     lines = sorted(
         p[cs.KEY_START_LINE]
         for p in _fire(tmp_path, "m.rb", src)
         if p[cs.KEY_NAME] == "swallowed_rescue"
     )
-    assert lines == [13, 18], lines
+    assert lines == [13, 18, 23], lines
 
 
 def test_tsx_files_get_findings(tmp_path: Path) -> None:
