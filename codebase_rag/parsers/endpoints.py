@@ -92,6 +92,20 @@ def url_matches_template(url: str, template: str) -> bool:
     )
 
 
+def _has_literal_segment(template: str) -> bool:
+    """True when at least one path segment is not a template parameter.
+
+    An all-parameter template (``/{id}/``, ``/<path:path>``, or the bare
+    root ``/``) matches any URL of the right shape, so linking it to a
+    literal URL carries no evidence and only fabricates traces.
+    """
+    return any(
+        not _TEMPLATE_PARAM_RE.match(segment)
+        for segment in template.split("/")
+        if segment
+    )
+
+
 def emit_endpoints(
     ingestor: IngestorProtocol,
     label: cs.NodeLabel,
@@ -160,7 +174,9 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     Endpoint identities are ``METHOD /path/template``; a NETWORK resource
     links to every endpoint whose template matches its URL path. Matching
     is method-agnostic: the request method lives on the sink edge, not in
-    the Resource identity. Returns the number of edges emitted.
+    the Resource identity. Templates without a literal segment are skipped
+    entirely; they would match any same-length URL path. Returns the number
+    of edges emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
@@ -172,7 +188,11 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     for network_qn, url in networks.items():
         for endpoint_qn, identity in endpoints.items():
             _, _, template = identity.partition(" ")
-            if template and url_matches_template(url, template):
+            if (
+                template
+                and _has_literal_segment(template)
+                and url_matches_template(url, template)
+            ):
                 writer.ensure_relationship_batch(
                     (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                     cs.RelationshipType.RESOLVES_TO,

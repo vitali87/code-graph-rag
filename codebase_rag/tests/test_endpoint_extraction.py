@@ -190,6 +190,82 @@ class TestLinkEndpoints:
         ingestor.ensure_relationship_batch.assert_not_called()
 
 
+class TestAllParameterTemplatesDoNotLink:
+    """Dogfood finding: a one-segment URL like ``http://host/docs`` matched
+    every one-segment wildcard template (``/{id}/``, ``/<path:path>``, ...)
+    across every indexed project, fabricating cross-service traces. A
+    template with no literal segment carries no evidence and must not link.
+    """
+
+    @staticmethod
+    def _rows(url: str, *endpoints: str) -> list[dict[str, str]]:
+        rows = [
+            {
+                "qualified_name": f"resource::NETWORK::{url}",
+                "name": url,
+                "kind": "NETWORK",
+            }
+        ]
+        rows += [
+            {
+                "qualified_name": f"resource::ENDPOINT::{identity}",
+                "name": identity,
+                "kind": "ENDPOINT",
+            }
+            for identity in endpoints
+        ]
+        return rows
+
+    def test_all_parameter_templates_do_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows(
+            "http://localhost:8000/docs",
+            "GET /{id}/",
+            "GET /<path:path>",
+            "GET /docs",
+        )
+
+        assert link_endpoints(ingestor) == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (
+                cs.NodeLabel.RESOURCE,
+                "qualified_name",
+                "resource::NETWORK::http://localhost:8000/docs",
+            ),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", "resource::ENDPOINT::GET /docs"),
+        )
+
+    def test_root_template_does_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows("http://svc/", "GET /")
+
+        assert link_endpoints(ingestor) == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_mixed_template_with_literal_segment_still_links(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows(
+            "http://user-service:8000/users/42",
+            "GET /users/{id}",
+        )
+
+        assert link_endpoints(ingestor) == 1
+
+
 class TestReviewHardening:
     @pytest.mark.parametrize(
         ("decorator", "expected"),
