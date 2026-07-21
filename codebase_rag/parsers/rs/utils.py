@@ -175,7 +175,7 @@ def tuple_group_inner(node: Node) -> Node | None:
     # Grouping parens (`&(dyn Svc + Send)`) have one typed child and NO comma; a
     # 1-ary tuple `(T,)` also has one typed child, so the comma, not the child
     # count, separates the two.
-    if any(c.type == cs.SEPARATOR_COMMA for c in node.children):
+    if any(c.type == cs.CHAR_COMMA for c in node.children):
         return None
     inners = [c for c in node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES]
     return inners[0] if len(inners) == 1 else None

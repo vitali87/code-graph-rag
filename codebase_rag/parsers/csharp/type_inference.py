@@ -56,7 +56,7 @@ def _arity(leaf: str) -> int:
             depth += 1
         elif ch in ">)]":
             depth -= 1
-        elif ch == cs.SEPARATOR_COMMA and depth == 0:
+        elif ch == cs.CHAR_COMMA and depth == 0:
             count += 1
     return count
 

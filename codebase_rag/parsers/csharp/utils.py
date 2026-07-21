@@ -63,7 +63,7 @@ def generic_arity_of_type_text(text: str) -> int:
             if depth == 0:
                 break
             depth -= 1
-        elif ch == cs.SEPARATOR_COMMA and depth == 0:
+        elif ch == cs.CHAR_COMMA and depth == 0:
             count += 1
     return count
 

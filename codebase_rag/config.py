@@ -1,3 +1,5 @@
+"""Runtime configuration: settings, model providers, and environment loading."""
+
 from __future__ import annotations
 
 import os
