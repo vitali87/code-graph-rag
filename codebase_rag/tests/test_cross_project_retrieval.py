@@ -86,9 +86,7 @@ class TestFindSnippetAcrossProjects:
         ]
         retriever = CodeRetriever(str(current_repo), ingestor)
 
-        result = await retriever.find_code_snippet(
-            "user-service.src.handlers.get_user"
-        )
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
 
         assert result.found is True
         assert result.source_code == _SOURCE
@@ -124,9 +122,7 @@ class TestFindSnippetAcrossProjects:
         assert result.source_code == _SOURCE
 
     @pytest.mark.asyncio
-    async def test_not_found_when_no_file_exists_anywhere(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_not_found_when_no_file_exists_anywhere(self, tmp_path: Path) -> None:
         current_repo = tmp_path / "order-service"
         current_repo.mkdir()
 
