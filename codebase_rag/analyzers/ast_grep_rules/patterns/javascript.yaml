@@ -25,3 +25,4 @@ rules:
                 any:
                   - kind: arrow_function
                   - kind: function_expression
+                  - kind: generator_function

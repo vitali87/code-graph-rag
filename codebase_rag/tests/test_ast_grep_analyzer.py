@@ -279,11 +279,13 @@ def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
 
 def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
     # (H) `execute("... %s" % params)` is the classic printf-style injection, as
-    # (H) dangerous as `+` concatenation; a parametrized query stays clean.
+    # (H) dangerous as `+` concatenation; a parametrized query stays clean, and a
+    # (H) numeric modulo (line 4) must NOT be mistaken for string formatting.
     src = (
         'db.execute("SELECT " + u)\n'
         'db.execute("SELECT %s" % u)\n'
         'db.execute("SELECT ?", (u,))\n'
+        "db.execute(index % shard_count)\n"
     )
     lines = sorted(
         p[cs.KEY_START_LINE]
@@ -294,12 +296,14 @@ def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
 
 
 def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
-    # (H) Modern factories are usually `const createX = () => {}` (arrow) or a
-    # (H) function expression, not a `function` declaration; catch all three.
+    # (H) Modern factories are usually `const createX = () => {}` (arrow), a
+    # (H) function expression, or a generator function expression, not a `function`
+    # (H) declaration; catch all four. A non-factory name stays clean.
     src = (
         "function createA() { return {}; }\n"
         "const createB = () => ({});\n"
         "const makeC = function () { return {}; };\n"
+        "const makeGen = function* () { yield {}; };\n"
         "const other = () => ({});\n"
     )
     names = sorted(
@@ -307,7 +311,7 @@ def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
         for p in _fire(tmp_path, "f.js", src)
         if p[cs.KEY_NAME] == "factory_function"
     )
-    assert names == [1, 2, 3], names
+    assert names == [1, 2, 3, 4], names
 
 
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
