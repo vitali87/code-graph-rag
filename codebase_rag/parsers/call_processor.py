@@ -94,6 +94,12 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
+# Languages with argument-REFERENCE edges but no interprocedural
+# callable-param flow: passing a function keeps it reachable (REFERENCES),
+# while invocation edges stay with the flow languages.
+_ARG_REF_ONLY_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.DART}
+)
 
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
@@ -1976,11 +1982,12 @@ class CallProcessor:
             or language in _JS_TS_LANGUAGES
             or is_cpp
         )
-        # C# gets the argument-REFERENCE half only (a method group passed as
-        # a delegate argument keeps its target reachable, Polly's EmptyHandler
-        # family, 16 dead-code false flags) without the interprocedural
-        # callable-param flow, which is untuned for C#.
-        is_arg_ref_lang = is_flow_lang or language == cs.SupportedLanguage.CSHARP
+        # C# and Dart get the argument-REFERENCE half only (a method group or
+        # tear-off passed as an argument keeps its target reachable, Polly's
+        # EmptyHandler family, Flutter's `onPressed: _handleTap` callbacks)
+        # without the interprocedural callable-param flow, which is untuned
+        # for them.
+        is_arg_ref_lang = is_flow_lang or language in _ARG_REF_ONLY_LANGUAGES
         # A method-group pass is not an invocation: C# records it as
         # REFERENCES everywhere (CALLS here put 282 phantom edges into the
         # Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
@@ -3835,6 +3842,21 @@ class CallProcessor:
                 None,
             )
         if args_node is None:
+            # Dart has no call-expression node: a selector/cascade_section
+            # wraps its arguments in an argument_part holding the real
+            # `arguments` node one level down.
+            for part in call_node.named_children:
+                if part.type == cs.TS_DART_ARGUMENT_PART:
+                    args_node = next(
+                        (
+                            grand
+                            for grand in part.named_children
+                            if grand.type == cs.TS_DART_ARGUMENTS
+                        ),
+                        None,
+                    )
+                    break
+        if args_node is None:
             return positional, keyword
         for child in args_node.named_children:
             # C# wraps every argument expression in an `argument` node (which
@@ -3843,6 +3865,34 @@ class CallProcessor:
             # reference-type checks see the identifier, not the wrapper.
             if child.type == cs.TS_CSHARP_ARGUMENT and child.named_children:
                 child = child.named_children[-1]
+            # Dart wraps positional values in `argument`; a named value is a
+            # `named_argument` whose label child names it and whose last named
+            # child is the expression.
+            if child.type == cs.TS_DART_ARGUMENT and child.named_children:
+                child = child.named_children[-1]
+            if child.type == cs.TS_DART_NAMED_ARGUMENT:
+                label = next(
+                    (
+                        grand
+                        for grand in child.named_children
+                        if grand.type == cs.TS_DART_LABEL
+                    ),
+                    None,
+                )
+                value_node = child.named_children[-1] if child.named_children else None
+                name_node = (
+                    label.named_children[0]
+                    if label is not None and label.named_children
+                    else None
+                )
+                if (
+                    name_node is not None
+                    and value_node is not None
+                    and value_node is not label
+                    and (name := safe_decode_text(name_node)) is not None
+                ):
+                    keyword[name] = value_node
+                continue
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 name_node = child.child_by_field_name(cs.FIELD_NAME)
                 value_node = child.child_by_field_name(cs.FIELD_VALUE)

@@ -12,6 +12,12 @@
 # argument_part directly inside the `cascade_section`.
 TS_DART_SELECTOR = "selector"
 TS_DART_ARGUMENT_PART = "argument_part"
+# Inside an argument_part: `arguments` holds `argument` wrappers for
+# positional values and `named_argument` (label + expression) for named ones.
+TS_DART_ARGUMENTS = "arguments"
+TS_DART_ARGUMENT = "argument"
+TS_DART_NAMED_ARGUMENT = "named_argument"
+TS_DART_LABEL = "label"
 TS_DART_CASCADE_SECTION = "cascade_section"
 TS_DART_CASCADE_SELECTOR = "cascade_selector"
 TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR = "unconditional_assignable_selector"
