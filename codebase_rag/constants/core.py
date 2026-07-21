@@ -115,6 +115,8 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
 PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
+    "function_registry.py",
+    "ast_cache.py",
     "language_spec.py",
     "parser_loader.py",
 )

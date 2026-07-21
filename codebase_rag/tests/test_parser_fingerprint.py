@@ -69,6 +69,23 @@ class TestComputeParserFingerprint:
         source.write_text("A = 2\n")
         assert compute_parser_fingerprint(pkg) != before
 
+    @pytest.mark.parametrize("filename", ["function_registry.py", "ast_cache.py"])
+    def test_changes_when_extracted_parser_module_changes(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        # FunctionRegistryTrie and BoundedASTCache moved out of graph_updater.py
+        # into their own modules; both still decide how sources become edges, so
+        # an edit to either must trip the fingerprint even though graph_updater
+        # itself is unchanged.
+        assert filename in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        pkg = tmp_path / "pkg"
+        pkg.mkdir(parents=True)
+        source = pkg / filename
+        source.write_text("A = 1\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("A = 2\n")
+        assert compute_parser_fingerprint(pkg) != before
+
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
         parsers_dir = pkg / cs.PARSER_FINGERPRINT_SOURCE_DIRS[0]
