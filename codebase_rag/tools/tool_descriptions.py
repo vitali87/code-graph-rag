@@ -186,7 +186,7 @@ MCP_STRUCTURAL_REPLACE = (
 
 MCP_ASK_AGENT = (
     "Ask the Code Graph RAG agent a question about the codebase. "
-    "Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. "
+    "Uses the full RAG pipeline to analyse the code graph and provide a detailed answer. "
     "Use this for general questions about architecture, functionality, and code relationships."
 )
 

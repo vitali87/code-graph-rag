@@ -1,10 +1,10 @@
 ---
-description: "Keep your Code-Graph-RAG knowledge graph synchronized with code changes using the real-time file watcher."
+description: "Keep your Code-Graph-RAG knowledge graph synchronised with code changes using the real-time file watcher."
 ---
 
 # Real-Time Graph Updates
 
-For active development, keep your knowledge graph automatically synchronized with code changes using the real-time updater.
+For active development, keep your knowledge graph automatically synchronised with code changes using the real-time updater.
 
 ## What It Does
 
@@ -59,4 +59,4 @@ cgr start --repo-path ~/my-project
 
 ## Performance Note
 
-The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. Optimization of this behavior is a work in progress.
+The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. Optimisation of this behaviour is a work in progress.

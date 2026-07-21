@@ -311,11 +311,11 @@ ORANGE_STYLE = Style.from_dict(
 )
 
 OPTIMIZATION_LOOP_UI = AgentLoopUI(
-    status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",
+    status_message="[bold green]Agent is analysing codebase... (Press Ctrl+C to cancel)[/bold green]",
     cancelled_log="ASSISTANT: [Analysis was cancelled]",
-    approval_prompt="Do you approve this optimization?",
-    denial_default="User rejected this optimization without feedback",
-    panel_title="[bold green]Optimization Agent[/bold green]",
+    approval_prompt="Do you approve this optimisation?",
+    denial_default="User rejected this optimisation without feedback",
+    panel_title="[bold green]Optimisation Agent[/bold green]",
 )
 
 CHAT_LOOP_UI = AgentLoopUI(

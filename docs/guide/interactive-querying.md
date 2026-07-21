@@ -24,7 +24,7 @@ cgr start --repo-path /path/to/your/repo
 - "Find Rust structs and their methods"
 - "Show me Go interfaces and implementations"
 
-### Analyzing Relationships
+### Analysing Relationships
 
 - "Find all functions that call each other"
 - "What classes are in the user module"
@@ -35,7 +35,7 @@ cgr start --repo-path /path/to/your/repo
 ### C++ Specific Queries
 
 - "Find all C++ operator overloads in the Matrix class"
-- "Show me C++ template functions with their specializations"
+- "Show me C++ template functions with their specialisations"
 - "List all C++ namespaces and their contained classes"
 - "Find C++ lambda expressions used in algorithms"
 
@@ -45,7 +45,7 @@ cgr start --repo-path /path/to/your/repo
 - "Refactor the User class to use dependency injection"
 - "Convert these Python functions to async/await pattern"
 - "Add error handling to authentication methods"
-- "Optimize this function for better performance"
+- "Optimise this function for better performance"
 
 ## Semantic Code Search
 

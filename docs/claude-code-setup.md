@@ -39,7 +39,7 @@ claude mcp add --transport stdio code-graph-rag \
 ```
 
 **Replace**:
-- `/absolute/path/to/your/project` - Your codebase to analyze
+- `/absolute/path/to/your/project` - Your codebase to analyse
 - `/absolute/path/to/code-graph-rag` - Where you cloned this repo
 - `your-google-api-key` - Your Google AI API key
 
@@ -121,7 +121,7 @@ claude mcp add --transport stdio code-graph-rag-frontend \
 
 **Can't find uv/code-graph-rag**: Use absolute paths from `which uv`
 
-**Wrong repository analyzed**:
+**Wrong repository analysed**:
 - Without `TARGET_REPO_PATH`: MCP uses the directory where Claude Code is opened
 - With `TARGET_REPO_PATH`: MCP always uses that specific path (must be absolute)
 

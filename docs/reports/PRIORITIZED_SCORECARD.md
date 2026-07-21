@@ -1,10 +1,10 @@
-# Prioritized Scorecard: Rewrite Candidates
+# Prioritised Scorecard: Rewrite Candidates
 
 **Baseline:** 31.2s total, 179M function calls, indexing 352 Python files (cProfile)
 
 ## Scoring Methodology
 
-Each candidate is scored 1 to 5 on six dimensions. The final rank is determined by **Net Score**, which weights measured/projected performance gain and scope of impact highest, while penalizing integration overhead, risk, and maintenance burden.
+Each candidate is scored 1 to 5 on six dimensions. The final rank is determined by **Net Score**, which weights measured/projected performance gain and scope of impact highest, while penalising integration overhead, risk, and maintenance burden.
 
 **Weights:** Performance Gain (25%) | Memory Improvement (10%) | Integration Feasibility (20%) | Risk & Complexity (20%) | Scope of Impact (15%) | Maintenance Burden (10%)
 
@@ -46,19 +46,19 @@ Each candidate is scored 1 to 5 on six dimensions. The final rank is determined 
 
 ---
 
-### Rank 3: Cache `build_local_variable_type_map` Results (Python Memoization)
+### Rank 3: Cache `build_local_variable_type_map` Results (Python Memoisation)
 
 | Dimension | Score | Rationale |
 |---|---|---|
 | Performance Gain | 3 | 8.3% of CPU (2.59s across 5,228 calls). Saves ~2s. |
 | Memory Improvement | 2 | Adds ~2MB cache. Slight memory increase. |
-| Integration Feasibility | 5 | Add `@lru_cache` or dict-based memoization. No dependencies. |
+| Integration Feasibility | 5 | Add `@lru_cache` or dict-based memoisation. No dependencies. |
 | Risk & Complexity | 5 | Keyed by (file_path, function_start_line, function_end_line). Cache invalidation handled by existing incremental update system. |
 | Scope of Impact | 3 | Affects call resolution for files with multiple functions. |
-| Maintenance Burden | 5 | Standard memoization pattern. |
+| Maintenance Burden | 5 | Standard memoisation pattern. |
 | **Net Score** | **3.90** | |
 
-**Verdict: PROCEED.** Standard memoization with minimal memory cost.
+**Verdict: PROCEED.** Standard memoisation with minimal memory cost.
 
 ---
 
@@ -136,8 +136,8 @@ Each candidate is scored 1 to 5 on six dimensions. The final rank is determined 
 |---|---|---|
 | Performance Gain | 3 | 1.5x to 3x after Tier 1 fixes. Limited by sequential pass dependencies (Amdahl's law). |
 | Memory Improvement | 1 | Increases memory (per-worker grammar loading, duplicate tries). |
-| Integration Feasibility | 3 | Requires restructuring three-pass pipeline. Shared mutable state (trie, import maps) needs synchronization. |
-| Risk & Complexity | 3 | Tree-sitter objects not serializable across process boundaries. Worker initialization overhead (~50ms per worker). |
+| Integration Feasibility | 3 | Requires restructuring three-pass pipeline. Shared mutable state (trie, import maps) needs synchronisation. |
+| Risk & Complexity | 3 | Tree-sitter objects not serialisable across process boundaries. Worker initialisation overhead (~50ms per worker). |
 | Scope of Impact | 3 | Affects per-file processing throughput. |
 | Maintenance Burden | 3 | Adds concurrency complexity. Harder to debug. |
 | **Net Score** | **2.70** | |
@@ -192,7 +192,7 @@ Each candidate is scored 1 to 5 on six dimensions. The final rank is determined 
 | Maintenance Burden | 4 | Minimal. |
 | **Net Score** | **1.85** | |
 
-**Verdict: REJECT.** Optimizing an operation that takes microseconds per call provides no meaningful improvement. The cache invalidation cost (forced full re-index) creates a one-time penalty that exceeds months of per-operation savings. The integration architect's analysis is correct: "Skip unless profiling proves hashing is >5% of total wall clock time." It is far below 5%.
+**Verdict: REJECT.** Optimising an operation that takes microseconds per call provides no meaningful improvement. The cache invalidation cost (forced full re-index) creates a one-time penalty that exceeds months of per-operation savings. The integration architect's analysis is correct: "Skip unless profiling proves hashing is >5% of total wall clock time." It is far below 5%.
 
 ---
 
@@ -254,11 +254,11 @@ The Rust AST extension (Rank 7) would save ~0.94s from tree-sitter, reducing to 
 
 3. **neo4j-rust-ext is completely inapplicable** (wrong database driver). This was a factual error in the language recommendations.
 
-4. **BLAKE3 hashing optimizes a non-bottleneck** (microsecond-level operations that total <0.1% of runtime).
+4. **BLAKE3 hashing optimises a non-bottleneck** (microsecond-level operations that total <0.1% of runtime).
 
 5. **Standalone Rust trie and string processing have negative net gains** due to per-lookup FFI boundary crossing costs that exceed the per-operation savings.
 
-6. **The single largest optimization (Rank 1) is a Python bugfix**, not a language rewrite. Fixing the `_simple_name_lookup` index miss rate from 80.7% to near 0% eliminates 48.3% of total CPU time.
+6. **The single largest optimisation (Rank 1) is a Python bugfix**, not a language rewrite. Fixing the `_simple_name_lookup` index miss rate from 80.7% to near 0% eliminates 48.3% of total CPU time.
 
 ---
 
@@ -268,7 +268,7 @@ The Rust AST extension (Rank 7) would save ~0.94s from tree-sitter, reducing to 
 |------|-----------|------|-----------|------------|---------|
 | 1 | Fix `find_ending_with` | Python bugfix | 4.80 | ~13.5s (43.3%) | **PROCEED** |
 | 2 | String path ops | Python refactor | 4.50 | ~4.0s (12.8%) | **PROCEED** |
-| 3 | Cache type inference | Python memoization | 3.90 | ~2.0s (6.4%) | **PROCEED** |
+| 3 | Cache type inference | Python memoisation | 3.90 | ~2.0s (6.4%) | **PROCEED** |
 | 4 | Suppress debug logging | Config change | 3.75 | ~1.7s (5.5%) | **PROCEED** |
 | 5 | Deduplicate FS traversal | Python refactor | 3.55 | ~1.5s (4.8%) | **PROCEED** |
 | 6 | orjson | Dependency swap | 3.50 | Variable | **PROCEED** |

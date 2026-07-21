@@ -268,7 +268,7 @@ Within a function body, taint moves and disappears by these rules:
 
 A multi-hop chain like `a = getenv(...); b = a; c = b; print(c)` might look as if
 it needs a backward search from the sink (`print`) down through `c → b → a` to
-the source. It does not. The analyzer makes a **single forward pass**, top to
+the source. It does not. The analyser makes a **single forward pass**, top to
 bottom, carrying one live table:
 
 > `tainted` = { variable name → the **origin resource** it currently carries }

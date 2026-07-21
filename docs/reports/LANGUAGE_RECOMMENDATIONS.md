@@ -4,7 +4,7 @@
 
 **CPU profiling reveals that 48.3% of total runtime is spent in a single Python function** (`FunctionRegistryTrie.find_ending_with()`) performing a linear scan fallback with 123.7M `str.endswith()` calls. This is a pure algorithmic bottleneck, not a language limitation, and fixing the simple name lookup index (80.7% miss rate) would nearly halve total runtime with zero language rewrite.
 
-After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure Python fixes), **Rust via PyO3** is the recommended target language for the remaining CPU-bound hotspots (AST wrapper overhead, trie operations, call resolution). For serialization, **orjson** (Rust-backed) is a drop-in replacement for stdlib json. ~~neo4j-rust-ext~~ was retracted (codebase uses Memgraph/pymgclient, not Neo4j).
+After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure Python fixes), **Rust via PyO3** is the recommended target language for the remaining CPU-bound hotspots (AST wrapper overhead, trie operations, call resolution). For serialisation, **orjson** (Rust-backed) is a drop-in replacement for stdlib json. ~~neo4j-rust-ext~~ was retracted (codebase uses Memgraph/pymgclient, not Neo4j).
 
 **Critical distinction:** This report contains both theoretical per-instruction overhead multipliers (20x-50x from structural analysis) and empirical runtime impact (from CPU profiling). The structural multipliers explain WHY Python is slow at specific operations, but the IMPACT must be measured against the actual profiled runtime distribution via Amdahl's law. After Phase 0 Python fixes reduce the baseline from 31.2s to ~8-10s, the Rust extension (Phase 2) addresses ~20% of the reduced baseline, yielding diminishing but still meaningful returns.
 
@@ -69,15 +69,15 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 - `find_ending_with()` at `graph_updater.py:156`: **7.91s self time (25.3%), 15.07s cumulative (48.3%)** across 27,376 calls
 - Root cause: The `_simple_name_lookup` index has an **80.7% miss rate** (22,096 of 27,376 calls miss). On each miss, the code falls back to a linear scan: `[qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]`, triggering **123.7M `str.endswith()` calls** (7.21s self time)
 - Called 26,950 times from `CallResolver._try_resolve_via_trie()`, the last-resort call resolution strategy
-- **This single function accounts for nearly half of all CPU time. The trie data structure exists but is bypassed in favor of the linear fallback in most cases.**
-- **CRITICAL: Fix the simple name lookup index first (Python algorithmic fix).** A proper reverse index mapping simple names to qualified names would eliminate the linear scan entirely, reducing this from 15.07s to sub-second. This is the highest-ROI optimization in the entire codebase. Note: even after the algorithmic fix, Python's per-call `str.endswith()` overhead is 5x to 10x what Rust byte-slice comparisons would cost (structural analysis cross-reference), so the Rust trie rewrite remains valuable for the remaining lookup operations.
+- **This single function accounts for nearly half of all CPU time. The trie data structure exists but is bypassed in favour of the linear fallback in most cases.**
+- **CRITICAL: Fix the simple name lookup index first (Python algorithmic fix).** A proper reverse index mapping simple names to qualified names would eliminate the linear scan entirely, reducing this from 15.07s to sub-second. This is the highest-ROI optimisation in the entire codebase. Note: even after the algorithmic fix, Python's per-call `str.endswith()` overhead is 5x to 10x what Rust byte-slice comparisons would cost (structural analysis cross-reference), so the Rust trie rewrite remains valuable for the remaining lookup operations.
 
 **Evidence for language rewrite (after algorithmic fix):**
 - **Concurrency analysis confirms this is GIL-bound:** Pure Python trie/dict operations in `FunctionRegistryTrie` and `CallResolver` hold the GIL throughout, preventing any thread-level parallelism. The concurrency analyst estimates 10x to 50x speedup from moving this to native code. This is the strongest case for a Rust rewrite since it eliminates both per-operation overhead AND the GIL bottleneck.
 - The current implementation uses nested Python dicts as trie nodes, which means every level of trie traversal creates Python string objects and performs dict hash lookups with full Python object overhead.
-- **Structural analysis (HIGH severity):** Python dicts carry 50 to 80 bytes overhead per entry plus hash computation. Each `in` or `[]` lookup involves: hash the key string (O(n) for string length), probe the hash table, compare keys. In Rust, a `HashMap` has similar algorithmic complexity but with inline storage, no reference counting, and cache-friendly memory layout. Specialized data structures (arena-allocated tries, interned string IDs) are practical in systems languages but impractical in Python due to the object model.
+- **Structural analysis (HIGH severity):** Python dicts carry 50 to 80 bytes overhead per entry plus hash computation. Each `in` or `[]` lookup involves: hash the key string (O(n) for string length), probe the hash table, compare keys. In Rust, a `HashMap` has similar algorithmic complexity but with inline storage, no reference counting, and cache-friendly memory layout. Specialised data structures (arena-allocated tries, interned string IDs) are practical in systems languages but impractical in Python due to the object model.
 - **String overhead (HIGH severity, 5x to 15x):** Qualified names are constructed, split, compared, and looked up thousands of times per file. Each `.split(".")` allocates a new list of new string objects. Each f-string creates a new heap allocation. `_calculate_import_distance()` at `call_resolver.py:651-671` splits both strings and compares elementwise. In Rust, these would be zero-copy string views or stack-allocated slices.
-- Rust trie implementations (radix_trie crate) store data contiguously in memory with no per-node heap allocation, eliminating GC pressure. For high-miss-rate lookups (common in call resolution with fallback chains), optimized Rust tries outperform Python dicts. [Source: dev.to/timclicks/two-trie-implementations-in-rust]
+- Rust trie implementations (radix_trie crate) store data contiguously in memory with no per-node heap allocation, eliminating GC pressure. For high-miss-rate lookups (common in call resolution with fallback chains), optimised Rust tries outperform Python dicts. [Source: dev.to/timclicks/two-trie-implementations-in-rust]
 - The Gauge.sh case study showed that moving data structures out of Python and into compact Rust structs reduced malloc calls by 8.5x, directly relevant to this trie-heavy workload.
 - PyO3 achieves 92% of pure Rust performance for data structure operations while maintaining full Python interoperability. [Source: pyo3.rs/main/performance]
 
@@ -89,11 +89,11 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 
 ---
 
-### HOTSPOT 3: JSON Serialization/Deserialization for Graph Data
+### HOTSPOT 3: JSON Serialisation/Deserialisation for Graph Data
 
 **Files:** `graph_loader.py`, `graph_updater.py`, `services/graph_service.py`
 
-**Workload:** Loading and saving large graph JSON files (nodes, relationships, properties). The `GraphLoader.load()` method reads potentially multi-megabyte JSON files. The `GraphUpdater` serializes graph data for Neo4j ingestion.
+**Workload:** Loading and saving large graph JSON files (nodes, relationships, properties). The `GraphLoader.load()` method reads potentially multi-megabyte JSON files. The `GraphUpdater` serialises graph data for Neo4j ingestion.
 
 **Recommended Language:** Drop-in replacement with orjson (Rust-backed)
 
@@ -103,9 +103,9 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 - orjson (written in Rust) is 2x to 15.8x faster than Python's stdlib json, depending on payload size. For large payloads (>1MB), gains are 10x or more. [Source: medium.com/codeelevation/want-500-faster-json-in-python-try-orjson]
 - orjson uses SIMD (AVX2) for parallel UTF-8 validation and string escaping, scanning 32 bytes at once vs byte-by-byte. [Source: github.com/ijl/orjson]
 - Memory usage is 75% lower peak RSS, which matters for large graph files.
-- For a 10K-record benchmark, orjson achieved 820 MB/s serialization vs json's 52 MB/s (15.8x).
+- For a 10K-record benchmark, orjson achieved 820 MB/s serialisation vs json's 52 MB/s (15.8x).
 
-**Architecture:** Replace `import json` with `import orjson` throughout the codebase. This is the lowest-effort, highest-ROI optimization. orjson is a drop-in replacement for most use cases. The only API difference is that `orjson.dumps()` returns bytes instead of str.
+**Architecture:** Replace `import json` with `import orjson` throughout the codebase. This is the lowest-effort, highest-ROI optimisation. orjson is a drop-in replacement for most use cases. The only API difference is that `orjson.dumps()` returns bytes instead of str.
 
 **Why this over a full rewrite:** The JSON parsing itself is the bottleneck, not the surrounding Python code. orjson already provides native Rust performance for this specific operation. Writing a custom Rust extension for JSON handling would duplicate orjson's work.
 
@@ -115,7 +115,7 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 
 **CORRECTION (from integration-architect):** This codebase uses **Memgraph via `pymgclient`** (a C extension), NOT the Neo4j Python driver. There is no `neo4j` dependency in `pyproject.toml`. The `neo4j-rust-ext` package patches the Neo4j driver's PackStream implementation and has **zero effect** on `pymgclient`. This recommendation is retracted.
 
-`pymgclient` is already a C extension with low overhead. CPU profiling confirms database serialization (protobuf) is negligible at 0.17s total. No language rewrite is needed for the database communication layer.
+`pymgclient` is already a C extension with low overhead. CPU profiling confirms database serialisation (protobuf) is negligible at 0.17s total. No language rewrite is needed for the database communication layer.
 
 ---
 
@@ -136,7 +136,7 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 
 **Architecture:** Replace `hashlib.sha256` with `blake3.blake3` in the `EmbeddingCache._content_hash()` method. This is a one-line change. Note: existing caches would need to be regenerated since hash values will differ.
 
-**CPU PROFILING RESULT: Hashing is NOT a bottleneck.** `_hash_file()` costs only 0.04s total (0.1%) across 453 calls. SHA-256 hashing is fast and not worth optimizing. BLAKE3 swap is deprioritized.
+**CPU PROFILING RESULT: Hashing is NOT a bottleneck.** `_hash_file()` costs only 0.04s total (0.1%) across 453 calls. SHA-256 hashing is fast and not worth optimising. BLAKE3 swap is deprioritised.
 
 **Additional structural insight (MEDIUM severity):** The embedding pipeline at `embedder.py:109-126` and `unixcoder.py:97-107` crosses the Python/C boundary 3+ times per embedding: Python `list[list[int]]` to `torch.tensor` (copy), through PyTorch C++ backend (efficient), `.cpu().numpy()` (copy), `.tolist()` (N allocations for N-dim vector). Each crossing involves full memory copies and new container allocations. In Rust with `tch-rs`, tensor references can be held throughout without conversion overhead, providing 2x to 3x improvement on the embedding data path itself (separate from model inference time).
 
@@ -159,7 +159,7 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 - **Key insight from profiling:** File traversal is NOT I/O-bound as originally assumed. The bottleneck is Python pathlib object overhead (creating intermediate Path objects for every `relative_to()` call), not filesystem I/O (`posix.scandir` costs only 0.42s). Using string-based path operations instead of pathlib would eliminate most of this overhead. Additionally, merging the duplicate traversal passes would cut FS stat calls in half.
 
 **I/O PROFILING DATA (confirms NOT I/O-bound):**
-- Actual disk I/O for the entire workload totals only **0.85s (6.1% of 14.0s)**. File reads: 0.02s, hashing: 0.02s, protobuf serialization: 0.01s, JSON cache: 0.001s.
+- Actual disk I/O for the entire workload totals only **0.85s (6.1% of 14.0s)**. File reads: 0.02s, hashing: 0.02s, protobuf serialisation: 0.01s, JSON cache: 0.001s.
 - `pathlib.relative_to()` performs **zero disk I/O**. It constructs intermediate `PurePosixPath` objects via `__init__`, `is_relative_to`, `with_segments`, `_from_parsed_parts`. Measured at **10.6 us/call**.
 - **String slice equivalent: 0.065 us/call (163x faster).** This is the measured speedup from the I/O profiler for replacing `pathlib.relative_to()` with string slicing.
 - Duplicate `rglob("*")` traversals cost ~0.80s combined (two passes of ~0.40s each scanning 59,283 entries).
@@ -168,7 +168,7 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 - The `rglob` filesystem traversal itself is fast (0.42s). The 4.29s in `should_skip_path` is pure Python object creation overhead from pathlib.
 - The real opportunity is (a) replacing `pathlib.relative_to()` with string slicing (163x faster per call), and (b) merging the two separate `rglob` passes into one.
 
-**Architecture:** Keep file traversal in Python. Fix pathlib overhead first (Priority 0b). Thread-based parallelism for file processing is less impactful than originally estimated: CPU profiling shows tree-sitter parsing is only 0.6% of total CPU, so parallelizing parsing yields minimal gains. The dominant bottleneck (48.3%) is in the post-parsing call resolution phase, which is sequential and GIL-bound.
+**Architecture:** Keep file traversal in Python. Fix pathlib overhead first (Priority 0b). Thread-based parallelism for file processing is less impactful than originally estimated: CPU profiling shows tree-sitter parsing is only 0.6% of total CPU, so parallelising parsing yields minimal gains. The dominant bottleneck (48.3%) is in the post-parsing call resolution phase, which is sequential and GIL-bound.
 
 **Why not Rust for traversal:** The per-file processing calls into tree-sitter (C library) and constructs Python objects. The overhead is in path manipulation (pathlib), not traversal I/O. A string-based path fix in Python is sufficient.
 
@@ -216,14 +216,14 @@ After addressing algorithmic issues (Phase 0: ~3.7x total improvement from pure 
 **Key observations:**
 1. 48.3% of CPU is in a single function with an algorithmic fix available (index miss rate)
 2. Tree-sitter C operations (parse + captures) total only 1.0s (3.1%), confirming the bottleneck is Python wrapper code
-3. Protobuf serialization is negligible (0.17s total)
+3. Protobuf serialisation is negligible (0.17s total)
 4. File hashing is negligible (0.04s total)
 
 ---
 
 ## Structural Performance Ceilings (from Static Analysis)
 
-The static-pattern-analyst identified 9 categories of Python runtime overhead that create inherent performance ceilings. These are organized by severity:
+The static-pattern-analyst identified 9 categories of Python runtime overhead that create inherent performance ceilings. These are organised by severity:
 
 | Severity | Pattern | Overhead Multiplier | Rewrite Benefit |
 |---|---|---|---|
@@ -261,9 +261,9 @@ Memory profiling confirms that Python's object model creates significant memory 
 
 ---
 
-## Non-Language Optimizations (Algorithmic / Python-Level)
+## Non-Language Optimisations (Algorithmic / Python-Level)
 
-CPU profiling and concurrency analysis identified multiple high-impact optimizations that do NOT require a language rewrite. **These should be implemented first** as they collectively address over 70% of CPU time.
+CPU profiling and concurrency analysis identified multiple high-impact optimisations that do NOT require a language rewrite. **These should be implemented first** as they collectively address over 70% of CPU time.
 
 ### ALGORITHMIC 0: Fix `find_ending_with()` Simple Name Index (THE #1 PRIORITY)
 
@@ -287,7 +287,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 
 **Projected Speedup:** ~2x to 5x on the type inference phase
 
-**Action:** Memoize type inference results per function AST node. Since the AST is immutable after parsing, results are safe to cache.
+**Action:** Memoise type inference results per function AST node. Since the AST is immutable after parsing, results are safe to cache.
 
 ### ALGORITHMIC 0d: Reduce Debug Logging Overhead
 
@@ -307,7 +307,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 
 ### ALGORITHMIC 0f: Binary Format for Embedding Cache
 
-**Issue:** 500 embeddings (768-dim float vectors) stored as JSON = 6.3MB, save = 149ms, load = 38ms. Each embedding is serialized as a JSON array of 768 float values with full decimal precision.
+**Issue:** 500 embeddings (768-dim float vectors) stored as JSON = 6.3MB, save = 149ms, load = 38ms. Each embedding is serialised as a JSON array of 768 float values with full decimal precision.
 
 **Projected Speedup:** 10x+ on embedding cache I/O (both size and speed)
 
@@ -357,7 +357,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 
 ---
 
-## Prioritized Implementation Order
+## Prioritised Implementation Order
 
 ### Phase 0: Python Algorithmic Fixes (addresses ~72% of CPU time)
 
@@ -376,11 +376,11 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 
 | Priority | Library | Effort | Expected Speedup |
 |---|---|---|---|
-| 1a | JSON serialization (orjson) | Very low (dependency swap) | 5x-15x on JSON ops |
+| 1a | JSON serialisation (orjson) | Very low (dependency swap) | 5x-15x on JSON ops |
 | ~~1b~~ | ~~Neo4j driver (neo4j-rust-ext)~~ | ~~RETRACTED~~ | ~~Inapplicable: codebase uses Memgraph/pymgclient, not Neo4j~~ |
 | 1b | Embedding hash (BLAKE3) | Very low (one-line change) | 4x-10x on hashing (confirmed negligible: 0.04s) |
 
-**Note from profiling:** File hashing (`_hash_file`) is only 0.04s total (0.1%), and protobuf serialization is 0.17s total. These are negligible. BLAKE3 (Priority 1b) can be deprioritized. orjson remains worthwhile for larger codebases. The neo4j-rust-ext recommendation was retracted because this codebase uses Memgraph via `pymgclient` (C extension), not the Neo4j Python driver.
+**Note from profiling:** File hashing (`_hash_file`) is only 0.04s total (0.1%), and protobuf serialisation is 0.17s total. These are negligible. BLAKE3 (Priority 1b) can be deprioritised. orjson remains worthwhile for larger codebases. The neo4j-rust-ext recommendation was retracted because this codebase uses Memgraph via `pymgclient` (C extension), not the Neo4j Python driver.
 
 ### Phase 2: Rust Extension (addresses remaining CPU-bound overhead)
 
@@ -399,7 +399,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 |---|---|---|---|
 | 3a | File processing parallelism (ThreadPoolExecutor) | Medium | Downgraded: marginal gains |
 
-**Phase 3 is downgraded based on revised analysis.** CPU profiling shows tree-sitter parsing is only 0.6% of CPU, and the file processing bottleneck (`pathlib.relative_to` at 13.7%) is GIL-bound pure Python that ThreadPoolExecutor cannot parallelize. The pathlib fix (Phase 0b, string slicing, 163x faster) is the correct solution, not parallelism. ProcessPoolExecutor for call resolution is also impractical: memory profiling shows 170 MiB peak memory, making serialization cost too high. The Rust PyO3 native extension (Phase 2) is the only viable path for parallelizing call resolution, as it can release the GIL via `Python::allow_threads`.
+**Phase 3 is downgraded based on revised analysis.** CPU profiling shows tree-sitter parsing is only 0.6% of CPU, and the file processing bottleneck (`pathlib.relative_to` at 13.7%) is GIL-bound pure Python that ThreadPoolExecutor cannot parallelise. The pathlib fix (Phase 0b, string slicing, 163x faster) is the correct solution, not parallelism. ProcessPoolExecutor for call resolution is also impractical: memory profiling shows 170 MiB peak memory, making serialisation cost too high. The Rust PyO3 native extension (Phase 2) is the only viable path for parallelising call resolution, as it can release the GIL via `Python::allow_threads`.
 
 ---
 
@@ -408,7 +408,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 - [Gauge.sh: Python extensions should be lazy](https://www.gauge.sh/blog/python-extensions-should-be-lazy) - 16x speedup moving AST processing to Rust
 - [Neo4j Python Driver 10x Faster With Rust](https://neo4j.com/blog/developer/python-driver-10x-faster-with-rust/) - neo4j-rust-ext benchmarks
 - [Baseten: 12x higher embedding throughput with Python and Rust](https://www.baseten.co/blog/your-client-code-matters-10x-higher-embedding-throughput-with-python-and-rust/) - PyO3 GIL release pattern
-- [orjson: 500% Faster JSON in Python](https://medium.com/codeelevation/want-500-faster-json-in-python-try-orjson-powered-by-rust-22995c25c312) - JSON serialization benchmarks
+- [orjson: 500% Faster JSON in Python](https://medium.com/codeelevation/want-500-faster-json-in-python-try-orjson-powered-by-rust-22995c25c312) - JSON serialisation benchmarks
 - [PyO3 Performance Guide](https://pyo3.rs/main/performance) - FFI overhead characteristics
 - [Rust: Python's New Performance Engine](https://thenewstack.io/rust-pythons-new-performance-engine/) - Industry adoption trends
 - [Comparing Cython to Rust for Python Extensions](https://willayd.com/comparing-cython-to-rust-evaluating-python-extensions.html) - Graph algorithm benchmarks
@@ -420,4 +420,4 @@ CPU profiling and concurrency analysis identified multiple high-impact optimizat
 - [ast-grep](https://github.com/ast-grep/ast-grep) - Rust tree-sitter code analysis tool
 - [Rust trie implementations](https://dev.to/timclicks/two-trie-implementations-in-rust-ones-super-fast) - Trie performance
 - [Corrode: Migrating from Python to Rust](https://corrode.dev/learn/migration-guides/python-to-rust/) - Migration guide
-- [Datadog: Migrating static analyzer from Java to Rust](https://www.datadoghq.com/blog/engineering/how-we-migrated-our-static-analyzer-from-java-to-rust/) - Code analysis tool migration
+- [Datadog: Migrating static analyser from Java to Rust](https://www.datadoghq.com/blog/engineering/how-we-migrated-our-static-analyzer-from-java-to-rust/) - Code analysis tool migration

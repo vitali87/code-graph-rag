@@ -48,7 +48,7 @@ cgr export -o my_graph.json
 
 ### `cgr optimize`
 
-AI-powered codebase optimization.
+AI-powered codebase optimisation.
 
 ```bash
 cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
@@ -59,7 +59,7 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 | `--repo-path` | Path to repository |
 | `--orchestrator` | Specify provider:model for operations |
 | `--batch-size` | Override Memgraph flush batch size |
-| `--reference-document` | Path to reference documentation for guided optimization |
+| `--reference-document` | Path to reference documentation for guided optimisation |
 
 Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 

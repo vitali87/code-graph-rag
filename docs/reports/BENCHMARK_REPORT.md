@@ -62,9 +62,9 @@ Convert paths to strings at the boundary of `should_skip_path` and use `str.remo
 
 ---
 
-## FINDING 3: orjson vs stdlib json (JSON Serialization)
+## FINDING 3: orjson vs stdlib json (JSON Serialisation)
 
-**orjson provides massive speedups on serialization with zero integration overhead.**
+**orjson provides massive speedups on serialisation with zero integration overhead.**
 
 ### Measured Results
 
@@ -83,11 +83,11 @@ Convert paths to strings at the boundary of `should_skip_path` and use `str.remo
 ### Projected vs Measured
 
 The language recommendations projected 5x to 15x. Our measured results show:
-- **Compact serialization: 5.4x to 5.7x** (within projected range)
-- **Indented serialization: 24x to 25x** (exceeds projected range significantly)
-- **Deserialization: 1.8x to 2.0x** (below projected range)
+- **Compact serialisation: 5.4x to 5.7x** (within projected range)
+- **Indented serialisation: 24x to 25x** (exceeds projected range significantly)
+- **Deserialisation: 1.8x to 2.0x** (below projected range)
 
-The indented serialization speedup is particularly relevant because `_write_graph_json` uses `json.dump(data, f, indent=2)` (the slowest path). For a 20K node graph, this drops from 217ms to 8.6ms.
+The indented serialisation speedup is particularly relevant because `_write_graph_json` uses `json.dump(data, f, indent=2)` (the slowest path). For a 20K node graph, this drops from 217ms to 8.6ms.
 
 ---
 
@@ -166,7 +166,7 @@ GraphLoader.load() is 2x to 2.7x slower than raw JSON parsing due to index const
 
 ### Analysis
 
-SHA256 with 8KB buffer is already the fastest option. Larger buffers and mmap add overhead for these file sizes. MD5 is slower (no hardware acceleration on this platform). File hashing consumes <0.5% of total runtime. No optimization needed.
+SHA256 with 8KB buffer is already the fastest option. Larger buffers and mmap add overhead for these file sizes. MD5 is slower (no hardware acceleration on this platform). File hashing consumes <0.5% of total runtime. No optimisation needed.
 
 ---
 
@@ -179,7 +179,7 @@ SHA256 with 8KB buffer is already the fastest option. Larger buffers and mmap ad
 | orjson for JSON | 5x to 15x on JSON ops | **1.8x to 25x** depending on operation | **VALIDATED** |
 | BLAKE3 for hashing | 4x to 10x speedup | **0.5x (slower)** | **INVALIDATED** |
 | neo4j-rust-ext | 3x to 10x on DB ops | N/A (wrong driver) | **INVALIDATED** (uses Memgraph/pymgclient) |
-| Rust AST extension | 10x to 16x on parsing | Not benchmarked (3.1% of CPU) | **DEPRIORITIZED** (targets 3.1% of runtime) |
+| Rust AST extension | 10x to 16x on parsing | Not benchmarked (3.1% of CPU) | **DEPRIORITISED** (targets 3.1% of runtime) |
 | Rust trie | 3x to 8x on lookups | 1.5x to 3x net (per feasibility) | **SUPERSEDED** by Python index fix |
 
 ## Revised Priority Order (Measured)
@@ -188,7 +188,7 @@ SHA256 with 8KB buffer is already the fastest option. Larger buffers and mmap ad
 |---|---|---|---|---|
 | **1** | Fix `find_ending_with` suffix index | Python bugfix | 261x to 382x on operation (~1.9x total) | Low |
 | **2** | Replace pathlib with string ops | Python refactor | 45x to 643x on path ops (~1.15x total) | Low |
-| **3** | Cache type inference results | Python memoization | Not benchmarked (projected ~1.07x total) | Low |
+| **3** | Cache type inference results | Python memoisation | Not benchmarked (projected ~1.07x total) | Low |
 | **4** | Suppress debug logging | Config change | Not benchmarked (projected ~1.06x total) | Trivial |
 | **5** | Deduplicate FS traversal | Python refactor | Not benchmarked (projected ~1.05x total) | Low |
 | **6** | orjson for JSON | Dependency swap | 5.4x to 25x on JSON ops | Trivial |
