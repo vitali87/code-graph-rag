@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.anyio]
 
@@ -301,7 +302,7 @@ class TestIndexRepository:
 
             result = await mcp_registry.index_repository()
 
-            project_name = temp_project_root.resolve().name
+            project_name = derive_project_name(temp_project_root)
             mcp_registry.ingestor.delete_project.assert_called_once_with(project_name)  # type: ignore[attr-defined]
             assert "Error:" not in result
 
@@ -356,10 +357,14 @@ class TestIndexRepository:
             mock_updater_class.return_value = mock_updater
 
             await registry1.index_repository()
-            mock_ingestor.delete_project.assert_called_with("project1")
+            mock_ingestor.delete_project.assert_called_with(
+                derive_project_name(project1)
+            )
 
             await registry2.index_repository()
-            mock_ingestor.delete_project.assert_called_with("project2")
+            mock_ingestor.delete_project.assert_called_with(
+                derive_project_name(project2)
+            )
 
             assert mock_ingestor.delete_project.call_count == 2
 

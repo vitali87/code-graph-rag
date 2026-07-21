@@ -696,7 +696,7 @@ _FINDING_NODE_PROPS = (
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
+    NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
     NodeSchema(
         NodeLabel.PACKAGE,
         "{qualified_name: string, name: string, path: string, absolute_path: string}",
@@ -898,6 +898,16 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
         RelationshipType.FLOWS_TO,
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.EXPOSES,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RESOURCE,),
+        RelationshipType.RESOLVES_TO,
+        (NodeLabel.RESOURCE,),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE,),

@@ -89,6 +89,7 @@ nav:
     - Graph Export: guide/graph-export.md
     - Real-Time Updates: guide/realtime-updates.md
     - MCP Server: guide/mcp-server.md
+    - Multi-Project Graphs: guide/multi-project.md
   - Python SDK:
     - Overview: sdk/overview.md
     - Graph Loader: sdk/graph-loader.md

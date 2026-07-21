@@ -83,7 +83,7 @@ The interactive agent has access to these tools:
 | `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
 | `list_directory` | Lists the contents of a directory to explore the codebase. |
 | `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
-| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Pass a project name to restrict matches to a single indexed project. |
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
 | `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search. |

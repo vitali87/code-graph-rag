@@ -19,6 +19,7 @@ KEY_RELATIONSHIP_TYPES = "relationship_types"
 KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
+KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 KEY_IS_MACRO = "is_macro"
@@ -157,6 +158,8 @@ class RelationshipType(StrEnum):
     READS_FROM = "READS_FROM"
     WRITES_TO = "WRITES_TO"
     FLOWS_TO = "FLOWS_TO"
+    EXPOSES = "EXPOSES"
+    RESOLVES_TO = "RESOLVES_TO"
     IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
     HAS_SMELL = "HAS_SMELL"
     HAS_VULNERABILITY = "HAS_VULNERABILITY"
@@ -213,6 +216,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.READS_FROM,
             RelationshipType.WRITES_TO,
             RelationshipType.FLOWS_TO,
+            RelationshipType.EXPOSES,
+            RelationshipType.RESOLVES_TO,
         }
     ),
     CaptureGroup.FINDINGS: frozenset(

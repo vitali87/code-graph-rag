@@ -23,7 +23,9 @@ CYPHER_AUDIT_MISSING_REQUIRED = (
 CYPHER_AUDIT_IS_NULL = "n.{prop} IS NULL"
 CYPHER_AUDIT_OR = " OR "
 
-CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
+CYPHER_LIST_PROJECTS = (
+    "MATCH (p:Project) RETURN p.name AS name, p.root_path AS root_path ORDER BY p.name"
+)
 
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
@@ -115,13 +117,14 @@ CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE id(n) = $node_id
 RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS path
+       n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
 CYPHER_FIND_BY_QUALIFIED_NAME = """
 MATCH (n) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path, n.docstring AS docstring
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+       n.absolute_path AS absolute_path, n.docstring AS docstring
 LIMIT 1
 """
 

@@ -9,19 +9,33 @@ from pydantic_ai import Tool
 from .. import logs as ls
 from .. import tool_errors as te
 from ..constants import ENCODING_UTF8
-from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
+from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..utils.path_utils import (
+    absolute_path_within_project_root,
+    project_roots_from_rows,
+)
 from . import tool_descriptions as td
 
 
 class CodeRetriever:
-    __slots__ = ("project_root", "ingestor")
+    __slots__ = ("project_root", "ingestor", "_project_roots")
 
     def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
+        # ponytail: session-lifetime cache; a project indexed after the first
+        # lookup is treated as unknown (permissive) until a new retriever.
+        self._project_roots: dict[str, str | None] | None = None
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
+
+    async def _get_project_roots(self) -> dict[str, str | None]:
+        if self._project_roots is None:
+            self._project_roots = project_roots_from_rows(
+                await asyncio.to_thread(self.ingestor.fetch_all, CYPHER_LIST_PROJECTS)
+            )
+        return self._project_roots
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
@@ -59,7 +73,31 @@ class CodeRetriever:
                     error_message=te.CODE_MISSING_LOCATION,
                 )
 
-            full_path = self.project_root / file_path_str
+            # The recorded absolute_path is authoritative: a same-named file
+            # in the active repo must not shadow a cross-project node. The
+            # relative join covers repos moved since indexing and old graphs
+            # without the property (issue #425).
+            absolute_path_str = res.get("absolute_path")
+            if absolute_path_str and not absolute_path_within_project_root(
+                qualified_name, absolute_path_str, await self._get_project_roots()
+            ):
+                absolute_path_str = None
+            if absolute_path_str and Path(absolute_path_str).is_file():
+                full_path = Path(absolute_path_str)
+            else:
+                full_path = self.project_root / file_path_str
+            if not full_path.is_file():
+                return CodeSnippet(
+                    qualified_name=qualified_name,
+                    source_code="",
+                    file_path=file_path_str,
+                    line_start=0,
+                    line_end=0,
+                    found=False,
+                    error_message=te.CODE_SOURCE_FILE_MISSING.format(
+                        path=file_path_str
+                    ),
+                )
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
