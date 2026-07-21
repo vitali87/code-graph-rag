@@ -73,7 +73,5 @@ def test_internal_base_override_is_not_flagged(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="dart")
     props = _method_props(mock_ingestor)
-    override = next(
-        v for k, v in props.items() if k.endswith("Circle.area")
-    )
+    override = next(v for k, v in props.items() if k.endswith("Circle.area"))
     assert not override.get(cs.KEY_OVERRIDES_EXTERNAL), override
