@@ -33,6 +33,10 @@ rules:
         - has:
             kind: variable_list
             has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)', stopBy: end }
+        # The string must be the assigned VALUE (a direct child of the
+        # expression_list), not one buried in a call argument. Without this a
+        # destructuring `password = creds:match("([^:]*):(.*)")` matched: the
+        # pattern string lived inside the match() arguments, not the value.
         - has:
             kind: expression_list
-            has: { kind: string, regex: '^.{8,}$', stopBy: end }
+            has: { kind: string, regex: '^.{8,}$' }

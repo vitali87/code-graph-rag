@@ -553,6 +553,63 @@ def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> Non
     assert lines == [4], lines
 
 
+def test_lua_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
+    # (H) Dogfood FP (luarocks): `password = creds:match("([^:]*):(.*)")` is a
+    # (H) destructuring match, not a secret; the string literal must be the
+    # (H) assigned value, not an argument buried in a call. Line 2 is real.
+    src = 'user, password = creds:match("([^:]*):(.*)")\nlocal secret = "abcdefghij"\n'
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "s.lua", src)
+        if p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert lines == [2], lines
+
+
+def test_lua_factory_function_matches_name_not_body(tmp_path: Path) -> None:
+    # (H) Dogfood FP (luarocks): the old rule scanned the whole body for any
+    # (H) new/create/make identifier, so a function merely CALLING results.new()
+    # (H) was flagged. Only the function NAME should decide. Lines 1-2 are real
+    # (H) factories (bare + dotted); line 3 only calls one in its body.
+    src = (
+        "function create_thing(a) return {} end\n"
+        "function results.new(a) return {} end\n"
+        "function download.download_all(a) return results.new(a) end\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "f.lua", src)
+        if p[cs.KEY_NAME] == "factory_function"
+    )
+    assert lines == [1, 2], lines
+
+
+def test_lua_module_return_only_top_level(tmp_path: Path) -> None:
+    # (H) Dogfood FP (luarocks): module_return is the idiomatic trailing
+    # (H) `return M` export, NOT every `return x` inside a function. Only the
+    # (H) top-level return (line 3) counts; the in-function return does not.
+    src = "local M = {}\nfunction M.f() return r end\nreturn M\n"
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "m.lua", src)
+        if p[cs.KEY_NAME] == "module_return"
+    )
+    assert lines == [3], lines
+
+
+def test_lua_global_assignment_ignores_field_writes(tmp_path: Path) -> None:
+    # (H) Dogfood FP (luarocks): a field/index write (`M.const = {}`,
+    # (H) `mt.__index = f`, `t[k] = v`) is never a leaked global; only a bare
+    # (H) identifier target is. Line 4 is the only real global leak.
+    src = "M.const = {}\nmt.__index = funcs\nt[k] = v\nleaked = 5\n"
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "g.lua", src)
+        if p[cs.KEY_NAME] == "global_assignment"
+    )
+    assert lines == [4], lines
+
+
 def test_multilang_security_rules_avoid_common_false_positives(
     tmp_path: Path,
 ) -> None:
