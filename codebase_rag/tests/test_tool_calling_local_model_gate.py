@@ -13,8 +13,8 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig, settings
-from codebase_rag.tests.integration.test_tool_calling import (
-    _orchestrator_reliably_tool_calls,
+from codebase_rag.tests.integration.orchestrator_gate import (
+    orchestrator_reliably_tool_calls,
 )
 
 
@@ -31,7 +31,7 @@ def test_ollama_orchestrator_is_not_trusted_for_tool_calls(
 ) -> None:
     _set_orchestrator(monkeypatch, cs.Provider.OLLAMA)
 
-    assert _orchestrator_reliably_tool_calls() is False
+    assert orchestrator_reliably_tool_calls() is False
 
 
 @pytest.mark.parametrize(
@@ -43,4 +43,4 @@ def test_api_orchestrators_are_trusted_for_tool_calls(
 ) -> None:
     _set_orchestrator(monkeypatch, provider)
 
-    assert _orchestrator_reliably_tool_calls() is True
+    assert orchestrator_reliably_tool_calls() is True

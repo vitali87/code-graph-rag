@@ -8,6 +8,9 @@ from loguru import logger
 from pydantic_ai import Tool
 
 from codebase_rag.services.llm import create_rag_orchestrator
+from codebase_rag.tests.integration.orchestrator_gate import (
+    orchestrator_reliably_tool_calls,
+)
 
 pytestmark = [pytest.mark.asyncio(loop_scope="module"), pytest.mark.integration]
 
@@ -126,15 +129,6 @@ def _api_key_configured() -> bool:
     return True
 
 
-def _orchestrator_reliably_tool_calls() -> bool:
-    # Small local models emit tool calls as JSON text often enough that
-    # asserting on executed tools tests the model, not our wiring.
-    from codebase_rag import constants as cs
-    from codebase_rag.config import settings
-
-    return settings.active_orchestrator_config.provider != cs.Provider.OLLAMA
-
-
 @pytest.fixture(scope="module")
 def agent(tracking_tools: list[Tool]) -> Agent:
     if not _api_key_configured():
@@ -142,7 +136,7 @@ def agent(tracking_tools: list[Tool]) -> Agent:
             "Live orchestrator API key not resolved "
             "(unset or unresolved op:// reference); skipping live API integration."
         )
-    if not _orchestrator_reliably_tool_calls():
+    if not orchestrator_reliably_tool_calls():
         pytest.skip(
             "Local Ollama orchestrators emit tool calls as text unreliably; "
             "skipping live tool-calling assertions."
