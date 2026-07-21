@@ -1,9 +1,11 @@
 # Type Inference Gaps
 
 Type-extraction engines now exist for Python, TypeScript/JavaScript, Java, C++, Rust, and Go
-(`codebase_rag/parsers/*/type_inference.py`), covering explicit declarations, `var`/`auto`/short
-declarations, generics element types, and return-type inference. The items below are the gaps
-that remain.
+(`codebase_rag/parsers/*/type_inference.py`). Coverage varies by language: all handle explicit
+local declarations; `var`/`auto`/short-declaration inference, generics element types, and
+return-type inference are each implemented where that language's engine supports them (for
+example C++ resolves `auto` from constructor-shaped initializers but does not generally infer
+a variable's type from an arbitrary call's return type). The items below are the known gaps.
 
 ## Python
 

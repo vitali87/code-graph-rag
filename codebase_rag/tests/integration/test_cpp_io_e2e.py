@@ -57,13 +57,15 @@ void leak(const char* name) {
 def test_cpp_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # std::getenv reads ENV::SECRET; printf writes STDOUT; std::cout / std::cerr `<<`
-    # insertion writes STDOUT. First C++ increment of issue #714 -- direct calls +
-    # stream insertion, no fstream/FILE* handles (deferred).
+    # std::getenv reads ENV::SECRET; printf / std::cout `<<` insertion writes
+    # STDOUT; std::cerr `<<` insertion writes STDERR. First C++ increment of
+    # issue #714 -- direct calls + stream insertion, no fstream/FILE* handles
+    # (deferred).
     _build(memgraph_ingestor, tmp_path, _CPP_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
     assert (_WRITES, "resource::STDOUT::<dynamic>") in edges
+    assert (_WRITES, "resource::STDERR::<dynamic>") in edges
 
 
 def test_cpp_unqualified_getenv(
@@ -79,24 +81,24 @@ def test_cpp_unqualified_getenv(
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "resource"),
     [
-        "putchar('x');",
-        'std::wcout << L"hi";',
-        'std::wcerr << L"e";',
+        ("putchar('x');", "resource::STDOUT::<dynamic>"),
+        ('std::wcout << L"hi";', "resource::STDOUT::<dynamic>"),
+        ('std::wcerr << L"e";', "resource::STDERR::<dynamic>"),
     ],
 )
 def test_cpp_putchar_and_wide_streams(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, body: str
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, body: str, resource: str
 ) -> None:
-    # putchar and the wide streams wcout/wcerr (`<<`) each write STDOUT, like
-    # puts / cout. Isolated so the STDOUT edge can only come from the sink.
+    # putchar and wcout (`<<`) write STDOUT like puts / cout; wcerr writes
+    # STDERR like cerr. Isolated so the edge can only come from the sink.
     _build(
         memgraph_ingestor,
         tmp_path,
         f"#include <cstdio>\n#include <iostream>\nvoid f() {{\n    {body}\n}}\n",
     )
-    assert (_WRITES, "resource::STDOUT::<dynamic>") in _io_edges(memgraph_ingestor)
+    assert (_WRITES, resource) in _io_edges(memgraph_ingestor)
 
 
 def test_cpp_nested_lambda_not_credited(
