@@ -201,7 +201,13 @@ class TestCodeChangeEventHandlerDebounce:
         event2 = FileModifiedEvent(str(sample_file))
         handler.dispatch(event2)
 
-        time.sleep(0.15)
+        # The flush runs on a daemon timer thread; a fixed sleep races its
+        # scheduling on loaded CI runners, so poll with a generous deadline.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if mock_ingestor.flush_all.call_count >= 1:
+                break
+            time.sleep(0.02)
 
         assert mock_ingestor.flush_all.call_count >= 1
 
