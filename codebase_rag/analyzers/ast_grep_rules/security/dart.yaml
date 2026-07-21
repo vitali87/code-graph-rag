@@ -12,17 +12,19 @@ rules:
       kind: call_expression
       regex: '^Process\.(run|start|runSync|startSync)\s*\('
   - id: sqli_concat
-    # Possible SQL injection: a query string literal joined with another
-    # expression through the + operator.
+    # Anchored to an actual database call (rawQuery/execute/query/...) whose
+    # argument is built by string concatenation. Tying the rule to a sink, rather
+    # than to SQL-looking string content, keeps ordinary prose that merely
+    # contains words like "select ... from" from being misflagged.
     message: "Possible SQL injection: query built with string concatenation"
     rule:
-      kind: additive_expression
-      has:
-        kind: string_literal
-        # Require a full SQL-statement shape (verb + companion keyword) so UI text
-        # like "Select " + option is not misflagged as a query.
-        regex: '(?i)(select\b.*\bfrom\b|insert\b.*\binto\b|update\b.*\bset\b|delete\b.*\bfrom\b)'
-        stopBy: end
+      kind: call_expression
+      all:
+        - regex: '(?i)\b(rawQuery|rawInsert|rawUpdate|rawDelete|execute|query)\s*\('
+        - has:
+            kind: additive_expression
+            has: { kind: string_literal, stopBy: end }
+            stopBy: end
   - id: hardcoded_secret
     # Security rule: favour recall. A field or local variable whose name matches
     # a credential shape bound to a non-trivial (>=8 char incl. quotes) string

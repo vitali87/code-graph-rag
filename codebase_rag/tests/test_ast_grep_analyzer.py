@@ -405,7 +405,7 @@ _POSITIVE_FIXTURES = {
         "    dynamic x = 5;\n"
         "    if (y == null) {}\n"
         '    Process.run("ls", []);\n'
-        '    var q = "SELECT * FROM t WHERE id=" + name;\n'
+        '    db.rawQuery("SELECT * FROM t WHERE id=" + name);\n'
         '    var password = "supersecretvalue";\n'
         "  }\n"
         "}\n"
@@ -566,8 +566,13 @@ def test_multilang_security_rules_avoid_common_false_positives(
         ),
         ("e.java", 'class A { void f(){ myExecutor.exec("job"); } }\n', "runtime_exec"),
         ("e.scala", "object O { def f() { list.exec() } }\n", "os_command_exec"),
-        ("d.dart", 'void f(x){ var b = "Please select one " + x; }\n', "sqli_concat"),
-        # keyword-in-text must not read as a SQL sink without a real query shape
+        # prose containing SQL keyword pairs must not read as a query without a
+        # real database sink around the concatenation
+        (
+            "d.dart",
+            'void f(x){ var b = "Please select a file from the list: " + x; }\n',
+            "sqli_concat",
+        ),
         ("u.dart", 'void f(x){ var label = "Select " + option; }\n', "sqli_concat"),
         (
             "r.java",
