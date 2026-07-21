@@ -188,3 +188,63 @@ class TestLinkEndpoints:
 
         assert link_endpoints(ingestor) == 0
         ingestor.ensure_relationship_batch.assert_not_called()
+
+
+class TestReviewHardening:
+    @pytest.mark.parametrize(
+        ("decorator", "expected"),
+        [
+            ('@bp.route("/login", methods=("POST",))', [("POST", "/login")]),
+            ('@bp.route("/login", methods={"POST"})', [("POST", "/login")]),
+            (
+                '@bp.route("/x", methods=("PUT", "DELETE"))',
+                [("PUT", "/x"), ("DELETE", "/x")],
+            ),
+        ],
+    )
+    def test_flask_methods_accept_any_iterable_literal(
+        self, decorator: str, expected: list[tuple[str, str]]
+    ) -> None:
+        assert parse_route_decorator(decorator) == expected
+
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("http://svc/users/42", "/users/<int:user_id>", True),
+            ("http://svc/users/42", "/users/<user_id>", True),
+            ("http://svc/files/report", "/files/<path:name>", True),
+            ("http://svc/users/42/x", "/users/<int:user_id>", False),
+        ],
+    )
+    def test_flask_angle_bracket_variables_match(
+        self, url: str, template: str, matches: bool
+    ) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+    def test_relink_deletes_existing_resolves_to_first(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import (
+            CYPHER_DELETE_RESOLVES_TO,
+            link_endpoints,
+        )
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = []
+
+        link_endpoints(ingestor)
+
+        ingestor.execute_write.assert_called_once_with(CYPHER_DELETE_RESOLVES_TO)
+
+    def test_link_only_considers_actively_referenced_resources(self) -> None:
+        # Resources whose caller or handler was deleted must not relink:
+        # the fetch queries anchor on live sink and EXPOSES edges.
+        from codebase_rag.parsers.endpoints import (
+            CYPHER_LIVE_ENDPOINT_RESOURCES,
+            CYPHER_LIVE_NETWORK_RESOURCES,
+        )
+
+        assert "READS_FROM|WRITES_TO" in CYPHER_LIVE_NETWORK_RESOURCES
+        assert "EXPOSES" in CYPHER_LIVE_ENDPOINT_RESOURCES
