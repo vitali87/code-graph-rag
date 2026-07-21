@@ -1850,6 +1850,10 @@ class GraphUpdater:
         # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
 
+        # Drop shared Resource nodes left without any anchoring code edge,
+        # e.g. an endpoint whose route changed on an incremental rebuild.
+        self.ingestor.execute_write(cs.CYPHER_DELETE_UNANCHORED_RESOURCES)
+
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
