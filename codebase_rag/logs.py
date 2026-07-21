@@ -135,6 +135,7 @@ VECTOR_STORE_DELETE_PROJECT_DONE = "Deleted {backend} vectors for project '{proj
 VECTOR_STORE_DELETE_PROJECT_FAILED = (
     "Failed to delete {backend} vectors for project '{project}': {error}"
 )
+VECTOR_STORE_CLEARED = "Cleared all {backend} vectors"
 QDRANT_DELETE_PROJECT = "Deleting {count} Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_FAILED = (

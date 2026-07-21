@@ -411,3 +411,81 @@ def test_milvus_store_search_verify_delete_roundtrip(
     assert [node_id for node_id, _score in results] == [101, 103]
     assert found_ids == {101, 102}
     assert remaining_ids == {103}
+
+
+def test_clear_all_embeddings_qdrant_drops_and_recreates_collection(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
+        vs.QdrantVectorStore().clear_all_embeddings()
+
+    mock_client.delete_collection.assert_called_once_with(
+        collection_name=vs.settings.QDRANT_COLLECTION_NAME
+    )
+    mock_client.create_collection.assert_called_once()
+
+
+def test_clear_all_embeddings_milvus_drops_and_recreates_collection(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    with (
+        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vector_store._ensure_milvus_collection") as mock_ensure,
+    ):
+        vs.MilvusVectorStore().clear_all_embeddings()
+
+    mock_client.drop_collection.assert_called_once_with(
+        vs.settings.MILVUS_COLLECTION_NAME
+    )
+    mock_ensure.assert_called_once_with(mock_client)
+
+
+def test_module_clear_all_embeddings_dispatches_to_backend() -> None:
+    import codebase_rag.vector_store as vs
+
+    store = MagicMock()
+    with patch("codebase_rag.vector_store._get_vector_store", return_value=store):
+        vs.clear_all_embeddings()
+
+    store.clear_all_embeddings.assert_called_once_with()
+
+
+def test_module_clear_all_embeddings_noop_without_backend() -> None:
+    import codebase_rag.vector_store as vs
+
+    with patch("codebase_rag.vector_store._get_vector_store", return_value=None):
+        vs.clear_all_embeddings()
+
+
+def test_clear_all_embeddings_qdrant_propagates_failure(
+    reset_global_client: None,
+) -> None:
+    # A swallowed purge failure would let clean report success while stale
+    # vectors keep resolving to unrelated nodes in the rebuilt graph.
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.delete_collection.side_effect = RuntimeError("qdrant down")
+    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
+        store = vs.QdrantVectorStore()
+        with pytest.raises(RuntimeError, match="qdrant down"):
+            store.clear_all_embeddings()
+
+
+def test_clear_all_embeddings_milvus_propagates_failure(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    mock_client = MagicMock()
+    mock_client.drop_collection.side_effect = RuntimeError("milvus down")
+    with patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client):
+        store = vs.MilvusVectorStore()
+        with pytest.raises(RuntimeError, match="milvus down"):
+            store.clear_all_embeddings()

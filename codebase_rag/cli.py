@@ -46,7 +46,7 @@ from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
-from .vector_store import delete_project_embeddings
+from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -225,6 +225,9 @@ def _run_graph_sync(
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
             _delete_hash_cache(repo)
+            # Stale vectors keyed by recycled node ids would crowd out live
+            # hits and can map onto unrelated nodes in the rebuilt graph.
+            clear_all_embeddings()
 
         ingestor.ensure_constraints()
 
@@ -452,6 +455,7 @@ def start(
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
 
+        clear_all_embeddings()
         _delete_hash_cache(repo_to_clean)
         _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
         return
