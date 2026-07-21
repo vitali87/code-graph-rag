@@ -375,8 +375,7 @@ class QdrantVectorStore:
 
             if project is None:
                 return [
-                    (node_id, score)
-                    for node_id, score, _ in run_query(effective_top_k)
+                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
                 ]
             return _search_project_scoped(run_query, effective_top_k, project)
         except Exception as e:
@@ -495,8 +494,7 @@ class MilvusVectorStore:
 
             if project is None:
                 return [
-                    (node_id, score)
-                    for node_id, score, _ in run_query(effective_top_k)
+                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
                 ]
             return _search_project_scoped(run_query, effective_top_k, project)
         except Exception as e:
