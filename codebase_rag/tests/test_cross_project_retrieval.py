@@ -368,3 +368,84 @@ class TestBoundedAbsolutePathReads:
         )
 
         assert get_function_source_code(ingestor, node_id=1) is None
+
+
+class TestDottedProjectNames:
+    def test_dotted_project_name_still_bounds_reads(self, tmp_path: Path) -> None:
+        # A custom project name may contain dots; the containment check must
+        # match the longest known project prefix, not the first qn segment.
+        from codebase_rag.utils.path_utils import absolute_path_within_project_root
+
+        outside = tmp_path / "elsewhere" / "handlers.py"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(_SOURCE, encoding="utf-8")
+
+        roots = {"my.service": str(tmp_path / "my.service")}
+
+        assert (
+            absolute_path_within_project_root(
+                "my.service.handlers.get_user", str(outside), roots
+            )
+            is False
+        )
+
+    def test_longest_project_prefix_wins(self, tmp_path: Path) -> None:
+        from codebase_rag.utils.path_utils import absolute_path_within_project_root
+
+        inside = tmp_path / "svc-v2" / "handlers.py"
+        inside.parent.mkdir(parents=True)
+        inside.write_text(_SOURCE, encoding="utf-8")
+
+        roots = {
+            "svc": str(tmp_path / "svc"),
+            "svc.v2": str(tmp_path / "svc-v2"),
+        }
+
+        assert (
+            absolute_path_within_project_root(
+                "svc.v2.handlers.get_user", str(inside), roots
+            )
+            is True
+        )
+
+
+class TestRootsCaching:
+    @pytest.mark.asyncio
+    async def test_roots_fetched_once_per_retriever(self, tmp_path: Path) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        node_rows = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(target),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        roots_rows = [
+            {"name": "user-service", "root_path": str(tmp_path / "user-service")}
+        ]
+        ingestor = MagicMock()
+        ingestor.fetch_all.side_effect = lambda query, params=None: (
+            roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
+        )
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        for _ in range(3):
+            result = await retriever.find_code_snippet(
+                "user-service.src.handlers.get_user"
+            )
+            assert result.found is True
+
+        roots_calls = [
+            c
+            for c in ingestor.fetch_all.call_args_list
+            if c.args[0] == CYPHER_LIST_PROJECTS
+        ]
+        assert len(roots_calls) == 1

@@ -146,3 +146,39 @@ def test_semantic_code_search_passes_project_to_vector_search() -> None:
 
     assert mock_search.call_args.kwargs["project"] == "proj__12345678"
     assert mock_search.call_args.kwargs["top_k"] == 7
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_qdrant_widens_window_until_project_matches_found() -> None:
+    # The first over-fetch window may hold only other projects' neighbors;
+    # the search must widen the window instead of returning nothing.
+    import codebase_rag.vector_store as vs
+
+    other = [
+        _qdrant_point(i, f"noise__00000000.mod.f{i}", 0.9 - i * 0.001)
+        for i in range(100)
+    ]
+    wanted = [
+        _qdrant_point(1000, "user-service__aaaa1111.src.handlers.get_user", 0.5),
+        _qdrant_point(1001, "user-service__aaaa1111.src.models.User", 0.4),
+    ]
+
+    def query_points(collection_name: str, query: list[float], limit: int):  # type: ignore[no-untyped-def]
+        result = MagicMock()
+        result.points = (other + wanted)[:limit]
+        return result
+
+    mock_client = MagicMock()
+    mock_client.query_points.side_effect = query_points
+
+    with (
+        patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT),
+        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
+    ):
+        vs.close_vector_store_client()
+        results = vs.search_embeddings(
+            _EMBEDDING, top_k=2, project="user-service__aaaa1111"
+        )
+        vs.close_vector_store_client()
+
+    assert [node_id for node_id, _ in results] == [1000, 1001]
