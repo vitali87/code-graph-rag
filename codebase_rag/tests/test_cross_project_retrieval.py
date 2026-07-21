@@ -58,23 +58,57 @@ class TestFindSnippetAcrossProjects:
         assert result.source_code == _SOURCE
 
     @pytest.mark.asyncio
-    async def test_prefers_project_root_when_relative_path_resolves(
+    async def test_absolute_path_wins_over_colliding_local_file(
         self, tmp_path: Path
     ) -> None:
+        # The node's recorded location is authoritative: a same-named file in
+        # the active repo must not shadow a cross-project node.
         current_repo = tmp_path / "order-service"
         (current_repo / "src").mkdir(parents=True)
-        local = current_repo / "src" / "handlers.py"
-        local.write_text(_SOURCE, encoding="utf-8")
-        stale = tmp_path / "stale" / "handlers.py"
-        stale.parent.mkdir()
-        stale.write_text("# stale copy\n", encoding="utf-8")
+        (current_repo / "src" / "handlers.py").write_text(
+            "# unrelated local file\n", encoding="utf-8"
+        )
+        other_repo = tmp_path / "user-service" / "src"
+        other_repo.mkdir(parents=True)
+        target = other_repo / "handlers.py"
+        target.write_text(_SOURCE, encoding="utf-8")
 
         ingestor = MagicMock()
         ingestor.fetch_all.return_value = [
             {
                 "name": "get_user",
                 "path": "src/handlers.py",
-                "absolute_path": str(stale),
+                "absolute_path": str(target),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet(
+            "user-service.src.handlers.get_user"
+        )
+
+        assert result.found is True
+        assert result.source_code == _SOURCE
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_project_root_when_absolute_path_stale(
+        self, tmp_path: Path
+    ) -> None:
+        # The repo moved since indexing: the recorded absolute_path is gone
+        # but the relative join against the current root still resolves.
+        current_repo = tmp_path / "order-service"
+        (current_repo / "src").mkdir(parents=True)
+        (current_repo / "src" / "handlers.py").write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(tmp_path / "gone" / "handlers.py"),
                 "start": 1,
                 "end": 2,
                 "docstring": None,
@@ -88,6 +122,34 @@ class TestFindSnippetAcrossProjects:
 
         assert result.found is True
         assert result.source_code == _SOURCE
+
+    @pytest.mark.asyncio
+    async def test_not_found_when_no_file_exists_anywhere(
+        self, tmp_path: Path
+    ) -> None:
+        current_repo = tmp_path / "order-service"
+        current_repo.mkdir()
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "name": "get_user",
+                "path": "src/handlers.py",
+                "absolute_path": str(tmp_path / "gone" / "handlers.py"),
+                "start": 1,
+                "end": 2,
+                "docstring": None,
+            }
+        ]
+        retriever = CodeRetriever(str(current_repo), ingestor)
+
+        result = await retriever.find_code_snippet(
+            "order-service.src.handlers.get_user"
+        )
+
+        assert result.found is False
+        assert result.error_message is not None
+        assert "Source file not found" in result.error_message
 
     def test_find_by_qualified_name_returns_absolute_path(self) -> None:
         assert "absolute_path" in CYPHER_FIND_BY_QUALIFIED_NAME
@@ -105,6 +167,38 @@ class TestFunctionSourceAcrossProjects:
             {
                 "qualified_name": "user-service.handlers.get_user",
                 "path": "definitely/not/here/handlers.py",
+                "absolute_path": str(target),
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ]
+
+        source = get_function_source_code(ingestor, node_id=1)
+
+        assert source is not None
+        assert "def get_user" in source
+
+    def test_absolute_path_wins_over_cwd_collision(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A file in the process CWD matching the node's relative path must
+        # not shadow the recorded absolute location.
+        cwd = tmp_path / "elsewhere"
+        (cwd / "src").mkdir(parents=True)
+        (cwd / "src" / "handlers.py").write_text(
+            "# unrelated cwd file\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(cwd)
+
+        target = tmp_path / "user-service" / "src" / "handlers.py"
+        target.parent.mkdir(parents=True)
+        target.write_text(_SOURCE, encoding="utf-8")
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "user-service.src.handlers.get_user",
+                "path": "src/handlers.py",
                 "absolute_path": str(target),
                 "start_line": 1,
                 "end_line": 2,
