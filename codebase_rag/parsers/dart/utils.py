@@ -6,13 +6,13 @@ from ... import constants as cs
 
 
 def dart_get_name(node: Node) -> str | None:
-    # (H) Mirror of language_spec._dart_get_name for the parsers-internal callers
-    # (H) (ingest_method) that cannot import language_spec without a cycle. Most
-    # (H) nodes expose a `name` field; constructors/factories/mixins take their
-    # (H) LAST bare identifier child (`C.named` -> `named`, default `C(...)` -> `C`).
-    # (H) The constructor check comes FIRST: the grammar's `name` field on
-    # (H) constructor_signature is the CLASS identifier, which would collapse
-    # (H) every named constructor into a duplicate of the default one.
+    # Mirror of language_spec._dart_get_name for the parsers-internal callers
+    # (ingest_method) that cannot import language_spec without a cycle. Most
+    # nodes expose a `name` field; constructors/factories/mixins take their
+    # LAST bare identifier child (`C.named` -> `named`, default `C(...)` -> `C`).
+    # The constructor check comes FIRST: the grammar's `name` field on
+    # constructor_signature is the CLASS identifier, which would collapse
+    # every named constructor into a duplicate of the default one.
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
         if ids:
@@ -69,8 +69,8 @@ def dart_definition_end_byte(node: Node) -> int:
 
 
 def _selector_member_name(selector: Node) -> str | None:
-    # (H) `.m` / `?.m` -> "m"; an index selector (`[i]`) or a nested
-    # (H) argument_part has no static member name.
+    # `.m` / `?.m` -> "m"; an index selector (`[i]`) or a nested
+    # argument_part has no static member name.
     for child in selector.named_children:
         if child.type in (
             cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
@@ -100,14 +100,14 @@ def _selector_has_argument_part(node: Node) -> bool:
 
 
 def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
-    # (H) Backward walk over a selector chain, shared by plain and cascade
-    # (H) calls: None means the chain is broken (index selector, arbitrary
-    # (H) expression) and has no static name; an empty list means the chain
-    # (H) bottomed out at `this`/`super`. With allow_calls, a call hop in the
-    # (H) receiver (`Base(args).m()`, `factory().m()`) contributes a `()`
-    # (H) marker so the resolver's chained path can type the receiver from the
-    # (H) callee's return type or constructor class; without it (cascade path)
-    # (H) a call-result receiver stays unresolvable.
+    # Backward walk over a selector chain, shared by plain and cascade
+    # calls: None means the chain is broken (index selector, arbitrary
+    # expression) and has no static name; an empty list means the chain
+    # bottomed out at `this`/`super`. With allow_calls, a call hop in the
+    # receiver (`Base(args).m()`, `factory().m()`) contributes a `()`
+    # marker so the resolver's chained path can type the receiver from the
+    # callee's return type or constructor class; without it (cascade path)
+    # a call-result receiver stays unresolvable.
     parts_rev: list[str] = []
     while node is not None:
         if allow_calls and _selector_has_argument_part(node):
@@ -127,8 +127,8 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
 
 
 def _assemble_chain(tokens: list[str]) -> str:
-    # (H) A `()` marker attaches to the preceding hop with no separator
-    # (H) (`Base` + `()` -> `Base()`); every other hop is dot-joined.
+    # A `()` marker attaches to the preceding hop with no separator
+    # (`Base` + `()` -> `Base()`); every other hop is dot-joined.
     out = ""
     for token in tokens:
         if token == _CALL_HOP:
@@ -141,11 +141,11 @@ def _assemble_chain(tokens: list[str]) -> str:
 
 
 def _cascade_call_name(call_node: Node) -> str | None:
-    # (H) `obj..m()` holds the argument_part inside the cascade_section; every
-    # (H) section shares the ONE base receiver, so skip earlier sibling
-    # (H) sections, then walk the receiver chain exactly like a plain call --
-    # (H) an `obj.field..m()` cascade must keep its full receiver, or the bare
-    # (H) member name could bind an unrelated same-name function.
+    # `obj..m()` holds the argument_part inside the cascade_section; every
+    # section shares the ONE base receiver, so skip earlier sibling
+    # sections, then walk the receiver chain exactly like a plain call --
+    # an `obj.field..m()` cascade must keep its full receiver, or the bare
+    # member name could bind an unrelated same-name function.
     parts = [
         name
         for child in call_node.named_children
@@ -167,17 +167,17 @@ _CHAIN_STOP = ""
 
 
 def _chain_part(node: Node) -> str | None:
-    # (H) One backward step over the selector chain: a member selector or the
-    # (H) base identifier contributes a name segment; `this`/`super` yield the
-    # (H) empty STOP marker (their member resolves against the caller's
-    # (H) class); anything else (index selector, a call result, an arbitrary
-    # (H) expression base) has no static name.
+    # One backward step over the selector chain: a member selector or the
+    # base identifier contributes a name segment; `this`/`super` yield the
+    # empty STOP marker (their member resolves against the caller's
+    # class); anything else (index selector, a call result, an arbitrary
+    # expression base) has no static name.
     match node.type:
         case cs.TS_DART_SELECTOR:
             return _selector_member_name(node)
         case cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR:
-            # (H) a super call attaches the member selector directly, without
-            # (H) the `selector` wrapper
+            # a super call attaches the member selector directly, without
+            # the `selector` wrapper
             return _first_identifier_text(node)
         case cs.TS_DART_IDENTIFIER:
             if node.text is None:

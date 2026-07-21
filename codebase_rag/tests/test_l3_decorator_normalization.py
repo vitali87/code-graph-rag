@@ -1,7 +1,7 @@
-# (H) Covers the L3 eval harness (evals/calls_trace.py): a call to a functools.wraps
-# (H) decorated function dispatches through the decorator's generic wrapper at runtime,
-# (H) but cgr's static graph resolves the call to the function itself. The trace must
-# (H) attribute the wrapper frame to the wrapped function so the two agree.
+# Covers the L3 eval harness (evals/calls_trace.py): a call to a functools.wraps
+# decorated function dispatches through the decorator's generic wrapper at runtime,
+# but cgr's static graph resolves the call to the function itself. The trace must
+# attribute the wrapper frame to the wrapped function so the two agree.
 from __future__ import annotations
 
 import importlib.util

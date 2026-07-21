@@ -1628,7 +1628,7 @@ def main_single_query(
     output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
 ) -> None:
     _setup_common_initialization(repo_path)
-    # (H) Override logger to stderr so stdout is clean for scripted output
+    # Override logger to stderr so stdout is clean for scripted output
     logger.remove()
     logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
 

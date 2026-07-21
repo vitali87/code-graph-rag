@@ -1,6 +1,6 @@
-# (H) Tests for the structural search/replace tool wrappers and their MCP
-# (H) registration (#415): guard/error/no-match branches the service tests do
-# (H) not reach, plus end-to-end MCP handler delegation.
+# Tests for the structural search/replace tool wrappers and their MCP
+# registration (#415): guard/error/no-match branches the service tests do
+# not reach, plus end-to-end MCP handler delegation.
 from __future__ import annotations
 
 from pathlib import Path

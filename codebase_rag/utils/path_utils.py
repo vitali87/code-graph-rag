@@ -41,10 +41,10 @@ def cached_resolve_posix(file_path: Path) -> str:
     return file_path.resolve().as_posix()
 
 
-# (H) #495: .cgrignore lines and --exclude values are interpreted with
-# (H) .gitignore (gitwildmatch) semantics: bare names match at any depth (as
-# (H) before), and globs / anchoring / dir-only trailing slash now work. The
-# (H) spec is compiled once per pattern set (frozensets are hashable).
+# #495: .cgrignore lines and --exclude values are interpreted with
+# .gitignore (gitwildmatch) semantics: bare names match at any depth (as
+# before), and globs / anchoring / dir-only trailing slash now work. The
+# spec is compiled once per pattern set (frozensets are hashable).
 @lru_cache(maxsize=64)
 def compiled_ignore_spec(patterns: frozenset[str]) -> PathSpec:
     return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns))
@@ -58,14 +58,14 @@ _GLOB_MAGIC = re.compile(r"[*?\[]")
 
 
 def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
-    # (H) Dir-pruning guard: keep a pruned-by-default directory when an
-    # (H) unignore pattern could match it or anything beneath it.
+    # Dir-pruning guard: keep a pruned-by-default directory when an
+    # unignore pattern could match it or anything beneath it.
     if "/" not in pattern.rstrip("/"):
-        # (H) slash-free patterns are unanchored: they can match at any depth.
+        # slash-free patterns are unanchored: they can match at any depth.
         return True
     head, *glob_rest = _GLOB_MAGIC.split(pattern, 1)
     if glob_rest:
-        # (H) the glob may complete the trailing segment; keep whole segments.
+        # the glob may complete the trailing segment; keep whole segments.
         head = head.rsplit("/", 1)[0]
     head = head.strip("/")
     return (
@@ -88,11 +88,11 @@ def should_skip_path(
         return True
     rel_path = cached_relative_path(path, repo_path)
     rel_path_str = rel_path.as_posix()
-    # (H) a trailing slash marks the path as a directory for dir-only patterns.
+    # a trailing slash marks the path as a directory for dir-only patterns.
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
-    # (H) unignore rescues only built-in ignores, never explicit user excludes.
+    # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
         return False
     if (
@@ -100,18 +100,18 @@ def should_skip_path(
         and unignore_paths
         and any(unignore_could_match_within(u, rel_path_str) for u in unignore_paths)
     ):
-        # (H) structure traversal must descend into a built-in-ignored dir when
-        # (H) an unignore pattern can match beneath it (mirrors _should_keep_dir),
-        # (H) or rescued files get no Folder/Package ancestry in the graph.
+        # structure traversal must descend into a built-in-ignored dir when
+        # an unignore pattern can match beneath it (mirrors _should_keep_dir),
+        # or rescued files get no Folder/Package ancestry in the graph.
         return False
     dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     return has_ignored_dir_part(dir_parts)
 
 
 def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
-    # (H) `bin` is a build-output ignore (dotnet's <proj>/bin, repo-root bin/)
-    # (H) EXCEPT directly under src/: Cargo's standard multi-binary layout puts
-    # (H) first-party binaries in src/bin/, and build systems never emit there.
+    # `bin` is a build-output ignore (dotnet's <proj>/bin, repo-root bin/)
+    # EXCEPT directly under src/: Cargo's standard multi-binary layout puts
+    # first-party binaries in src/bin/, and build systems never emit there.
     for index, part in enumerate(dir_parts):
         if part not in cs.IGNORE_PATTERNS:
             continue
@@ -132,7 +132,7 @@ def should_skip_rel_file(
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
-    # (H) unignore rescues only built-in ignores, never explicit user excludes.
+    # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)

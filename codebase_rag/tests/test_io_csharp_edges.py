@@ -1,7 +1,7 @@
-# (H) C# I/O: the language had full structural support (issue #102) but ZERO
-# (H) flow/IO modelling. First increment: direct sinks for the effective-global
-# (H) BCL surface (System.Console, System.Environment, System.IO.File), which are
-# (H) never in import_map, so the catalog is not import-gated.
+# C# I/O: the language had full structural support (issue #102) but ZERO
+# flow/IO modelling. First increment: direct sinks for the effective-global
+# BCL surface (System.Console, System.Environment, System.IO.File), which are
+# never in import_map, so the catalog is not import-gated.
 from __future__ import annotations
 
 from pathlib import Path
@@ -110,8 +110,8 @@ def test_csharp_console_error_writes_stderr(tmp_path: Path) -> None:
 
 
 def test_csharp_using_imported_short_names_resolve(tmp_path: Path) -> None:
-    # (H) With `using System;` / `using System.IO;` the calls are written in their
-    # (H) short form (Console.X, File.X); both spellings are keyed.
+    # With `using System;` / `using System.IO;` the calls are written in their
+    # short form (Console.X, File.X); both spellings are keyed.
     files = {
         "A.cs": (
             "using System;\n"
@@ -130,8 +130,8 @@ def test_csharp_using_imported_short_names_resolve(tmp_path: Path) -> None:
 
 
 def test_csharp_reordered_named_args_resolve_correct_path(tmp_path: Path) -> None:
-    # (H) C# named args can be reordered, so the target must be matched by name,
-    # (H) not by positional index: here `path` is the 2nd argument.
+    # C# named args can be reordered, so the target must be matched by name,
+    # not by positional index: here `path` is the 2nd argument.
     files = {
         "A.cs": (
             "using System.IO;\n"

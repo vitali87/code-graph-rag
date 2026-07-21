@@ -1,8 +1,8 @@
-# (H) Handle-aware I/O for the lean non-Python walk (issue #714): a call binding
-# (H) a resource handle (`os.OpenFile`, `fs.createWriteStream`, `new FileWriter`,
-# (H) `File::open`, `std::ifstream f("x")`) attributes later method calls on the
-# (H) bound variable to the constructor's resource, exactly as Python's handle
-# (H) walk does for `open()` / `sqlite3.connect()`.
+# Handle-aware I/O for the lean non-Python walk (issue #714): a call binding
+# a resource handle (`os.OpenFile`, `fs.createWriteStream`, `new FileWriter`,
+# `File::open`, `std::ifstream f("x")`) attributes later method calls on the
+# bound variable to the constructor's resource, exactly as Python's handle
+# walk does for `open()` / `sqlite3.connect()`.
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,8 +21,8 @@ _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
 def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, resource_qn)
-    # (H) for READS_FROM / WRITES_TO edges only.
+    # Build the graph for `files` and return (caller_qn, rel_type, resource_qn)
+    # for READS_FROM / WRITES_TO edges only.
     parsers, queries = load_parsers()
     for rel, content in files.items():
         p = tmp_path / rel
@@ -44,20 +44,20 @@ def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
 
 
 def _has(rels: set[tuple[str, str, str]], caller: str, rel: str, resource: str) -> bool:
-    # (H) Java method qns carry a parameter signature suffix (`A.fetch(String)`);
-    # (H) match on the qn with any trailing `(...)` stripped.
+    # Java method qns carry a parameter signature suffix (`A.fetch(String)`);
+    # match on the qn with any trailing `(...)` stripped.
     return any(
         a.partition("(")[0].endswith(caller) and r == rel and b == resource
         for a, r, b in rels
     )
 
 
-# (H) Go tests below.
+# Go tests below.
 
 
 def test_go_openfile_handle_write(tmp_path: Path) -> None:
-    # (H) os.OpenFile is a handle constructor, NOT a direct sink (its direction
-    # (H) depends on flags), so this WRITE can only come from the method binding.
+    # os.OpenFile is a handle constructor, NOT a direct sink (its direction
+    # depends on flags), so this WRITE can only come from the method binding.
     files = {
         "main.go": (
             "package main\n\n"
@@ -133,8 +133,8 @@ def test_go_net_dial_write(tmp_path: Path) -> None:
 
 
 def test_go_handle_alias_tracks_binding(tmp_path: Path) -> None:
-    # (H) `g := f` aliases the handle; I/O through the alias still attributes to
-    # (H) the constructor's resource.
+    # `g := f` aliases the handle; I/O through the alias still attributes to
+    # the constructor's resource.
     files = {
         "main.go": (
             "package main\n\n"
@@ -151,7 +151,7 @@ def test_go_handle_alias_tracks_binding(tmp_path: Path) -> None:
 
 
 def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
-    # (H) Rebinding the variable to a non-handle kills the binding.
+    # Rebinding the variable to a non-handle kills the binding.
     files = {
         "main.go": (
             "package main\n\n"
@@ -168,8 +168,8 @@ def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
 
 
 def test_go_block_local_handle_does_not_leak(tmp_path: Path) -> None:
-    # (H) A handle declared inside a nested block is out of scope after the
-    # (H) block; a same-named use outside must not attribute to it (greploop P1).
+    # A handle declared inside a nested block is out of scope after the
+    # block; a same-named use outside must not attribute to it (greploop P1).
     files = {
         "main.go": (
             "package main\n\n"
@@ -197,7 +197,7 @@ def test_go_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
     assert not any(r == WRITES_TO for _, r, _ in rels)
 
 
-# (H) JS/TS tests below.
+# JS/TS tests below.
 
 
 def test_js_write_stream_handle(tmp_path: Path) -> None:
@@ -229,7 +229,7 @@ def test_js_read_stream_handle(tmp_path: Path) -> None:
 
 
 def test_js_stream_end_writes(tmp_path: Path) -> None:
-    # (H) `ws.end(data)` flushes the final chunk: a WRITE.
+    # `ws.end(data)` flushes the final chunk: a WRITE.
     files = {
         "app.js": (
             "const fs = require('fs');\n"
@@ -251,7 +251,7 @@ def test_js_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
     assert not any(r == WRITES_TO for _, r, _ in rels)
 
 
-# (H) Java tests below.
+# Java tests below.
 
 
 def test_java_new_filewriter_write(tmp_path: Path) -> None:
@@ -271,8 +271,8 @@ def test_java_new_filewriter_write(tmp_path: Path) -> None:
 
 
 def test_java_buffered_reader_wrapper(tmp_path: Path) -> None:
-    # (H) The idiomatic wrapper: the resource identity comes from the INNER
-    # (H) constructor (`new FileReader("in.txt")`).
+    # The idiomatic wrapper: the resource identity comes from the INNER
+    # constructor (`new FileReader("in.txt")`).
     files = {
         "A.java": (
             "import java.io.BufferedReader;\n"
@@ -290,8 +290,8 @@ def test_java_buffered_reader_wrapper(tmp_path: Path) -> None:
 
 
 def test_java_files_new_buffered_reader_path_of(tmp_path: Path) -> None:
-    # (H) `Files.newBufferedReader(Path.of("cfg.txt"))`: the identity unwraps
-    # (H) through Path.of to the literal.
+    # `Files.newBufferedReader(Path.of("cfg.txt"))`: the identity unwraps
+    # through Path.of to the literal.
     files = {
         "A.java": (
             "import java.nio.file.Files;\n"
@@ -309,8 +309,8 @@ def test_java_files_new_buffered_reader_path_of(tmp_path: Path) -> None:
 
 
 def test_java_connection_statement_query(tmp_path: Path) -> None:
-    # (H) DriverManager.getConnection binds a DATABASE handle; createStatement
-    # (H) DERIVES a same-resource handle; executeQuery reads through it.
+    # DriverManager.getConnection binds a DATABASE handle; createStatement
+    # DERIVES a same-resource handle; executeQuery reads through it.
     files = {
         "A.java": (
             "import java.sql.Connection;\n"
@@ -330,8 +330,8 @@ def test_java_connection_statement_query(tmp_path: Path) -> None:
 
 
 def test_java_fully_qualified_new_constructor(tmp_path: Path) -> None:
-    # (H) `new java.io.FileWriter("out.txt")`: the fully qualified constructor
-    # (H) type must bind exactly like the simple name (greploop P1).
+    # `new java.io.FileWriter("out.txt")`: the fully qualified constructor
+    # type must bind exactly like the simple name (greploop P1).
     files = {
         "A.java": (
             "class A {\n"
@@ -347,8 +347,8 @@ def test_java_fully_qualified_new_constructor(tmp_path: Path) -> None:
 
 
 def test_java_scanner_new_file_identity(tmp_path: Path) -> None:
-    # (H) `new Scanner(new File("x"))`: Scanner is a wrapper; File is not a handle
-    # (H) itself but carries the identity literal.
+    # `new Scanner(new File("x"))`: Scanner is a wrapper; File is not a handle
+    # itself but carries the identity literal.
     files = {
         "A.java": (
             "import java.io.File;\n"
@@ -366,8 +366,8 @@ def test_java_scanner_new_file_identity(tmp_path: Path) -> None:
 
 
 def test_java_printwriter_filename_overload(tmp_path: Path) -> None:
-    # (H) PrintWriter is both a wrapper and a direct filename constructor; the
-    # (H) filename overload must bind when arg0 is not a handle.
+    # PrintWriter is both a wrapper and a direct filename constructor; the
+    # filename overload must bind when arg0 is not a handle.
     files = {
         "A.java": (
             "import java.io.PrintWriter;\n"
@@ -384,8 +384,8 @@ def test_java_printwriter_filename_overload(tmp_path: Path) -> None:
 
 
 def test_java_statement_execute_sql_refinement(tmp_path: Path) -> None:
-    # (H) `execute(sql)` is READ_WRITE by signature; a SELECT literal refines it
-    # (H) to a READ only.
+    # `execute(sql)` is READ_WRITE by signature; a SELECT literal refines it
+    # to a READ only.
     files = {
         "A.java": (
             "import java.sql.Connection;\n"
@@ -406,8 +406,8 @@ def test_java_statement_execute_sql_refinement(tmp_path: Path) -> None:
 
 
 def test_java_try_with_resources_binds_reader_handle(tmp_path: Path) -> None:
-    # (H) The idiomatic home of a Java handle is a try-with-resources header:
-    # (H) the `resource` declaration must bind exactly like a local declarator.
+    # The idiomatic home of a Java handle is a try-with-resources header:
+    # the `resource` declaration must bind exactly like a local declarator.
     files = {
         "A.java": (
             "import java.io.BufferedReader;\n"
@@ -426,11 +426,11 @@ def test_java_try_with_resources_binds_reader_handle(tmp_path: Path) -> None:
     assert _has(rels, "A.load", READS_FROM, "resource::FILE::in.txt")
 
 
-# (H) Rust tests below.
+# Rust tests below.
 
 
 def test_rust_file_open_read_to_string(tmp_path: Path) -> None:
-    # (H) `File::open("in.txt")?` binds through the try_expression wrapper.
+    # `File::open("in.txt")?` binds through the try_expression wrapper.
     files = {
         "main.rs": (
             "use std::fs::File;\n"
@@ -448,7 +448,7 @@ def test_rust_file_open_read_to_string(tmp_path: Path) -> None:
 
 
 def test_rust_file_create_write_all_unwrap(tmp_path: Path) -> None:
-    # (H) `.unwrap()` on the constructor call must unwrap to the inner binding.
+    # `.unwrap()` on the constructor call must unwrap to the inner binding.
     files = {
         "main.rs": (
             "use std::fs::File;\n"
@@ -480,8 +480,8 @@ def test_rust_fully_qualified_file_open(tmp_path: Path) -> None:
 
 
 def test_rust_bufreader_wrapper(tmp_path: Path) -> None:
-    # (H) `BufReader::new(f)` wraps an existing handle: reads through the
-    # (H) wrapper attribute to the underlying file.
+    # `BufReader::new(f)` wraps an existing handle: reads through the
+    # wrapper attribute to the underlying file.
     files = {
         "main.rs": (
             "use std::fs::File;\n"
@@ -499,12 +499,12 @@ def test_rust_bufreader_wrapper(tmp_path: Path) -> None:
     assert _has(rels, "main.load", READS_FROM, "resource::FILE::in.txt")
 
 
-# (H) C++ tests below.
+# C++ tests below.
 
 
 def test_cpp_ofstream_insertion_writes(tmp_path: Path) -> None:
-    # (H) `std::ofstream out("out.txt"); out << line;` -- the declaration
-    # (H) constructs a FILE handle; `<<` on it is a WRITE to that file.
+    # `std::ofstream out("out.txt"); out << line;` -- the declaration
+    # constructs a FILE handle; `<<` on it is a WRITE to that file.
     files = {
         "main.cpp": (
             "#include <fstream>\n"
@@ -548,8 +548,8 @@ def test_cpp_ofstream_write_method(tmp_path: Path) -> None:
 
 
 def test_cpp_vexing_parse_dynamic_identity(tmp_path: Path) -> None:
-    # (H) `std::ifstream dyn(path)` parses as a function_declarator (most vexing
-    # (H) parse); it still binds a FILE handle with a <dynamic> identity.
+    # `std::ifstream dyn(path)` parses as a function_declarator (most vexing
+    # parse); it still binds a FILE handle with a <dynamic> identity.
     files = {
         "main.cpp": (
             "#include <fstream>\n"
@@ -565,7 +565,7 @@ def test_cpp_vexing_parse_dynamic_identity(tmp_path: Path) -> None:
 
 
 def test_cpp_arithmetic_shift_no_edge(tmp_path: Path) -> None:
-    # (H) `x << 2` on a non-handle base must not emit anything.
+    # `x << 2` on a non-handle base must not emit anything.
     files = {
         "main.cpp": (
             "#include <fstream>\n"
@@ -579,12 +579,12 @@ def test_cpp_arithmetic_shift_no_edge(tmp_path: Path) -> None:
     assert not any(a.endswith("main.shift") for a, _, _ in rels)
 
 
-# (H) Python derive tests below.
+# Python derive tests below.
 
 
 def test_python_cursor_derives_connection_handle(tmp_path: Path) -> None:
-    # (H) `cur = conn.cursor()` derives a same-resource DATABASE handle, so
-    # (H) cur.fetchall() reads the connection's database (issue #714).
+    # `cur = conn.cursor()` derives a same-resource DATABASE handle, so
+    # cur.fetchall() reads the connection's database (issue #714).
     files = {
         "m.py": (
             "import sqlite3\n\n"

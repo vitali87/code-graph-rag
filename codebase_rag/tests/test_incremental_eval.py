@@ -24,7 +24,7 @@ _CALLS = cs.RelationshipType.CALLS.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
 _CONTAINS_FILE = cs.RelationshipType.CONTAINS_FILE.value
 
-# (H) The inbound call edge issue #532 drops: caller.use() calls callee.target().
+# The inbound call edge issue #532 drops: caller.use() calls callee.target().
 _INBOUND_CALL = (_FUNCTION, "proj.caller.use", _CALLS, _FUNCTION, "proj.callee.target")
 
 
@@ -33,8 +33,8 @@ def _node(store: _StatefulIngestor, label: str, **props: object) -> None:
 
 
 def _module_subtree() -> _StatefulIngestor:
-    # (H) Two modules: callee.py defines target(); caller.py defines use() which
-    # (H) CALLS target(). Mirrors the real graph shape captured from cgr.
+    # Two modules: callee.py defines target(); caller.py defines use() which
+    # CALLS target(). Mirrors the real graph shape captured from cgr.
     s = _StatefulIngestor()
     _node(s, _MODULE, qualified_name="proj.callee", path="callee.py")
     _node(s, _FUNCTION, qualified_name="proj.callee.target", path="callee.py")
@@ -61,11 +61,11 @@ class TestStatefulStore:
 
         assert (_MODULE, "proj.callee") not in s.nodes
         assert (_FUNCTION, "proj.callee.target") not in s.nodes
-        # (H) The caller subtree is untouched.
+        # The caller subtree is untouched.
         assert (_FUNCTION, "proj.caller.use") in s.nodes
-        # (H) DETACH removes the inbound CALLS edge incident on the deleted target.
+        # DETACH removes the inbound CALLS edge incident on the deleted target.
         assert not any(e[2] == _CALLS for e in s.edges)
-        # (H) The caller's own DEFINES edge survives.
+        # The caller's own DEFINES edge survives.
         assert any(e[2] == _DEFINES and e[1] == "proj.caller" for e in s.edges)
 
     def test_delete_file_detaches(self) -> None:
@@ -131,7 +131,7 @@ class TestIncrementalScenario:
     def test_clean_reindex_sees_inbound_call(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Baseline: a clean forced index resolves caller.use -> callee.target.
+        # Baseline: a clean forced index resolves caller.use -> callee.target.
         src = tmp_path / "proj"
         _make_repo(src)
         parsers, queries = parsers_queries
@@ -152,10 +152,10 @@ class TestIncrementalScenario:
     def test_incremental_preserves_inbound_call_editing_callee(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Issue #532: editing the callee deletes its module subtree (and the
-        # (H) inbound CALLS incident on it). The fix must rebuild that inbound edge
-        # (H) from the unchanged caller, so the incremental graph equals a clean
-        # (H) re-index.
+        # Issue #532: editing the callee deletes its module subtree (and the
+        # inbound CALLS incident on it). The fix must rebuild that inbound edge
+        # from the unchanged caller, so the incremental graph equals a clean
+        # re-index.
         src = tmp_path / "proj"
         _make_repo(src)
         parsers, queries = parsers_queries
@@ -169,10 +169,10 @@ class TestIncrementalScenario:
     def test_incremental_preserves_cross_file_call_editing_caller(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Editing the caller must rebuild its outbound call to the unchanged
-        # (H) callee. This requires the function registry to know definitions in
-        # (H) unchanged files (rehydrated from the persisted graph), not just the
-        # (H) changed file.
+        # Editing the caller must rebuild its outbound call to the unchanged
+        # callee. This requires the function registry to know definitions in
+        # unchanged files (rehydrated from the persisted graph), not just the
+        # changed file.
         src = tmp_path / "proj"
         _make_repo(src)
         parsers, queries = parsers_queries
@@ -186,11 +186,11 @@ class TestIncrementalScenario:
     def test_baseline_index_ignores_preexisting_cache(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) The real cgr source carries its own .cgr-hash-cache.json from prior
-        # (H) indexing. If the scenario copies it, a future-dated cache makes every
-        # (H) file look unchanged and the baseline index skips them, so the diff
-        # (H) against a clean re-index becomes meaningless. The runner must purge
-        # (H) any copied cache so the baseline is a true full index.
+        # The real cgr source carries its own .cgr-hash-cache.json from prior
+        # indexing. If the scenario copies it, a future-dated cache makes every
+        # file look unchanged and the baseline index skips them, so the diff
+        # against a clean re-index becomes meaningless. The runner must purge
+        # any copied cache so the baseline is a true full index.
         src = tmp_path / "proj"
         _make_repo(src)
         (src / "other.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
@@ -216,19 +216,19 @@ class TestIncrementalScenario:
         incr, clean = run_neutral_edit_scenario(
             src, "proj", "callee.py", parsers, queries, tmp_path / "scn"
         )
-        # (H) other.py was never edited; it must still be indexed in the baseline.
+        # other.py was never edited; it must still be indexed in the baseline.
         assert (_FUNCTION, "proj.other.helper") in clean.nodes
         assert (_FUNCTION, "proj.other.helper") in incr.nodes
 
     def test_incremental_preserves_property_dispatch_editing_caller(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Issue #532 residual (full-parity): editing client.py re-parses only it,
-        # (H) so the property status of Factory.dep (a @property in the unchanged
-        # (H) factory.py) is not re-marked. cgr resolves the attribute access
-        # (H) `self.d.dep` to that property via its property-name set, which the
-        # (H) incremental run must rehydrate from the graph (not just the function
-        # (H) registry). Without it the property-dispatch edge drops vs a clean index.
+        # Issue #532 residual (full-parity): editing client.py re-parses only it,
+        # so the property status of Factory.dep (a @property in the unchanged
+        # factory.py) is not re-marked. cgr resolves the attribute access
+        # `self.d.dep` to that property via its property-name set, which the
+        # incremental run must rehydrate from the graph (not just the function
+        # registry). Without it the property-dispatch edge drops vs a clean index.
         method = cs.NodeLabel.METHOD.value
         prop_call = (
             _FUNCTION,
@@ -260,13 +260,13 @@ class TestIncrementalScenario:
     def test_incremental_preserves_protocol_dispatch_editing_caller(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Issue #532 residual: editing client.py re-parses only it, so
-        # (H) class_inheritance no longer records that GreeterProtocol subclasses
-        # (H) Protocol (iface.py was not re-parsed). Protocol dispatch keys off that
-        # (H) hierarchy: a clean index redirects g.greet() from the Protocol stub to
-        # (H) the concrete Greeter.greet, but without rehydrating class_inheritance
-        # (H) the incremental run leaves the call on the stub. The fix rehydrates the
-        # (H) hierarchy from persisted INHERITS edges before Pass 3.
+        # Issue #532 residual: editing client.py re-parses only it, so
+        # class_inheritance no longer records that GreeterProtocol subclasses
+        # Protocol (iface.py was not re-parsed). Protocol dispatch keys off that
+        # hierarchy: a clean index redirects g.greet() from the Protocol stub to
+        # the concrete Greeter.greet, but without rehydrating class_inheritance
+        # the incremental run leaves the call on the stub. The fix rehydrates the
+        # hierarchy from persisted INHERITS edges before Pass 3.
         method = cs.NodeLabel.METHOD.value
         concrete = (
             _FUNCTION,
@@ -308,13 +308,13 @@ class TestIncrementalScenario:
         assert incr == clean
 
     def test_all_inherits_query_returns_bases_in_base_index_order(self) -> None:
-        # (H) Rehydration replays INHERITS edges into class_inheritance; multiple
-        # (H) inheritance is order-sensitive (method resolution and override
-        # (H) attribution walk the base list first-match-wins). The persisted
-        # (H) base_index must restore source order regardless of the order the edges
-        # (H) were stored in. Insert five bases in reverse index order; the query
-        # (H) must return them by base_index (the store is a set, so without the
-        # (H) base_index ordering the returned order would not be base0..base4).
+        # Rehydration replays INHERITS edges into class_inheritance; multiple
+        # inheritance is order-sensitive (method resolution and override
+        # attribution walk the base list first-match-wins). The persisted
+        # base_index must restore source order regardless of the order the edges
+        # were stored in. Insert five bases in reverse index order; the query
+        # must return them by base_index (the store is a set, so without the
+        # base_index ordering the returned order would not be base0..base4).
         klass = cs.NodeLabel.CLASS.value
         s = _StatefulIngestor()
         child = "proj.combined.Combined"
@@ -331,24 +331,24 @@ class TestIncrementalScenario:
         assert bases == want
 
     def test_rehydrate_skips_multi_base_class_with_missing_base_index(self) -> None:
-        # (H) Greptile #572: an INHERITS edge written by an older index has no
-        # (H) base_index, so a multi-inheritance class's base order cannot be
-        # (H) trusted after an upgrade. Such a class must NOT be rehydrated (it would
-        # (H) risk binding a call/override to the wrong base); a single-base class is
-        # (H) order-free and is still rehydrated; a fully-ordered class is rehydrated
-        # (H) in base_index order; and a class already parsed locally is left alone.
+        # Greptile #572: an INHERITS edge written by an older index has no
+        # base_index, so a multi-inheritance class's base order cannot be
+        # trusted after an upgrade. Such a class must NOT be rehydrated (it would
+        # risk binding a call/override to the wrong base); a single-base class is
+        # order-free and is still rehydrated; a fully-ordered class is rehydrated
+        # in base_index order; and a class already parsed locally is left alone.
         from codebase_rag.graph_updater import GraphUpdater
 
         rows: list[dict[str, object]] = [
-            # (H) Ordered multi-base -> rehydrated in index order.
+            # Ordered multi-base -> rehydrated in index order.
             {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.B", cs.KEY_BASE_INDEX: 1},
             {cs.KEY_CHILD_QN: "p.Ok", cs.KEY_BASE_QN: "p.A", cs.KEY_BASE_INDEX: 0},
-            # (H) Multi-base with a missing index -> skipped entirely.
+            # Multi-base with a missing index -> skipped entirely.
             {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.X", cs.KEY_BASE_INDEX: None},
             {cs.KEY_CHILD_QN: "p.Old", cs.KEY_BASE_QN: "p.Y", cs.KEY_BASE_INDEX: 1},
-            # (H) Single base with a missing index -> still safe to rehydrate.
+            # Single base with a missing index -> still safe to rehydrate.
             {cs.KEY_CHILD_QN: "p.Solo", cs.KEY_BASE_QN: "p.Z", cs.KEY_BASE_INDEX: None},
-            # (H) Already parsed locally -> not touched.
+            # Already parsed locally -> not touched.
             {cs.KEY_CHILD_QN: "p.Local", cs.KEY_BASE_QN: "p.W", cs.KEY_BASE_INDEX: 0},
         ]
         result = GraphUpdater._rehydrated_bases_by_child(rows, {"p.Local": ["p.W"]})
@@ -357,11 +357,11 @@ class TestIncrementalScenario:
     def test_incremental_preserves_multiple_inheritance_dispatch(
         self, tmp_path: Path, parsers_queries: tuple[object, object]
     ) -> None:
-        # (H) Issue #532 residual (Greptile #572): editing the caller rehydrates
-        # (H) class_inheritance for the unchanged Combined(MixinA, MixinB). Python
-        # (H) MRO resolves c.shared() to MixinA.shared (first base). If rehydration
-        # (H) lost base order, an incremental run could bind it to MixinB.shared,
-        # (H) diverging from a clean index. base_index ordering keeps them equal.
+        # Issue #532 residual (Greptile #572): editing the caller rehydrates
+        # class_inheritance for the unchanged Combined(MixinA, MixinB). Python
+        # MRO resolves c.shared() to MixinA.shared (first base). If rehydration
+        # lost base order, an incremental run could bind it to MixinB.shared,
+        # diverging from a clean index. base_index ordering keeps them equal.
         method = cs.NodeLabel.METHOD.value
         first_base = (
             _FUNCTION,

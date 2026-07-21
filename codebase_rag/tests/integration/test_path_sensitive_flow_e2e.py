@@ -47,8 +47,8 @@ def _resource_flow_present(ingestor: MemgraphIngestor, frm: str, to: str) -> boo
 def test_kill_on_one_branch_still_flows(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) x tainted, killed on ONLY the if-branch; the else-path (implicit) still
-    # (H) leaks ENV::K -> STDOUT, so the flow must survive (MAY analysis).
+    # x tainted, killed on ONLY the if-branch; the else-path (implicit) still
+    # leaks ENV::K -> STDOUT, so the flow must survive (MAY analysis).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -65,8 +65,8 @@ def test_kill_on_one_branch_still_flows(
 def test_taint_on_one_branch_flows(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) x clean, tainted on ONLY the if-branch; that path leaks, so the flow
-    # (H) must appear (taint that exists on ANY path survives the merge).
+    # x clean, tainted on ONLY the if-branch; that path leaks, so the flow
+    # must appear (taint that exists on ANY path survives the merge).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -83,8 +83,8 @@ def test_taint_on_one_branch_flows(
 def test_kill_on_all_branches_does_not_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) x tainted, then reassigned to an untainted value on EVERY path (if AND
-    # (H) else): killed on all paths, so NO ENV::K -> STDOUT flow may remain.
+    # x tainted, then reassigned to an untainted value on EVERY path (if AND
+    # else): killed on all paths, so NO ENV::K -> STDOUT flow may remain.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -103,8 +103,8 @@ def test_kill_on_all_branches_does_not_flow(
 def test_loop_carried_taint_reaches_earlier_statement(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) x is tainted at the END of the loop body; on the NEXT iteration the
-    # (H) earlier print(x) sees that taint. The two-pass loop merge must catch it.
+    # x is tainted at the END of the loop body; on the NEXT iteration the
+    # earlier print(x) sees that taint. The two-pass loop merge must catch it.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -121,8 +121,8 @@ def test_loop_carried_taint_reaches_earlier_statement(
 def test_taint_survives_except_only_kill(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) x killed only on the except path; the normal (no-exception) path keeps
-    # (H) the taint, so the flow must survive the try/except merge.
+    # x killed only on the except path; the normal (no-exception) path keeps
+    # the taint, so the flow must survive the try/except merge.
     _build(
         memgraph_ingestor,
         tmp_path,

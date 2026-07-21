@@ -369,8 +369,8 @@ class TestTestPathPatternsUnit:
     def test_test_patterns_cover_js_ts_convention(self) -> None:
         from codebase_rag.constants import TEST_PATH_PATTERNS
 
-        # (H) *.test.ts / *.spec.tsx / __tests__/ are test files; without these
-        # (H) substrings every symbol in them is wrongly reported as dead.
+        # *.test.ts / *.spec.tsx / __tests__/ are test files; without these
+        # substrings every symbol in them is wrongly reported as dead.
         for path in (
             "src/solution.test.ts",
             "app/foo.spec.tsx",
@@ -397,10 +397,10 @@ def _dead_code_config(
 @pytest.mark.integration
 class TestCollectDeadCodeIntegration:
     def _seed(self, ingestor: MemgraphIngestor) -> None:
-        # (H) called -> live; orphan -> dead; handler is a @task root;
-        # (H) routed is a @app.route root calling routed_callee (decorators are
-        # (H) stored @-prefixed and dotted, exactly as the parser emits them);
-        # (H) test_runs is a test root that calls helper (so helper is live)
+        # called -> live; orphan -> dead; handler is a @task root;
+        # routed is a @app.route root calling routed_callee (decorators are
+        # stored @-prefixed and dotted, exactly as the parser emits them);
+        # test_runs is a test root that calls helper (so helper is live)
         ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -462,9 +462,9 @@ class TestCollectDeadCodeIntegration:
         )
 
         names = {r["qualified_name"] for r in rows}
-        # (H) without test roots, production code reached only from tests (helper)
-        # (H) is reported; the test fn itself is test infrastructure, filtered
-        # (H) from candidates by path.
+        # without test roots, production code reached only from tests (helper)
+        # is reported; the test fn itself is test infrastructure, filtered
+        # from candidates by path.
         assert names == {
             "proj.mod.orphan",
             "proj.mod.helper",
@@ -489,9 +489,9 @@ class TestCollectDeadCodeIntegration:
     def test_test_module_call_is_not_a_root_when_excluding_tests(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) a function reached only from a TEST module's top-level call must NOT
-        # (H) be kept alive when --no-include-tests, else test-only code hides as
-        # (H) live. The same call DOES keep it live when tests are included.
+        # a function reached only from a TEST module's top-level call must NOT
+        # be kept alive when --no-include-tests, else test-only code hides as
+        # live. The same call DOES keep it live when tests are included.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(tm:Module {qualified_name: 'proj.tests.test_x', "
@@ -515,10 +515,10 @@ class TestCollectDeadCodeIntegration:
     def test_class_candidates_when_classes_included(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) used is a module-load root that instantiates WithInit (INSTANTIATES
-        # (H) the class plus CALLS its __init__), NoInit (INSTANTIATES only, no
-        # (H) __init__) and Derived (INSTANTIATES; Derived INHERITS Base, so Base
-        # (H) is live too). Only DeadClass (and the orphan function) is unreachable.
+        # used is a module-load root that instantiates WithInit (INSTANTIATES
+        # the class plus CALLS its __init__), NoInit (INSTANTIATES only, no
+        # __init__) and Derived (INSTANTIATES; Derived INHERITS Base, so Base
+        # is live too). Only DeadClass (and the orphan function) is unreachable.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -569,11 +569,11 @@ class TestCollectDeadCodeIntegration:
     def test_subclass_only_base_is_reported_when_subclass_is_unreachable(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) Base is subclassed by Derived, but nothing instantiates Derived, so
-        # (H) the traversal never reaches Derived and therefore never reaches Base
-        # (H) via INHERITS. The whole dead cluster (both classes) is reported: a
-        # (H) base kept alive only by an unreachable subclass is itself dead.
-        # (H) Live is present purely so the scan has a reachable root to anchor.
+        # Base is subclassed by Derived, but nothing instantiates Derived, so
+        # the traversal never reaches Derived and therefore never reaches Base
+        # via INHERITS. The whole dead cluster (both classes) is reported: a
+        # base kept alive only by an unreachable subclass is itself dead.
+        # Live is present purely so the scan has a reachable root to anchor.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -600,9 +600,9 @@ class TestCollectDeadCodeIntegration:
     def test_no_roots_reports_everything(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) with no roots at all (nothing exported / entry-point / decorated /
-        # (H) called at module load), every function is unreachable and must be
-        # (H) reported.
+        # with no roots at all (nothing exported / entry-point / decorated /
+        # called at module load), every function is unreachable and must be
+        # reported.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(a:Function {qualified_name: 'proj.mod.a', name: 'a', start_line: 1, "
@@ -623,13 +623,13 @@ class TestCollectDeadCodeIntegration:
     def test_registration_closure_and_protocol_stub_are_roots(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) a decorated closure DEFINED by a LIVE function (prompt_toolkit
-        # (H) @bindings.add, MCP @server.list_tools) is registered when the enclosing
-        # (H) function runs, and it keeps its own callees live; a method of a
-        # (H) typing.Protocol subclass is an interface stub whose callers resolve to
-        # (H) the implementations. Neither is dead, while an undecorated closure, a
-        # (H) plain private method, and the whole cluster under a DEAD enclosing
-        # (H) function (owner, decorated closure, closure-only callee) are.
+        # a decorated closure DEFINED by a LIVE function (prompt_toolkit
+        # @bindings.add, MCP @server.list_tools) is registered when the enclosing
+        # function runs, and it keeps its own callees live; a method of a
+        # typing.Protocol subclass is an interface stub whose callers resolve to
+        # the implementations. Neither is dead, while an undecorated closure, a
+        # plain private method, and the whole cluster under a DEAD enclosing
+        # function (owner, decorated closure, closure-only callee) are.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -688,9 +688,9 @@ class TestCollectDeadCodeIntegration:
     def test_module_load_callee_is_a_root(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) a function called by a Module (e.g. `if __name__ == "__main__": main()`
-        # (H) or a bare decorator) runs at import, so it and its callees are live even
-        # (H) with no entry-point/decorator/export root.
+        # a function called by a Module (e.g. `if __name__ == "__main__": main()`
+        # or a bare decorator) runs at import, so it and its callees are live even
+        # with no entry-point/decorator/export root.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
@@ -780,9 +780,9 @@ class TestFlowsToParallelProvenanceIntegration:
     def test_mixed_via_and_viales_edges_do_not_collapse(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # (H) A batch mixing rows that carry `via` with a row that does not (same
-        # (H) endpoints) must keep every edge: the via-less row must not strip
-        # (H) `via` from the merge key for the rest (#722 mixed-batch regression).
+        # A batch mixing rows that carry `via` with a row that does not (same
+        # endpoints) must keep every edge: the via-less row must not strip
+        # `via` from the merge key for the rest (#722 mixed-batch regression).
         memgraph_ingestor._execute_query(
             "CREATE (a:Function {qualified_name: 'mod.caller', name: 'caller'}), "
             "(b:Function {qualified_name: 'mod.callee', name: 'callee'})"

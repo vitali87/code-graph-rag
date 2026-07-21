@@ -1,8 +1,8 @@
-# (H) Covers Go containment-edge validation: cgr's DEFINES (Module->top-level
-# (H) func/type) and DEFINES_METHOD (struct Class->receiver method) edges are
-# (H) graded against the independent go/ast oracle (evals/oracles/go_ast.go),
-# (H) joined on (kind, file, line) endpoints. The sample exercises a same-file
-# (H) method and a cross-file method (receiver type declared in another file).
+# Covers Go containment-edge validation: cgr's DEFINES (Module->top-level
+# func/type) and DEFINES_METHOD (struct Class->receiver method) edges are
+# graded against the independent go/ast oracle (evals/oracles/go_ast.go),
+# joined on (kind, file, line) endpoints. The sample exercises a same-file
+# method and a cross-file method (receiver type declared in another file).
 from __future__ import annotations
 
 from pathlib import Path

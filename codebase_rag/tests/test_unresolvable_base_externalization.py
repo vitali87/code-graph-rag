@@ -1,16 +1,16 @@
-# (H) Two inheritance-recall losses the thrift oracle re-measure surfaced
-# (H) after the dangling-edge campaign:
-# (H) 1. A src-root layout (setup.py maps lib/py/src -> package `thrift`)
-# (H)    makes an import-mapped base like `thrift.Thrift.TProcessor` look
-# (H)    project-internal while the real class qn is path-based
-# (H)    (`thrift.src.Thrift.TProcessor`); the deferred resolver dropped what
-# (H)    a unique whole-segment suffix match resolves to the real node.
-# (H) 2. A written base that resolves nowhere in the index (`object`,
-# (H)    Rust `Default`, generated `Iface`) is BY CONSTRUCTION defined outside
-# (H)    the indexed tree; dropping it loses a syntactic inheritance fact the
-# (H)    source declares. The written name (not the module-anchored guess)
-# (H)    now emits onto an ExternalModule node, generalizing the JS-global
-# (H)    and java.lang tables into a language-agnostic fallback.
+# Two inheritance-recall losses the thrift oracle re-measure surfaced
+# after the dangling-edge campaign:
+# 1. A src-root layout (setup.py maps lib/py/src -> package `thrift`)
+#    makes an import-mapped base like `thrift.Thrift.TProcessor` look
+#    project-internal while the real class qn is path-based
+#    (`thrift.src.Thrift.TProcessor`); the deferred resolver dropped what
+#    a unique whole-segment suffix match resolves to the real node.
+# 2. A written base that resolves nowhere in the index (`object`,
+#    Rust `Default`, generated `Iface`) is BY CONSTRUCTION defined outside
+#    the indexed tree; dropping it loses a syntactic inheritance fact the
+#    source declares. The written name (not the module-anchored guess)
+#    now emits onto an ExternalModule node, generalizing the JS-global
+#    and java.lang tables into a language-agnostic fallback.
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,8 +30,8 @@ def _inherits(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
 def test_src_root_base_suffix_resolves_to_real_class(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Mirrors thrift's layout: the package root is src/ but imports are
-    # (H) written against the distribution name, which equals the project.
+    # Mirrors thrift's layout: the package root is src/ but imports are
+    # written against the distribution name, which equals the project.
     src = temp_repo / "src"
     src.mkdir()
     (src / "Thrift.py").write_text("class TProcessor(object):\n    pass\n")
@@ -130,11 +130,11 @@ class AppError extends Exception
 def test_rust_shadowed_std_trait_externalizes(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) thrift's errors.rs: `pub enum Error` implements the std trait ALSO
-    # (H) written `Error`; parse-time resolution lands on the enum itself and
-    # (H) a self-edge is never real, but the WRITTEN bare name is still a
-    # (H) syntactic fact and must externalize (the reference is to the
-    # (H) shadowed outer name, not the child).
+    # thrift's errors.rs: `pub enum Error` implements the std trait ALSO
+    # written `Error`; parse-time resolution lands on the enum itself and
+    # a self-edge is never real, but the WRITTEN bare name is still a
+    # syntactic fact and must externalize (the reference is to the
+    # shadowed outer name, not the child).
     (temp_repo / "errors.rs").write_text(
         """
 use std::fmt;

@@ -1,8 +1,8 @@
-# (H) Path-sensitivity completion for the lean non-Python flow walk (issue #714):
-# (H) loops and try/catch branch-and-merge for the non-hoisted languages (Go,
-# (H) Java, C++), and Rust if/match expressions. MAY semantics: taint surviving
-# (H) on ANY path survives the join, a kill counts only when it happens on EVERY
-# (H) path, and a loop body's later statements can taint its earlier ones.
+# Path-sensitivity completion for the lean non-Python flow walk (issue #714):
+# loops and try/catch branch-and-merge for the non-hoisted languages (Go,
+# Java, C++), and Rust if/match expressions. MAY semantics: taint surviving
+# on ANY path survives the join, a kill counts only when it happens on EVERY
+# path, and a loop body's later statements can taint its earlier ones.
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,8 +20,8 @@ _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
 def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
-    # (H) Build the graph for `files` and return (from_qn, to_qn) for every
-    # (H) FLOWS_TO edge.
+    # Build the graph for `files` and return (from_qn, to_qn) for every
+    # FLOWS_TO edge.
     parsers, queries = load_parsers()
     for rel, content in files.items():
         p = tmp_path / rel
@@ -43,8 +43,8 @@ def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
 
 
 def test_go_loop_carried_taint_reaches_earlier_sink(tmp_path: Path) -> None:
-    # (H) The read happens AFTER the write in source order, but a later loop
-    # (H) iteration carries it back to the sink: needs the second body pass.
+    # The read happens AFTER the write in source order, but a later loop
+    # iteration carries it back to the sink: needs the second body pass.
     files = {
         "main.go": (
             "package main\n\n"
@@ -62,8 +62,8 @@ def test_go_loop_carried_taint_reaches_earlier_sink(tmp_path: Path) -> None:
 
 
 def test_go_kill_inside_loop_body_does_not_erase_skip_path(tmp_path: Path) -> None:
-    # (H) The loop may run zero times, so a kill inside the body must not erase
-    # (H) taint on the skip path.
+    # The loop may run zero times, so a kill inside the body must not erase
+    # taint on the skip path.
     files = {
         "main.go": (
             "package main\n\n"
@@ -82,9 +82,9 @@ def test_go_kill_inside_loop_body_does_not_erase_skip_path(tmp_path: Path) -> No
 
 
 def test_java_catch_sees_pre_kill_taint(tmp_path: Path) -> None:
-    # (H) The try body may throw BEFORE the kill, so the catch handler must be
-    # (H) seeded with union(pre, body_exit): the ENV taint still reaches the
-    # (H) sink inside catch.
+    # The try body may throw BEFORE the kill, so the catch handler must be
+    # seeded with union(pre, body_exit): the ENV taint still reaches the
+    # sink inside catch.
     files = {
         "A.java": (
             "class A {\n"
@@ -144,8 +144,8 @@ def test_cpp_catch_sees_pre_kill_taint(tmp_path: Path) -> None:
 
 
 def test_rust_if_kill_does_not_erase_else_path(tmp_path: Path) -> None:
-    # (H) Rust ifs are if_expression, not if_statement: the branch-merge must
-    # (H) route them too, so a kill in one branch keeps the other path's taint.
+    # Rust ifs are if_expression, not if_statement: the branch-merge must
+    # route them too, so a kill in one branch keeps the other path's taint.
     files = {
         "main.rs": (
             "fn work(cond: bool) {\n"
@@ -162,7 +162,7 @@ def test_rust_if_kill_does_not_erase_else_path(tmp_path: Path) -> None:
 
 
 def test_rust_match_arm_kill_does_not_leak(tmp_path: Path) -> None:
-    # (H) A kill inside one match arm must not erase the other arms' taint.
+    # A kill inside one match arm must not erase the other arms' taint.
     files = {
         "main.rs": (
             "fn work(n: u8) {\n"
@@ -200,9 +200,9 @@ def test_cpp_for_loop_carried_taint(tmp_path: Path) -> None:
 
 
 def test_go_for_post_statement_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
-    # (H) The for-clause post statement runs only AFTER a completed body
-    # (H) iteration, never on the zero-iteration path: a kill there must not
-    # (H) erase the pre-loop taint.
+    # The for-clause post statement runs only AFTER a completed body
+    # iteration, never on the zero-iteration path: a kill there must not
+    # erase the pre-loop taint.
     files = {
         "main.go": (
             "package main\n\n"
@@ -220,9 +220,9 @@ def test_go_for_post_statement_kill_does_not_erase_skip_path(tmp_path: Path) -> 
 
 
 def test_java_for_update_kill_runs_after_body_pass(tmp_path: Path) -> None:
-    # (H) The update clause runs after each body iteration, so the FIRST body
-    # (H) pass still sees the pre-loop taint: a kill in the update must not hide
-    # (H) the sink inside the body.
+    # The update clause runs after each body iteration, so the FIRST body
+    # pass still sees the pre-loop taint: a kill in the update must not hide
+    # the sink inside the body.
     files = {
         "A.java": (
             "class A {\n"
@@ -257,8 +257,8 @@ def test_cpp_for_update_kill_does_not_erase_skip_path(tmp_path: Path) -> None:
 
 
 def test_java_try_with_resources_taint_flows_to_body_sink(tmp_path: Path) -> None:
-    # (H) The resource declarations of a try-with-resources run before the body
-    # (H) on every path: a taint bound there must reach a sink in the body.
+    # The resource declarations of a try-with-resources run before the body
+    # on every path: a taint bound there must reach a sink in the body.
     files = {
         "A.java": (
             "class A {\n"
@@ -275,8 +275,8 @@ def test_java_try_with_resources_taint_flows_to_body_sink(tmp_path: Path) -> Non
 
 
 def test_java_do_while_kill_has_no_skip_path(tmp_path: Path) -> None:
-    # (H) A do-while body ALWAYS runs at least once, so a kill there is a kill
-    # (H) on every path: no false skip-path flow may survive the loop.
+    # A do-while body ALWAYS runs at least once, so a kill there is a kill
+    # on every path: no false skip-path flow may survive the loop.
     files = {
         "A.java": (
             "class A {\n"
@@ -295,8 +295,8 @@ def test_java_do_while_kill_has_no_skip_path(tmp_path: Path) -> None:
 
 
 def test_cpp_do_while_condition_sees_body_taint(tmp_path: Path) -> None:
-    # (H) The do-while condition runs AFTER each body iteration, so a sink in
-    # (H) the condition sees the body's taint.
+    # The do-while condition runs AFTER each body iteration, so a sink in
+    # the condition sees the body's taint.
     files = {
         "main.cpp": (
             "#include <cstdio>\n"
@@ -314,8 +314,8 @@ def test_cpp_do_while_condition_sees_body_taint(tmp_path: Path) -> None:
 
 
 def test_rust_loop_kill_has_no_skip_path(tmp_path: Path) -> None:
-    # (H) A Rust `loop` always enters its body before it can break, so a kill
-    # (H) on the straight-line body path must not be undone by a skip-path merge.
+    # A Rust `loop` always enters its body before it can break, so a kill
+    # on the straight-line body path must not be undone by a skip-path merge.
     files = {
         "main.rs": (
             "fn work() {\n"

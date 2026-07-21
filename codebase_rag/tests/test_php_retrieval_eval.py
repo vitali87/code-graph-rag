@@ -44,12 +44,12 @@ def test_oracle_captures_first_party_php_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared = oracle_php_call_edges(tmp_path)
 
-    # (H) $this->helper(), free(), T::make(), $t->caller() are first-party calls.
+    # $this->helper(), free(), T::make(), $t->caller() are first-party calls.
     assert ("T.php", "helper") in edges
     assert ("use.php", "free") in edges
     assert ("use.php", "make") in edges
     assert ("use.php", "caller") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("T.php", "orphan") not in edges
     assert {"helper", "caller", "make", "free", "orphan", "useIt"} <= declared
 
@@ -64,10 +64,10 @@ def test_cgr_matches_oracle_on_clean_php_project(tmp_path: Path) -> None:
 
 @needs_node
 def test_php_dynamic_member_call_not_emitted(tmp_path: Path) -> None:
-    # (H) A dynamic member call (`$this->$method()`) has a `variable` offset whose
-    # (H) name is the variable identifier ("method"), not a static method name. The
-    # (H) oracle must not emit it as a call edge even when it collides with a
-    # (H) declared first-party method name, or it becomes a false ground-truth edge.
+    # A dynamic member call (`$this->$method()`) has a `variable` offset whose
+    # name is the variable identifier ("method"), not a static method name. The
+    # oracle must not emit it as a call edge even when it collides with a
+    # declared first-party method name, or it becomes a false ground-truth edge.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "c.php").write_text(
         "<?php\nclass C {\n"

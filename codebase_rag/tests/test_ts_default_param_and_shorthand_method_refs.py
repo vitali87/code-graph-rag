@@ -1,11 +1,11 @@
-# (H) Two zustand residuals with the same root pattern -- a function consumed by
-# (H) syntax the call graph didn't scan:
-# (H) 1. a DEFAULT PARAMETER value (`useStore(api, selector = identity as any)`)
-# (H)    references the default function; nothing scanned parameter defaults.
-# (H) 2. an object-literal SHORTHAND METHOD (`return { then(x) {...}, catch(x)
-# (H)    {...} }`, persist's thenable) -- the dispatch-table scan only walked
-# (H)    `pair` values, so shorthand methods of a returned/stored object were
-# (H)    never referenced and reported dead unless explicitly called in-repo.
+# Two zustand residuals with the same root pattern -- a function consumed by
+# syntax the call graph didn't scan:
+# 1. a DEFAULT PARAMETER value (`useStore(api, selector = identity as any)`)
+#    references the default function; nothing scanned parameter defaults.
+# 2. an object-literal SHORTHAND METHOD (`return { then(x) {...}, catch(x)
+#    {...} }`, persist's thenable) -- the dispatch-table scan only walked
+#    `pair` values, so shorthand methods of a returned/stored object were
+#    never referenced and reported dead unless explicitly called in-repo.
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,9 +43,9 @@ def test_default_param_function_value_is_referenced(
 def test_js_default_param_function_value_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Plain-JS grammar wraps a defaulted parameter in an assignment_pattern
-    # (H) whose default sits under `right`, unlike TS's required_parameter `value`;
-    # (H) both forms must be scanned.
+    # Plain-JS grammar wraps a defaulted parameter in an assignment_pattern
+    # whose default sits under `right`, unlike TS's required_parameter `value`;
+    # both forms must be scanned.
     root = temp_repo / "zdefjs"
     root.mkdir(parents=True)
     (root / "react.js").write_text(

@@ -1,9 +1,9 @@
-# (H) When several files each declare a same-named nested class (gson has
-# (H) CollectionTypeAdapterFactory.Adapter, MapTypeAdapterFactory.Adapter,
-# (H) ReflectiveTypeAdapterFactory.Adapter), a subclass `class Sub extends Adapter`
-# (H) must inherit from the Adapter nested in ITS OWN file, not a same-named one in
-# (H) another file that merely sorts first. A wrong INHERITS sends the method-override
-# (H) edges to the wrong base, so the subclass overrides look dead.
+# When several files each declare a same-named nested class (gson has
+# CollectionTypeAdapterFactory.Adapter, MapTypeAdapterFactory.Adapter,
+# ReflectiveTypeAdapterFactory.Adapter), a subclass `class Sub extends Adapter`
+# must inherit from the Adapter nested in ITS OWN file, not a same-named one in
+# another file that merely sorts first. A wrong INHERITS sends the method-override
+# edges to the wrong base, so the subclass overrides look dead.
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,8 +22,8 @@ def test_nested_superclass_prefers_same_file(
     root = temp_repo / "jsup"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
-    # (H) Two files each declare a nested `Adapter`. The subclass in Reflective.java
-    # (H) must inherit from Reflective's Adapter, not Collection's (which sorts first).
+    # Two files each declare a nested `Adapter`. The subclass in Reflective.java
+    # must inherit from Reflective's Adapter, not Collection's (which sorts first).
     (pkg / "Collection.java").write_text(
         "package com.example;\n"
         "public class Collection {\n"

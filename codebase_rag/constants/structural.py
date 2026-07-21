@@ -1,16 +1,16 @@
-# (H) Constants for the ast-grep structural search/replace toolkit (#415).
+# Constants for the ast-grep structural search/replace toolkit (#415).
 from __future__ import annotations
 
 import re
 
 from .languages import SupportedLanguage
 
-# (H) Optional dependency module name for the dependency guard.
+# Optional dependency module name for the dependency guard.
 MODULE_AST_GREP = "ast_grep_py"
 
-# (H) cgr language -> ast-grep language id. scala and dart are intentionally
-# (H) absent: ast-grep ships no grammar for them, so files in those languages
-# (H) are skipped by the tools rather than crashing the Rust binding.
+# cgr language -> ast-grep language id. scala and dart are intentionally
+# absent: ast-grep ships no grammar for them, so files in those languages
+# are skipped by the tools rather than crashing the Rust binding.
 AST_GREP_LANGUAGES: dict[SupportedLanguage, str] = {
     SupportedLanguage.PYTHON: "python",
     SupportedLanguage.JS: "javascript",
@@ -26,17 +26,17 @@ AST_GREP_LANGUAGES: dict[SupportedLanguage, str] = {
     SupportedLanguage.CSHARP: "csharp",
 }
 
-# (H) Metavariable tokens in a rewrite template. ast-grep's node.replace() does
-# (H) NOT interpolate metavars, so the service does it: $$$NAME (multi) and
-# (H) $NAME (single). One combined pattern, matched left-to-right in a single
-# (H) pass so text inserted for one metavar is never re-scanned for another.
+# Metavariable tokens in a rewrite template. ast-grep's node.replace() does
+# NOT interpolate metavars, so the service does it: $$$NAME (multi) and
+# $NAME (single). One combined pattern, matched left-to-right in a single
+# pass so text inserted for one metavar is never re-scanned for another.
 AST_GREP_METAVAR_RE = re.compile(r"\$\$\$([A-Z_][A-Z0-9_]*)|\$([A-Z_][A-Z0-9_]*)")
 
-# (H) Cap on matches returned by a single structural search, so an over-broad
-# (H) pattern cannot flood the agent context. Truncation is reported, not silent.
+# Cap on matches returned by a single structural search, so an over-broad
+# pattern cannot flood the agent context. Truncation is reported, not silent.
 AST_GREP_MAX_RESULTS = 200
 
-# (H) Result dict keys (StructuralSearchMatch / StructuralReplaceChange).
+# Result dict keys (StructuralSearchMatch / StructuralReplaceChange).
 STRUCT_KEY_FILE = "file"
 STRUCT_KEY_LINE = "line"
 STRUCT_KEY_COLUMN = "column"
@@ -47,7 +47,7 @@ STRUCT_KEY_MATCHES = "matches"
 STRUCT_KEY_DIFF = "diff"
 STRUCT_KEY_APPLIED = "applied"
 
-# (H) User-facing messages.
+# User-facing messages.
 AST_GREP_NOT_AVAILABLE = (
     "Structural search/replace is not available. Install with: uv sync --extra ast-grep"
 )
@@ -62,7 +62,7 @@ AST_GREP_TRUNCATED = (
 AST_GREP_DRY_RUN_HEADER = "Dry run: {count} file(s) would change. No files written."
 AST_GREP_APPLIED_HEADER = "Applied: rewrote {count} file(s)."
 
-# (H) Approval-prompt display for a structural rewrite.
+# Approval-prompt display for a structural rewrite.
 AST_GREP_APPROVAL_HEADER = "Structural replace"
 AST_GREP_APPROVAL_PATTERN = "pattern:  {pattern}"
 AST_GREP_APPROVAL_REWRITE = "rewrite:  {rewrite}"

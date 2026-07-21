@@ -1,8 +1,8 @@
-# (H) Types nested inside a C++ class body (class/enum/union members) must get
-# (H) a DEFINES edge from the enclosing Class node. The parent walk used to
-# (H) fall back to a qn-trim labeled Method (a phantom: right qn, wrong label),
-# (H) which the database drops, orphaning every class-nested type (issue #650:
-# (H) 17 Class + 16 Enum + 1 Union orphans on souffle).
+# Types nested inside a C++ class body (class/enum/union members) must get
+# a DEFINES edge from the enclosing Class node. The parent walk used to
+# fall back to a qn-trim labeled Method (a phantom: right qn, wrong label),
+# which the database drops, orphaning every class-nested type (issue #650:
+# 17 Class + 16 Enum + 1 Union orphans on souffle).
 from __future__ import annotations
 
 from pathlib import Path

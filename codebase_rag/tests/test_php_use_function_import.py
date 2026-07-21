@@ -9,11 +9,11 @@ from evals.cgr_graph import _capture
 
 
 def _make(root: Path) -> None:
-    # (H) enum_value is declared `namespace App\Support` but lives in a file whose
-    # (H) path is Collections/functions.php, so cgr registers it by file path
-    # (H) (proj.Collections.functions.enum_value), NOT by namespace. This is the
-    # (H) pervasive laravel global-helper layout (Illuminate/Collections/functions.php
-    # (H) declares namespace Illuminate\Support).
+    # enum_value is declared `namespace App\Support` but lives in a file whose
+    # path is Collections/functions.php, so cgr registers it by file path
+    # (proj.Collections.functions.enum_value), NOT by namespace. This is the
+    # pervasive laravel global-helper layout (Illuminate/Collections/functions.php
+    # declares namespace Illuminate\Support).
     collections = root / "Collections"
     collections.mkdir(parents=True, exist_ok=True)
     (collections / "functions.php").write_text(
@@ -42,12 +42,12 @@ def _make(root: Path) -> None:
 def test_use_function_import_call_resolves_across_namespace_path_mismatch(
     tmp_path: Path,
 ) -> None:
-    # (H) A bare call to a function brought in by `use function A\B\c` must resolve
-    # (H) to the registered first-party function even though the PHP namespace path
-    # (H) never matches cgr's file-path qualified name. Before the fix, the namespace
-    # (H) target (App.Support.enum_value) matched no node and was misclassified as an
-    # (H) external import, suppressing the simple-name trie fallback and dropping the
-    # (H) call. A bare call without `use function` already resolved via the trie.
+    # A bare call to a function brought in by `use function A\B\c` must resolve
+    # to the registered first-party function even though the PHP namespace path
+    # never matches cgr's file-path qualified name. Before the fix, the namespace
+    # target (App.Support.enum_value) matched no node and was misclassified as an
+    # external import, suppressing the simple-name trie fallback and dropping the
+    # call. A bare call without `use function` already resolved via the trie.
     _make(tmp_path)
     ingestor = _capture(tmp_path, "proj")
     calls = {
@@ -62,10 +62,10 @@ def test_use_function_import_call_resolves_across_namespace_path_mismatch(
 
 
 def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
-    # (H) On an incremental re-index the same module_qn is parsed again;
-    # (H) parse_imports resets import_mapping[module_qn] but must also drop the
-    # (H) module's php_function_imports, or a `use function` removed from the file
-    # (H) lingers and keeps (wrongly) exempting that name from external suppression.
+    # On an incremental re-index the same module_qn is parsed again;
+    # parse_imports resets import_mapping[module_qn] but must also drop the
+    # module's php_function_imports, or a `use function` removed from the file
+    # lingers and keeps (wrongly) exempting that name from external suppression.
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PHP not in parsers:
         pytest.skip("php tree-sitter grammar not installed")

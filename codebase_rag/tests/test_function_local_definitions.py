@@ -1,7 +1,7 @@
-# (H) Finding #3 from the evals/ harness: methods of a class defined inside a
-# (H) function body (function-local class) were dropped. They are now captured by
-# (H) default (CAPTURE_FUNCTION_LOCAL_DEFINITIONS=True); explicitly disabling the
-# (H) flag restores the historical behaviour of skipping them.
+# Finding #3 from the evals/ harness: methods of a class defined inside a
+# function body (function-local class) were dropped. They are now captured by
+# default (CAPTURE_FUNCTION_LOCAL_DEFINITIONS=True); explicitly disabling the
+# flag restores the historical behaviour of skipping them.
 from __future__ import annotations
 
 from pathlib import Path

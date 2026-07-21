@@ -1,9 +1,9 @@
-# (H) Constructing a C++ object guarantees its destructor runs at end of
-# (H) lifetime, but no call node ever names `~X`, so a dtor whose class is
-# (H) constructed everywhere still reported dead (fmt's args node.~node).
-# (H) Every construction site that redirects CALLS to the class's ctors now
-# (H) redirects to its destructor too: call-expression constructions,
-# (H) member-initializer base/delegated ctor runs, and braced returns.
+# Constructing a C++ object guarantees its destructor runs at end of
+# lifetime, but no call node ever names `~X`, so a dtor whose class is
+# constructed everywhere still reported dead (fmt's args node.~node).
+# Every construction site that redirects CALLS to the class's ctors now
+# redirects to its destructor too: call-expression constructions,
+# member-initializer base/delegated ctor runs, and braced returns.
 from __future__ import annotations
 
 from pathlib import Path
@@ -84,8 +84,8 @@ def test_member_init_base_reaches_base_dtor(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(mock_ingestor)
-    # (H) A derived object's destruction runs the base dtor; the derived ctor
-    # (H) is the construction site the graph can see.
+    # A derived object's destruction runs the base dtor; the derived ctor
+    # is the construction site the graph can see.
     assert any(
         src.endswith(".container_buffer.container_buffer")
         and dst.endswith(".buffer.~buffer")

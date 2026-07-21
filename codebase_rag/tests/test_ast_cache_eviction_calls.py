@@ -10,7 +10,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    # (H) CALLS edges as (caller_qn, callee_qn).
+    # CALLS edges as (caller_qn, callee_qn).
     out: set[tuple[str, str]] = set()
     for c in mock_ingestor.ensure_relationship_batch.call_args_list:
         if c.args[1] == "CALLS":
@@ -19,10 +19,10 @@ def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
 
 
 def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
-    # (H) The AST cache is bounded and evicts on large repos. Pass 3 must still
-    # (H) emit calls for every parsed file, not just cache survivors. With the
-    # (H) cache pinned to one entry, all but the last-parsed file are evicted
-    # (H) during Pass 2; every module's intra-file call must still be recorded.
+    # The AST cache is bounded and evicts on large repos. Pass 3 must still
+    # emit calls for every parsed file, not just cache survivors. With the
+    # cache pinned to one entry, all but the last-parsed file are evicted
+    # during Pass 2; every module's intra-file call must still be recorded.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -37,7 +37,7 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
     updater = GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     )
-    updater.ast_cache.max_entries = 1  # (H) force eviction of all but the last file
+    updater.ast_cache.max_entries = 1  # force eviction of all but the last file
     updater.run()
 
     calls = _calls(mock)
@@ -49,19 +49,19 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
             f"missing top->helper CALLS edge for evicted module {name}; calls={sorted(calls)}"
         )
 
-    # (H) A reused updater must reset per-run parse tracking, not accumulate.
+    # A reused updater must reset per-run parse tracking, not accumulate.
     parsed_after_first = len(updater._parsed_files)
     updater.run(force=True)
     assert len(updater._parsed_files) == parsed_after_first
 
 
 def test_factory_return_inference_survives_ast_cache_eviction(tmp_path: Path) -> None:
-    # (H) Type inference reads OTHER modules' ASTs (factory return statements,
-    # (H) class bodies, self-assignment maps). On a repo larger than
-    # (H) CACHE_MAX_ENTRIES the factory's module is often evicted by the time
-    # (H) the caller's calls are processed (django: urls/resolvers.py evicted
-    # (H) before contrib/admindocs/views.py resolves get_resolver()); the
-    # (H) lookup must reload from disk, not silently drop the inferred type.
+    # Type inference reads OTHER modules' ASTs (factory return statements,
+    # class bodies, self-assignment maps). On a repo larger than
+    # CACHE_MAX_ENTRIES the factory's module is often evicted by the time
+    # the caller's calls are processed (django: urls/resolvers.py evicted
+    # before contrib/admindocs/views.py resolves get_resolver()); the
+    # lookup must reload from disk, not silently drop the inferred type.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")

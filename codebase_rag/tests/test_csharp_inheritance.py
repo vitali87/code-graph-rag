@@ -1,5 +1,5 @@
-# (H) C# Phase 2: INHERITS (base class, interface-extends-interface) and
-# (H) IMPLEMENTS (class/struct/record implementing interfaces).
+# C# Phase 2: INHERITS (base class, interface-extends-interface) and
+# IMPLEMENTS (class/struct/record implementing interfaces).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -63,11 +63,11 @@ public class Derived : Base, IShape, IColor { }
 
     inherits = _pairs(mock_ingestor, "INHERITS")
     implements = _pairs(mock_ingestor, "IMPLEMENTS")
-    # (H) The base class is inheritance; the interfaces are implementation.
+    # The base class is inheritance; the interfaces are implementation.
     assert _has(inherits, "N.Derived", "N.Base"), inherits
     assert _has(implements, "N.Derived", "N.IShape"), implements
     assert _has(implements, "N.Derived", "N.IColor"), implements
-    # (H) An interface must never be recorded as a base class.
+    # An interface must never be recorded as a base class.
     assert not _has(inherits, "N.Derived", "N.IShape"), inherits
 
 
@@ -120,8 +120,8 @@ public class C : System.Collections.Generic.List<int> { }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     inherits = _pairs(mock_ingestor, "INHERITS")
-    # (H) The generic type arguments must not leak into the base's qn, or it
-    # (H) can never match the registered (generic-free) List type.
+    # The generic type arguments must not leak into the base's qn, or it
+    # can never match the registered (generic-free) List type.
     assert _has(inherits, "N.C", "System.Collections.Generic.List"), inherits
     assert not any("<" in parent for _, parent in inherits), inherits
 
@@ -129,10 +129,10 @@ public class C : System.Collections.Generic.List<int> { }
 def test_nongeneric_base_pair_resolves_to_generic_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) C# arity overloading: `class Widget : Widget<object>` names a DIFFERENT
-    # (H) type that shares the simple name (the Polly Foo.cs + Foo.TResult.cs
-    # (H) layout). Name resolution lands on the declaring type itself, and the
-    # (H) self-loop guard must recover the sibling instead of dropping the edge.
+    # C# arity overloading: `class Widget : Widget<object>` names a DIFFERENT
+    # type that shares the simple name (the Polly Foo.cs + Foo.TResult.cs
+    # layout). Name resolution lands on the declaring type itself, and the
+    # self-loop guard must recover the sibling instead of dropping the edge.
     (csharp_project / "Widget.cs").write_text(
         "namespace N;\npublic class Widget : Widget<object> { }\n",
         encoding="utf-8",
@@ -153,8 +153,8 @@ def test_nongeneric_base_pair_resolves_to_generic_sibling(
 def test_nongeneric_interface_base_pair_resolves_to_generic_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Same arity-pair shape on interfaces (Polly's ITtlStrategy :
-    # (H) ITtlStrategy<object>); an interface's bases are INHERITS.
+    # Same arity-pair shape on interfaces (Polly's ITtlStrategy :
+    # ITtlStrategy<object>); an interface's bases are INHERITS.
     (csharp_project / "ITtl.cs").write_text(
         "namespace N;\npublic interface ITtl : ITtl<object> { }\n",
         encoding="utf-8",
@@ -175,10 +175,10 @@ def test_nongeneric_interface_base_pair_resolves_to_generic_sibling(
 def test_arity_pair_across_directories_resolves_project_wide(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Polly's BrokenCircuitException shape: the generic child lives in one
-    # (H) project directory, the non-generic base in another, so the
-    # (H) same-package tier finds nothing and the project-wide tier must
-    # (H) recover the single other declaration.
+    # Polly's BrokenCircuitException shape: the generic child lives in one
+    # project directory, the non-generic base in another, so the
+    # same-package tier finds nothing and the project-wide tier must
+    # recover the single other declaration.
     core = csharp_project / "Core"
     legacy = csharp_project / "Legacy"
     core.mkdir()
@@ -203,10 +203,10 @@ def test_arity_pair_across_directories_resolves_project_wide(
 def test_same_file_arity_pair_child_first_recovers_variant_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Issue #764 shape 1: both members of the arity pair in ONE file, child
-    # (H) declared first. The two types collide on natural qn (the second gets a
-    # (H) DUP_QN_MARKER variant), the base resolves to the child itself, and the
-    # (H) unique other same-scope variant IS the written sibling.
+    # Issue #764 shape 1: both members of the arity pair in ONE file, child
+    # declared first. The two types collide on natural qn (the second gets a
+    # DUP_QN_MARKER variant), the base resolves to the child itself, and the
+    # unique other same-scope variant IS the written sibling.
     (csharp_project / "Ttl.cs").write_text(
         "namespace N;\n"
         "public interface ITtl : ITtl<object> { }\n"
@@ -225,9 +225,9 @@ def test_same_file_arity_pair_child_first_recovers_variant_sibling(
 def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Issue #764 shape 2 (Polly's ExecuteParameters, nested in a class): the
-    # (H) GENERIC member is the child and declares first (bare qn); the
-    # (H) non-generic base registers second as the variant.
+    # Issue #764 shape 2 (Polly's ExecuteParameters, nested in a class): the
+    # GENERIC member is the child and declares first (bare qn); the
+    # non-generic base registers second as the variant.
     (csharp_project / "Exec.cs").write_text(
         "namespace N;\n"
         "public class Outer {\n"
@@ -250,10 +250,10 @@ def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
 def test_same_file_arity_pair_generic_first_still_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Declaration-order regression pin: with the generic FIRST (bare qn),
-    # (H) the child registers as the variant and the base already resolves to
-    # (H) the bare sibling at parse time; the fix for the child-first order
-    # (H) must not disturb this.
+    # Declaration-order regression pin: with the generic FIRST (bare qn),
+    # the child registers as the variant and the base already resolves to
+    # the bare sibling at parse time; the fix for the child-first order
+    # must not disturb this.
     (csharp_project / "Rev.cs").write_text(
         "namespace N;\n"
         "public interface IRev<TResult> { int GetIt(); }\n"
@@ -272,10 +272,10 @@ def test_same_file_arity_pair_generic_first_still_resolves(
 def test_arity_pair_with_partial_generic_sibling_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Issue #764 shape 3 (Polly's PredicateBuilder): the non-generic child
-    # (H) sits alone in its file; the generic sibling is `partial` across TWO
-    # (H) other files, so the sibling recovery sees two candidate qns. The
-    # (H) partial group says they are one type; the edge must not be dropped.
+    # Issue #764 shape 3 (Polly's PredicateBuilder): the non-generic child
+    # sits alone in its file; the generic sibling is `partial` across TWO
+    # other files, so the sibling recovery sees two candidate qns. The
+    # partial group says they are one type; the edge must not be dropped.
     (csharp_project / "Pred.cs").write_text(
         "namespace N;\npublic sealed class Pred : Pred<object> { }\n",
         encoding="utf-8",
@@ -308,6 +308,6 @@ def test_enum_underlying_type_is_not_inheritance(
 
     inherits = _pairs(mock_ingestor, "INHERITS")
     implements = _pairs(mock_ingestor, "IMPLEMENTS")
-    # (H) `enum Color : byte` names an underlying integral type, not a base.
+    # `enum Color : byte` names an underlying integral type, not a base.
     assert not any(ch.endswith("N.Color") for ch, _ in inherits), inherits
     assert not any(ch.endswith("N.Color") for ch, _ in implements), implements

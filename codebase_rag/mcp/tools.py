@@ -418,7 +418,7 @@ class MCPToolsRegistry:
             )
         return self._rag_agent
 
-    # (H) Setter allows tests to inject a mock agent without triggering LLM init
+    # Setter allows tests to inject a mock agent without triggering LLM init
     @rag_agent.setter
     def rag_agent(self, value: Agent) -> None:
         self._rag_agent = value

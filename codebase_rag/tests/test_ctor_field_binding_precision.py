@@ -1,7 +1,7 @@
-# (H) Store-then-invoke gaps beyond keyword-arg bindings: a callable stored via a
-# (H) POSITIONAL constructor argument, or stored under a DIFFERENT attribute name
-# (H) than its parameter (self.ctx_factory = create_context), must still resolve
-# (H) when the field is invoked (cfg.handler(), codec.ctx_factory()).
+# Store-then-invoke gaps beyond keyword-arg bindings: a callable stored via a
+# POSITIONAL constructor argument, or stored under a DIFFERENT attribute name
+# than its parameter (self.ctx_factory = create_context), must still resolve
+# when the field is invoked (cfg.handler(), codec.ctx_factory()).
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,8 +39,8 @@ def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def test_positional_init_arg_binds_to_stored_field(tmp_path: Path) -> None:
-    # (H) Config(fn) passes the callback positionally; __init__ stores it under
-    # (H) the same name, and run() invokes it through the field.
+    # Config(fn) passes the callback positionally; __init__ stores it under
+    # the same name, and run() invokes it through the field.
     files = {
         "config.py": (
             "class Config:\n"
@@ -63,9 +63,9 @@ def test_positional_init_arg_binds_to_stored_field(tmp_path: Path) -> None:
 
 
 def test_keyword_arg_stored_under_renamed_attribute(tmp_path: Path) -> None:
-    # (H) The keyword name (create_context) differs from the stored attribute
-    # (H) (ctx_factory); the invocation goes through the ATTRIBUTE name, so the
-    # (H) binding must map param -> attr (the brrr/with_brrr_from_cfg shape).
+    # The keyword name (create_context) differs from the stored attribute
+    # (ctx_factory); the invocation goes through the ATTRIBUTE name, so the
+    # binding must map param -> attr (the brrr/with_brrr_from_cfg shape).
     files = {
         "codec.py": (
             "class Codec:\n"
@@ -87,8 +87,8 @@ def test_keyword_arg_stored_under_renamed_attribute(tmp_path: Path) -> None:
 
 
 def test_positional_namedtuple_field_binds(tmp_path: Path) -> None:
-    # (H) A NamedTuple/dataclass without __init__ takes its field order from the
-    # (H) annotated class body; Spec(py_name) binds fetch_name positionally.
+    # A NamedTuple/dataclass without __init__ takes its field order from the
+    # annotated class body; Spec(py_name) binds fetch_name positionally.
     files = {
         "spec.py": (
             "from typing import Callable, NamedTuple\n\n\n"
@@ -106,9 +106,9 @@ def test_positional_namedtuple_field_binds(tmp_path: Path) -> None:
 
 
 def test_typed_default_param_binds_positionally(tmp_path: Path) -> None:
-    # (H) A typed default parameter (handler: Callable = None) exposes its name as
-    # (H) an `identifier` under the `name` field, so param-order extraction gets
-    # (H) 'handler', not the whole 'handler: Callable' annotation.
+    # A typed default parameter (handler: Callable = None) exposes its name as
+    # an `identifier` under the `name` field, so param-order extraction gets
+    # 'handler', not the whole 'handler: Callable' annotation.
     files = {
         "config.py": (
             "from typing import Callable\n\n\n"
@@ -131,12 +131,12 @@ def test_typed_default_param_binds_positionally(tmp_path: Path) -> None:
 
 
 def test_nested_class_ctor_field_binding_is_recorded(tmp_path: Path) -> None:
-    # (H) A nested class (Inner inside Outer) must resolve to Outer.Inner via the
-    # (H) enclosing-class qn, not a bare module.Inner lookup that misses, so its
-    # (H) positional ctor field binding IS recorded (finding: nested-class params
-    # (H) and renames were silently dropped). Asserted at the binding level: the
-    # (H) CALLS EDGE additionally depends on nested-class method-qn attribution,
-    # (H) a separate pre-existing concern outside constructor-field binding.
+    # A nested class (Inner inside Outer) must resolve to Outer.Inner via the
+    # enclosing-class qn, not a bare module.Inner lookup that misses, so its
+    # positional ctor field binding IS recorded (finding: nested-class params
+    # and renames were silently dropped). Asserted at the binding level: the
+    # CALLS EDGE additionally depends on nested-class method-qn attribution,
+    # a separate pre-existing concern outside constructor-field binding.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -172,10 +172,10 @@ def test_nested_class_ctor_field_binding_is_recorded(tmp_path: Path) -> None:
 
 
 def test_inherited_ctor_positional_arg_binds(tmp_path: Path) -> None:
-    # (H) Sub has no __init__: Sub(on_event) uses the inherited Base.__init__,
-    # (H) which stores self.handler. The positional binding must resolve through
-    # (H) the base's ctor params and record under Base (where the field lives),
-    # (H) or inherited self.handler() never resolves.
+    # Sub has no __init__: Sub(on_event) uses the inherited Base.__init__,
+    # which stores self.handler. The positional binding must resolve through
+    # the base's ctor params and record under Base (where the field lives),
+    # or inherited self.handler() never resolves.
     files = {
         "base.py": (
             "class Base:\n"
@@ -198,11 +198,11 @@ def test_inherited_ctor_positional_arg_binds(tmp_path: Path) -> None:
 
 
 def test_nested_helper_store_does_not_clobber_ctor_rename(tmp_path: Path) -> None:
-    # (H) A `self.cb = handler` inside a nested helper in __init__ must NOT be
-    # (H) recorded as the constructor-store rename: the real store is
-    # (H) `self.handler = handler` in the __init__ body, and the field
-    # (H) invocation goes through self.handler(). The rename walk must skip
-    # (H) nested function/class scopes or the nested attr overrides the real one.
+    # A `self.cb = handler` inside a nested helper in __init__ must NOT be
+    # recorded as the constructor-store rename: the real store is
+    # `self.handler = handler` in the __init__ body, and the field
+    # invocation goes through self.handler(). The rename walk must skip
+    # nested function/class scopes or the nested attr overrides the real one.
     files = {
         "config.py": (
             "class Config:\n"

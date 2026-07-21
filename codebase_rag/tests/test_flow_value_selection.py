@@ -1,7 +1,7 @@
-# (H) Taint through value-selection expressions: a ternary / conditional
-# (H) expression MAY yield either branch, and a short-circuit default
-# (H) (`env || 'fallback'`, `x or 'y'`) MAY yield either operand, so the
-# (H) bound name unions the branches' taints instead of dropping them.
+# Taint through value-selection expressions: a ternary / conditional
+# expression MAY yield either branch, and a short-circuit default
+# (`env || 'fallback'`, `x or 'y'`) MAY yield either operand, so the
+# bound name unions the branches' taints instead of dropping them.
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,7 +63,7 @@ def test_python_or_default_bind_carries_taint(tmp_path: Path) -> None:
 
 
 def test_python_clean_ternary_still_kills(tmp_path: Path) -> None:
-    # (H) A ternary over two clean values REPLACES the old taint.
+    # A ternary over two clean values REPLACES the old taint.
     files = {
         "m.py": (
             "import os\n\n"
@@ -125,9 +125,9 @@ def test_js_logical_and_carries_right_taint(tmp_path: Path) -> None:
 
 
 def test_js_arithmetic_binary_does_not_carry_taint(tmp_path: Path) -> None:
-    # (H) Only short-circuit operators select a whole operand as the value;
-    # (H) `s = n - 1` over clean operands must stay clean even while a
-    # (H) tainted local exists.
+    # Only short-circuit operators select a whole operand as the value;
+    # `s = n - 1` over clean operands must stay clean even while a
+    # tainted local exists.
     files = {
         "m.js": (
             "export function work(n) {\n"
@@ -142,8 +142,8 @@ def test_js_arithmetic_binary_does_not_carry_taint(tmp_path: Path) -> None:
 
 
 def test_cpp_boolean_and_does_not_carry_taint(tmp_path: Path) -> None:
-    # (H) Outside JS, `&&`/`||` produce a BOOLEAN, not one of the operands:
-    # (H) `ok = getenv(..) && true` must not taint ok.
+    # Outside JS, `&&`/`||` produce a BOOLEAN, not one of the operands:
+    # `ok = getenv(..) && true` must not taint ok.
     files = {
         "main.cpp": (
             "#include <cstdlib>\n"

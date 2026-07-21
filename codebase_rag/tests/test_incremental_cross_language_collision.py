@@ -1,13 +1,13 @@
-# (H) Incremental cross-language module-qn collision (found via the polyglot
-# (H) eval). On a full build, two files that strip to the same module qn
-# (H) (shapes.rs / shapes.cpp) are disambiguated -- the second gets its extension
-# (H) appended -- because both pass through _disambiguate_module_qn in one run.
-# (H) On an INCREMENTAL run that ADDS one of them next to an already-indexed
-# (H) sibling, the disambiguator only sees files processed this run, so the added
-# (H) file re-claims the bare qn and silently overwrites the existing module
-# (H) under the qualified_name uniqueness constraint (issue #652 class). This
-# (H) needs the query-capable _StatefulIngestor: the mock harness never
-# (H) rehydrates, so the bug is invisible to every other test.
+# Incremental cross-language module-qn collision (found via the polyglot
+# eval). On a full build, two files that strip to the same module qn
+# (shapes.rs / shapes.cpp) are disambiguated -- the second gets its extension
+# appended -- because both pass through _disambiguate_module_qn in one run.
+# On an INCREMENTAL run that ADDS one of them next to an already-indexed
+# sibling, the disambiguator only sees files processed this run, so the added
+# file re-claims the bare qn and silently overwrites the existing module
+# under the qualified_name uniqueness constraint (issue #652 class). This
+# needs the query-capable _StatefulIngestor: the mock harness never
+# rehydrates, so the bug is invisible to every other test.
 from __future__ import annotations
 
 import os
@@ -38,7 +38,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
 
 
 def _shapes_modules(store: _StatefulIngestor) -> dict[str, str]:
-    # (H) path -> module qn, for every Module node whose file is a shapes.* file.
+    # path -> module qn, for every Module node whose file is a shapes.* file.
     out: dict[str, str] = {}
     for (label, _uid), props in store.nodes.items():
         if label != _MODULE:
@@ -71,11 +71,11 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
     store = _StatefulIngestor()
     _index(store, temp_repo, force=False)
 
-    # (H) rust owns the bare module qn after the first (full) index.
+    # rust owns the bare module qn after the first (full) index.
     assert _shapes_modules(store) == {"shapes.rs": "proj.shapes"}
 
-    # (H) Add the C++ sibling and mark it changed past the hash cache so the
-    # (H) incremental run re-parses it.
+    # Add the C++ sibling and mark it changed past the hash cache so the
+    # incremental run re-parses it.
     cache = temp_repo / cs.HASH_CACHE_FILENAME
     future = cache.stat().st_mtime + 10
     cpp = temp_repo / "shapes.cpp"
@@ -85,8 +85,8 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
     _index(store, temp_repo, force=False)
 
     modules = _shapes_modules(store)
-    # (H) Both files must survive with DISTINCT module qns; pre-fix, shapes.cpp
-    # (H) re-claims proj.shapes and overwrites the rust module node.
+    # Both files must survive with DISTINCT module qns; pre-fix, shapes.cpp
+    # re-claims proj.shapes and overwrites the rust module node.
     assert set(modules) == {"shapes.rs", "shapes.cpp"}, modules
     assert len(set(modules.values())) == 2, (
         f"cross-language module qn collision on incremental add: {modules}"
@@ -98,10 +98,10 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
 def test_incremental_delete_then_add_sibling_matches_clean_index(
     temp_repo: Path,
 ) -> None:
-    # (H) Deleting shapes.rs while adding shapes.cpp in the same cycle must give
-    # (H) shapes.cpp the bare qn a clean index would (proj.shapes), not the
-    # (H) suffixed form. The seed must not hand the disambiguator a qn owned by a
-    # (H) file that no longer exists on disk (Greptile #823 P1).
+    # Deleting shapes.rs while adding shapes.cpp in the same cycle must give
+    # shapes.cpp the bare qn a clean index would (proj.shapes), not the
+    # suffixed form. The seed must not hand the disambiguator a qn owned by a
+    # file that no longer exists on disk (Greptile #823 P1).
     (temp_repo / "shapes.rs").write_text(_RS, encoding="utf-8")
 
     store = _StatefulIngestor()
@@ -120,7 +120,7 @@ def test_incremental_delete_then_add_sibling_matches_clean_index(
     modules = _shapes_modules(store)
     assert modules == {"shapes.cpp": "proj.shapes"}, modules
 
-    # (H) equivalence check: a clean index of the final tree agrees.
+    # equivalence check: a clean index of the final tree agrees.
     clean = _StatefulIngestor()
     _index(clean, temp_repo, force=True)
     assert _shapes_modules(clean) == modules

@@ -1,11 +1,11 @@
-# (H) Import-resolution eval. For every module, classify each import by its
-# (H) top-level package as internal (first-party, resolving into the repo) or
-# (H) external (stdlib / third-party), and check cgr against an ast + filesystem
-# (H) oracle. The comparison unit is (importing_file, top_level_package,
-# (H) is_external): both sides reduce an import to its top-level name the same
-# (H) way, so the oracle is independent of cgr. This isolates internal/external
-# (H) misclassification (issue #498), which the structural L1 IMPORTS grading
-# (H) (internal targets only, by resolved file) does not see.
+# Import-resolution eval. For every module, classify each import by its
+# top-level package as internal (first-party, resolving into the repo) or
+# external (stdlib / third-party), and check cgr against an ast + filesystem
+# oracle. The comparison unit is (importing_file, top_level_package,
+# is_external): both sides reduce an import to its top-level name the same
+# way, so the oracle is independent of cgr. This isolates internal/external
+# misclassification (issue #498), which the structural L1 IMPORTS grading
+# (internal targets only, by resolved file) does not see.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -45,8 +45,8 @@ def _import_deps_for_module(tree: ast.Module, rel: str, project: str) -> set[Imp
         elif isinstance(node, ast.ImportFrom):
             base_parts = _from_base_parts(node, pkg_parts)
             if not base_parts:
-                # (H) A relative import that escapes the package root resolves to
-                # (H) nothing the repo defines; skip rather than guess.
+                # A relative import that escapes the package root resolves to
+                # nothing the repo defines; skip rather than guess.
                 continue
             top = base_parts[0]
             if top not in ec.IMPORTS_IGNORED_TOPS:

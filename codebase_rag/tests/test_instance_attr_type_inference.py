@@ -1,8 +1,8 @@
-# (H) L3 finding from the evals/ harness: a method calls self.attr.method(), but the
-# (H) type of self.attr is only knowable from the __init__ assignment in the same
-# (H) class. cgr scanned only the calling method for self-assignments, so the type
-# (H) was unknown and an ambiguous bare name resolved to the wrong global. Instance
-# (H) attributes assigned in __init__ must be visible to every method of the class.
+# L3 finding from the evals/ harness: a method calls self.attr.method(), but the
+# type of self.attr is only knowable from the __init__ assignment in the same
+# class. cgr scanned only the calling method for self-assignments, so the type
+# was unknown and an ambiguous bare name resolved to the wrong global. Instance
+# attributes assigned in __init__ must be visible to every method of the class.
 from __future__ import annotations
 
 from pathlib import Path

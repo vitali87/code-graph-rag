@@ -20,7 +20,7 @@ def test_check_memgraph_connection_returns_failure_when_down(
 
 
 class _FakeColumn:
-    # (H) Mirrors mgclient.Column: exposes .name and is NOT subscriptable.
+    # Mirrors mgclient.Column: exposes .name and is NOT subscriptable.
     __slots__ = ("name",)
 
     def __init__(self, name: str):

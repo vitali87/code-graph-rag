@@ -1,11 +1,11 @@
-# (H) ast-grep finding analyzer (issue #413). A post-pass over indexed source
-# (H) files that runs categorized ast-grep YAML rules and emits
-# (H) Pattern/CodeSmell/SecurityIssue nodes linked to each file's Module. Rules
-# (H) live in ast_grep_rules/{patterns,smells,security}/<lang>.yaml; a new rule is
-# (H) a YAML entry, no code. The FINDINGS capture group is opt-in, so the analyzer
-# (H) no-ops entirely unless a finding relationship is enabled. Findings link to
-# (H) the Module (not the enclosing Class/Function); the finding node carries the
-# (H) line so the site is still locatable. Symbol-level linkage is a follow-up.
+# ast-grep finding analyzer (issue #413). A post-pass over indexed source
+# files that runs categorized ast-grep YAML rules and emits
+# Pattern/CodeSmell/SecurityIssue nodes linked to each file's Module. Rules
+# live in ast_grep_rules/{patterns,smells,security}/<lang>.yaml; a new rule is
+# a YAML entry, no code. The FINDINGS capture group is opt-in, so the analyzer
+# no-ops entirely unless a finding relationship is enabled. Findings link to
+# the Module (not the enclosing Class/Function); the finding node carries the
+# line so the site is still locatable. Symbol-level linkage is a follow-up.
 from __future__ import annotations
 
 import logging
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _RULES_DIR = Path(__file__).parent / "ast_grep_rules"
 _SNIPPET_MAX = 200
 
-# (H) rule-category directory name -> (finding node label, relationship type).
+# rule-category directory name -> (finding node label, relationship type).
 _CATEGORY_MAP: dict[str, tuple[cs.NodeLabel, cs.RelationshipType]] = {
     "patterns": (cs.NodeLabel.PATTERN, cs.RelationshipType.IMPLEMENTS_PATTERN),
     "smells": (cs.NodeLabel.CODE_SMELL, cs.RelationshipType.HAS_SMELL),
@@ -37,7 +37,7 @@ _CATEGORY_MAP: dict[str, tuple[cs.NodeLabel, cs.RelationshipType]] = {
 class _Rule:
     rule_id: str
     message: str
-    body: dict[str, Any]  # (H) ast-grep rule body, splatted into find_all(**body)
+    body: dict[str, Any]  # ast-grep rule body, splatted into find_all(**body)
     node_label: cs.NodeLabel
     rel_type: cs.RelationshipType
 
@@ -118,10 +118,10 @@ class FindingAnalyzer:
 
             self._rules = load_finding_rules()
         except ImportError:
-            # (H) ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
+            # ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
             logger.warning("ast-grep-py unavailable; finding analyzer disabled")
         except Exception as exc:  # noqa: BLE001
-            # (H) a malformed shipped rule file must not crash indexing.
+            # a malformed shipped rule file must not crash indexing.
             logger.warning("ast-grep finding analyzer disabled: %s", exc)
 
     def analyze(self, module_qn_to_file_path: dict[str, Path]) -> None:
@@ -137,8 +137,8 @@ class FindingAnalyzer:
                 raw = file_path.read_bytes()
             except OSError:
                 continue
-            # (H) decode with replacement so a few malformed bytes don't skip the
-            # (H) whole file; ast-grep tolerates U+FFFD in the source.
+            # decode with replacement so a few malformed bytes don't skip the
+            # whole file; ast-grep tolerates U+FFFD in the source.
             source = raw.decode("utf-8", errors="replace")
             try:
                 root = SgRoot(source, lang_rules.ast_grep_id).root()
@@ -173,9 +173,9 @@ class FindingAnalyzer:
         node_range = node.range()
         start_line = node_range.start.line + 1
         end_line = node_range.end.line + 1
-        # (H) qn scopes the finding to file+line+column+rule so two matches of one
-        # (H) rule on the same line stay distinct, while re-indexing merges the
-        # (H) same site idempotently.
+        # qn scopes the finding to file+line+column+rule so two matches of one
+        # rule on the same line stay distinct, while re-indexing merges the
+        # same site idempotently.
         qualified_name = cs.SEPARATOR_DOT.join(
             [module_qn, str(start_line), str(node_range.start.column), rule.rule_id]
         )

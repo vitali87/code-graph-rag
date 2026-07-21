@@ -1,9 +1,9 @@
-# (H) A static-field access on a nested class used as a call receiver
-# (H) (`AccessChecker.INSTANCE.canAccess(...)`, gson's ReflectionAccessFilterHelper) did
-# (H) not resolve: the field-access chain's base (`AccessChecker`, a nested class
-# (H) referenced by simple name) was only tried as `module.AccessChecker`, never the
-# (H) nested `module.Outer.AccessChecker`, so the whole call dropped and the method
-# (H) looked dead.
+# A static-field access on a nested class used as a call receiver
+# (`AccessChecker.INSTANCE.canAccess(...)`, gson's ReflectionAccessFilterHelper) did
+# not resolve: the field-access chain's base (`AccessChecker`, a nested class
+# referenced by simple name) was only tried as `module.AccessChecker`, never the
+# nested `module.Outer.AccessChecker`, so the whole call dropped and the method
+# looked dead.
 from __future__ import annotations
 
 from pathlib import Path

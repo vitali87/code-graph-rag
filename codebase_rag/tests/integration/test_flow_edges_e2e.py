@@ -16,12 +16,12 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-# (H) One module exercising every I/O and data-flow shape end to end:
-# (H)   os.getenv -> READS_FROM ENV; print -> WRITES_TO STDOUT;
-# (H)   x = getenv('K'); print(x)        -> resource->resource (ENV::K -> STDOUT)
-# (H)   t = getenv('T'); forward(t)      -> arg flow (leak -> forward, via=arg:0)
-# (H)   r = build(); print(r)            -> return flow (build -> leak) + the
-# (H)                                       returned read reaches STDOUT.
+# One module exercising every I/O and data-flow shape end to end:
+#   os.getenv -> READS_FROM ENV; print -> WRITES_TO STDOUT;
+#   x = getenv('K'); print(x)        -> resource->resource (ENV::K -> STDOUT)
+#   t = getenv('T'); forward(t)      -> arg flow (leak -> forward, via=arg:0)
+#   r = build(); print(r)            -> return flow (build -> leak) + the
+#                                       returned read reaches STDOUT.
 FLOW_CODE = """\
 import os
 
@@ -114,25 +114,25 @@ def test_io_and_flow_edges_survive_the_memgraph_round_trip(
 ) -> None:
     _index(memgraph_ingestor, flow_project, io=True)
 
-    # (H) Resource endpoints exist (no dangling FLOWS_TO edge).
+    # Resource endpoints exist (no dangling FLOWS_TO edge).
     resources = _resource_qns(memgraph_ingestor)
     assert ENV_K in resources
     assert STDOUT in resources
 
-    # (H) READS_FROM / WRITES_TO landed alongside FLOWS_TO.
+    # READS_FROM / WRITES_TO landed alongside FLOWS_TO.
     types = _rel_types(memgraph_ingestor)
     assert cs.RelationshipType.READS_FROM.value in types
     assert cs.RelationshipType.WRITES_TO.value in types
     assert cs.RelationshipType.FLOWS_TO.value in types
 
     flows = _flows(memgraph_ingestor)
-    # (H) resource -> resource: the env value reaches stdout.
+    # resource -> resource: the env value reaches stdout.
     assert _has(flows, ENV_K, STDOUT, kind=FlowKind.RESOURCE.value)
-    # (H) arg flow: a tainted local passed into forward().
+    # arg flow: a tainted local passed into forward().
     assert _has(
         flows, "flow.leak", "flow.forward", kind=FlowKind.ARG.value, via="arg:0"
     )
-    # (H) return flow: build() returns a tainted value into leak().
+    # return flow: build() returns a tainted value into leak().
     assert _has(
         flows, "flow.build", "flow.leak", kind=FlowKind.RETURN.value, via="return"
     )
@@ -150,8 +150,8 @@ def test_default_capture_writes_no_resource_or_flow(
 def test_method_body_flow_uses_a_method_caller(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The caller_spec inside a class body is a Method, not a Function; the
-    # (H) resource->resource edge must still round-trip from a method body.
+    # The caller_spec inside a class body is a Method, not a Function; the
+    # resource->resource edge must still round-trip from a method body.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -175,7 +175,7 @@ def test_method_body_flow_uses_a_method_caller(
 def test_multi_hop_assignment_chain_reaches_sink(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Taint must survive a chain of plain-identifier reassignments.
+    # Taint must survive a chain of plain-identifier reassignments.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -192,8 +192,8 @@ def test_multi_hop_assignment_chain_reaches_sink(
 def test_retaint_tracks_latest_source_only(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Overwriting a tainted local with a *different* source rebinds taint:
-    # (H) the sink sees the second source, never the discarded first.
+    # Overwriting a tainted local with a *different* source rebinds taint:
+    # the sink sees the second source, never the discarded first.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -211,11 +211,11 @@ def test_retaint_tracks_latest_source_only(
 def test_transitive_two_hop_return_carries_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A source returned through two nested call boundaries keeps its origin
-    # (H) resource, so the outermost sink emits the full resource flow AND every
-    # (H) hop of the callee->caller return chain is present (direct-return
-    # (H) `return inner()` emits its edge just like an assigned `v = outer()`).
-    # (H) Callees are defined before callers (single-pass, source-ordered).
+    # A source returned through two nested call boundaries keeps its origin
+    # resource, so the outermost sink emits the full resource flow AND every
+    # hop of the callee->caller return chain is present (direct-return
+    # `return inner()` emits its edge just like an assigned `v = outer()`).
+    # Callees are defined before callers (single-pass, source-ordered).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -233,9 +233,9 @@ def test_transitive_two_hop_return_carries_source(
 def test_nested_scope_taint_does_not_leak_to_outer(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A nested def is a scope boundary: its `x = getenv(...)` must not taint
-    # (H) the outer function's same-named `x`. The nested read still exists as its
-    # (H) own READS_FROM, but no ENV::NESTED -> STDOUT flow may be attributed here.
+    # A nested def is a scope boundary: its `x = getenv(...)` must not taint
+    # the outer function's same-named `x`. The nested read still exists as its
+    # own READS_FROM, but no ENV::NESTED -> STDOUT flow may be attributed here.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -254,8 +254,8 @@ def test_nested_scope_taint_does_not_leak_to_outer(
 def test_cooccurrence_is_not_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) An unrelated read next to an untainted call is not data flow: no arg
-    # (H) edge to the callee and no resource flow to the sink.
+    # An unrelated read next to an untainted call is not data flow: no arg
+    # edge to the callee and no resource flow to the sink.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -274,8 +274,8 @@ def test_cooccurrence_is_not_flow(
 def test_go_loop_carried_flow_survives_round_trip(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) issue #714 lean-flow depth: a later loop iteration carries the ENV read
-    # (H) back to the file write of an earlier statement (two-pass loop walk).
+    # issue #714 lean-flow depth: a later loop iteration carries the ENV read
+    # back to the file write of an earlier statement (two-pass loop walk).
     project = tmp_path / "go_flow_project"
     project.mkdir()
     (project / "main.go").write_text(

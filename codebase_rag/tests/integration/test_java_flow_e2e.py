@@ -54,7 +54,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 def test_java_env_flows_to_stdout(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local carries the env source to a later println: ENV -> STDOUT.
+    # A local carries the env source to a later println: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -76,7 +76,7 @@ def test_java_env_flows_to_stdout(
 def test_java_direct_env_argument_flows_to_stdout(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The env read nested directly in the print call still flows ENV -> STDOUT.
+    # The env read nested directly in the print call still flows ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -97,7 +97,7 @@ def test_java_direct_env_argument_flows_to_stdout(
 def test_java_tainted_value_arg_edge_to_callee(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Passing a tainted local to a first-party method emits a caller->callee ARG edge.
+    # Passing a tainted local to a first-party method emits a caller->callee ARG edge.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -120,8 +120,8 @@ def test_java_tainted_value_arg_edge_to_callee(
 def test_java_return_taint_edge(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A method returning a tainted value emits a callee->caller RETURN edge to its
-    # (H) caller (resolved cross-method through the shared return-taint fixpoint).
+    # A method returning a tainted value emits a callee->caller RETURN edge to its
+    # caller (resolved cross-method through the shared return-taint fixpoint).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -146,8 +146,8 @@ def test_java_return_taint_edge(
 def test_java_reassignment_kills_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Overwriting the tainted local with a clean literal before the print kills the
-    # (H) taint, so no ENV -> STDOUT flow survives (Java assignment_expression bind).
+    # Overwriting the tainted local with a clean literal before the print kills the
+    # taint, so no ENV -> STDOUT flow survives (Java assignment_expression bind).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -167,7 +167,7 @@ def test_java_reassignment_kills_taint(
 def test_java_untainted_local_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A println of a plain local (no source) emits no resource flow.
+    # A println of a plain local (no source) emits no resource flow.
     _build(
         memgraph_ingestor,
         tmp_path,

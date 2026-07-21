@@ -2,8 +2,8 @@ from .constants import CYPHER_DEFAULT_LIMIT, NodeLabel, RelationshipType
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
-# (H) Graph structural integrity audit (issue #646). A zero-degree Project is a
-# (H) valid empty-repo graph, so the orphan scan exempts it.
+# Graph structural integrity audit (issue #646). A zero-degree Project is a
+# valid empty-repo graph, so the orphan scan exempts it.
 CYPHER_AUDIT_ORPHANS = (
     "MATCH (n) WHERE NOT (n)--() AND NOT n:Project "
     "RETURN labels(n)[0] AS label, count(n) AS orphans"
@@ -82,9 +82,9 @@ WHERE c.name = 'UserService'
 RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-# (H) ast-grep findings (issue #413): Pattern/CodeSmell/SecurityIssue nodes hang
-# (H) off a Module via IMPLEMENTS_PATTERN/HAS_SMELL/HAS_VULNERABILITY. The finding
-# (H) node's name is the rule id; start_line locates the site.
+# ast-grep findings (issue #413): Pattern/CodeSmell/SecurityIssue nodes hang
+# off a Module via IMPLEMENTS_PATTERN/HAS_SMELL/HAS_VULNERABILITY. The finding
+# node's name is the rule id; start_line locates the site.
 CYPHER_EXAMPLE_FIND_PATTERN = f"""MATCH (m:Module)-[:IMPLEMENTS_PATTERN]->(p:Pattern)
 WHERE p.name = 'singleton'
 RETURN m.path AS path, p.name AS pattern, p.start_line AS line, p.message AS message
@@ -139,13 +139,13 @@ ORDER BY count DESC
 """
 
 
-# (H) Dead-code fetch queries. Reachability itself runs client-side in
-# (H) codebase_rag/dead_code.py: the previous single-query formulation expanded
-# (H) *BFS from every root, which is O(roots x graph) and hit memgraph's 600s
-# (H) query timeout on big projects (django: 31k roots, 101k CALLS edges). These
-# (H) two linear scans fetch the project's nodes and edges instead; the target
-# (H) of a relationship is deliberately unfiltered so INHERITS to an external
-# (H) base (typing.Protocol) and OVERRIDES of external methods stay visible.
+# Dead-code fetch queries. Reachability itself runs client-side in
+# codebase_rag/dead_code.py: the previous single-query formulation expanded
+# *BFS from every root, which is O(roots x graph) and hit memgraph's 600s
+# query timeout on big projects (django: 31k roots, 101k CALLS edges). These
+# two linear scans fetch the project's nodes and edges instead; the target
+# of a relationship is deliberately unfiltered so INHERITS to an external
+# base (typing.Protocol) and OVERRIDES of external methods stay visible.
 _DEAD_CODE_NODE_LABELS = "|".join(
     (
         NodeLabel.FUNCTION.value,
@@ -217,10 +217,10 @@ def build_merge_relationship_query(
     has_props: bool = False,
     merge_key_props: tuple[str, ...] = (),
 ) -> str:
-    # (H) merge_key_props: properties that distinguish parallel edges between the
-    # (H) same node pair (e.g. FLOWS_TO's `via`). Including them in the MERGE
-    # (H) pattern keeps each variant as its own edge instead of collapsing them
-    # (H) into one (issue #722). Every row in the batch must carry these keys.
+    # merge_key_props: properties that distinguish parallel edges between the
+    # same node pair (e.g. FLOWS_TO's `via`). Including them in the MERGE
+    # pattern keeps each variant as its own edge instead of collapsing them
+    # into one (issue #722). Every row in the batch must carry these keys.
     key_map = ""
     if merge_key_props:
         key_map = " {" + ", ".join(f"{p}: row.props.{p}" for p in merge_key_props) + "}"

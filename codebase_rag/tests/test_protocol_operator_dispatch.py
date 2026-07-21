@@ -1,9 +1,9 @@
-# (H) L3 finding from the evals/ harness: an operator on a Protocol-typed attribute
-# (H) (self.ast_cache[k], k in self.ast_cache) must dispatch to the dunder on the
-# (H) concrete implementer even when the implementer's name does not follow the
-# (H) XxxProtocol convention, and even when the dunder (e.g. __len__) is defined only on
-# (H) the implementer and not declared on the Protocol stub. Structural conformance
-# (H) (a class defining the Protocol's named methods) identifies the implementer.
+# L3 finding from the evals/ harness: an operator on a Protocol-typed attribute
+# (self.ast_cache[k], k in self.ast_cache) must dispatch to the dunder on the
+# concrete implementer even when the implementer's name does not follow the
+# XxxProtocol convention, and even when the dunder (e.g. __len__) is defined only on
+# the implementer and not declared on the Protocol stub. Structural conformance
+# (a class defining the Protocol's named methods) identifies the implementer.
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,8 +24,8 @@ FILES = {
         "    def __getitem__(self, key):\n        ...\n\n"
         "    def __contains__(self, key):\n        ...\n"
     ),
-    # (H) MemCache does not match the Cache name convention and adds __len__, which the
-    # (H) Protocol does not declare. It conforms via the named method snapshot.
+    # MemCache does not match the Cache name convention and adds __len__, which the
+    # Protocol does not declare. It conforms via the named method snapshot.
     "pkg/impl.py": (
         "class MemCache:\n"
         "    def snapshot(self):\n        return {}\n\n"

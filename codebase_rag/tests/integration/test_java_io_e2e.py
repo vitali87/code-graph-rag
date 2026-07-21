@@ -56,10 +56,10 @@ class App {
 def test_java_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) System.getenv reads ENV::SECRET (literal arg); System.out/err.print* write
-    # (H) STDOUT (arg is an identifier -> <dynamic>); Files.writeString writes a FILE
-    # (H) (its arg is a Path, so the path identity is <dynamic>). First Java increment
-    # (H) of issue #714 -- direct, non-handle sinks only.
+    # System.getenv reads ENV::SECRET (literal arg); System.out/err.print* write
+    # STDOUT (arg is an identifier -> <dynamic>); Files.writeString writes a FILE
+    # (its arg is a Path, so the path identity is <dynamic>). First Java increment
+    # of issue #714 -- direct, non-handle sinks only.
     _build(memgraph_ingestor, tmp_path, _JAVA_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
@@ -68,7 +68,7 @@ def test_java_direct_io_sinks(
 
 
 def test_java_files_read(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> None:
-    # (H) Files.readString / readAllLines are direct FILE reads.
+    # Files.readString / readAllLines are direct FILE reads.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -85,8 +85,8 @@ def test_java_files_read(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) ->
 def test_java_local_shadows_system(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A parameter named `System` shadows the java.lang.System global, so
-    # (H) System.getenv here is not the stdlib sink -- no ENV read may be emitted.
+    # A parameter named `System` shadows the java.lang.System global, so
+    # System.getenv here is not the stdlib sink -- no ENV read may be emitted.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -102,7 +102,7 @@ def test_java_local_shadows_system(
 def test_java_local_var_shadows_system(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local variable named `System` also shadows the global within its scope.
+    # A local variable named `System` also shadows the global within its scope.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -119,9 +119,9 @@ def test_java_local_var_shadows_system(
 def test_java_call_before_decl_still_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Java locals are declare-at-point: a call BEFORE a same-named local is the
-    # (H) real global, so it must still emit. A later `Object System` shadows only the
-    # (H) calls that follow it, not this earlier System.getenv (source-order shadowing).
+    # Java locals are declare-at-point: a call BEFORE a same-named local is the
+    # real global, so it must still emit. A later `Object System` shadows only the
+    # calls that follow it, not this earlier System.getenv (source-order shadowing).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -141,9 +141,9 @@ def test_java_call_before_decl_still_emits(
 def test_java_imported_files_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `import java.nio.file.Files` maps Files -> java.nio.file.Files, so the call
-    # (H) normalises to java.nio.file.Files.readString; the FQN sink key must match so
-    # (H) the FILE read still emits (the common, imported case).
+    # `import java.nio.file.Files` maps Files -> java.nio.file.Files, so the call
+    # normalises to java.nio.file.Files.readString; the FQN sink key must match so
+    # the FILE read still emits (the common, imported case).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -163,8 +163,8 @@ def test_java_imported_files_emits(
 def test_java_fully_qualified_files_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A fully-qualified call `java.nio.file.Files.write(...)` (no import) also hits
-    # (H) the FQN sink key.
+    # A fully-qualified call `java.nio.file.Files.write(...)` (no import) also hits
+    # the FQN sink key.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -183,9 +183,9 @@ def test_java_fully_qualified_files_emits(
 def test_java_multi_declarator_second_init_shadowed(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) In `Object System = make(), x = System.getenv(...)` the first declarator binds
-    # (H) `System`, which is in scope for the second declarator's initializer (JLS 6.3),
-    # (H) so System.getenv there is the local, not the global -- no ENV read.
+    # In `Object System = make(), x = System.getenv(...)` the first declarator binds
+    # `System`, which is in scope for the second declarator's initializer (JLS 6.3),
+    # so System.getenv there is the local, not the global -- no ENV read.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -201,10 +201,10 @@ def test_java_multi_declarator_second_init_shadowed(
 def test_java_earlier_declarator_init_not_shadowed(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) In `Object x = System.getenv("A"), System = make()` the sink is in the FIRST
-    # (H) declarator's initializer, which runs BEFORE the second declarator binds
-    # (H) `System` (JLS 6.3: a name is in scope only from its own declarator on), so
-    # (H) System.getenv there is the global and must emit.
+    # In `Object x = System.getenv("A"), System = make()` the sink is in the FIRST
+    # declarator's initializer, which runs BEFORE the second declarator binds
+    # `System` (JLS 6.3: a name is in scope only from its own declarator on), so
+    # System.getenv there is the global and must emit.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -220,9 +220,9 @@ def test_java_earlier_declarator_init_not_shadowed(
 def test_java_foreach_iterable_call_not_shadowed(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The for-each loop variable is NOT in scope in the iterable expression, so a
-    # (H) sink there is the real global and must emit even when the loop var name
-    # (H) collides with the sink head.
+    # The for-each loop variable is NOT in scope in the iterable expression, so a
+    # sink there is the real global and must emit even when the loop var name
+    # collides with the sink head.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -240,8 +240,8 @@ def test_java_foreach_iterable_call_not_shadowed(
 def test_java_foreach_loopvar_shadows_in_body(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The for-each loop variable IS in scope in the loop body, so a call on it
-    # (H) there is shadowed (not the global).
+    # The for-each loop variable IS in scope in the loop body, so a call on it
+    # there is shadowed (not the global).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -259,9 +259,9 @@ def test_java_foreach_loopvar_shadows_in_body(
 def test_java_varargs_shadows_system(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A varargs parameter `Object... System` is a `spread_parameter` (no `name`
-    # (H) field; the bound name is its plain identifier child). It shadows the global
-    # (H) just like a plain parameter, so no ENV read may be emitted.
+    # A varargs parameter `Object... System` is a `spread_parameter` (no `name`
+    # field; the bound name is its plain identifier child). It shadows the global
+    # just like a plain parameter, so no ENV read may be emitted.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -277,9 +277,9 @@ def test_java_varargs_shadows_system(
 def test_java_handle_constructors_and_wrappers(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) issue #714 handle walk: `new FileWriter` binds a FILE handle; the
-    # (H) BufferedReader wrapper takes its identity from the inner FileReader;
-    # (H) Files.newBufferedReader unwraps Path.of to the literal.
+    # issue #714 handle walk: `new FileWriter` binds a FILE handle; the
+    # BufferedReader wrapper takes its identity from the inner FileReader;
+    # Files.newBufferedReader unwraps Path.of to the literal.
     _build(
         memgraph_ingestor,
         tmp_path,

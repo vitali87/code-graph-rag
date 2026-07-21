@@ -1,8 +1,8 @@
-# (H) Covers Rust node SPAN (end_line) validation: cgr's end_line for each node is
-# (H) graded against the syn oracle (which emits the whole-node span end), joined
-# (H) on (kind, file, start) endpoints. Exercises doc comments, multi-line
-# (H) attributes, a multi-line signature, a where-clause, and a multi-line closure
-# (H) so the span is not trivially the start line.
+# Covers Rust node SPAN (end_line) validation: cgr's end_line for each node is
+# graded against the syn oracle (which emits the whole-node span end), joined
+# on (kind, file, start) endpoints. Exercises doc comments, multi-line
+# attributes, a multi-line signature, a where-clause, and a multi-line closure
+# so the span is not trivially the start line.
 from __future__ import annotations
 
 from pathlib import Path
@@ -79,5 +79,5 @@ def test_cgr_matches_syn_oracle_on_node_spans(tmp_path: Path) -> None:
         aggregate,
         result.diff,
     )
-    # (H) Guard the sample actually exercises multi-line spans (else it is vacuous).
+    # Guard the sample actually exercises multi-line spans (else it is vacuous).
     assert aggregate["tp"] >= 5, aggregate

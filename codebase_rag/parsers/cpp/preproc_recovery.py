@@ -1,18 +1,18 @@
-# (H) Recovery for the conditional-brace preprocessor pattern that collapses a
-# (H) whole C/C++ file into one tree-sitter ERROR node. A branch can open a
-# (H) brace that a LATER branch closes (nlohmann binary_reader.hpp:
-# (H) `#ifdef __cpp_lib_byteswap ... else { #endif` followed by
-# (H) `#ifdef __cpp_lib_byteswap } #endif`); the preprocessor keeps the braces
-# (H) balanced under every configuration, but tree-sitter keeps EVERY branch's
-# (H) tokens and sees an imbalance, which at file scale makes error recovery
-# (H) reinterpret the entire translation unit (3,125 lines -> one ERROR;
-# (H) methods degrade to free functions or vanish, orphaning whole dead-code
-# (H) clusters). When a parse comes back with a catastrophic ERROR, blank the
-# (H) net-unbalanced LEAF conditional branches (space-filled, so every byte
-# (H) offset and line number of the surviving code is preserved) and re-parse,
-# (H) preferring the SMALLEST blanked subset: each candidate alone first, the
-# (H) full set as a last resort, keeping the retry only when it strictly
-# (H) shrinks the worst ERROR span.
+# Recovery for the conditional-brace preprocessor pattern that collapses a
+# whole C/C++ file into one tree-sitter ERROR node. A branch can open a
+# brace that a LATER branch closes (nlohmann binary_reader.hpp:
+# `#ifdef __cpp_lib_byteswap ... else { #endif` followed by
+# `#ifdef __cpp_lib_byteswap } #endif`); the preprocessor keeps the braces
+# balanced under every configuration, but tree-sitter keeps EVERY branch's
+# tokens and sees an imbalance, which at file scale makes error recovery
+# reinterpret the entire translation unit (3,125 lines -> one ERROR;
+# methods degrade to free functions or vanish, orphaning whole dead-code
+# clusters). When a parse comes back with a catastrophic ERROR, blank the
+# net-unbalanced LEAF conditional branches (space-filled, so every byte
+# offset and line number of the surviving code is preserved) and re-parse,
+# preferring the SMALLEST blanked subset: each candidate alone first, the
+# full set as a last resort, keeping the retry only when it strictly
+# shrinks the worst ERROR span.
 import re
 
 from tree_sitter import Node, Parser, Tree
@@ -20,12 +20,12 @@ from tree_sitter import Node, Parser, Tree
 from ... import constants as cs
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
-# (H) a line holding nothing but an ALL_CAPS identifier: a scope-marker macro
-# (H) invocation without a trailing semicolon (NLOHMANN_JSON_NAMESPACE_BEGIN,
-# (H) FMT_BEGIN_NAMESPACE)
+# a line holding nothing but an ALL_CAPS identifier: a scope-marker macro
+# invocation without a trailing semicolon (NLOHMANN_JSON_NAMESPACE_BEGIN,
+# FMT_BEGIN_NAMESPACE)
 _MACRO_MARKER = re.compile(rb"^[A-Z_][A-Z0-9_]{2,}$")
-# (H) node types whose content is payload, not code: a marker-shaped line
-# (H) inside one must never be blanked
+# node types whose content is payload, not code: a marker-shaped line
+# inside one must never be blanked
 _PAYLOAD_NODE_TYPES = frozenset(
     (
         "comment",
@@ -44,11 +44,11 @@ _CHAR_SPACE = b" "
 _CHAR_NEWLINE = b"\n"
 _LINE_COMMENT = b"//"
 
-# (H) A branch list plus whether the conditional contains nested conditionals:
-# (H) only LEAF conditionals are candidates. An outer region (an include guard
-# (H) spans the whole file) legitimately holds unbalanced fragments between its
-# (H) nested directives (a class body split by an inner #if), so blanking is
-# (H) restricted to branches whose entire content is directive-free.
+# A branch list plus whether the conditional contains nested conditionals:
+# only LEAF conditionals are candidates. An outer region (an include guard
+# spans the whole file) legitimately holds unbalanced fragments between its
+# nested directives (a class body split by an inner #if), so blanking is
+# restricted to branches whose entire content is directive-free.
 _Frame = tuple[list[bool], list[tuple[int, int]], list[int]]
 
 
@@ -64,9 +64,9 @@ def _max_error_span(root: Node) -> int:
 
 
 def _code_brace_delta(line: bytes) -> int:
-    # (H) a brace after `//` is prose, not structure (a doc note `// { see
-    # (H) design` must not mark its branch unbalanced); block comments and
-    # (H) string literals are left to the strict-improvement guard
+    # a brace after `//` is prose, not structure (a doc note `// { see
+    # design` must not mark its branch unbalanced); block comments and
+    # string literals are left to the strict-improvement guard
     code = line.split(_LINE_COMMENT, 1)[0]
     return code.count(_CHAR_OPEN_BRACE) - code.count(_CHAR_CLOSE_BRACE)
 
@@ -126,25 +126,25 @@ def _count_error_nodes(root: Node) -> int:
 def _retry_without_macro_markers(
     parser: Parser, tree: Tree, source_bytes: bytes
 ) -> tuple[Tree, bytes]:
-    # (H) A bare scope-marker macro line (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no
-    # (H) semicolon) glues onto the NEXT top-level construct: tree-sitter
-    # (H) parses macro + `template <...> struct ordered_map : base` as ONE
-    # (H) declaration whose struct head sinks into an init_declarator, and
-    # (H) macro + `namespace detail {` as a function_definition named
-    # (H) `namespace`. The damage is silent-ish -- a couple of SMALL error
-    # (H) nodes -- so the catastrophic whole-file pass never fires, yet the
-    # (H) class/namespace and every member are lost or leak to module scope.
-    # (H) Blanking just the marker lines (space-filled, offsets preserved) and
-    # (H) re-parsing recovers the real structure; the strict error-count
-    # (H) improvement guard keeps benign marker uses untouched. A `//` comment
-    # (H) after the marker is prose, not part of the invocation. All gated
-    # (H) markers blank TOGETHER: per-marker subsets cannot work here, because
-    # (H) a marker glued into an otherwise well-formed neighbor (an attribute
-    # (H) macro between `template<...>` and the declarator) damages the tree
-    # (H) SILENTLY -- no error node -- so no per-subset metric can see which
-    # (H) single marker repairs it. Collateral is prevented structurally
-    # (H) instead: a marker-shaped line whose covering node is string or
-    # (H) comment payload is never a candidate.
+    # A bare scope-marker macro line (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no
+    # semicolon) glues onto the NEXT top-level construct: tree-sitter
+    # parses macro + `template <...> struct ordered_map : base` as ONE
+    # declaration whose struct head sinks into an init_declarator, and
+    # macro + `namespace detail {` as a function_definition named
+    # `namespace`. The damage is silent-ish -- a couple of SMALL error
+    # nodes -- so the catastrophic whole-file pass never fires, yet the
+    # class/namespace and every member are lost or leak to module scope.
+    # Blanking just the marker lines (space-filled, offsets preserved) and
+    # re-parsing recovers the real structure; the strict error-count
+    # improvement guard keeps benign marker uses untouched. A `//` comment
+    # after the marker is prose, not part of the invocation. All gated
+    # markers blank TOGETHER: per-marker subsets cannot work here, because
+    # a marker glued into an otherwise well-formed neighbor (an attribute
+    # macro between `template<...>` and the declarator) damages the tree
+    # SILENTLY -- no error node -- so no per-subset metric can see which
+    # single marker repairs it. Collateral is prevented structurally
+    # instead: a marker-shaped line whose covering node is string or
+    # comment payload is never a candidate.
     if not tree.root_node.has_error:
         return tree, source_bytes
     lines = source_bytes.split(_CHAR_NEWLINE)
@@ -171,10 +171,10 @@ def _retry_without_macro_markers(
 
 
 def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
-    # (H) Mutates skip_stack for the directive on this line; True means the
-    # (H) line IS a directive (always blanked). `#elif`/`#else` flip the
-    # (H) current group to skipping so only the FIRST branch survives; an
-    # (H) `#if` inside a skipped branch inherits the skip.
+    # Mutates skip_stack for the directive on this line; True means the
+    # line IS a directive (always blanked). `#elif`/`#else` flip the
+    # current group to skipping so only the FIRST branch survives; an
+    # `#if` inside a skipped branch inherits the skip.
     if stripped.startswith(b"#if"):
         skip_stack.append(any(skip_stack))
         return True
@@ -190,11 +190,11 @@ def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
 
 
 def _blank_csharp_directives(source_bytes: bytes) -> bytes:
-    # (H) Keep only the FIRST branch of each conditional group: retaining both
-    # (H) branches of an `#if X bodyA #else bodyB #endif` around an
-    # (H) expression-bodied member leaves an orphaned second body that
-    # (H) misparses into a phantom bare-name declaration (Polly's
-    # (H) DelegatingComponent grew a parameterless ExecuteComponent).
+    # Keep only the FIRST branch of each conditional group: retaining both
+    # branches of an `#if X bodyA #else bodyB #endif` around an
+    # expression-bodied member leaves an orphaned second body that
+    # misparses into a phantom bare-name declaration (Polly's
+    # DelegatingComponent grew a parameterless ExecuteComponent).
     lines = source_bytes.split(_CHAR_NEWLINE)
     skip_stack: list[bool] = []
     for i, line in enumerate(lines):
@@ -210,19 +210,19 @@ def parse_with_preproc_recovery(
 ) -> Tree:
     tree = parser.parse(source_bytes)
     if language == cs.SupportedLanguage.CSHARP:
-        # (H) A C# conditional directive interleaved with declaration syntax
-        # (H) (`void M() #if X => Impl() #endif ;`, Serilog's ILogger default
-        # (H) interface bodies) can shatter a whole type into an ERROR node:
-        # (H) members register as module-level Functions and the directive
-        # (H) CONDITION becomes a phantom node. On any parse error, retry with
-        # (H) the conditional-directive LINES blanked (line-count preserving,
-        # (H) only the FIRST branch kept -- an orphaned alternative body would
-        # (H) misparse into a phantom bare-name declaration) and keep the tree
-        # (H) with the smaller error.
-        # (H) has_error, not the line-span metric: the shatter often yields
-        # (H) SINGLE-LINE inner ERROR nodes inside a plausibly-shaped wrong
-        # (H) declaration (a property named after the directive condition),
-        # (H) which a span measure scores as zero.
+        # A C# conditional directive interleaved with declaration syntax
+        # (`void M() #if X => Impl() #endif ;`, Serilog's ILogger default
+        # interface bodies) can shatter a whole type into an ERROR node:
+        # members register as module-level Functions and the directive
+        # CONDITION becomes a phantom node. On any parse error, retry with
+        # the conditional-directive LINES blanked (line-count preserving,
+        # only the FIRST branch kept -- an orphaned alternative body would
+        # misparse into a phantom bare-name declaration) and keep the tree
+        # with the smaller error.
+        # has_error, not the line-span metric: the shatter often yields
+        # SINGLE-LINE inner ERROR nodes inside a plausibly-shaped wrong
+        # declaration (a property named after the directive condition),
+        # which a span measure scores as zero.
         if not tree.root_node.has_error or b"#if" not in source_bytes:
             return tree
         retry = parser.parse(_blank_csharp_directives(source_bytes))
@@ -234,18 +234,18 @@ def parse_with_preproc_recovery(
     tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)
     worst = _max_error_span(tree.root_node)
     total_lines = source_bytes.count(_CHAR_NEWLINE) + 1
-    # (H) local errors recover fine through query matching; only a collapse
-    # (H) covering most of the file warrants the blank-and-retry pass
+    # local errors recover fine through query matching; only a collapse
+    # covering most of the file warrants the blank-and-retry pass
     if worst * 2 < total_lines:
         return tree
     lines = source_bytes.split(_CHAR_NEWLINE)
     candidates = _unbalanced_leaf_branches(lines)
     if not candidates:
         return tree
-    # (H) prefer the smallest blanked subset: an unrelated branch whose textual
-    # (H) imbalance survives comment stripping (a brace in a string or macro
-    # (H) payload) must not lose its definitions when a single real offender
-    # (H) explains the collapse; the full set stays as the last resort
+    # prefer the smallest blanked subset: an unrelated branch whose textual
+    # imbalance survives comment stripping (a brace in a string or macro
+    # payload) must not lose its definitions when a single real offender
+    # explains the collapse; the full set stays as the last resort
     subsets: list[list[tuple[int, int]]] = [[c] for c in candidates]
     if len(candidates) > 1:
         subsets.append(candidates)

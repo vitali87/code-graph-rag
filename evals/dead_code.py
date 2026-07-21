@@ -1,11 +1,11 @@
-# (H) Dead-code eval. cgr's `dead-code` command reports functions/methods
-# (H) unreachable from any entry point via the shared reachability engine in
-# (H) codebase_rag.dead_code. The deterministic in-memory harness cannot query a
-# (H) database, so it runs the same engine over the captured graph and grades the
-# (H) result on controlled fixtures whose dead set is known by construction. The
-# (H) engine is unit-tested on hand-built graphs, so a fixture mismatch indicts
-# (H) cgr's CALLS graph (e.g. a missing edge flagging a live function as dead),
-# (H) not the scorer.
+# Dead-code eval. cgr's `dead-code` command reports functions/methods
+# unreachable from any entry point via the shared reachability engine in
+# codebase_rag.dead_code. The deterministic in-memory harness cannot query a
+# database, so it runs the same engine over the captured graph and grades the
+# result on controlled fixtures whose dead set is known by construction. The
+# engine is unit-tested on hand-built graphs, so a fixture mismatch indicts
+# cgr's CALLS graph (e.g. a missing edge flagging a live function as dead),
+# not the scorer.
 import json
 from pathlib import Path
 from typing import Annotated
@@ -67,9 +67,9 @@ def main(
         Path, typer.Option(help="Directory for the dead-code report json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    # (H) Corpus mode is informational: a real repo has no independent dead-code
-    # (H) oracle (true reachability needs the same call graph), so this reports
-    # (H) cgr's reachable-from-roots dead set. The graded eval lives in the tests.
+    # Corpus mode is informational: a real repo has no independent dead-code
+    # oracle (true reachability needs the same call graph), so this reports
+    # cgr's reachable-from-roots dead set. The graded eval lives in the tests.
     target = target.resolve()
     project = project_name or target.name
     logger.info(ls.DEAD_CODE_TARGET.format(target=target, project=project))

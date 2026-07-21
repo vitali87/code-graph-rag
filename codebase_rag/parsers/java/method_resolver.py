@@ -25,10 +25,10 @@ if TYPE_CHECKING:
 
 
 def _java_signature_arity(qn_or_member: str) -> int | None:
-    # (H) Top-level parameter count of a signatured Java method name
-    # (H) (`resolve(A,B,Map<K, V>)` -> 3, `create()` -> 0); None if unsignatured.
-    # (H) Generic commas (`Map<K, V>`) are nested, so only depth-0 commas separate
-    # (H) parameters. Used to pick the arity-matching overload for a call.
+    # Top-level parameter count of a signatured Java method name
+    # (`resolve(A,B,Map<K, V>)` -> 3, `create()` -> 0); None if unsignatured.
+    # Generic commas (`Map<K, V>`) are nested, so only depth-0 commas separate
+    # parameters. Used to pick the arity-matching overload for a call.
     open_idx = qn_or_member.find(cs.CHAR_PAREN_OPEN)
     if open_idx < 0:
         return None
@@ -48,9 +48,9 @@ def _java_signature_arity(qn_or_member: str) -> int | None:
 
 
 def _java_param_type_names(qn: str) -> list[str]:
-    # (H) Simple parameter type names from a signatured method qn
-    # (H) (`isX(Class<?>,String)` -> ['Class', 'String']): generics and package/scope
-    # (H) stripped so they compare with inferred argument type simple names.
+    # Simple parameter type names from a signatured method qn
+    # (`isX(Class<?>,String)` -> ['Class', 'String']): generics and package/scope
+    # stripped so they compare with inferred argument type simple names.
     open_idx = qn.find(cs.CHAR_PAREN_OPEN)
     close_idx = qn.rfind(cs.CHAR_PAREN_CLOSE)
     if open_idx < 0 or close_idx <= open_idx:
@@ -81,9 +81,9 @@ def _java_param_type_names(qn: str) -> list[str]:
 
 
 def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> bool:
-    # (H) True when every KNOWN argument type equals the candidate's parameter type at
-    # (H) that position (simple names). Unknown args (None) are wildcards. Used to pick
-    # (H) the right same-arity overload (isX(String) vs isX(Class) for a String arg).
+    # True when every KNOWN argument type equals the candidate's parameter type at
+    # that position (simple names). Unknown args (None) are wildcards. Used to pick
+    # the right same-arity overload (isX(String) vs isX(Class) for a String arg).
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
         return False
@@ -96,12 +96,12 @@ def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> b
 def _callable_visible_to_caller(
     entity_type: str, qn: str, caller_qn: str | None
 ) -> bool:
-    # (H) A Java FUNCTION entry is a method declared inside another method's body -- i.e.
-    # (H) an anonymous/local class method, only visible lexically. The unqualified
-    # (H) module-wide fallback must not let a call OUTSIDE that anon bind to it (M.use()
-    # (H) -> an anon-local helper() elsewhere). Accept a FUNCTION only when the caller is
-    # (H) lexically within its owning scope (owner qn prefixes the caller). METHOD and
-    # (H) CONSTRUCTOR entries are top-level and stay module-visible.
+    # A Java FUNCTION entry is a method declared inside another method's body -- i.e.
+    # an anonymous/local class method, only visible lexically. The unqualified
+    # module-wide fallback must not let a call OUTSIDE that anon bind to it (M.use()
+    # -> an anon-local helper() elsewhere). Accept a FUNCTION only when the caller is
+    # lexically within its owning scope (owner qn prefixes the caller). METHOD and
+    # CONSTRUCTOR entries are top-level and stay module-visible.
     if entity_type != cs.ENTITY_FUNCTION:
         return True
     if not caller_qn:
@@ -115,10 +115,10 @@ def _pick_overload(
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
 ) -> tuple[str, str] | None:
-    # (H) Choose among same-name candidates: prefer an argument-TYPE match (resolves
-    # (H) same-arity overloads like isX(String) vs isX(Class)), then an argument-COUNT
-    # (H) match, then the first. A type match implies an arity match (equal param/arg
-    # (H) counts), so it is the most specific.
+    # Choose among same-name candidates: prefer an argument-TYPE match (resolves
+    # same-arity overloads like isX(String) vs isX(Class)), then an argument-COUNT
+    # match, then the first. A type match implies an arity match (equal param/arg
+    # counts), so it is the most specific.
     if not matches:
         return None
     if len(matches) > 1 and any(at is not None for at in arg_types):
@@ -188,10 +188,10 @@ class JavaMethodResolverMixin:
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # (H) Check for 'this' reference - inside a method-body anonymous class `this`
-        # (H) is the anon (its base type), which the lexical named-class walk misses;
-        # (H) prefer that, then the lexical containing class (precise in multi-class
-        # (H) files); fall back to the first class under the module otherwise.
+        # Check for 'this' reference - inside a method-body anonymous class `this`
+        # is the anon (its base type), which the lexical named-class walk misses;
+        # prefer that, then the lexical containing class (precise in multi-class
+        # files); fall back to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
             if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
                 return anon_base
@@ -208,8 +208,8 @@ class JavaMethodResolverMixin:
                 None,
             )
 
-        # (H) Check for 'super' reference - resolve the lexical class then its parent when
-        # (H) available; otherwise fall back to the first class under the module with a parent.
+        # Check for 'super' reference - resolve the lexical class then its parent when
+        # available; otherwise fall back to the first class under the module with a parent.
         if object_ref == cs.JAVA_KEYWORD_SUPER:
             if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
                 parent_qn := self._find_parent_class(lexical)
@@ -233,10 +233,10 @@ class JavaMethodResolverMixin:
         ):
             return simple_class_qn
 
-        # (H) A nested class referenced by its simple name as a static receiver base
-        # (H) (`Checker.INSTANCE...`, gson's `AccessChecker.INSTANCE`) has qn
-        # (H) `module.Outer.Nested`, which the direct check above misses; use the
-        # (H) nested-aware type resolver so the static-field access chain resolves.
+        # A nested class referenced by its simple name as a static receiver base
+        # (`Checker.INSTANCE...`, gson's `AccessChecker.INSTANCE`) has qn
+        # `module.Outer.Nested`, which the direct check above misses; use the
+        # nested-aware type resolver so the static-field access chain resolves.
         nested_qn = self._resolve_java_type_name(object_ref, module_qn)
         if nested_qn != object_ref and self.function_registry.get(nested_qn) in (
             NodeType.CLASS,
@@ -245,15 +245,15 @@ class JavaMethodResolverMixin:
         ):
             return nested_qn
 
-        # (H) An unqualified class-name receiver for a static call (`T.make()`)
-        # (H) defined in a sibling file: imports and the current module were checked
-        # (H) above, so the remaining unqualified case is a same-package class.
+        # An unqualified class-name receiver for a static call (`T.make()`)
+        # defined in a sibling file: imports and the current module were checked
+        # above, so the remaining unqualified case is a same-package class.
         if sibling_class_qn := self._resolve_sibling_class_qn(object_ref, module_qn):
             return sibling_class_qn
 
-        # (H) A receiver like `obj.engine` (field access on a typed variable) is not a
-        # (H) single name: resolve the base, then walk each field's declared type across
-        # (H) classes so `obj.engine.start()` and deeper chains resolve to a method.
+        # A receiver like `obj.engine` (field access on a typed variable) is not a
+        # single name: resolve the base, then walk each field's declared type across
+        # classes so `obj.engine.start()` and deeper chains resolve to a method.
         if cs.SEPARATOR_DOT in object_ref:
             return self._resolve_field_access_chain_type(
                 object_ref, local_var_types, module_qn, context_node
@@ -275,10 +275,10 @@ class JavaMethodResolverMixin:
     def _enclosing_anon_base_qn(
         self, context_node: ASTNode | None, module_qn: str
     ) -> str | None:
-        # (H) If `context_node` sits inside a method-body anonymous class
-        # (H) (`new Base(){ ... }`) before any named class, return the anon's base type
-        # (H) qn -- an unqualified call inside the anon is `this.m()`, dispatched on the
-        # (H) anon (i.e. its base), not the enclosing named class. None otherwise.
+        # If `context_node` sits inside a method-body anonymous class
+        # (`new Base(){ ... }`) before any named class, return the anon's base type
+        # qn -- an unqualified call inside the anon is `this.m()`, dispatched on the
+        # anon (i.e. its base), not the enclosing named class. None otherwise.
         if context_node is None:
             return None
         named = (
@@ -340,12 +340,12 @@ class JavaMethodResolverMixin:
         return parent_classes[0] if parent_classes else None
 
     def _resolve_sibling_class_qn(self, class_name: str, module_qn: str) -> str | None:
-        # (H) Resolve a bare class name to a registered Class/Interface in a SIBLING
-        # (H) file of the same package (directory), so an unqualified same-package
-        # (H) reference resolves without an import. A bare receiver with no import
-        # (H) is only valid for the current package in Java, so a class in another
-        # (H) package is NOT a match -- linking it would be a wrong cross-package
-        # (H) edge; leave the receiver unresolved instead.
+        # Resolve a bare class name to a registered Class/Interface in a SIBLING
+        # file of the same package (directory), so an unqualified same-package
+        # reference resolves without an import. A bare receiver with no import
+        # is only valid for the current package in Java, so a class in another
+        # package is NOT a match -- linking it would be a wrong cross-package
+        # edge; leave the receiver unresolved instead.
         if not (candidate_modules := self._fqn_to_module_qn.get(class_name)):
             return None
         if not (current_file := self.module_qn_to_file_path.get(module_qn)):
@@ -644,10 +644,10 @@ class JavaMethodResolverMixin:
     def _infer_arg_types(
         self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str | None, ...]:
-        # (H) Infer the simple type of each argument so same-arity overloads can be told
-        # (H) apart (isX(String) vs isX(Class)). Only identifier arguments whose type is
-        # (H) known (local var or field) are resolved; everything else is None (unknown),
-        # (H) which _overload_matches_arg_types treats as a wildcard.
+        # Infer the simple type of each argument so same-arity overloads can be told
+        # apart (isX(String) vs isX(Class)). Only identifier arguments whose type is
+        # known (local var or field) are resolved; everything else is None (unknown),
+        # which _overload_matches_arg_types treats as a wildcard.
         args_node = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not args_node:
             return ()
@@ -692,12 +692,12 @@ class JavaMethodResolverMixin:
 
         if not object_ref:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
-            # (H) An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
-            # (H) anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
-            # (H) so bind against the anon's base type FIRST -- `_lexical_class_qn` only
-            # (H) sees the enclosing NAMED class and would mis-bind an inherited call to
-            # (H) a same-named method there. Then the enclosing class hierarchy; the bare
-            # (H) module-wide scan is the last resort (it ignores lexical scope).
+            # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
+            # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
+            # so bind against the anon's base type FIRST -- `_lexical_class_qn` only
+            # sees the enclosing NAMED class and would mis-bind an inherited call to
+            # a same-named method there. Then the enclosing class hierarchy; the bare
+            # module-wide scan is the last resort (it ignores lexical scope).
             if (
                 anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)
             ) and (

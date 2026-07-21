@@ -1,8 +1,8 @@
-# (H) Covers Rust containment-edge validation: cgr's DEFINES (module -> item /
-# (H) nested module) and DEFINES_METHOD (struct/trait -> method) edges are graded
-# (H) against the independent syn oracle (evals/oracles/rs_oracle), joined on
-# (H) (kind, file, line) endpoints. Exercises an inherent impl, a trait method,
-# (H) and an impl inside a nested `mod` (cross-module type resolution).
+# Covers Rust containment-edge validation: cgr's DEFINES (module -> item /
+# nested module) and DEFINES_METHOD (struct/trait -> method) edges are graded
+# against the independent syn oracle (evals/oracles/rs_oracle), joined on
+# (kind, file, line) endpoints. Exercises an inherent impl, a trait method,
+# and an impl inside a nested `mod` (cross-module type resolution).
 from __future__ import annotations
 
 from pathlib import Path

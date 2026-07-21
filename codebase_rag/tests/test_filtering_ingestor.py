@@ -25,8 +25,8 @@ def test_enabled_rel_passes_through() -> None:
 
 
 def test_call_shape_preserved_without_properties() -> None:
-    # (H) Callers that omit properties must not gain a spurious properties=None;
-    # (H) downstream tests compare the exact call() and read call.kwargs.
+    # Callers that omit properties must not gain a spurious properties=None;
+    # downstream tests compare the exact call() and read call.kwargs.
     ing, inner = _wrap([])
     ing.ensure_relationship_batch(
         (NL.CLASS, QN, "m.C"), RT.DEFINES_METHOD, (NL.METHOD, QN, "m.C.f")
@@ -50,8 +50,8 @@ def test_call_shape_forwards_properties_as_kwarg() -> None:
 
 
 def test_call_shape_forwards_positional_properties() -> None:
-    # (H) INHERITS passes base_index props positionally; the wrapper must keep it
-    # (H) positional (tests assert len(call.args) == 4).
+    # INHERITS passes base_index props positionally; the wrapper must keep it
+    # positional (tests assert len(call.args) == 4).
     ing, inner = _wrap([])
     ing.ensure_relationship_batch(
         (NL.CLASS, QN, "m.D"),
@@ -66,7 +66,7 @@ def test_call_shape_forwards_positional_properties() -> None:
 
 
 def test_disabled_rel_dropped() -> None:
-    ing, inner = _wrap([])  # (H) io off by default
+    ing, inner = _wrap([])  # io off by default
     ing.ensure_relationship_batch(
         (NL.FUNCTION, QN, "m.a"), RT.WRITES_TO, (NL.RESOURCE, QN, "resource::FILE::x")
     )
@@ -74,7 +74,7 @@ def test_disabled_rel_dropped() -> None:
 
 
 def test_disabled_node_dropped_enabled_kept() -> None:
-    ing, inner = _wrap([])  # (H) io off → Resource off
+    ing, inner = _wrap([])  # io off → Resource off
     ing.ensure_node_batch(NL.RESOURCE, {QN: "resource::FILE::x"})
     ing.ensure_node_batch(NL.FUNCTION, {QN: "m.a"})
     labels = [c.args[0] for c in inner.ensure_node_batch.call_args_list]
@@ -93,8 +93,8 @@ def test_io_enabled_lets_resource_through() -> None:
 
 
 class _QueryableInner:
-    # (H) A concrete class (not MagicMock) so isinstance(_, QueryProtocol) holds,
-    # (H) matching how the real MemgraphIngestor is detected at runtime.
+    # A concrete class (not MagicMock) so isinstance(_, QueryProtocol) holds,
+    # matching how the real MemgraphIngestor is detected at runtime.
     def __init__(self) -> None:
         self.ensure_node_batch = MagicMock()
         self.ensure_relationship_batch = MagicMock()

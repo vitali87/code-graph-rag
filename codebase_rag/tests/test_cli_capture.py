@@ -1,5 +1,5 @@
-# (H) The --capture flag must reach the sync path for the normal start and
-# (H) ask-agent runs, not only the --update-graph path (PR #638 review).
+# The --capture flag must reach the sync path for the normal start and
+# ask-agent runs, not only the --update-graph path (PR #638 review).
 
 from __future__ import annotations
 

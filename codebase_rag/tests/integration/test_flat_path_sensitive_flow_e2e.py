@@ -57,14 +57,14 @@ def _any_resource(flows: list[dict[str, str | None]]) -> bool:
     return any(f["kind"] == FlowKind.RESOURCE.value for f in flows)
 
 
-# (H) Go
+# Go
 
 
 def test_go_kill_on_one_branch_taint_survives(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) secret is killed only inside the if; on the fall-through path it is still the
-    # (H) env source, so a MAY analysis keeps ENV -> STDOUT. The flat walk over-kills.
+    # secret is killed only inside the if; on the fall-through path it is still the
+    # env source, so a MAY analysis keeps ENV -> STDOUT. The flat walk over-kills.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -89,8 +89,8 @@ def test_go_kill_on_one_branch_taint_survives(
 def test_go_kill_on_all_branches_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) secret is reassigned to a clean value on BOTH the then and else paths, so no
-    # (H) tainted path reaches the sink -- MAY still yields no flow.
+    # secret is reassigned to a clean value on BOTH the then and else paths, so no
+    # tainted path reaches the sink -- MAY still yields no flow.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -113,9 +113,9 @@ def test_go_kill_on_all_branches_no_flow(
 def test_go_branch_local_shadow_does_not_leak(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `os := load()` is scoped to the if block; after the block the imported package
-    # (H) `os` is back in scope, so os.Getenv is the real env source. The flat walk grows
-    # (H) its shadow set function-wide and wrongly suppresses the later read.
+    # `os := load()` is scoped to the if block; after the block the imported package
+    # `os` is back in scope, so os.Getenv is the real env source. The flat walk grows
+    # its shadow set function-wide and wrongly suppresses the later read.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -140,9 +140,9 @@ def test_go_branch_local_shadow_does_not_leak(
 def test_go_if_initializer_shadow_does_not_leak(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A Go `if` initializer (`if os := load(); ...`) is scoped to the whole if
-    # (H) statement and must not leak past it, so os.Getenv AFTER the if is the real
-    # (H) env source. The shadow set must be restored to its pre-if state on exit.
+    # A Go `if` initializer (`if os := load(); ...`) is scoped to the whole if
+    # statement and must not leak past it, so os.Getenv AFTER the if is the real
+    # env source. The shadow set must be restored to its pre-if state on exit.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -163,14 +163,14 @@ def test_go_if_initializer_shadow_does_not_leak(
     )
 
 
-# (H) Java
+# Java
 
 
 def test_java_kill_on_one_branch_taint_survives(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Java parity: the reassignment inside the if is one path only; the else path
-    # (H) still carries the env source, so MAY keeps ENV -> STDOUT.
+    # Java parity: the reassignment inside the if is one path only; the else path
+    # still carries the env source, so MAY keeps ENV -> STDOUT.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -195,7 +195,7 @@ def test_java_kill_on_one_branch_taint_survives(
 def test_java_kill_on_all_branches_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Clean reassignment on both paths -> no tainted path reaches the sink.
+    # Clean reassignment on both paths -> no tainted path reaches the sink.
     _build(
         memgraph_ingestor,
         tmp_path,

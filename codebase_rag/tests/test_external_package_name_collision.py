@@ -1,8 +1,8 @@
-# (H) L2 residual from the evals/ harness: when cgr is pointed at a directory that
-# (H) is itself a package (has __init__.py), a bare absolute import like
-# (H) `from mcp.server import X` is the EXTERNAL top-level package, not the internal
-# (H) sibling subpackage `<project>.mcp` (which is reachable only as that dotted name
-# (H) or relatively). cgr used to mis-resolve it to the internal package.
+# L2 residual from the evals/ harness: when cgr is pointed at a directory that
+# is itself a package (has __init__.py), a bare absolute import like
+# `from mcp.server import X` is the EXTERNAL top-level package, not the internal
+# sibling subpackage `<project>.mcp` (which is reachable only as that dotted name
+# or relatively). cgr used to mis-resolve it to the internal package.
 from __future__ import annotations
 
 from pathlib import Path

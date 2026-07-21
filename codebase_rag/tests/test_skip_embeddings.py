@@ -1,6 +1,6 @@
-# (H) Opting out of the semantic embedding pass (issue #690): the
-# (H) --no-embeddings CLI flag, the CGR_SKIP_EMBEDDINGS setting, and the
-# (H) CGR_EMBEDDING_DEVICE override for the embedder's device selection.
+# Opting out of the semantic embedding pass (issue #690): the
+# --no-embeddings CLI flag, the CGR_SKIP_EMBEDDINGS setting, and the
+# CGR_EMBEDDING_DEVICE override for the embedder's device selection.
 
 from __future__ import annotations
 

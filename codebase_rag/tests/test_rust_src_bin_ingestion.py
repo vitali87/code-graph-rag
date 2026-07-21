@@ -11,9 +11,9 @@ def _function_qns(ingestor: MagicMock) -> set[str]:
 
 
 def test_rust_src_bin_binaries_are_ingested(temp_repo: Path) -> None:
-    # (H) Cargo's standard multi-binary layout puts additional binaries under
-    # (H) src/bin/; the generic build-output ignore for `bin` directories must
-    # (H) not swallow it (mini-redis's entire cli.rs/server.rs were invisible).
+    # Cargo's standard multi-binary layout puts additional binaries under
+    # src/bin/; the generic build-output ignore for `bin` directories must
+    # not swallow it (mini-redis's entire cli.rs/server.rs were invisible).
     root = temp_repo / "crate"
     (root / "src" / "bin").mkdir(parents=True)
     (root / "Cargo.toml").write_text(
@@ -36,8 +36,8 @@ def test_rust_src_bin_binaries_are_ingested(temp_repo: Path) -> None:
 
 
 def test_non_src_bin_directories_stay_ignored(temp_repo: Path) -> None:
-    # (H) Build-output bin/ trees (dotnet's <proj>/bin/Debug, a repo-root bin/)
-    # (H) keep the existing ignore.
+    # Build-output bin/ trees (dotnet's <proj>/bin/Debug, a repo-root bin/)
+    # keep the existing ignore.
     root = temp_repo / "app"
     (root / "bin").mkdir(parents=True)
     (root / "proj" / "bin" / "Debug").mkdir(parents=True)

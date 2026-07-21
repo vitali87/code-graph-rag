@@ -5,7 +5,7 @@ from evals.cgr_graph import _capture
 
 
 def test_split_receiver_chain_ignores_dots_inside_arguments() -> None:
-    # (H) `.` inside call args / index / generic must not split the receiver chain.
+    # `.` inside call args / index / generic must not split the receiver chain.
     assert _split_receiver_chain("c.Find(1.5)") == ["c", "Find(1.5)"]
     assert _split_receiver_chain("a.b(x.y).c") == ["a", "b(x.y)", "c"]
     assert _split_receiver_chain("m[k.v].get") == ["m[k.v]", "get"]
@@ -13,10 +13,10 @@ def test_split_receiver_chain_ignores_dots_inside_arguments() -> None:
 
 
 def _make(root: Path) -> None:
-    # (H) `c.Root().Run()`: Root() returns *Command, so Run() must resolve on
-    # (H) Command. cgr infers the receiver `c` type (Command) already; the missing
-    # (H) piece is the RETURN type of Root() feeding the next hop. This is the cobra
-    # (H) `cmd.Root().GenZshCompletion()` gap.
+    # `c.Root().Run()`: Root() returns *Command, so Run() must resolve on
+    # Command. cgr infers the receiver `c` type (Command) already; the missing
+    # piece is the RETURN type of Root() feeding the next hop. This is the cobra
+    # `cmd.Root().GenZshCompletion()` gap.
     (root / "m.go").write_text(
         "package p\n"
         "type Command struct{}\n"
@@ -35,9 +35,9 @@ def test_go_chained_return_type_resolves_second_hop(tmp_path: Path) -> None:
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
         if rel == "CALLS"
     }
-    # (H) first hop already resolves via receiver-type inference.
+    # first hop already resolves via receiver-type inference.
     assert ("proj.m.Command.Use", "proj.m.Command.Root") in calls
-    # (H) second hop needs Root()'s return type (*Command) to resolve Run().
+    # second hop needs Root()'s return type (*Command) to resolve Run().
     assert ("proj.m.Command.Use", "proj.m.Command.Run") in calls
 
 
@@ -48,9 +48,9 @@ def _calls(tmp_path: Path, body: str) -> set[tuple[str, str]]:
 
 
 def test_chained_call_on_container_return_does_not_misresolve(tmp_path: Path) -> None:
-    # (H) Kids() returns []Command (a slice); a chained `.Run()` is called on the
-    # (H) slice, NOT on a Command, so it must NOT resolve to Command.Run. Unwrapping
-    # (H) the container to its element type would emit a false edge.
+    # Kids() returns []Command (a slice); a chained `.Run()` is called on the
+    # slice, NOT on a Command, so it must NOT resolve to Command.Run. Unwrapping
+    # the container to its element type would emit a false edge.
     calls = _calls(
         tmp_path,
         "package p\n"
@@ -63,8 +63,8 @@ def test_chained_call_on_container_return_does_not_misresolve(tmp_path: Path) ->
 
 
 def test_chained_call_with_dotted_argument_resolves(tmp_path: Path) -> None:
-    # (H) A dotted call argument (`1.5`) must not break the chain split: Find(1.5)
-    # (H) returns *Command, so Run() still resolves.
+    # A dotted call argument (`1.5`) must not break the chain split: Find(1.5)
+    # returns *Command, so Run() still resolves.
     calls = _calls(
         tmp_path,
         "package p\n"
@@ -77,9 +77,9 @@ def test_chained_call_with_dotted_argument_resolves(tmp_path: Path) -> None:
 
 
 def test_local_from_method_return_resolves_later_call(tmp_path: Path) -> None:
-    # (H) `root := c.Root()` stores the return of a method in a local across
-    # (H) statements; a later `root.Run()` must resolve on the return type
-    # (H) (Command), not stay unresolved. The stored-local form of the inline chain.
+    # `root := c.Root()` stores the return of a method in a local across
+    # statements; a later `root.Run()` must resolve on the return type
+    # (Command), not stay unresolved. The stored-local form of the inline chain.
     calls = _calls(
         tmp_path,
         "package p\n"
@@ -93,10 +93,10 @@ def test_local_from_method_return_resolves_later_call(tmp_path: Path) -> None:
 
 
 def test_local_from_field_method_chain_resolves(tmp_path: Path) -> None:
-    # (H) The gin router shape: `root := engine.trees.get(method)` then
-    # (H) `root.addRoute(...)`. `engine.trees` is a struct-field hop (needs Go field
-    # (H) types), `.get()` returns *node, so root.addRoute must resolve to
-    # (H) node.addRoute -- NOT mis-resolve to the enclosing Engine.addRoute.
+    # The gin router shape: `root := engine.trees.get(method)` then
+    # `root.addRoute(...)`. `engine.trees` is a struct-field hop (needs Go field
+    # types), `.get()` returns *node, so root.addRoute must resolve to
+    # node.addRoute -- NOT mis-resolve to the enclosing Engine.addRoute.
     calls = _calls(
         tmp_path,
         "package p\n"
@@ -112,20 +112,20 @@ def test_local_from_field_method_chain_resolves(tmp_path: Path) -> None:
         "}\n",
     )
     assert ("proj.m.Engine.addRoute", "proj.m.node.addRoute") in calls
-    # (H) the false self-edge from mis-resolving root.addRoute to the enclosing
-    # (H) type's same-named method must not appear.
+    # the false self-edge from mis-resolving root.addRoute to the enclosing
+    # type's same-named method must not appear.
     assert ("proj.m.Engine.addRoute", "proj.m.Engine.addRoute") not in calls
 
 
 def test_direct_field_hop_method_call_resolves(tmp_path: Path) -> None:
-    # (H) The gin `ServeHTTP` shape: `c := pool.Get().(*Context)` binds c via a TYPE
-    # (H) ASSERTION, then `c.writermem.reset(w)` is a field-hop receiver called INLINE
-    # (H) with no intermediate local. Two gaps compose: (1) the assertion must type c
-    # (H) as Context; (2) `writermem` is a struct field of type responseWriter, so
-    # (H) `.reset` must resolve to responseWriter.reset via the field-type map. A
-    # (H) same-named decoy `Context.reset` (gin has one) defeats the trie coincidence:
-    # (H) the bare-method fallback mis-binds to Context.reset and orphans
-    # (H) responseWriter.reset unless both the assertion and the field hop resolve.
+    # The gin `ServeHTTP` shape: `c := pool.Get().(*Context)` binds c via a TYPE
+    # ASSERTION, then `c.writermem.reset(w)` is a field-hop receiver called INLINE
+    # with no intermediate local. Two gaps compose: (1) the assertion must type c
+    # as Context; (2) `writermem` is a struct field of type responseWriter, so
+    # `.reset` must resolve to responseWriter.reset via the field-type map. A
+    # same-named decoy `Context.reset` (gin has one) defeats the trie coincidence:
+    # the bare-method fallback mis-binds to Context.reset and orphans
+    # responseWriter.reset unless both the assertion and the field hop resolve.
     (tmp_path / "m.go").write_text(
         "package p\n"
         "type responseWriter struct{}\n"
@@ -150,5 +150,5 @@ def test_direct_field_hop_method_call_resolves(tmp_path: Path) -> None:
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }
     assert ("proj.gin.Engine.serve", "proj.m.responseWriter.reset") in calls
-    # (H) must not mis-resolve the field hop to the same-named enclosing-type method.
+    # must not mis-resolve the field hop to the same-named enclosing-type method.
     assert ("proj.gin.Engine.serve", "proj.m.Context.reset") not in calls

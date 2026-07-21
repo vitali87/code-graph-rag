@@ -1,10 +1,10 @@
-# (H) A non-C++ base or interface that does not resolve at parse time used to
-# (H) be anchored to the child's own module qn (`_resolve_to_qn` fallback), so
-# (H) every cross-file or external base emitted an INHERITS/IMPLEMENTS edge to
-# (H) a phantom the database drops (issue #652: 136 INHERITS + 81 IMPLEMENTS
-# (H) across the fixture suite). Emission is now deferred until every class is
-# (H) registered, re-resolved against the full registry, and skipped entirely
-# (H) when the target resolves nowhere (java.lang.Exception, Rust Send/Sync).
+# A non-C++ base or interface that does not resolve at parse time used to
+# be anchored to the child's own module qn (`_resolve_to_qn` fallback), so
+# every cross-file or external base emitted an INHERITS/IMPLEMENTS edge to
+# a phantom the database drops (issue #652: 136 INHERITS + 81 IMPLEMENTS
+# across the fixture suite). Emission is now deferred until every class is
+# registered, re-resolved against the full registry, and skipped entirely
+# when the target resolves nowhere (java.lang.Exception, Rust Send/Sync).
 from __future__ import annotations
 
 from pathlib import Path
@@ -134,7 +134,7 @@ def test_rust_external_traits_emit_no_phantom_edges(
             to_label, _, to_qn = call.args[2]
             assert (str(to_label), to_qn) in node_keys, call.args
 
-    # (H) The first-party trait impl must survive the deferral.
+    # The first-party trait impl must survive the deferral.
     implements = {
         (call.args[0][2], call.args[2][2])
         for call in get_relationships(

@@ -21,14 +21,14 @@ def _calls_from(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
     }
 
 
-# (H) A field's declared type can be a `typedef`/`using` alias of a first-party class
-# (H) rather than the class name itself. Resolving `m_.Lock()` requires mapping the
-# (H) alias to its underlying class; without it the receiver has a type the resolver
-# (H) cannot turn into a class, so the call is dropped (the name-only trie fallback is
-# (H) skipped once a receiver type is known). The typedef field (`Mutex`) and the
-# (H) using field (`Gizmo`) target distinct methods so BOTH alias forms are asserted
-# (H) independently. `Alpha.Lock` sorts before `Mutex.Lock`, so a name-only guess
-# (H) would pick the wrong one -- only alias-resolved field typing binds Mutex.Lock.
+# A field's declared type can be a `typedef`/`using` alias of a first-party class
+# rather than the class name itself. Resolving `m_.Lock()` requires mapping the
+# alias to its underlying class; without it the receiver has a type the resolver
+# cannot turn into a class, so the call is dropped (the name-only trie fallback is
+# skipped once a receiver type is known). The typedef field (`Mutex`) and the
+# using field (`Gizmo`) target distinct methods so BOTH alias forms are asserted
+# independently. `Alpha.Lock` sorts before `Mutex.Lock`, so a name-only guess
+# would pick the wrong one -- only alias-resolved field typing binds Mutex.Lock.
 _SOURCE = """
 namespace ns {
 
@@ -75,24 +75,24 @@ def test_cpp_typedef_and_using_alias_field_calls_resolve_to_underlying_class(
     run_updater(project, mock_ingestor)
 
     callees = _calls_from(mock_ingestor, ".DB.Run")
-    # (H) typedef path: m_.Lock() binds Mutex.Lock (not the same-named Alpha.Lock).
+    # typedef path: m_.Lock() binds Mutex.Lock (not the same-named Alpha.Lock).
     assert any(c.endswith(".Mutex.Lock") for c in callees), (
         f"m_.Lock() should resolve to Mutex.Lock via the typedef alias, got {callees}"
     )
     assert not any(c.endswith(".Alpha.Lock") for c in callees), (
         f"typedef alias field call must not resolve to Alpha.Lock, got {callees}"
     )
-    # (H) using path: g_.Poke() binds Gizmo.Poke.
+    # using path: g_.Poke() binds Gizmo.Poke.
     assert any(c.endswith(".Gizmo.Poke") for c in callees), (
         f"g_.Poke() should resolve to Gizmo.Poke via the using alias, got {callees}"
     )
 
 
-# (H) Correctness guards for the global bare-name alias map (PR #568 review):
-# (H) (1) an alias defined inside a function body is local and must not be collected;
-# (H) (2) the same alias name mapping to different types in two namespaces/files is
-# (H) ambiguous and must be dropped (not first-write-wins), so those receivers fall
-# (H) back to name-only resolution instead of a confidently-wrong typed edge.
+# Correctness guards for the global bare-name alias map (PR #568 review):
+# (1) an alias defined inside a function body is local and must not be collected;
+# (2) the same alias name mapping to different types in two namespaces/files is
+# ambiguous and must be dropped (not first-write-wins), so those receivers fall
+# back to name-only resolution instead of a confidently-wrong typed edge.
 def test_collect_type_aliases_skips_function_bodies_and_drops_conflicts() -> None:
     src = """
 namespace a { typedef Widget Handle; }
@@ -108,8 +108,8 @@ void f() {
     conflicts: set[str] = set()
     CppTypeInferenceEngine().collect_type_aliases(_root_node(src), aliases, conflicts)
 
-    # (H) File-scope aliases resolve; the conflicting `Handle` is dropped, and the
-    # (H) function-local `L`/`Inner` are never collected.
+    # File-scope aliases resolve; the conflicting `Handle` is dropped, and the
+    # function-local `L`/`Inner` are never collected.
     assert aliases == {"Lock": "Mutex", "AliasT": "Lock"}, aliases
     assert "Handle" in conflicts
     assert "L" not in aliases and "Inner" not in aliases

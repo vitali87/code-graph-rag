@@ -5,8 +5,8 @@ from evals.cross_project import cgr_cross_package, score_cross_project
 
 
 def _make_monorepo(root: Path) -> None:
-    # (H) Two sibling top-level packages plus a third; pkg_b and pkg_c both reach
-    # (H) into pkg_a, which no single-top-level-package corpus exercises.
+    # Two sibling top-level packages plus a third; pkg_b and pkg_c both reach
+    # into pkg_a, which no single-top-level-package corpus exercises.
     for pkg in ("pkg_a", "pkg_b", "pkg_c"):
         (root / pkg).mkdir(parents=True)
         (root / pkg / "__init__.py").write_text("", encoding="utf-8")
@@ -27,9 +27,9 @@ def test_cgr_resolves_cross_package_calls_and_imports(tmp_path: Path) -> None:
     calls, imports = cgr_cross_package(tmp_path, tmp_path.name)
     project = tmp_path.name
 
-    # (H) pkg_b.use.run() calls pkg_a.core.shared() across the package boundary.
+    # pkg_b.use.run() calls pkg_a.core.shared() across the package boundary.
     assert (f"{project}.pkg_b.use.run", f"{project}.pkg_a.core.shared") in calls
-    # (H) both pkg_b and pkg_c import a pkg_a module.
+    # both pkg_b and pkg_c import a pkg_a module.
     assert (f"{project}.pkg_b.use", f"{project}.pkg_a.core") in imports
     assert any(src == f"{project}.pkg_c.only_import" for src, _t in imports)
 
@@ -46,7 +46,7 @@ def test_intra_package_edges_are_not_cross_package(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     calls, imports = cgr_cross_package(root, "mono")
-    # (H) Everything is within pkg_a, so there are no cross-package edges.
+    # Everything is within pkg_a, so there are no cross-package edges.
     assert calls == set()
     assert imports == set()
 

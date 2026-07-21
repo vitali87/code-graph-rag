@@ -33,10 +33,10 @@ def _calls_from(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
     }
 
 
-# (H) Member data declarations use `field_identifier`, not `identifier`, and a member
-# (H) FUNCTION declaration (`void Lock();`) is also a field_declaration but with a
-# (H) function_declarator -- only data members are fields. Pointer/qualified/template
-# (H) types reduce to a bare type name the resolver can map to a class.
+# Member data declarations use `field_identifier`, not `identifier`, and a member
+# FUNCTION declaration (`void Lock();`) is also a field_declaration but with a
+# function_declarator -- only data members are fields. Pointer/qualified/template
+# types reduce to a bare type name the resolver can map to a class.
 def test_cpp_build_field_type_map_captures_data_members_only() -> None:
     src = """
 class DBImpl {
@@ -51,8 +51,8 @@ class DBImpl {
 };
 """
     fields = CppTypeInferenceEngine().build_field_type_map(_first_class_node(src))
-    # (H) Only class-typed fields are recorded: primitive-typed members (`int
-    # (H) counter_, extra_;`) can never be a method-call receiver, so they are omitted.
+    # Only class-typed fields are recorded: primitive-typed members (`int
+    # counter_, extra_;`) can never be a method-call receiver, so they are omitted.
     assert fields == {
         "mutex_": "Mutex",
         "buffer_": "string",
@@ -61,11 +61,11 @@ class DBImpl {
     assert "Lock" not in fields and "Count" not in fields
 
 
-# (H) A first-party member field receiver: `mutex_.Lock()` must resolve to the field's
-# (H) class method, not fall to a name-only guess. `Alpha` also defines `Lock` and sorts
-# (H) before `Mutex`, so the name-only trie fallback deterministically picks the WRONG
-# (H) `Alpha.Lock` -- only the field's type disambiguates. The method is defined INLINE
-# (H) here, so field decls and the call are in the same AST.
+# A first-party member field receiver: `mutex_.Lock()` must resolve to the field's
+# class method, not fall to a name-only guess. `Alpha` also defines `Lock` and sorts
+# before `Mutex`, so the name-only trie fallback deterministically picks the WRONG
+# `Alpha.Lock` -- only the field's type disambiguates. The method is defined INLINE
+# here, so field decls and the call are in the same AST.
 _INLINE_SOURCE = """
 namespace ns {
 
@@ -108,13 +108,13 @@ def test_cpp_inline_member_field_call_resolves_to_field_type(
     )
 
 
-# (H) The real leveldb shape: the class (with its fields) is declared in a header and
-# (H) the method is defined OUT-OF-LINE in a .cc, so the field declarations live in a
-# (H) different translation unit than the method body. Field types must therefore be
-# (H) captured at class ingestion and looked up by the enclosing class qn.
-# (H) `Alpha.Lock` (sorts before `Mutex.Lock`) and `Buf.clear` are same-named
-# (H) first-party competitors: without field-type inference the name-only trie binds
-# (H) mutex_.Lock() to Alpha.Lock and buffer_.clear() to Buf.clear.
+# The real leveldb shape: the class (with its fields) is declared in a header and
+# the method is defined OUT-OF-LINE in a .cc, so the field declarations live in a
+# different translation unit than the method body. Field types must therefore be
+# captured at class ingestion and looked up by the enclosing class qn.
+# `Alpha.Lock` (sorts before `Mutex.Lock`) and `Buf.clear` are same-named
+# first-party competitors: without field-type inference the name-only trie binds
+# mutex_.Lock() to Alpha.Lock and buffer_.clear() to Buf.clear.
 _HEADER = """
 namespace ns {
 
@@ -171,22 +171,22 @@ def test_cpp_out_of_line_member_field_call_resolves_cross_file(
     run_updater(project, mock_ingestor)
 
     callees = _calls_from(mock_ingestor, ".DB.Run")
-    # (H) FN fix: first-party Mutex field method resolves cross-file.
+    # FN fix: first-party Mutex field method resolves cross-file.
     assert any(c.endswith(".Mutex.Lock") for c in callees), (
         f"mutex_.Lock() should resolve to Mutex.Lock across files, got {callees}"
     )
-    # (H) FP fix: buffer_ is a std::string (external), so buffer_.clear() must NOT be
-    # (H) rebound to any first-party clear method.
+    # FP fix: buffer_ is a std::string (external), so buffer_.clear() must NOT be
+    # rebound to any first-party clear method.
     assert not any(c.endswith(".clear") for c in callees), (
         f"buffer_.clear() on a std::string field must not resolve first-party, "
         f"got {callees}"
     )
 
 
-# (H) Member fields are frequently declared inside preprocessor conditionals
-# (H) (`#ifdef`), which wrap the field_declaration in a preproc_ifdef node. Iterating
-# (H) only the class body's direct children misses them; the collector must recurse
-# (H) through preprocessor blocks while still skipping nested type/function scopes.
+# Member fields are frequently declared inside preprocessor conditionals
+# (`#ifdef`), which wrap the field_declaration in a preproc_ifdef node. Iterating
+# only the class body's direct children misses them; the collector must recurse
+# through preprocessor blocks while still skipping nested type/function scopes.
 def test_cpp_build_field_type_map_captures_fields_in_preproc_blocks() -> None:
     src = """
 class C {
@@ -201,10 +201,10 @@ class C {
     assert fields == {"mutex_": "Mutex", "cond_": "Slice"}, fields
 
 
-# (H) A derived class accesses fields inherited from its base. The receiver map must
-# (H) collect fields along the inheritance chain (derived shadows base). `Alpha.Lock`
-# (H) is a same-named competitor that sorts first, so name-only resolution picks it;
-# (H) only the inherited field type resolves `mutex_.Lock()` to Mutex.Lock.
+# A derived class accesses fields inherited from its base. The receiver map must
+# collect fields along the inheritance chain (derived shadows base). `Alpha.Lock`
+# is a same-named competitor that sorts first, so name-only resolution picks it;
+# only the inherited field type resolves `mutex_.Lock()` to Mutex.Lock.
 _INHERITED_SOURCE = """
 namespace ns {
 

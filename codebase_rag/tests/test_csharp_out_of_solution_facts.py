@@ -129,13 +129,13 @@ public class Consumer
 def test_first_party_assembly_reference_is_not_marked_external(
     temp_repo: Path,
 ) -> None:
-    # (H) Polly-shaped backfire: samples consume the repo's own published
-    # (H) package, so their calls into first-party code resolve to METADATA.
-    # (H) The assembly is still built from this repo, so marking those sites
-    # (H) external would suppress the tree-sitter fallback edges that
-    # (H) correctly bind them to the first-party source (the 3272->3238
-    # (H) regression). Metadata from a first-party-named assembly must emit
-    # (H) neither a positive fact nor an external fact.
+    # Polly-shaped backfire: samples consume the repo's own published
+    # package, so their calls into first-party code resolve to METADATA.
+    # The assembly is still built from this repo, so marking those sites
+    # external would suppress the tree-sitter fallback edges that
+    # correctly bind them to the first-party source (the 3272->3238
+    # regression). Metadata from a first-party-named assembly must emit
+    # neither a positive fact nor an external fact.
     import subprocess
 
     from codebase_rag.parsers.csharp_frontend import (
@@ -167,15 +167,15 @@ def test_first_party_assembly_reference_is_not_marked_external(
 
     sample_externals = [k for k in facts.external_sites if k[0] == "Samples/Sample.cs"]
     assert not any(k[3] == "Go" for k in sample_externals), facts.external_sites
-    # (H) A genuinely external call in the same file stays an external fact.
+    # A genuinely external call in the same file stays an external fact.
     assert any(k[3] == "WriteLine" for k in sample_externals), facts.external_sites
 
 
 def test_roslyn_facts_cover_projects_outside_the_solution(temp_repo: Path) -> None:
-    # (H) Polly-shaped layout: the solution lists only Main, while Samples sits
-    # (H) beside it un-referenced (bench/samples projects). Facts must still
-    # (H) cover Samples' files or every call in them degrades to tree-sitter
-    # (H) heuristics (the #794 recall tail).
+    # Polly-shaped layout: the solution lists only Main, while Samples sits
+    # beside it un-referenced (bench/samples projects). Facts must still
+    # cover Samples' files or every call in them degrades to tree-sitter
+    # heuristics (the #794 recall tail).
     from codebase_rag.parsers.csharp_frontend import (
         csharp_frontend_available,
         run_csharp_frontend,

@@ -1,12 +1,12 @@
-# (H) C++ #include resolution and its downstream effects (issue #652).
-# (H) The naive resolver rooted every include at the project and stripped the
-# (H) extension, so `#include "Directive.h"` from Directive.cpp mapped the stem
-# (H) to the .cpp's OWN module qn (the header's real qn is the disambiguated
-# (H) Directive.h). That poisoned the import map: IMPORTS edges pointed at
-# (H) phantom modules (3.9k on souffle), and resolve_class_name's import-map
-# (H) step returned a MODULE qn when asked for the class `Directive`, so every
-# (H) out-of-line method's calls were attributed to a phantom free-function
-# (H) caller (11k dangling CALLS on souffle).
+# C++ #include resolution and its downstream effects (issue #652).
+# The naive resolver rooted every include at the project and stripped the
+# extension, so `#include "Directive.h"` from Directive.cpp mapped the stem
+# to the .cpp's OWN module qn (the header's real qn is the disambiguated
+# Directive.h). That poisoned the import map: IMPORTS edges pointed at
+# phantom modules (3.9k on souffle), and resolve_class_name's import-map
+# step returned a MODULE qn when asked for the class `Directive`, so every
+# out-of-line method's calls were attributed to a phantom free-function
+# caller (11k dangling CALLS on souffle).
 from __future__ import annotations
 
 from pathlib import Path
@@ -89,8 +89,8 @@ def test_include_imports_edge_targets_real_header_module(
         if str(call.args[0][2]) == cpp_module
     }
     assert header_module in import_targets, import_targets
-    # (H) The self-import phantom (stem resolved to the includer's own qn) must
-    # (H) be gone.
+    # The self-import phantom (stem resolved to the includer's own qn) must
+    # be gone.
     assert cpp_module not in import_targets, import_targets
     assert (cs.NodeLabel.MODULE.value, header_module) in keys
 
@@ -98,8 +98,8 @@ def test_include_imports_edge_targets_real_header_module(
 def test_subdir_include_resolves_via_path_suffix(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) souffle-style layout: includes are written relative to an -I root
-    # (H) ("ast/Directive.h"), not the includer or the repo root.
+    # souffle-style layout: includes are written relative to an -I root
+    # ("ast/Directive.h"), not the includer or the repo root.
     (temp_repo / "src" / "ast").mkdir(parents=True)
     (temp_repo / "src" / "ast" / "Directive.h").write_text(HDR)
     (temp_repo / "src" / "ast" / "Directive.cpp").write_text(

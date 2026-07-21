@@ -42,7 +42,7 @@ def test_file_creation_flow(
 
     event_handler.dispatch(event)
 
-    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    # 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
     assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
@@ -63,7 +63,7 @@ def test_file_modification_flow(
 
     event_handler.dispatch(event)
 
-    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    # 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
     assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
@@ -83,7 +83,7 @@ def test_file_deletion_flow(
 
     event_handler.dispatch(event)
 
-    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    # 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
     assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
@@ -130,11 +130,11 @@ def test_non_code_files_create_file_nodes(
 
     event_handler.dispatch(event)
 
-    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    # 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
     assert mock_updater.ingestor.execute_write.call_count == 3
-    # (H) AST parsing is skipped for non-code files
+    # AST parsing is skipped for non-code files
     mock_updater.factory.definition_processor.process_file.assert_not_called()
-    # (H) But File node creation IS called for all file types
+    # But File node creation IS called for all file types
     mock_updater.factory.structure_processor.process_generic_file.assert_called_once_with(
         non_code_file, "document.md"
     )

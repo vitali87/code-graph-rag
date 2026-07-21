@@ -17,15 +17,15 @@ def _make_crate(root: Path, body: str) -> None:
     (root / "lib.rs").write_text(body, encoding="utf-8")
 
 
-# (H) Every fixture defines the called method name on more than one type (an `Aaa`
-# (H) decoy sorting before the real type) so the name-only trie fallback is ambiguous
-# (H) and would pick the wrong `Aaa` alphabetically: only real receiver-type inference
-# (H) produces the correct edge. Mirrors mini-redis, where `apply`/`run`/`new`/
-# (H) `into_frame` live on many command types.
+# Every fixture defines the called method name on more than one type (an `Aaa`
+# decoy sorting before the real type) so the name-only trie fallback is ambiguous
+# and would pick the wrong `Aaa` alphabetically: only real receiver-type inference
+# produces the correct edge. Mirrors mini-redis, where `apply`/`run`/`new`/
+# `into_frame` live on many command types.
 
 
 def test_self_receiver_dispatch(tmp_path: Path) -> None:
-    # (H) `self.accept()` inside a method must resolve to the impl target's method.
+    # `self.accept()` inside a method must resolve to the impl target's method.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -44,7 +44,7 @@ def test_self_receiver_dispatch(tmp_path: Path) -> None:
 
 
 def test_struct_literal_binding_dispatch(tmp_path: Path) -> None:
-    # (H) `let s = Listener {}; s.run()` binds s to Listener via the struct literal.
+    # `let s = Listener {}; s.run()` binds s to Listener via the struct literal.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -66,7 +66,7 @@ def test_struct_literal_binding_dispatch(tmp_path: Path) -> None:
 
 
 def test_field_type_receiver_dispatch(tmp_path: Path) -> None:
-    # (H) `self.shutdown.is_shutdown()` resolves through the struct field's type.
+    # `self.shutdown.is_shutdown()` resolves through the struct field's type.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -88,11 +88,11 @@ def test_field_type_receiver_dispatch(tmp_path: Path) -> None:
 
 
 def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
-    # (H) `let state = self.shared.state.lock().unwrap()` inside impl Db: type `state`
-    # (H) by hopping self -> Db, field shared: Arc<Shared> -> Shared, field
-    # (H) state: Mutex<State> -> State (deref through Arc/Mutex), then lock()/unwrap()
-    # (H) as guard-accessor identities -> State. `state.next_expiration()` must then
-    # (H) dispatch to State.next_expiration (mini-redis Db.set).
+    # `let state = self.shared.state.lock().unwrap()` inside impl Db: type `state`
+    # by hopping self -> Db, field shared: Arc<Shared> -> Shared, field
+    # state: Mutex<State> -> State (deref through Arc/Mutex), then lock()/unwrap()
+    # as guard-accessor identities -> State. `state.next_expiration()` must then
+    # dispatch to State.next_expiration (mini-redis Db.set).
     _make_crate(
         tmp_path,
         "use std::sync::{Arc, Mutex};\n"
@@ -115,11 +115,11 @@ def test_guard_deref_field_hop_binding_dispatch(tmp_path: Path) -> None:
 
 
 def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
-    # (H) A Mutex/RwLock does NOT deref-coerce: a bare `let m: Mutex<Inner>` receiver
-    # (H) can only reach Inner via a lock/borrow hop, so `m` must stay typed as the
-    # (H) wrapper -- NOT erased to Inner (which would mis-resolve a direct `m.work()`
-    # (H) to Inner.work). `work` is defined on two types so the trie can't mask a
-    # (H) precise mis-resolution.
+    # A Mutex/RwLock does NOT deref-coerce: a bare `let m: Mutex<Inner>` receiver
+    # can only reach Inner via a lock/borrow hop, so `m` must stay typed as the
+    # wrapper -- NOT erased to Inner (which would mis-resolve a direct `m.work()`
+    # to Inner.work). `work` is defined on two types so the trie can't mask a
+    # precise mis-resolution.
     _make_crate(
         tmp_path,
         "use std::sync::Mutex;\n"
@@ -132,14 +132,14 @@ def test_guard_wrapper_local_not_erased_to_inner(tmp_path: Path) -> None:
         "}\n",
     )
     calls = _calls(tmp_path)
-    # (H) m is a Mutex receiver; a direct m.work() must NOT bind to Inner.work
+    # m is a Mutex receiver; a direct m.work() must NOT bind to Inner.work
     assert ("crate.lib.go", "crate.lib.Inner.work") not in calls
 
 
 def test_guard_field_direct_call_not_erased_to_inner(tmp_path: Path) -> None:
-    # (H) A guard-wrapped FIELD keeps its wrapper type in the field map: a DIRECT
-    # (H) `self.state.work()` (no lock) must NOT resolve to Inner.work. The inner is
-    # (H) applied only when a lock/borrow accessor intervenes (see the field-hop test).
+    # A guard-wrapped FIELD keeps its wrapper type in the field map: a DIRECT
+    # `self.state.work()` (no lock) must NOT resolve to Inner.work. The inner is
+    # applied only when a lock/borrow accessor intervenes (see the field-hop test).
     _make_crate(
         tmp_path,
         "use std::sync::Mutex;\n"
@@ -159,11 +159,11 @@ def test_guard_field_direct_call_not_erased_to_inner(tmp_path: Path) -> None:
 
 
 def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
-    # (H) A closure captures a local of its enclosing scope: `state` is typed in
-    # (H) Db.set (guard-deref field hop) but `state.next_expiration()` lives inside
-    # (H) `expire.map(|_| state.next_expiration())`. The closure's own var map only
-    # (H) sees the closure body, so the captured `state` is untyped unless the closure
-    # (H) inherits the enclosing scope's locals. Mirrors mini-redis Db.set.
+    # A closure captures a local of its enclosing scope: `state` is typed in
+    # Db.set (guard-deref field hop) but `state.next_expiration()` lives inside
+    # `expire.map(|_| state.next_expiration())`. The closure's own var map only
+    # sees the closure body, so the captured `state` is untyped unless the closure
+    # inherits the enclosing scope's locals. Mirrors mini-redis Db.set.
     _make_crate(
         tmp_path,
         "use std::sync::{Arc, Mutex};\n"
@@ -189,12 +189,12 @@ def test_closure_captured_local_receiver_dispatch(tmp_path: Path) -> None:
 
 
 def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
-    # (H) A NAMED nested `fn inner()` gets its own caller node and must OWN its body's
-    # (H) calls: `inner`'s `w.work()` belongs to inner only, NOT also to the enclosing
-    # (H) `outer` (a spurious duplicate edge). Anonymous closures still bubble; named
-    # (H) nested fns do not. The caller qn is the one the definition pass REGISTERED
-    # (H) (crate.lib.inner is the actual Function node); the old crate.lib.outer.inner
-    # (H) attribution was a phantom FROM endpoint the database dropped (issue #652).
+    # A NAMED nested `fn inner()` gets its own caller node and must OWN its body's
+    # calls: `inner`'s `w.work()` belongs to inner only, NOT also to the enclosing
+    # `outer` (a spurious duplicate edge). Anonymous closures still bubble; named
+    # nested fns do not. The caller qn is the one the definition pass REGISTERED
+    # (crate.lib.inner is the actual Function node); the old crate.lib.outer.inner
+    # attribution was a phantom FROM endpoint the database dropped (issue #652).
     _make_crate(
         tmp_path,
         "pub struct Worker {}\n"
@@ -210,8 +210,8 @@ def test_named_nested_fn_calls_not_bubbled_to_enclosing(tmp_path: Path) -> None:
 
 
 def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
-    # (H) `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
-    # (H) associated function's return type (Command).
+    # `let cmd = Command::from_frame(f); cmd.apply()` types cmd from the
+    # associated function's return type (Command).
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -234,8 +234,8 @@ def test_let_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
 
 
 def test_let_assoc_call_result_wrapper_return_type(tmp_path: Path) -> None:
-    # (H) A Result<Command> return type is stripped to Command so the unwrapped
-    # (H) local still dispatches.
+    # A Result<Command> return type is stripped to Command so the unwrapped
+    # local still dispatches.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -258,7 +258,7 @@ def test_let_assoc_call_result_wrapper_return_type(tmp_path: Path) -> None:
 
 
 def test_enum_match_binding_dispatch(tmp_path: Path) -> None:
-    # (H) `Get(cmd) => cmd.apply()` binds cmd to the variant's payload type (Get).
+    # `Get(cmd) => cmd.apply()` binds cmd to the variant's payload type (Get).
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -281,15 +281,15 @@ def test_enum_match_binding_dispatch(tmp_path: Path) -> None:
     )
     calls = _calls(tmp_path)
     assert ("crate.lib.Command.apply", "crate.lib.Get.apply") in calls
-    # (H) must not mis-resolve to the enclosing type's same-named method
+    # must not mis-resolve to the enclosing type's same-named method
     assert ("crate.lib.Command.apply", "crate.lib.Command.apply") not in calls
 
 
 def test_enum_match_multiarm_binding_shadowing(tmp_path: Path) -> None:
-    # (H) Every arm reuses the binding name `cmd` for a DIFFERENT variant type. A flat
-    # (H) var_types map keeps only the last arm's type, so all `cmd.apply()` collapse
-    # (H) to the last variant. Each arm's `cmd.apply()` must dispatch to ITS OWN
-    # (H) variant's method (mini-redis Command.apply dispatch).
+    # Every arm reuses the binding name `cmd` for a DIFFERENT variant type. A flat
+    # var_types map keeps only the last arm's type, so all `cmd.apply()` collapse
+    # to the last variant. Each arm's `cmd.apply()` must dispatch to ITS OWN
+    # variant's method (mini-redis Command.apply dispatch).
     _make_crate(
         tmp_path,
         "pub struct Get {}\n"
@@ -317,10 +317,10 @@ def test_enum_match_multiarm_binding_shadowing(tmp_path: Path) -> None:
 
 
 def test_nested_match_binding_not_leaked_to_outer_arm(tmp_path: Path) -> None:
-    # (H) A nested `match inner { Foo(x) => ... }` rebinds `x` only within its own arm.
-    # (H) The outer arm's `x.tag()` (x = the Bar param) must stay Bar.tag -- the nested
-    # (H) Foo binding must NOT be scoped to the whole outer arm (which would mis-overlay
-    # (H) the outer call to Foo.tag).
+    # A nested `match inner { Foo(x) => ... }` rebinds `x` only within its own arm.
+    # The outer arm's `x.tag()` (x = the Bar param) must stay Bar.tag -- the nested
+    # Foo binding must NOT be scoped to the whole outer arm (which would mis-overlay
+    # the outer call to Foo.tag).
     _make_crate(
         tmp_path,
         "pub struct Bar {}\n"
@@ -344,14 +344,14 @@ def test_nested_match_binding_not_leaked_to_outer_arm(tmp_path: Path) -> None:
         "}\n",
     )
     calls = _calls(tmp_path)
-    # (H) nested arm's x:Foo resolves to Foo.tag; outer arm's x (param Bar) to Bar.tag
+    # nested arm's x:Foo resolves to Foo.tag; outer arm's x (param Bar) to Bar.tag
     assert ("crate.lib.E.run", "crate.lib.Foo.tag") in calls
     assert ("crate.lib.E.run", "crate.lib.Bar.tag") in calls
 
 
 def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
-    # (H) `Ping::new(msg).into_frame()` resolves into_frame on the type Ping::new
-    # (H) returns (Ping).
+    # `Ping::new(msg).into_frame()` resolves into_frame on the type Ping::new
+    # returns (Ping).
     _make_crate(
         tmp_path,
         "pub struct Frame {}\n"
@@ -377,11 +377,11 @@ def test_assoc_fn_chain_dispatch(tmp_path: Path) -> None:
 
 
 def test_imported_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
-    # (H) `use crate::cmd::Command; let cmd = Command::from_frame(f); cmd.apply()`:
-    # (H) the type is IMPORTED, so its import target is a raw `::`-path, not a registry
-    # (H) qn. The call-return binding must resolve it to the real class node
-    # (H) (crate.cmd.Command) to look up from_frame's recorded return type -- else it
-    # (H) falls back to the ambiguous trie path.
+    # `use crate::cmd::Command; let cmd = Command::from_frame(f); cmd.apply()`:
+    # the type is IMPORTED, so its import target is a raw `::`-path, not a registry
+    # qn. The call-return binding must resolve it to the real class node
+    # (crate.cmd.Command) to look up from_frame's recorded return type -- else it
+    # falls back to the ambiguous trie path.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib.rs").write_text("pub mod cmd;\npub mod app;\n", encoding="utf-8")
     (tmp_path / "cmd.rs").write_text(
@@ -410,9 +410,9 @@ def test_imported_assoc_call_return_type_dispatch(tmp_path: Path) -> None:
 
 
 def test_reference_return_type_chained_dispatch(tmp_path: Path) -> None:
-    # (H) A method returning a reference (`fn frame(&self) -> &Frame`) must still
-    # (H) yield the referent type so a chained call (`self.frame().push_int()`)
-    # (H) resolves to Frame.push_int, not the ambiguous trie pick.
+    # A method returning a reference (`fn frame(&self) -> &Frame`) must still
+    # yield the referent type so a chained call (`self.frame().push_int()`)
+    # resolves to Frame.push_int, not the ambiguous trie pick.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"
@@ -435,11 +435,11 @@ def test_reference_return_type_chained_dispatch(tmp_path: Path) -> None:
 
 
 def test_imported_type_disambiguated_by_path(tmp_path: Path) -> None:
-    # (H) Two `Command` types in different modules whose `mk()` returns DIFFERENT
-    # (H) types (cmd.Command -> Real, other.Command -> Fake). `use crate::cmd::Command`
-    # (H) must resolve the call-return base to crate.cmd.Command so `x.run()` lands on
-    # (H) Real.run. A simple-name-only match would pick the alphabetically-first
-    # (H) crate.aaa.Command, type x as Fake, and mis-resolve to Fake.run.
+    # Two `Command` types in different modules whose `mk()` returns DIFFERENT
+    # types (cmd.Command -> Real, other.Command -> Fake). `use crate::cmd::Command`
+    # must resolve the call-return base to crate.cmd.Command so `x.run()` lands on
+    # Real.run. A simple-name-only match would pick the alphabetically-first
+    # crate.aaa.Command, type x as Fake, and mis-resolve to Fake.run.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib.rs").write_text(
         "pub mod aaa;\npub mod cmd;\npub mod types;\npub mod app;\n",
@@ -486,10 +486,10 @@ def test_imported_type_disambiguated_by_path(tmp_path: Path) -> None:
 
 
 def test_fully_qualified_inline_assoc_call_dispatch(tmp_path: Path) -> None:
-    # (H) A fully-qualified inline associated call with NO `use` import
-    # (H) (`let x = crate::cmd::Command::mk()`) must keep the qualified path so the
-    # (H) return-type base resolves to crate.cmd.Command (mk -> Real), not the
-    # (H) alphabetically-first crate.aaa.Command (mk -> Fake).
+    # A fully-qualified inline associated call with NO `use` import
+    # (`let x = crate::cmd::Command::mk()`) must keep the qualified path so the
+    # return-type base resolves to crate.cmd.Command (mk -> Real), not the
+    # alphabetically-first crate.aaa.Command (mk -> Fake).
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib.rs").write_text(
         "pub mod aaa;\npub mod cmd;\npub mod types;\npub mod app;\n",
@@ -535,12 +535,12 @@ def test_fully_qualified_inline_assoc_call_dispatch(tmp_path: Path) -> None:
 
 
 def test_macro_buried_receiver_call_dispatch(tmp_path: Path) -> None:
-    # (H) A `receiver.method()` call buried inside a macro token stream
-    # (H) (`sel! { res = server.run() => {} }`, like tokio::select!) loses its
-    # (H) field_expression structure -- the receiver `server` becomes a loose token.
-    # (H) The reconstructed call must be `server.run` so it dispatches to the local's
-    # (H) type (Listener.run), NOT the same-module free fn `run` (a false self-edge
-    # (H) that severed the whole server/command cluster in mini-redis).
+    # A `receiver.method()` call buried inside a macro token stream
+    # (`sel! { res = server.run() => {} }`, like tokio::select!) loses its
+    # field_expression structure -- the receiver `server` becomes a loose token.
+    # The reconstructed call must be `server.run` so it dispatches to the local's
+    # type (Listener.run), NOT the same-module free fn `run` (a false self-edge
+    # that severed the whole server/command cluster in mini-redis).
     _make_crate(
         tmp_path,
         "pub struct Listener {}\n"
@@ -556,13 +556,13 @@ def test_macro_buried_receiver_call_dispatch(tmp_path: Path) -> None:
     )
     calls = _calls(tmp_path)
     assert ("crate.lib.run", "crate.lib.Listener.run") in calls
-    # (H) must not mis-resolve to the same-module free function (self-edge)
+    # must not mis-resolve to the same-module free function (self-edge)
     assert ("crate.lib.run", "crate.lib.run") not in calls
 
 
 def test_macro_buried_field_hop_call_dispatch(tmp_path: Path) -> None:
-    # (H) A field-hop receiver buried in a macro (`self.shutdown.recv()`) must
-    # (H) reconstruct the full chain so it hops self -> field type -> method.
+    # A field-hop receiver buried in a macro (`self.shutdown.recv()`) must
+    # reconstruct the full chain so it hops self -> field type -> method.
     _make_crate(
         tmp_path,
         "pub struct Aaa {}\n"

@@ -1,9 +1,9 @@
-# (H) A platform-conditional import with a local fallback definition (click's
-# (H) `if WIN: from ._winconsole import _get_windows_console_stream ... else:
-# (H) def _get_windows_console_stream(...)`) is statically undecidable: the call
-# (H) resolves only to the imported target, so the mutually-exclusive local
-# (H) fallback def looks dead. Like Go build variants, fan the call out to BOTH --
-# (H) exactly one exists at runtime, and either may be it.
+# A platform-conditional import with a local fallback definition (click's
+# `if WIN: from ._winconsole import _get_windows_console_stream ... else:
+# def _get_windows_console_stream(...)`) is statically undecidable: the call
+# resolves only to the imported target, so the mutually-exclusive local
+# fallback def looks dead. Like Go build variants, fan the call out to BOTH --
+# exactly one exists at runtime, and either may be it.
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,10 +49,10 @@ def test_conditional_import_local_fallback_gets_call_edge(
 def test_unconditional_import_shadowing_gets_no_fanout(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) An UNCONDITIONAL import that shadows an earlier local def is plain
-    # (H) shadowing, not a platform variant: the local def is genuinely dead and
-    # (H) must NOT receive a fan-out edge. The fan-out is gated to names bound by
-    # (H) a CONDITIONAL (if/try-nested) import.
+    # An UNCONDITIONAL import that shadows an earlier local def is plain
+    # shadowing, not a platform variant: the local def is genuinely dead and
+    # must NOT receive a fan-out edge. The fan-out is gated to names bound by
+    # a CONDITIONAL (if/try-nested) import.
     root = temp_repo / "pyshad"
     root.mkdir(parents=True)
     (root / "other.py").write_text(

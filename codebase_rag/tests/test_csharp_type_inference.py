@@ -1,6 +1,6 @@
-# (H) C# Phase 3: typed member-call resolution -- a call on a receiver whose
-# (H) type is known (local from `new`, parameter, field, `this`) binds to that
-# (H) type's method, including inherited methods and overload arity.
+# C# Phase 3: typed member-call resolution -- a call on a receiver whose
+# type is known (local from `new`, parameter, field, `this`) binds to that
+# type's method, including inherited methods and overload arity.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -72,7 +72,7 @@ public class App { public void Run() { var d = new Derived(); d.Shared(); } }
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) Shared is declared on Base; the receiver typed Derived must reach it.
+    # Shared is declared on Base; the receiver typed Derived must reach it.
     assert any(t.endswith("N.Base.Shared") for t in _call_targets(mock_ingestor)), (
         _call_targets(mock_ingestor)
     )
@@ -117,8 +117,8 @@ public class App {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) `this._w.Area()` must resolve through the typed field to Widget, not the
-    # (H) decoy Other.Area (a bare-name fallback could not disambiguate the two).
+    # `this._w.Area()` must resolve through the typed field to Widget, not the
+    # decoy Other.Area (a bare-name fallback could not disambiguate the two).
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
     assert not any(t.endswith("N.Other.Area") for t in targets), targets
 
@@ -144,8 +144,8 @@ public class App {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) The outer `x` is a Widget; a lambda-local `x` of another type must not
-    # (H) clobber it in the outer method's type map.
+    # The outer `x` is a Widget; a lambda-local `x` of another type must not
+    # clobber it in the outer method's type map.
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
 
 
@@ -170,8 +170,8 @@ public class App {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) The conflicting `x` (Widget vs Gadget in sibling blocks) is dropped from
-    # (H) the type map without disturbing an unrelated, unambiguously-typed `y`.
+    # The conflicting `x` (Widget vs Gadget in sibling blocks) is dropped from
+    # the type map without disturbing an unrelated, unambiguously-typed `y`.
     assert any(t.endswith("N.Widget.Alpha") for t in _call_targets(mock_ingestor)), (
         _call_targets(mock_ingestor)
     )
@@ -192,9 +192,9 @@ public class App { public void Run(Widget? w) { w.Area(); } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) A nullable type `Widget?` must bind to Widget (the `?` is not part of the
-    # (H) type name); the decoy Other.Area proves it is the typed path, not a
-    # (H) bare-name fallback.
+    # A nullable type `Widget?` must bind to Widget (the `?` is not part of the
+    # type name); the decoy Other.Area proves it is the typed path, not a
+    # bare-name fallback.
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
     assert not any(t.endswith("N.Other.Area") for t in targets), targets
 
@@ -219,8 +219,8 @@ public class App { public void Run() { var d = new Derived(); d.Foo(1, 2); } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) d.Foo(1, 2) must reach the inherited two-arg overload, not the derived
-    # (H) one-arg Foo picked up as a lone same-name fallback.
+    # d.Foo(1, 2) must reach the inherited two-arg overload, not the derived
+    # one-arg Foo picked up as a lone same-name fallback.
     assert any(t.endswith("N.Base.Foo(int, int)") for t in targets), targets
     assert not any(t.endswith("N.Derived.Foo(int)") for t in targets), targets
 
@@ -247,8 +247,8 @@ public class Derived : Base { public void Run() { _w.Area(); } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) `_w` is inherited from Base (a different file); the receiver must still
-    # (H) type to Widget, not the decoy Other.Area.
+    # `_w` is inherited from Base (a different file); the receiver must still
+    # type to Widget, not the decoy Other.Area.
     assert any(t.endswith("N.Widget.Area") for t in targets), targets
     assert not any(t.endswith("N.Other.Area") for t in targets), targets
 
@@ -266,7 +266,7 @@ public class App { public void Run() { Helpers.Log(); } }
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) `Helpers.Log()` names the type directly (a static call), not a variable.
+    # `Helpers.Log()` names the type directly (a static call), not a variable.
     assert any(t.endswith("N.Helpers.Log") for t in _call_targets(mock_ingestor)), (
         _call_targets(mock_ingestor)
     )
@@ -289,7 +289,7 @@ public class App { public void Run() { var c = new Calc(); c.Add(1, 2); } }
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = _call_targets(mock_ingestor)
-    # (H) c.Add(1, 2) binds the two-argument overload, not the one-argument one.
+    # c.Add(1, 2) binds the two-argument overload, not the one-argument one.
     assert any(t.endswith("N.Calc.Add(int, int)") for t in targets), targets
     assert not any(t.endswith("N.Calc.Add(int)") for t in targets), targets
 
@@ -297,11 +297,11 @@ public class App { public void Run() { var c = new Calc(); c.Add(1, 2); } }
 def test_cast_expression_receiver_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A cast receiver `((ReloadableComponent)s!).Reload()` (Polly's
-    # (H) CancellationToken.Register callback pattern) hands the resolver a
-    # (H) parenthesized_expression wrapping a cast_expression; without
-    # (H) unwrapping to the cast TYPE the receiver is untypable, no CALLS edge
-    # (H) is emitted, and the callback target is flagged dead.
+    # A cast receiver `((ReloadableComponent)s!).Reload()` (Polly's
+    # CancellationToken.Register callback pattern) hands the resolver a
+    # parenthesized_expression wrapping a cast_expression; without
+    # unwrapping to the cast TYPE the receiver is untypable, no CALLS edge
+    # is emitted, and the callback target is flagged dead.
     (csharp_project / "C.cs").write_text(
         """
 namespace N;
@@ -324,8 +324,8 @@ public class Component {
 def test_object_creation_receiver_resolves_member_call(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `new Builder().Add()`: the receiver is an object_creation whose TYPE
-    # (H) is the receiver's class by construction.
+    # `new Builder().Add()`: the receiver is an object_creation whose TYPE
+    # is the receiver's class by construction.
     (csharp_project / "OC.cs").write_text(
         """
 namespace N;
@@ -348,10 +348,10 @@ public class App {
 def test_chained_return_receiver_resolves_member_call(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Policy.Handle<T>().Wrap(1)`: the receiver of Wrap is an INVOCATION;
-    # (H) its return type (recorded at ingestion) types the next hop. This is
-    # (H) Polly's whole fluent surface (Build/CircuitBreaker/Or chains, the
-    # (H) dominant recall gap).
+    # `Policy.Handle<T>().Wrap(1)`: the receiver of Wrap is an INVOCATION;
+    # its return type (recorded at ingestion) types the next hop. This is
+    # Polly's whole fluent surface (Build/CircuitBreaker/Or chains, the
+    # dominant recall gap).
     (csharp_project / "CH.cs").write_text(
         """
 namespace N;
@@ -374,11 +374,11 @@ public class App {
 def test_chained_call_disambiguates_generic_and_plain_builder(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Polly's dual builders: `Builder` and `Builder<TResult>` share a
-    # (H) simple name, so the receiver-type sweep is ambiguous and returns
-    # (H) None, killing the second hop of every fluent chain (`.Build()`, 44
-    # (H) missing edges). The class's declared GENERIC ARITY disambiguates:
-    # (H) a return type written `Builder` names the arity-0 class.
+    # Polly's dual builders: `Builder` and `Builder<TResult>` share a
+    # simple name, so the receiver-type sweep is ambiguous and returns
+    # None, killing the second hop of every fluent chain (`.Build()`, 44
+    # missing edges). The class's declared GENERIC ARITY disambiguates:
+    # a return type written `Builder` names the arity-0 class.
     (csharp_project / "Core.cs").write_text(
         """
 namespace N;
@@ -423,10 +423,10 @@ public class App {
 def test_cast_to_generic_twin_binds_the_generic_member(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `((Opt<int>)o).M()` writes arity 1: with twins `Opt` and `Opt<T>`
-    # (H) registered, the cast receiver must resolve the GENERIC twin and bind
-    # (H) its member (the instance-path cast branch dropped the arity that
-    # (H) object-creation and extension paths already carry).
+    # `((Opt<int>)o).M()` writes arity 1: with twins `Opt` and `Opt<T>`
+    # registered, the cast receiver must resolve the GENERIC twin and bind
+    # its member (the instance-path cast branch dropped the arity that
+    # object-creation and extension paths already carry).
     (csharp_project / "CastTwinA.cs").write_text(
         "namespace N;\npublic class Opt {\n    public void M() { }\n}\n",
         encoding="utf-8",

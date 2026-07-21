@@ -1,9 +1,9 @@
-# (H) A Go function used as a first-class VALUE -- returned bare (`return usageFn`),
-# (H) or placed in a composite literal (a func map `map[string]any{"rpad": rpad}` or a
-# (H) func slice `[]Handler{a}`) -- is invoked later by whoever receives it, never by a
-# (H) call the graph can see. Without a reference edge the function looks dead
-# (H) (cobra's defaultUsageFunc / rpad / trimRightSpace). cgr must reference such a
-# (H) function from the enclosing scope so it stays reachable.
+# A Go function used as a first-class VALUE -- returned bare (`return usageFn`),
+# or placed in a composite literal (a func map `map[string]any{"rpad": rpad}` or a
+# func slice `[]Handler{a}`) -- is invoked later by whoever receives it, never by a
+# call the graph can see. Without a reference edge the function looks dead
+# (cobra's defaultUsageFunc / rpad / trimRightSpace). cgr must reference such a
+# function from the enclosing scope so it stays reachable.
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,9 +74,9 @@ def test_func_slice_literal_value_is_referenced(
 def test_module_var_assigned_function_value_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) cobra's `var preExecHookFn = preExecHook`: a package-level var bound to a
-    # (H) bare function value, invoked later through the var. The assignment
-    # (H) references the function even in a file with no calls of its own.
+    # cobra's `var preExecHookFn = preExecHook`: a package-level var bound to a
+    # bare function value, invoked later through the var. The assignment
+    # references the function even in a file with no calls of its own.
     _project(
         temp_repo,
         "func preExecHook() {}\nvar preExecHookFn = preExecHook\n",
@@ -91,8 +91,8 @@ def test_module_var_assigned_function_value_is_referenced(
 def test_local_short_var_assigned_function_value_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `hook := preExecHook` inside a function binds the function to a local,
-    # (H) then hands it onward; the bind references it (mirrors the module var).
+    # `hook := preExecHook` inside a function binds the function to a local,
+    # then hands it onward; the bind references it (mirrors the module var).
     _project(
         temp_repo,
         "func preExecHook() {}\nfunc use() interface{} {\n\thook := preExecHook\n\treturn hook\n}\n",

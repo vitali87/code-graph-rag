@@ -72,8 +72,8 @@ class TestFileEditorInit:
         assert file_editor.dmp is not None
 
     def test_init_loads_parsers(self, file_editor: FileEditor) -> None:
-        # (H) parsers is a lazy Mapping view since #68; membership loads the
-        # (H) grammar on demand
+        # parsers is a lazy Mapping view since #68; membership loads the
+        # grammar on demand
         assert file_editor.parsers is not None
         assert isinstance(file_editor.parsers, Mapping)
         assert cs.SupportedLanguage.PYTHON in file_editor.parsers

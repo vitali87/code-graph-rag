@@ -1,9 +1,9 @@
-# (H) Cross-project (monorepo) eval. Every other eval runs on a single top-level
-# (H) package, so none checks that cgr resolves references that cross top-level
-# (H) package boundaries -- the monorepo case cgr is built for. This extracts
-# (H) cgr's CALLS and IMPORTS edges whose endpoints live in different top-level
-# (H) packages and grades them, on synthetic multi-package fixtures whose cross
-# (H) edges are known by construction.
+# Cross-project (monorepo) eval. Every other eval runs on a single top-level
+# package, so none checks that cgr resolves references that cross top-level
+# package boundaries -- the monorepo case cgr is built for. This extracts
+# cgr's CALLS and IMPORTS edges whose endpoints live in different top-level
+# packages and grades them, on synthetic multi-package fixtures whose cross
+# edges are known by construction.
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -22,8 +22,8 @@ Edge = tuple[str, str]
 
 
 def _top_package(qn: str, project: str) -> str | None:
-    # (H) qn is project.<top-package>.<rest>; the top-level package is the segment
-    # (H) right after the project root. Bare project-level modules have none.
+    # qn is project.<top-package>.<rest>; the top-level package is the segment
+    # right after the project root. Bare project-level modules have none.
     parts = qn.split(cs.SEPARATOR_DOT)
     if len(parts) >= 3 and parts[0] == project:
         return parts[1]

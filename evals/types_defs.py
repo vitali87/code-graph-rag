@@ -32,10 +32,10 @@ class GraphData(NamedTuple):
 
 
 class GraphState(NamedTuple):
-    # (H) A flat, comparable snapshot of a whole captured graph: node identities
-    # (H) (label, unique-id) and directed edges (from_label, from_id, rel,
-    # (H) to_label, to_id). Used to diff an incremental update against a clean
-    # (H) re-index, where the clean index is the oracle.
+    # A flat, comparable snapshot of a whole captured graph: node identities
+    # (label, unique-id) and directed edges (from_label, from_id, rel,
+    # to_label, to_id). Used to diff an incremental update against a clean
+    # re-index, where the clean index is the oracle.
     nodes: frozenset[tuple[str, str]]
     edges: frozenset[tuple[str, str, str, str, str]]
 
@@ -75,8 +75,8 @@ class OracleRecord(TypedDict):
     file: str
     line: int
     name: str
-    # (H) Optional so oracles that have not yet adopted span emission keep working
-    # (H) (records_to_nodes falls back to the start line).
+    # Optional so oracles that have not yet adopted span emission keep working
+    # (records_to_nodes falls back to the start line).
     end_line: NotRequired[int]
 
 
@@ -107,6 +107,6 @@ class OraclePayload(TypedDict):
     nodes: list[OracleRecord]
     edges: list[OracleEdge]
     name_edges: list[OracleNameEdge]
-    # (H) Optional: only the call-aware oracles (Go multi-language retrieval) emit
-    # (H) call sites; structure-only oracles omit this key.
+    # Optional: only the call-aware oracles (Go multi-language retrieval) emit
+    # call sites; structure-only oracles omit this key.
     calls: NotRequired[list[OracleCall]]

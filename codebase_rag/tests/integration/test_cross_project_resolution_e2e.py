@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-# (H) issue #711: two projects sharing one database. `collide` defines the bare
-# (H) names `len` / `getenv`; `caller` makes unqualified calls on a tainted value.
-# (H) Indexing `caller` after `collide` (no --clean) rehydrates the resolver trie
-# (H) from the whole DB, so the bare-name fallback must NOT bind into `collide`.
+# issue #711: two projects sharing one database. `collide` defines the bare
+# names `len` / `getenv`; `caller` makes unqualified calls on a tainted value.
+# Indexing `caller` after `collide` (no --clean) rehydrates the resolver trie
+# from the whole DB, so the bare-name fallback must NOT bind into `collide`.
 COLLIDE_CODE = """\
 def len(x):
     return 0
@@ -72,8 +72,8 @@ def test_bare_name_calls_do_not_leak_into_another_project(
     caller.mkdir()
     (caller / "app.py").write_text(CALLER_CODE, encoding="utf-8")
 
-    # (H) Index the collider first so its symbols are already in the DB when the
-    # (H) caller's run rehydrates the registry from the graph.
+    # Index the collider first so its symbols are already in the DB when the
+    # caller's run rehydrates the registry from the graph.
     _index(memgraph_ingestor, collide, io=True)
     _index(memgraph_ingestor, caller, io=True)
 

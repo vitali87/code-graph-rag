@@ -16,9 +16,9 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# (H) `struct WIDGET_API Widget` is a macro tree-sitter cannot expand: it loses
-# (H) the Widget class. The libclang frontend recovers it. The wiring decides
-# (H) which path runs, gated on CPP_FRONTEND + a discoverable compile_commands.
+# `struct WIDGET_API Widget` is a macro tree-sitter cannot expand: it loses
+# the Widget class. The libclang frontend recovers it. The wiring decides
+# which path runs, gated on CPP_FRONTEND + a discoverable compile_commands.
 _HEADER = """
 #define WIDGET_API
 
@@ -66,8 +66,8 @@ def test_default_treesitter_does_not_recover_macro_class(temp_repo: Path) -> Non
     run_updater(root, ingestor)
     classes = get_qualified_names(get_nodes(ingestor, "Class"))
 
-    # (H) No regression: with the default flag, indexing is the tree-sitter path,
-    # (H) which mis-parses the macro and never produces ui.Widget.
+    # No regression: with the default flag, indexing is the tree-sitter path,
+    # which mis-parses the macro and never produces ui.Widget.
     assert not any(q.endswith(".ui.Widget") for q in classes), (
         f"default path should not engage the frontend: {classes}"
     )
@@ -87,15 +87,15 @@ def test_libclang_frontend_recovers_macro_class(
     classes = get_qualified_names(get_nodes(ingestor, "Class"))
     methods = get_qualified_names(get_nodes(ingestor, "Method"))
 
-    # (H) The frontend recovers the real class and binds the out-of-line method.
+    # The frontend recovers the real class and binds the out-of-line method.
     assert any(q.endswith(".ui.Widget") for q in classes), (
         f"frontend did not recover Widget: {classes}"
     )
     assert any(q.endswith(".ui.Widget.show") for q in methods), (
         f"frontend did not bind Widget::show: {methods}"
     )
-    # (H) The covered file was NOT also processed by tree-sitter (no double-parse
-    # (H) producing the macro-mangled class).
+    # The covered file was NOT also processed by tree-sitter (no double-parse
+    # producing the macro-mangled class).
     assert not any(q.endswith(".ui.WIDGET_API") for q in classes), (
         f"tree-sitter should have skipped the covered file: {classes}"
     )

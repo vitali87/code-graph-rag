@@ -1,9 +1,9 @@
-# (H) Dart receiver typing (follow-up to PR #804): a member call on a typed
-# (H) receiver (`g.greet()` where g is a declared local, a construction-bound
-# (H) local, a parameter, or a class field) resolves through the generic
-# (H) local-type machinery once Dart supplies a variable-type map, exactly
-# (H) like Java/C#/C++/Go. Construction typing keys off the UpperCamelCase
-# (H) base identifier of `Base(...)` / `Base.named(...)` initializers.
+# Dart receiver typing (follow-up to PR #804): a member call on a typed
+# receiver (`g.greet()` where g is a declared local, a construction-bound
+# local, a parameter, or a class field) resolves through the generic
+# local-type machinery once Dart supplies a variable-type map, exactly
+# like Java/C#/C++/Go. Construction typing keys off the UpperCamelCase
+# base identifier of `Base(...)` / `Base.named(...)` initializers.
 from __future__ import annotations
 
 from pathlib import Path
@@ -226,8 +226,8 @@ def _has(edges: set[tuple[str, str]], src: str, dst: str) -> bool:
 
 
 def test_param_typed_receiver(dart_typed_project: Path, mock_ingestor: MagicMock):
-    # (H) Shouter.greet is a same-named decoy in every test here: bare
-    # (H) suffix-trie binding cannot disambiguate, only receiver typing can.
+    # Shouter.greet is a same-named decoy in every test here: bare
+    # suffix-trie binding cannot disambiguate, only receiver typing can.
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
     assert _has(calls, ".app.useParam", ".Greeter.greet"), sorted(calls)
@@ -255,8 +255,8 @@ def test_construction_bound_receiver(
 def test_field_typed_receiver(dart_typed_project: Path, mock_ingestor: MagicMock):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) bare field receiver and explicit this.field receiver both hop
-    # (H) through the field's declared type
+    # bare field receiver and explicit this.field receiver both hop
+    # through the field's declared type
     assert _has(calls, ".Holder.viaField", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".Holder.viaField", ".Shouter.greet"), sorted(calls)
     assert _has(calls, ".Holder.viaThisField", ".Greeter.hail"), sorted(calls)
@@ -267,12 +267,12 @@ def test_nested_local_function_does_not_poison_outer_scope(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) inner()'s same-named `s` (a Shouter) must not conflict-drop the
-    # (H) outer `s` (a Greeter) from the outer caller's type map
-    # (H) (PR #806 review round 3)
+    # inner()'s same-named `s` (a Shouter) must not conflict-drop the
+    # outer `s` (a Greeter) from the outer caller's type map
+    # (PR #806 review round 3)
     assert _has(calls, ".app.outerScoped", ".Greeter.greet"), sorted(calls)
-    # (H) a local function registers flat (app.inner) per the Dart FQN spec
-    # (H) and its own map types ITS s as Shouter
+    # a local function registers flat (app.inner) per the Dart FQN spec
+    # and its own map types ITS s as Shouter
     assert _has(calls, ".app.inner", ".Shouter.greet"), sorted(calls)
 
 
@@ -281,10 +281,10 @@ def test_multi_variable_declarations_type_every_binding(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) additional variables of a multi-declaration nest as
-    # (H) initialized_identifier children; `second` takes its OWN
-    # (H) construction's type, `fourth` the shared declared type
-    # (H) (PR #806 review).
+    # additional variables of a multi-declaration nest as
+    # initialized_identifier children; `second` takes its OWN
+    # construction's type, `fourth` the shared declared type
+    # (PR #806 review).
     assert _has(calls, ".app.useMultiDeclaration", ".Shouter.greet"), sorted(calls)
     assert not _has(calls, ".app.useMultiDeclaration", ".Greeter.greet"), sorted(calls)
     assert _has(calls, ".app.useMultiDeclaration", ".Greeter.hail"), sorted(calls)
@@ -295,9 +295,9 @@ def test_static_factory_return_types_the_local(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) `var s = Greeter.create()` types s from create's recorded return
-    # (H) type; the Shouter.greet decoy defeats both the suffix trie and the
-    # (H) unique-member gate, so only return typing can bind this
+    # `var s = Greeter.create()` types s from create's recorded return
+    # type; the Shouter.greet decoy defeats both the suffix trie and the
+    # unique-member gate, so only return typing can bind this
     assert _has(calls, ".app.useStaticFactory", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".app.useStaticFactory", ".Shouter.greet"), sorted(calls)
 
@@ -307,11 +307,11 @@ def test_non_class_static_return_does_not_type_the_local(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) Registry.describe() returns a String, not a Registry: the recorded
-    # (H) return type must override the construction heuristic, so `r` is a
-    # (H) String and `r.evict()` must NOT bind Registry.evict
+    # Registry.describe() returns a String, not a Registry: the recorded
+    # return type must override the construction heuristic, so `r` is a
+    # String and `r.evict()` must NOT bind Registry.evict
     assert not _has(calls, ".app.misuseFactory", ".Registry.evict"), sorted(calls)
-    # (H) the static call itself still resolves
+    # the static call itself still resolves
     assert _has(calls, ".app.misuseFactory", ".Registry.describe"), sorted(calls)
 
 
@@ -320,9 +320,9 @@ def test_declared_type_wins_over_initializer_return(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) an EXPLICIT declared type statically fixes the variable's type; the
-    # (H) initializer's recorded (void) return must not untype it
-    # (H) (PR #807 review). OtherRenderer.render is the decoy.
+    # an EXPLICIT declared type statically fixes the variable's type; the
+    # initializer's recorded (void) return must not untype it
+    # (PR #807 review). OtherRenderer.render is the decoy.
     assert _has(calls, ".app.useDeclaredWins", ".Widgetry.render"), sorted(calls)
     assert not _has(calls, ".app.useDeclaredWins", ".OtherRenderer.render"), sorted(
         calls
@@ -334,9 +334,9 @@ def test_nested_binding_does_not_retype_outer_local(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) an inner function's same-named `var r = Registry.describe()` must
-    # (H) not retype the OUTER r (a constructed Registry) to String
-    # (H) (PR #807 review). OtherRenderer.evict is the decoy.
+    # an inner function's same-named `var r = Registry.describe()` must
+    # not retype the OUTER r (a constructed Registry) to String
+    # (PR #807 review). OtherRenderer.evict is the decoy.
     assert _has(calls, ".app.outerEnrich", ".Registry.evict"), sorted(calls)
 
 
@@ -345,8 +345,8 @@ def test_inherited_method_on_typed_receiver(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) speak() is defined on Animal, the receiver is typed Dog: lookup must
-    # (H) walk the inheritance chain; OtherSpeaker.speak is the decoy
+    # speak() is defined on Animal, the receiver is typed Dog: lookup must
+    # walk the inheritance chain; OtherSpeaker.speak is the decoy
     assert _has(calls, ".app.useInherited", ".Animal.speak"), sorted(calls)
     assert not _has(calls, ".app.useInherited", ".OtherSpeaker.speak"), sorted(calls)
 
@@ -356,9 +356,9 @@ def test_construction_temporary_chain_resolves(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) `Greeter('x').greet()` invokes a method on a construction temporary;
-    # (H) the receiver is a call result, so only chained typing off the ctor
-    # (H) can bind it. Shouter.greet is the decoy.
+    # `Greeter('x').greet()` invokes a method on a construction temporary;
+    # the receiver is a call result, so only chained typing off the ctor
+    # can bind it. Shouter.greet is the decoy.
     assert _has(calls, ".app.useConstructionChain", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".app.useConstructionChain", ".Shouter.greet"), sorted(calls)
 
@@ -368,8 +368,8 @@ def test_factory_return_chain_resolves(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) `lowercaseFactory().hail()` types the receiver from the factory's
-    # (H) recorded return type (Greeter), then binds hail on it
+    # `lowercaseFactory().hail()` types the receiver from the factory's
+    # recorded return type (Greeter), then binds hail on it
     assert _has(calls, ".app.useFactoryChain", ".Greeter.hail"), sorted(calls)
     assert not _has(calls, ".app.useFactoryChain", ".Shouter.hail"), sorted(calls)
 
@@ -379,8 +379,8 @@ def test_inherited_method_on_construction_chain(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) `Dog().speak()` where speak is defined on Animal: chained typing must
-    # (H) walk the inheritance chain. OtherSpeaker.speak is the decoy.
+    # `Dog().speak()` where speak is defined on Animal: chained typing must
+    # walk the inheritance chain. OtherSpeaker.speak is the decoy.
     assert _has(calls, ".app.useInheritedConstructionChain", ".Animal.speak"), sorted(
         calls
     )
@@ -394,10 +394,10 @@ def test_lowercase_initializer_does_not_type(
 ):
     run_updater(dart_typed_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _calls(mock_ingestor)
-    # (H) `var h = lowercaseFactory()` is a call, not a construction: the base
-    # (H) identifier is not UpperCamelCase, so h stays untyped and the
-    # (H) ambiguous `h.greet()` binds NEITHER candidate
+    # `var h = lowercaseFactory()` is a call, not a construction: the base
+    # identifier is not UpperCamelCase, so h stays untyped and the
+    # ambiguous `h.greet()` binds NEITHER candidate
     assert not _has(calls, ".app.useUntypedHelper", ".Greeter.greet"), sorted(calls)
     assert not _has(calls, ".app.useUntypedHelper", ".Shouter.greet"), sorted(calls)
-    # (H) the construction inside lowercaseFactory itself still resolves
+    # the construction inside lowercaseFactory itself still resolves
     assert _has(calls, ".app.lowercaseFactory", ".Greeter.Greeter"), sorted(calls)

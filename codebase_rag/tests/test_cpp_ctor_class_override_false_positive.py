@@ -1,9 +1,9 @@
-# (H) A nested class that inherits its enclosing class (souffle's BTree
-# (H) `node::inner_node : node`) has a constructor whose name equals the nested
-# (H) class's own name. The override pass matched any registry entry named
-# (H) `parent_qn.method_name` without checking it is a METHOD, so the ctor
-# (H) emitted OVERRIDES with a Method label onto the nested CLASS node -- a
-# (H) label-mismatched phantom the database drops (issue #652).
+# A nested class that inherits its enclosing class (souffle's BTree
+# `node::inner_node : node`) has a constructor whose name equals the nested
+# class's own name. The override pass matched any registry entry named
+# `parent_qn.method_name` without checking it is a METHOD, so the ctor
+# emitted OVERRIDES with a Method label onto the nested CLASS node -- a
+# label-mismatched phantom the database drops (issue #652).
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,5 +43,5 @@ def test_ctor_does_not_override_same_named_nested_class(
         assert call.args[2][2] in method_qns, call.args
         if str(call.args[0][2]).endswith(".inner_node.size"):
             size_overrides.append(call)
-    # (H) The real override (size on the base) must survive the type check.
+    # The real override (size on the base) must survive the type check.
     assert size_overrides

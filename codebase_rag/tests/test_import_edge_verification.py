@@ -1,11 +1,11 @@
-# (H) IMPORTS edges were emitted straight from the import map's parse-time
-# (H) guesses, so an internal-looking target that maps to no real module (a
-# (H) broken import, a directory, a crate path resolved from the wrong root, a
-# (H) specifier with an explicit .js extension, a C++20 module declaration
-# (H) registering itself) produced an edge the database silently drops (issue
-# (H) #652: 51 across the fixture suite). Emission is now deferred until every
-# (H) file is parsed and verified against the real module qns; an internal
-# (H) target that resolves nowhere emits no edge.
+# IMPORTS edges were emitted straight from the import map's parse-time
+# guesses, so an internal-looking target that maps to no real module (a
+# broken import, a directory, a crate path resolved from the wrong root, a
+# specifier with an explicit .js extension, a C++20 module declaration
+# registering itself) produced an edge the database silently drops (issue
+# #652: 51 across the fixture suite). Emission is now deferred until every
+# file is parsed and verified against the real module qns; an internal
+# target that resolves nowhere emits no edge.
 from __future__ import annotations
 
 from pathlib import Path
@@ -69,8 +69,8 @@ def test_js_explicit_extension_resolves_to_module(
     assert f"{project}.b" in targets, targets
     _assert_no_dangling_imports(mock_ingestor)
 
-    # (H) The item mapping must also drop the extension or calls to createB
-    # (H) resolve against a phantom qn.
+    # The item mapping must also drop the extension or calls to createB
+    # resolve against a phantom qn.
     calls = {
         (call.args[0][2], call.args[2][2])
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
@@ -81,9 +81,9 @@ def test_js_explicit_extension_resolves_to_module(
 def test_js_bare_package_named_like_extension_keeps_its_name(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A bare npm package can legitimately END in .js (p5.js, highlight.js);
-    # (H) extension stripping applies to relative file paths only, or the
-    # (H) external package qn silently loses its real name.
+    # A bare npm package can legitimately END in .js (p5.js, highlight.js);
+    # extension stripping applies to relative file paths only, or the
+    # external package qn silently loses its real name.
     (temp_repo / "sketch.js").write_text(
         "import p5 from 'p5.js';\nexport const sketch = new p5();\n"
     )
@@ -196,8 +196,8 @@ int internal_helper() { return 7; }
 def test_js_destructured_require_of_missing_module_emits_no_phantom(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The CommonJS destructuring fallback emitted its IMPORTS edges
-    # (H) directly, bypassing deferred verification entirely.
+    # The CommonJS destructuring fallback emitted its IMPORTS edges
+    # directly, bypassing deferred verification entirely.
     utils = temp_repo / "src" / "utils"
     utils.mkdir(parents=True)
     (utils / "helpers.js").write_text("module.exports = { helper: () => {} };\n")
@@ -217,9 +217,9 @@ def test_js_destructured_require_of_missing_module_emits_no_phantom(
 def test_java_inner_class_never_self_implements(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `static class Entry implements Map.Entry<K, V>`: the parse-time
-    # (H) resolution can land on the inner class ITSELF (the only registered
-    # (H) qn ending in Entry); a self-IMPLEMENTS is never real.
+    # `static class Entry implements Map.Entry<K, V>`: the parse-time
+    # resolution can land on the inner class ITSELF (the only registered
+    # qn ending in Entry); a self-IMPLEMENTS is never real.
     (temp_repo / "SimpleHashMap.java").write_text(
         """
 import java.util.Map;
@@ -261,12 +261,12 @@ def test_lua_require_of_missing_module_emits_no_phantom(
 def test_python_from_package_import_submodule_targets_the_submodule(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `from thrift.transport import TTransport` under a src-root layout
-    # (H) imports the SUBMODULE TTransport.py; the stdlib extractor treats
-    # (H) the trailing name as an item and strips it, so suffix verification
-    # (H) anchored the edge at the package __init__ instead of the real
-    # (H) module file (thrift lib/py: 17 such edges). The flush must verify
-    # (H) the FULL dotted name as a module first.
+    # `from thrift.transport import TTransport` under a src-root layout
+    # imports the SUBMODULE TTransport.py; the stdlib extractor treats
+    # the trailing name as an item and strips it, so suffix verification
+    # anchored the edge at the package __init__ instead of the real
+    # module file (thrift lib/py: 17 such edges). The flush must verify
+    # the FULL dotted name as a module first.
     src = temp_repo / "src"
     transport = src / "transport"
     transport.mkdir(parents=True)
@@ -288,11 +288,11 @@ def test_python_from_package_import_submodule_targets_the_submodule(
 def test_python_import_suffix_match_ignores_other_language_modules(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) thrift lib/py: src/protocol/__init__.py AND src/ext/protocol.h both
-    # (H) yield module qns ending `.protocol`, so the language-blind suffix
-    # (H) match went ambiguous and dropped the edge for a Python import that
-    # (H) can only target the Python module. Candidates are tie-broken by the
-    # (H) importing language's file extensions.
+    # thrift lib/py: src/protocol/__init__.py AND src/ext/protocol.h both
+    # yield module qns ending `.protocol`, so the language-blind suffix
+    # match went ambiguous and dropped the edge for a Python import that
+    # can only target the Python module. Candidates are tie-broken by the
+    # importing language's file extensions.
     src = temp_repo / "src"
     proto = src / "protocol"
     ext = src / "ext"

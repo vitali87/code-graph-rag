@@ -1,7 +1,7 @@
-# (H) MPS command-buffer hygiene (issue #689): on Apple Silicon the embedding
-# (H) pass wedges inside Metal's waitUntilCompleted when command buffers pile
-# (H) up across thousands of batches, so the embedder must synchronize and
-# (H) release cached Metal memory after every batch it runs on MPS.
+# MPS command-buffer hygiene (issue #689): on Apple Silicon the embedding
+# pass wedges inside Metal's waitUntilCompleted when command buffers pile
+# up across thousands of batches, so the embedder must synchronize and
+# release cached Metal memory after every batch it runs on MPS.
 
 from __future__ import annotations
 
@@ -98,8 +98,8 @@ class TestSyncAfterBatch:
             patch("codebase_rag.embedder.torch.mps.synchronize") as mock_sync,
             patch("codebase_rag.embedder.torch.mps.empty_cache") as mock_empty,
         ):
-            # (H) A full interval of non-MPS batches must not advance the
-            # (H) cache-drop counter either.
+            # A full interval of non-MPS batches must not advance the
+            # cache-drop counter either.
             for _ in range(cs.EMBEDDING_MPS_CACHE_DROP_INTERVAL):
                 _sync_after_batch(device)
 

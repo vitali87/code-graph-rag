@@ -1,9 +1,9 @@
-# (H) Methods of an impl whose target is NOT a locally declared type
-# (H) (`impl<P> TInput for Box<P>`) have no owner node cgr can attach to, so
-# (H) cgr anchors them to the module with DEFINES (the documented
-# (H) orphan-prevention fallback). The syn oracle emitted NO containment for
-# (H) them, so every such method graded as a false-positive edge on thrift
-# (H) (53 in src/protocol/mod.rs). The oracle must model the fallback.
+# Methods of an impl whose target is NOT a locally declared type
+# (`impl<P> TInput for Box<P>`) have no owner node cgr can attach to, so
+# cgr anchors them to the module with DEFINES (the documented
+# orphan-prevention fallback). The syn oracle emitted NO containment for
+# them, so every such method graded as a false-positive edge on thrift
+# (53 in src/protocol/mod.rs). The oracle must model the fallback.
 from __future__ import annotations
 
 from pathlib import Path

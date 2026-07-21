@@ -1,7 +1,7 @@
-# (H) Tests for the realtime_updater debouncing functionality.
-# (H)
-# (H) These tests verify the hybrid debounce strategy that prevents redundant
-# (H) graph updates during rapid file saves.
+# Tests for the realtime_updater debouncing functionality.
+#
+# These tests verify the hybrid debounce strategy that prevents redundant
+# graph updates during rapid file saves.
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class MockQueryIngestor:
         pass
 
 
-# (H) Register MockQueryIngestor as implementing QueryProtocol for isinstance checks
+# Register MockQueryIngestor as implementing QueryProtocol for isinstance checks
 QueryProtocol.register(MockQueryIngestor)
 
 
@@ -133,8 +133,8 @@ class TestCodeChangeEventHandlerDebounce:
         )
 
         event = FileModifiedEvent(str(tmp_path / "some_dir"))
-        # (H) The is_directory property is set by watchdog based on the event type
-        # (H) For FileModifiedEvent, we need to check is_directory attribute
+        # The is_directory property is set by watchdog based on the event type
+        # For FileModifiedEvent, we need to check is_directory attribute
         object.__setattr__(event, "is_directory", True)
 
         handler.dispatch(event)
@@ -393,7 +393,7 @@ class TestDebounceIntegration:
 
         time.sleep(0.7)
 
-        # (H) With max_wait=2s and 3s total time, expect ~2-4 updates
+        # With max_wait=2s and 3s total time, expect ~2-4 updates
         call_count = mock_ingestor.flush_all.call_count
         assert 1 <= call_count <= 4, f"Expected 1-4 updates, got {call_count}"
 

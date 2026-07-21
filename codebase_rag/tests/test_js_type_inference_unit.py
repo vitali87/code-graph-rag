@@ -176,7 +176,7 @@ class TestInferJsVariableTypeFromValue:
         value_node = create_new_expression("MyClass")
 
         result = js_type_engine._infer_js_variable_type_from_value(
-            value_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            value_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -194,7 +194,7 @@ class TestInferJsVariableTypeFromValue:
         value_node = create_new_expression("MyClass")
 
         result = js_type_engine._infer_js_variable_type_from_value(
-            value_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            value_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -207,7 +207,7 @@ class TestInferJsVariableTypeFromValue:
         value_node = create_call_expression_with_identifier("createInstance")
 
         result = js_type_engine._infer_js_variable_type_from_value(
-            value_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            value_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -220,7 +220,7 @@ class TestInferJsVariableTypeFromValue:
         value_node = create_mock_node("string_literal", "hello")
 
         result = js_type_engine._infer_js_variable_type_from_value(
-            value_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            value_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -287,7 +287,7 @@ class TestAnalyzeReturnStatements:
         method_node = create_mock_node("method_definition", children=[])
 
         result = js_type_engine._analyze_return_statements(
-            method_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            method_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main.MyClass.method",
         )
 
@@ -305,7 +305,7 @@ class TestAnalyzeReturnStatements:
         method_node = create_mock_node("method_definition", children=[return_stmt])
 
         result = js_type_engine._analyze_return_statements(
-            method_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            method_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main.MyClass.method",
         )
 
@@ -320,7 +320,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -335,7 +335,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[var_decl])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -351,7 +351,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[var_decl])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -369,7 +369,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[var_decl1, var_decl2])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -388,7 +388,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[function_body])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -408,7 +408,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[var_decl])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -423,7 +423,7 @@ class TestBuildLocalVariableTypeMap:
         root_node = create_mock_node("program", children=[var_decl])
 
         result = js_type_engine.build_local_variable_type_map(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
             "myapp.main",
         )
 
@@ -446,7 +446,7 @@ class TestGetDeclaratorsViaQueryException:
         )
         root_node = create_mock_node("program", children=[])
         result = engine._get_declarators_via_query(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
         )
         assert result is None
 
@@ -473,7 +473,7 @@ class TestGetDeclaratorsViaQueryException:
         )
         root_node = create_mock_node("program", children=[])
         result = engine._get_declarators_via_query(
-            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
         )
         assert result is None
 

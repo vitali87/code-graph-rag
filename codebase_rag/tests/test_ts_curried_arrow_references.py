@@ -1,9 +1,9 @@
-# (H) A curried arrow's inner function (`const persistImpl = (config) =>
-# (H) (set, get, api) => {...}`, zustand's middleware shape) is the outer's implicit
-# (H) return value, but the returned-function reference pass only walked
-# (H) `return_statement`s -- an expression-bodied arrow has none, so the inner arrow
-# (H) node got a DEFINES edge and nothing else, orphaning it (false dead) even when
-# (H) the outer is reachable. The expression body IS the return: reference it.
+# A curried arrow's inner function (`const persistImpl = (config) =>
+# (set, get, api) => {...}`, zustand's middleware shape) is the outer's implicit
+# return value, but the returned-function reference pass only walked
+# `return_statement`s -- an expression-bodied arrow has none, so the inner arrow
+# node got a DEFINES edge and nothing else, orphaning it (false dead) even when
+# the outer is reachable. The expression body IS the return: reference it.
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,9 +41,9 @@ def test_curried_inner_arrow_is_referenced(
 def test_double_curried_inner_arrows_are_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Three-deep currying `(a) => (b) => (c) => {...}`: the middle arrow is
-    # (H) anonymous (no caller pass of its own), so the innermost must be referenced
-    # (H) too -- the walk bubbles both to the nearest named scope.
+    # Three-deep currying `(a) => (b) => (c) => {...}`: the middle arrow is
+    # anonymous (no caller pass of its own), so the innermost must be referenced
+    # too -- the walk bubbles both to the nearest named scope.
     root = temp_repo / "zcurry2"
     root.mkdir(parents=True)
     (root / "mw.ts").write_text(

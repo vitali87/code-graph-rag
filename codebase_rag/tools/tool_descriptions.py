@@ -83,7 +83,7 @@ STRUCTURAL_EDITOR = (
     "Optional 'language' restricts the rewrite to one language."
 )
 
-# (H) MCP tool descriptions
+# MCP tool descriptions
 MCP_LIST_PROJECTS = (
     "List all indexed projects in the knowledge graph database. "
     "Returns a list of project names that have been indexed."

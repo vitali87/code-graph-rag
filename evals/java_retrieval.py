@@ -1,10 +1,10 @@
-# (H) Multi-language retrieval (Java). Extends the file-level call-localization
-# (H) benchmark to Java: for each first-party Java symbol, which files call it.
-# (H) cgr's Java CALLS edges (reduced to caller file + callee simple name) are
-# (H) graded against javac method-invocation sites over the same first-party name
-# (H) universe. The oracle uses the JDK's own Compiler Tree API (javac),
-# (H) independent of cgr's tree-sitter frontend, so this measures cgr's cross-file
-# (H) Java call resolution against ground truth (mirrors evals/rust_retrieval.py).
+# Multi-language retrieval (Java). Extends the file-level call-localization
+# benchmark to Java: for each first-party Java symbol, which files call it.
+# cgr's Java CALLS edges (reduced to caller file + callee simple name) are
+# graded against javac method-invocation sites over the same first-party name
+# universe. The oracle uses the JDK's own Compiler Tree API (javac),
+# independent of cgr's tree-sitter frontend, so this measures cgr's cross-file
+# Java call resolution against ground truth (mirrors evals/rust_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 
@@ -49,8 +49,8 @@ def cgr_java_call_edges(
         path = caller_path.get((str(from_label), str(from_val)))
         if path is None:
             continue
-        # (H) A Java Method qn carries its parameter signature (Class.name(args)),
-        # (H) so strip it to recover the simple callee name the oracle records.
+        # A Java Method qn carries its parameter signature (Class.name(args)),
+        # so strip it to recover the simple callee name the oracle records.
         name = str(to_val).split(cs.SEPARATOR_DOT)[-1].split(cs.CHAR_PAREN_OPEN)[0]
         if name in declared:
             edges.add((path, name))

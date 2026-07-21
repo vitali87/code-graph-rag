@@ -1,4 +1,4 @@
-# (H) C/C++ tree-sitter node types, module markers, and operator maps.
+# C/C++ tree-sitter node types, module markers, and operator maps.
 
 from enum import StrEnum
 
@@ -20,9 +20,9 @@ class CppNodeType(StrEnum):
     FUNCTION_DECLARATOR = "function_declarator"
     POINTER_DECLARATOR = "pointer_declarator"
     REFERENCE_DECLARATOR = "reference_declarator"
-    # (H) An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
-    # (H) bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
-    # (H) an ERROR plus the real function_declarator; the name walk descends it.
+    # An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
+    # bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
+    # an ERROR plus the real function_declarator; the name walk descends it.
     PARENTHESIZED_DECLARATOR = "parenthesized_declarator"
     FIELD_DECLARATION = "field_declaration"
     FIELD_IDENTIFIER = "field_identifier"
@@ -53,17 +53,17 @@ class CppNodeType(StrEnum):
 CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
 
-# (H) C++ module declaration prefixes
+# C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "
 CPP_MODULE_PREFIX = "module "
 CPP_MODULE_PRIVATE_PREFIX = "module ;"
 CPP_IMPL_SUFFIX = "_impl"
 
-# (H) C++ module type values
+# C++ module type values
 CPP_MODULE_TYPE_INTERFACE = "interface"
 CPP_MODULE_TYPE_IMPLEMENTATION = "implementation"
 
-# (H) C++ export prefixes for class detection
+# C++ export prefixes for class detection
 CPP_EXPORT_CLASS_PREFIX = "export class "
 CPP_EXPORT_STRUCT_PREFIX = "export struct "
 CPP_EXPORT_UNION_PREFIX = "export union "
@@ -75,14 +75,14 @@ CPP_EXPORT_PREFIXES = (
     CPP_EXPORT_TEMPLATE_PREFIX,
 )
 
-# (H) C++ keywords for class detection
+# C++ keywords for class detection
 CPP_KEYWORD_CLASS = "class"
 CPP_KEYWORD_STRUCT = "struct"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
-# (H) A C/C++ class/struct/union tag with no body is a forward declaration
-# (H) (`class Widget;`); it must not become its own node, or it collides with the
-# (H) real definition's qn and fragments one class into several same-named nodes.
+# A C/C++ class/struct/union tag with no body is a forward declaration
+# (`class Widget;`); it must not become its own node, or it collides with the
+# real definition's qn and fragments one class into several same-named nodes.
 CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
     {"class_specifier", "struct_specifier", "union_specifier"}
 )
@@ -130,16 +130,16 @@ CPP_OPERATOR_SYMBOL_MAP: dict[str, str] = {
     "()": "operator_call",
 }
 
-# (H) Tree-sitter C++ node types for language_spec
+# Tree-sitter C++ node types for language_spec
 TS_CPP_FUNCTION_DEFINITION = "function_definition"
 TS_CPP_DECLARATION = "declaration"
 TS_CPP_FIELD_DECLARATION = "field_declaration"
 TS_CPP_TEMPLATE_DECLARATION = "template_declaration"
 TS_CPP_TEMPLATE_PARAMETER_LIST = "template_parameter_list"
-# (H) The template TYPE-parameter declaration node types. A value/non-type param
-# (H) (`parameter_declaration`, e.g. `int N` / `MyEnum E`) and a template-template param
-# (H) are deliberately excluded: their type name is a concrete type, not a stand-in that
-# (H) a call receiver could be instantiated as, so it must not enter the template-param set.
+# The template TYPE-parameter declaration node types. A value/non-type param
+# (`parameter_declaration`, e.g. `int N` / `MyEnum E`) and a template-template param
+# are deliberately excluded: their type name is a concrete type, not a stand-in that
+# a call receiver could be instantiated as, so it must not enter the template-param set.
 CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
     {
         "type_parameter_declaration",
@@ -159,21 +159,21 @@ TS_CPP_BINARY_EXPRESSION = "binary_expression"
 TS_CPP_UNARY_EXPRESSION = "unary_expression"
 TS_CPP_UPDATE_EXPRESSION = "update_expression"
 TS_CPP_FUNCTION_DECLARATOR = "function_declarator"
-# (H) Substring shared by C++ declarator node types (pointer_declarator,
-# (H) reference_declarator, parenthesized_declarator, ...), used to unwrap a
-# (H) parameter declarator down to its bound identifier.
+# Substring shared by C++ declarator node types (pointer_declarator,
+# reference_declarator, parenthesized_declarator, ...), used to unwrap a
+# parameter declarator down to its bound identifier.
 CPP_DECLARATOR_SUFFIX = "declarator"
 
 FIELD_OPERATOR = "operator"
 FIELD_MACRO = "macro"
 
-# (H) C++ I/O direct-sink walk node types (issue #714). call_expression keeps a
-# (H) `function` field so call_name works unchanged. The stdout write path is the
-# (H) stream-insertion operator `std::cout << x` -- a `binary_expression` with a `<<`
-# (H) operator whose left-spine base is cout/cerr (no call node), handled via
-# (H) stream_sink_type like Rust's macro sinks. A string_literal wraps string_content;
-# (H) `compound_statement` is the block scope; `declaration` holds init_declarator
-# (H) locals whose bound name is nested under the `declarator` field.
+# C++ I/O direct-sink walk node types (issue #714). call_expression keeps a
+# `function` field so call_name works unchanged. The stdout write path is the
+# stream-insertion operator `std::cout << x` -- a `binary_expression` with a `<<`
+# operator whose left-spine base is cout/cerr (no call node), handled via
+# stream_sink_type like Rust's macro sinks. A string_literal wraps string_content;
+# `compound_statement` is the block scope; `declaration` holds init_declarator
+# locals whose bound name is nested under the `declarator` field.
 TS_CPP_STRING_LITERAL = "string_literal"
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
@@ -182,34 +182,34 @@ TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
 TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
-# (H) `Reader<T>(...)` as a call target: the callee wraps name + template args.
+# `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
-# (H) `return {args};` -- a braced construction of the declared return type.
+# `return {args};` -- a braced construction of the declared return type.
 TS_CPP_INITIALIZER_LIST = "initializer_list"
-# (H) Stream-insertion operator; a `binary_expression` using it whose left-spine base
-# (H) is std::cout / std::cerr writes STDOUT.
+# Stream-insertion operator; a `binary_expression` using it whose left-spine base
+# is std::cout / std::cerr writes STDOUT.
 CPP_OP_LEFT_SHIFT = "<<"
-# (H) Stream-extraction operator; on a bound fstream handle (`in >> word`) it is a
-# (H) READ of that handle's resource (issue #714).
+# Stream-extraction operator; on a bound fstream handle (`in >> word`) it is a
+# READ of that handle's resource (issue #714).
 CPP_OP_RIGHT_SHIFT = ">>"
 TS_CPP_FOR_RANGE_LOOP = "for_range_loop"
-# (H) Switch family: cases may fall through; a default arm is a
-# (H) case_statement without a `value` field.
+# Switch family: cases may fall through; a default arm is a
+# case_statement without a `value` field.
 TS_CPP_SWITCH_STATEMENT = "switch_statement"
 TS_CPP_CASE_STATEMENT = "case_statement"
-# (H) field_expression = `obj.field` (argument/field); subscript_expression =
-# (H) `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
-# (H) correctness / future value-level sinks.
+# field_expression = `obj.field` (argument/field); subscript_expression =
+# `arr[i]` (argument/indices). Inert for C++ I/O (env access is a call), wired for
+# correctness / future value-level sinks.
 CPP_FIELD_ARGUMENT = "argument"
 CPP_FIELD_FIELD = "field"
 CPP_FIELD_INDICES = "indices"
 
-# (H) Derived node type tuples for class ingestion
+# Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
 CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)
-# (H) Node types that open their own variable scope; C++ local-variable inference must
-# (H) not descend into them, or a name declared inside a lambda / nested function /
-# (H) local class body would be attributed to the enclosing function's scope.
+# Node types that open their own variable scope; C++ local-variable inference must
+# not descend into them, or a name declared inside a lambda / nested function /
+# local class body would be attributed to the enclosing function's scope.
 CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
     (
         TS_CPP_FUNCTION_DEFINITION,
@@ -218,21 +218,21 @@ CPP_NESTED_SCOPE_NODE_TYPES = frozenset(
     )
 )
 
-# (H) Preprocessor conditional directive heads, matched at line start (C allows
-# (H) whitespace around '#'). Drives the whole-file-ERROR parse recovery: a
-# (H) conditional branch whose brace count does not balance (nlohmann's
-# (H) `#ifdef __cpp_lib_byteswap ... else { #endif`) breaks tree-sitter, which
-# (H) keeps every branch's tokens.
+# Preprocessor conditional directive heads, matched at line start (C allows
+# whitespace around '#'). Drives the whole-file-ERROR parse recovery: a
+# conditional branch whose brace count does not balance (nlohmann's
+# `#ifdef __cpp_lib_byteswap ... else { #endif`) breaks tree-sitter, which
+# keeps every branch's tokens.
 CPP_PREPROC_CONDITIONAL_PATTERN = (
     rb"^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b"
 )
 CPP_PREPROC_OPEN_DIRECTIVES = frozenset({b"if", b"ifdef", b"ifndef"})
 CPP_PREPROC_SPLIT_DIRECTIVES = frozenset({b"elif", b"elifdef", b"elifndef", b"else"})
 
-# (H) Reserved keywords that error recovery can leave in declarator position
-# (H) (nlohmann: a macro access-label followed by `const decltype(MACRO_)`
-# (H) members parses as a function declaration NAMED decltype). None can ever
-# (H) name a real C/C++ function or method, so extraction rejects them.
+# Reserved keywords that error recovery can leave in declarator position
+# (nlohmann: a macro access-label followed by `const decltype(MACRO_)`
+# members parses as a function declaration NAMED decltype). None can ever
+# name a real C/C++ function or method, so extraction rejects them.
 CPP_RESERVED_DEF_NAMES = frozenset(
     {
         "decltype",

@@ -258,8 +258,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         assigned_type = self._infer_type_from_expression(right_node, module_qn)
         if not assigned_type and right_node.type == cs.TS_PY_IDENTIFIER:
-            # (H) self.x = param: a bare identifier carries the type of the matching
-            # (H) (already-seeded) parameter or local, so flow it onto the attribute.
+            # self.x = param: a bare identifier carries the type of the matching
+            # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
         if not assigned_type:
@@ -331,18 +331,18 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_instance_attributes_from_init(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # (H) Instance attributes are assigned in __init__ (self.x = T()), so a method
-        # (H) that only reads self.x has no local assignment to infer from. Scan the
-        # (H) enclosing class's __init__ and seed the attribute types, letting any
-        # (H) reassignment in the calling method itself take precedence (setdefault).
+        # Instance attributes are assigned in __init__ (self.x = T()), so a method
+        # that only reads self.x has no local assignment to infer from. Scan the
+        # enclosing class's __init__ and seed the attribute types, letting any
+        # reassignment in the calling method itself take precedence (setdefault).
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
         init_node = self._find_init_method_node(class_node)
         if init_node is None or init_node is caller_node:
             return
         init_types: dict[str, str] = {}
-        # (H) Seed __init__ parameter types first so self.x = param flows the
-        # (H) parameter annotation onto the attribute.
+        # Seed __init__ parameter types first so self.x = param flows the
+        # parameter annotation onto the attribute.
         self._infer_parameter_types(init_node, init_types, module_qn)
         self._analyze_self_assignments(init_node, init_types, module_qn)
         for attr, attr_type in init_types.items():
@@ -364,9 +364,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_property_return_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # (H) self.prop where prop is an @property has the property's declared return
-        # (H) type, so a chained call self.prop.method() can resolve against the
-        # (H) returned class rather than an ambiguous same-named method elsewhere.
+        # self.prop where prop is an @property has the property's declared return
+        # type, so a chained call self.prop.method() can resolve against the
+        # returned class rather than an ambiguous same-named method elsewhere.
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
         self._collect_property_return_types(class_node, local_var_types)
@@ -397,8 +397,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 and (return_text := return_node.text)
             ):
                 continue
-            # (H) The return_type field wraps a type node; only a bare class name (not
-            # (H) a union, subscripted generic, or string forward ref) seeds a type.
+            # The return_type field wraps a type node; only a bare class name (not
+            # a union, subscripted generic, or string forward ref) seeds a type.
             return_type = return_text.decode(cs.ENCODING_UTF8)
             if return_type.isidentifier():
                 out.setdefault(
@@ -409,9 +409,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_class_annotation_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # (H) A class-level annotation (_handler: LanguageHandler) declares the type of
-        # (H) an instance attribute even when it is assigned from a factory call whose
-        # (H) return type cannot be inferred, so seed self.<name> from the annotation.
+        # A class-level annotation (_handler: LanguageHandler) declares the type of
+        # an instance attribute even when it is assigned from a factory call whose
+        # return type cannot be inferred, so seed self.<name> from the annotation.
         if (class_node := self._enclosing_class_node(caller_node)) is None:
             return
         self._collect_class_annotation_types(class_node, local_var_types)
@@ -448,10 +448,10 @@ class PythonVariableAnalyzerMixin(_VarBase):
         aliases: dict[str, str] | None = None,
         max_depth: int = 4,
     ) -> None:
-        # (H) A chained reference a.b.c needs the type of a.b (member b on a's class).
-        # (H) Each pass: (1) propagate local aliases (x = ref) from the referent's type,
-        # (H) then (2) for every typed ref, seed ref.member -> member type (full QN), so
-        # (H) deeper chains and aliases resolve on the next pass until a fixpoint.
+        # A chained reference a.b.c needs the type of a.b (member b on a's class).
+        # Each pass: (1) propagate local aliases (x = ref) from the referent's type,
+        # then (2) for every typed ref, seed ref.member -> member type (full QN), so
+        # deeper chains and aliases resolve on the next pass until a fixpoint.
         aliases = aliases or {}
         for _ in range(max_depth):
             added = False
@@ -476,9 +476,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 break
 
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:
-        # (H) Record local-variable aliases (resolver = self._resolver) where the rhs is
-        # (H) a plain name/attribute reference, so its type can be propagated. Skip
-        # (H) nested scopes and any rhs that is a call/subscript/other expression.
+        # Record local-variable aliases (resolver = self._resolver) where the rhs is
+        # a plain name/attribute reference, so its type can be propagated. Skip
+        # nested scopes and any rhs that is a call/subscript/other expression.
         aliases: dict[str, str] = {}
         boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
         stack: list[ASTNode] = list(caller_node.children)

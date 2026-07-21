@@ -1,10 +1,10 @@
-# (H) A graph is a function of (source files, parser code, parser config). The
-# (H) incremental hash cache keys only the source files, so a parser or config
-# (H) change with unchanged sources leaves stale old-parser edges in the graph.
-# (H) This fingerprint keys the other inputs: it hashes every parse-relevant
-# (H) source file of the installed package, the pinned grammar wheel versions,
-# (H) and the active frontend settings, so a sync can detect that the graph was
-# (H) built by a different parser or frontend configuration.
+# A graph is a function of (source files, parser code, parser config). The
+# incremental hash cache keys only the source files, so a parser or config
+# change with unchanged sources leaves stale old-parser edges in the graph.
+# This fingerprint keys the other inputs: it hashes every parse-relevant
+# source file of the installed package, the pinned grammar wheel versions,
+# and the active frontend settings, so a sync can detect that the graph was
+# built by a different parser or frontend configuration.
 import hashlib
 from importlib import metadata
 from pathlib import Path
@@ -21,20 +21,20 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
         hasher.update(source.read_bytes())
     for entry in _grammar_versions():
         hasher.update(entry.encode())
-    # (H) The active frontend selection changes which edges are produced for
-    # (H) unchanged sources (e.g. enabling the C# Roslyn hybrid rewrites
-    # (H) INHERITS/IMPLEMENTS), so it is part of the parser identity and must
-    # (H) trip the staleness warning when it changes.
+    # The active frontend selection changes which edges are produced for
+    # unchanged sources (e.g. enabling the C# Roslyn hybrid rewrites
+    # INHERITS/IMPLEMENTS), so it is part of the parser identity and must
+    # trip the staleness warning when it changes.
     for entry in _frontend_settings():
         hasher.update(entry.encode())
     return hasher.hexdigest()
 
 
 def _frontend_settings() -> list[str]:
-    # (H) The C# entry records the RESOLVED mode, not the setting: under AUTO a
-    # (H) graph built with dotnet present carries hybrid edges and one built
-    # (H) without does not, so the two must not share a fingerprint. Imported
-    # (H) lazily to keep this module free of the parsers package at import time.
+    # The C# entry records the RESOLVED mode, not the setting: under AUTO a
+    # graph built with dotnet present carries hybrid edges and one built
+    # without does not, so the two must not share a fingerprint. Imported
+    # lazily to keep this module free of the parsers package at import time.
     from .parsers.csharp_frontend import resolve_csharp_frontend
 
     return [
@@ -54,9 +54,9 @@ def _fingerprint_sources(root: Path) -> list[Path]:
         for name in cs.PARSER_FINGERPRINT_SOURCE_FILES
         if (path := root / name).is_file()
     )
-    # (H) The bundled Roslyn frontend tool (.cs/.csproj) is parser code even though
-    # (H) it is not Python; an edit to it changes the semantic edges produced, so a
-    # (H) tool change must trip the staleness warning.
+    # The bundled Roslyn frontend tool (.cs/.csproj) is parser code even though
+    # it is not Python; an edit to it changes the semantic edges produced, so a
+    # tool change must trip the staleness warning.
     tool_dir = root / cs.PARSER_FINGERPRINT_TOOL_DIR
     for pattern in cs.PARSER_FINGERPRINT_TOOL_GLOBS:
         sources.extend(path for path in tool_dir.glob(pattern) if path.is_file())

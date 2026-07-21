@@ -1,6 +1,6 @@
-# (H) Add-language grammar tooling messages, prompts, and file names.
+# Add-language grammar tooling messages, prompts, and file names.
 
-# (H) Language CLI paths and patterns
+# Language CLI paths and patterns
 LANG_GRAMMARS_DIR = "grammars"
 LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
 LANG_TREE_SITTER_JSON = "tree-sitter.json"
@@ -10,14 +10,14 @@ LANG_GIT_MODULES_PATH = ".git/modules/{path}"
 LANG_DEFAULT_GRAMMAR_URL = "https://github.com/tree-sitter/tree-sitter-{name}"
 LANG_TREE_SITTER_URL_MARKER = "github.com/tree-sitter/tree-sitter"
 
-# (H) Language CLI default node types
+# Language CLI default node types
 LANG_DEFAULT_FUNCTION_NODES = ("function_definition", "method_definition")
 LANG_DEFAULT_CLASS_NODES = ("class_declaration",)
 LANG_DEFAULT_MODULE_NODES = ("compilation_unit",)
 LANG_DEFAULT_CALL_NODES = ("invocation_expression",)
 LANG_FALLBACK_METHOD_NODE = "method_declaration"
 
-# (H) Language CLI node type detection keywords
+# Language CLI node type detection keywords
 LANG_FUNCTION_KEYWORDS = frozenset(
     {
         "function",
@@ -49,7 +49,7 @@ LANG_MODULE_KEYWORDS = frozenset(
 )
 LANG_EXCLUSION_KEYWORDS = frozenset({"access", "call"})
 
-# (H) Language CLI messages
+# Language CLI messages
 LANG_MSG_USING_DEFAULT_URL = "Using default tree-sitter URL: {url}"
 LANG_MSG_CUSTOM_URL_WARNING = (
     "WARNING: You are adding a grammar from a custom URL. "
@@ -110,7 +110,7 @@ LANG_MSG_REMOVED_ORPHAN = "Removed orphaned module: {module}"
 LANG_MSG_CLEANUP_COMPLETE = "Cleanup complete!"
 LANG_MSG_CLEANUP_CANCELLED = "Cleanup cancelled."
 
-# (H) Language CLI error messages
+# Language CLI error messages
 LANG_ERR_MISSING_ARGS = "Error: Either language_name or --grammar-url must be provided"
 LANG_ERR_REINSTALL_FAILED = "Failed to reinstall submodule: {error}"
 LANG_ERR_MANUAL_REMOVE_HINT = "You may need to remove it manually and try again:"
@@ -128,7 +128,7 @@ LANG_ERR_CONFIG_NOT_FOUND = "Could not find LANGUAGE_SPECS dictionary end"
 LANG_ERR_REMOVE_CONFIG = "Failed to update config file: {error}"
 LANG_ERR_REMOVE_SUBMODULE = "Failed to remove submodule: {error}"
 
-# (H) Language CLI prompts
+# Language CLI prompts
 LANG_PROMPT_LANGUAGE_NAME = "Language name (e.g., 'c-sharp', 'python')"
 LANG_PROMPT_COMMON_NAME = "What is the common name for this language?"
 LANG_PROMPT_EXTENSIONS = (
@@ -141,13 +141,13 @@ LANG_PROMPT_CALLS = "Select nodes representing FUNCTION CALLS (comma-separated)"
 LANG_PROMPT_CONTINUE = "Do you want to continue?"
 LANG_PROMPT_REMOVE_ORPHANS = "Do you want to remove these orphaned modules?"
 
-# (H) Language CLI fallback manual add message
+# Language CLI fallback manual add message
 LANG_FALLBACK_MANUAL_ADD = (
     "FALLBACK: Please manually add the following entry to "
     "'LANGUAGE_SPECS' in 'codebase_rag/language_spec.py':"
 )
 
-# (H) Language CLI table configuration
+# Language CLI table configuration
 LANG_TABLE_TITLE = "Configured Languages"
 LANG_TABLE_COL_LANGUAGE = "Language"
 LANG_TABLE_COL_EXTENSIONS = "Extensions"
@@ -162,5 +162,5 @@ LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
-# (H) Git submodule regex
+# Git submodule regex
 LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"

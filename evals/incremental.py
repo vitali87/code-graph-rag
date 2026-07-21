@@ -1,11 +1,11 @@
-# (H) Incremental-update correctness eval. cgr's incremental indexer re-parses
-# (H) only changed files; the promise is that the resulting graph equals a clean
-# (H) forced re-index of the same tree. This eval verifies that promise: index a
-# (H) repo, apply a semantically neutral edit to one file (a trailing comment
-# (H) that changes the hash but not the AST), run an incremental update, then
-# (H) diff the mutated graph against a clean re-index of the identical on-disk
-# (H) state. The clean re-index is the oracle, so any divergence is a real
-# (H) incremental-update bug (e.g. dropped inbound CALLS, issue #532).
+# Incremental-update correctness eval. cgr's incremental indexer re-parses
+# only changed files; the promise is that the resulting graph equals a clean
+# forced re-index of the same tree. This eval verifies that promise: index a
+# repo, apply a semantically neutral edit to one file (a trailing comment
+# that changes the hash but not the AST), run an incremental update, then
+# diff the mutated graph against a clean re-index of the identical on-disk
+# state. The clean re-index is the oracle, so any divergence is a real
+# incremental-update bug (e.g. dropped inbound CALLS, issue #532).
 import os
 import shutil
 import tempfile
@@ -51,9 +51,9 @@ def snapshot(store: _StatefulIngestor) -> GraphState:
 
 
 def _purge_index_state(work: Path) -> None:
-    # (H) A copied tree may carry cgr's own hash/dir-mtime caches (the real
-    # (H) codebase_rag source does). Left in place, a future-dated cache makes the
-    # (H) baseline index skip every file, so remove all such state before indexing.
+    # A copied tree may carry cgr's own hash/dir-mtime caches (the real
+    # codebase_rag source does). Left in place, a future-dated cache makes the
+    # baseline index skip every file, so remove all such state before indexing.
     for name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
         for stale in work.rglob(name):
             stale.unlink()
@@ -93,8 +93,8 @@ def run_neutral_edit_scenario(
     store = _StatefulIngestor()
     _index(store, work, project, parsers, queries, force=False)
 
-    # (H) The neutral edit must read as "changed": bump its mtime past the hash
-    # (H) cache so the in-sync fast path and the per-file mtime gate both fire.
+    # The neutral edit must read as "changed": bump its mtime past the hash
+    # cache so the in-sync fast path and the per-file mtime gate both fire.
     cache = work / cs.HASH_CACHE_FILENAME
     future = cache.stat().st_mtime + ec.INCREMENTAL_MTIME_BUMP
     target = work / target_rel
@@ -137,8 +137,8 @@ def _edge_repr(edge: tuple[str, str, str, str, str]) -> str:
 
 
 def compare_states(incremental: GraphState, clean: GraphState) -> ScoreResult:
-    # (H) clean is the oracle: missing = present in clean, absent from incremental
-    # (H) (fn); stale = present in incremental, absent from clean (fp).
+    # clean is the oracle: missing = present in clean, absent from incremental
+    # (fn); stale = present in incremental, absent from clean (fp).
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
 
@@ -224,8 +224,8 @@ def main(
     parsers, queries = load_parsers()
     results: list[ScoreResult] = []
     clean_equivalent = 0
-    # (H) Work outside the repo tree: each probe copies the whole target, so a
-    # (H) work dir under out_dir would pollute the repo and be scanned by hooks.
+    # Work outside the repo tree: each probe copies the whole target, so a
+    # work dir under out_dir would pollute the repo and be scanned by hooks.
     work_root = Path(tempfile.mkdtemp(prefix=ec.INCREMENTAL_TMP_PREFIX))
     try:
         for index, rel in enumerate(probes, start=1):

@@ -1,6 +1,6 @@
-# (H) Java networking I/O: the java.net / java.net.http surface (URL.openStream,
-# (H) URLConnection, HttpClient.send) is NETWORK, previously invisible to the
-# (H) catalog which only modelled java.net.Socket as a SOCKET.
+# Java networking I/O: the java.net / java.net.http surface (URL.openStream,
+# URLConnection, HttpClient.send) is NETWORK, previously invisible to the
+# catalog which only modelled java.net.Socket as a SOCKET.
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,7 +74,7 @@ def test_java_http_client_send_touches_network(tmp_path: Path) -> None:
         )
     }
     rels = _run(tmp_path, files)
-    # (H) send() is READ_WRITE, so both directions must be emitted.
+    # send() is READ_WRITE, so both directions must be emitted.
     assert _has(rels, "A.call", READS_FROM, "resource::NETWORK::<dynamic>"), rels
     assert _has(rels, "A.call", WRITES_TO, "resource::NETWORK::<dynamic>"), rels
 

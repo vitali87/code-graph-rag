@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-# (H) issue #723: modern-idiom I/O (httpx / aiohttp network, pathlib.Path file)
-# (H) must produce READS_FROM / WRITES_TO edges, mirroring requests / open.
+# issue #723: modern-idiom I/O (httpx / aiohttp network, pathlib.Path file)
+# must produce READS_FROM / WRITES_TO edges, mirroring requests / open.
 
 
 def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:

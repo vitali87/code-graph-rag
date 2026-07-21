@@ -14,12 +14,12 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# (H) A macro-free C++ corpus: a namespaced class declared in a header with
-# (H) in-class declarations + one inline method, its out-of-line definitions in
-# (H) the .cpp, a free-function prototype in the header, and free-function
-# (H) definitions in the .cpp. Macro-free so the tree-sitter path parses it
-# (H) correctly and its qualified names are the ground truth the libclang
-# (H) frontend must reproduce exactly (the issue #46 acceptance test).
+# A macro-free C++ corpus: a namespaced class declared in a header with
+# in-class declarations + one inline method, its out-of-line definitions in
+# the .cpp, a free-function prototype in the header, and free-function
+# definitions in the .cpp. Macro-free so the tree-sitter path parses it
+# correctly and its qualified names are the ground truth the libclang
+# frontend must reproduce exactly (the issue #46 acceptance test).
 HEADER = """
 namespace geo {
 
@@ -113,10 +113,10 @@ def _write_cpp_project(root: Path, header_name: str, header: str, src: str) -> N
     )
 
 
-# (H) A macro that tree-sitter cannot expand: `struct WIDGET_API Widget` is
-# (H) mis-parsed (WIDGET_API is read as the type), so cgr loses the `Widget`
-# (H) class entirely. libclang expands the macro and recovers it with its true
-# (H) multi-line span. This is the whole reason the frontend exists.
+# A macro that tree-sitter cannot expand: `struct WIDGET_API Widget` is
+# mis-parsed (WIDGET_API is read as the type), so cgr loses the `Widget`
+# class entirely. libclang expands the macro and recovers it with its true
+# multi-line span. This is the whole reason the frontend exists.
 _MACRO_HEADER = """
 #define WIDGET_API
 
@@ -153,7 +153,7 @@ def test_frontend_recovers_macro_mangled_class(temp_repo: Path) -> None:
     fe_class_nodes = get_nodes(fe_ingestor, "Class")
     fe_classes = get_qualified_names(fe_class_nodes)
 
-    # (H) tree-sitter loses Widget to the macro; the frontend recovers it.
+    # tree-sitter loses Widget to the macro; the frontend recovers it.
     assert not any(q.endswith(".ui.Widget") for q in ts_classes), (
         f"expected tree-sitter to mis-parse Widget, got {ts_classes}"
     )

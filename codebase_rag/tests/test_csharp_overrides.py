@@ -1,5 +1,5 @@
-# (H) C# Phase 2: OVERRIDES for `override` methods and interface
-# (H) implementations; `new` shadowing must NOT be recorded as an override.
+# C# Phase 2: OVERRIDES for `override` methods and interface
+# implementations; `new` shadowing must NOT be recorded as an override.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -59,7 +59,7 @@ public class Circle : IShape { public void Draw() {} }
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) Implementing an interface member is an override (no modifier needed).
+    # Implementing an interface member is an override (no modifier needed).
     assert _has(_pairs(mock_ingestor), "N.Circle.Draw", "N.IShape.Draw"), _pairs(
         mock_ingestor
     )
@@ -78,7 +78,7 @@ public class Derived : Base { public new void Hidden() {} }
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) `new` explicitly hides, it does not override: no OVERRIDES edge.
+    # `new` explicitly hides, it does not override: no OVERRIDES edge.
     assert not _has(_pairs(mock_ingestor), "N.Derived.Hidden", "N.Base.Hidden"), _pairs(
         mock_ingestor
     )

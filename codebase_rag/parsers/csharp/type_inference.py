@@ -32,17 +32,17 @@ if TYPE_CHECKING:
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
-# (H) Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
-# (H) static call on an unregistered type). The dispatcher must emit nothing
-# (H) and must NOT fall back to the name-only trie, which would fabricate an
-# (H) edge onto an unrelated same-name first-party member.
+# Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
+# static call on an unregistered type). The dispatcher must emit nothing
+# and must NOT fall back to the name-only trie, which would fabricate an
+# edge onto an unrelated same-name first-party member.
 CSHARP_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
 def _arity(leaf: str) -> int:
-    # (H) Parameter count of a (possibly signatured) method leaf: `M(int, string)`
-    # (H) -> 2, `M` / `M()` -> 0. Only depth-0 commas separate parameters, so a
-    # (H) qualified/array type never inflates the count.
+    # Parameter count of a (possibly signatured) method leaf: `M(int, string)`
+    # -> 2, `M` / `M()` -> 0. Only depth-0 commas separate parameters, so a
+    # qualified/array type never inflates the count.
     open_idx = leaf.find(cs.CHAR_PAREN_OPEN)
     if open_idx < 0:
         return 0
@@ -126,8 +126,8 @@ class CSharpTypeInferenceEngine:
         self.csharp_extension_methods = (
             csharp_extension_methods if csharp_extension_methods is not None else {}
         )
-        # (H) Shared references (populated by the Roslyn frontend / Pass 2 after
-        # (H) this engine is constructed), so `or {}` would lose them.
+        # Shared references (populated by the Roslyn frontend / Pass 2 after
+        # this engine is constructed), so `or {}` would lose them.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
         )
@@ -146,8 +146,8 @@ class CSharpTypeInferenceEngine:
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
         )
-        # (H) Shared reference (as above): {method qn: normalized return type},
-        # (H) populated during ingestion, read by chained-receiver typing.
+        # Shared reference (as above): {method qn: normalized return type},
+        # populated during ingestion, read by chained-receiver typing.
         self.method_return_types = (
             method_return_types if method_return_types is not None else {}
         )
@@ -156,13 +156,13 @@ class CSharpTypeInferenceEngine:
         )
         self._rel_to_module: dict[str, str] = {}
 
-    # (H) --- variable/field/parameter type map -------------------------------
+    # --- variable/field/parameter type map -------------------------------
 
     def build_variable_type_map(self, scope_node: Node) -> dict[str, str]:
-        # (H) Parameters and locals only. Field types are looked up at resolve
-        # (H) time against class_field_types (keyed by class qn), which also
-        # (H) reaches fields inherited from a base class in another file -- the
-        # (H) enclosing class qn is not known here, only at the call site.
+        # Parameters and locals only. Field types are looked up at resolve
+        # time against class_field_types (keyed by class qn), which also
+        # reaches fields inherited from a base class in another file -- the
+        # enclosing class qn is not known here, only at the call site.
         types: dict[str, str] = {}
         self._collect_parameters(scope_node, types)
         self._collect_locals(scope_node, types)
@@ -174,9 +174,9 @@ class CSharpTypeInferenceEngine:
             return
         prev_loose_type: str | None = None
         for child in param_list.children:
-            # (H) A `params string[] xs` tail is not wrapped in a `parameter`
-            # (H) node (grammar quirk, same as extract_parameter_type_names):
-            # (H) its array_type and identifier sit loose under the list.
+            # A `params string[] xs` tail is not wrapped in a `parameter`
+            # node (grammar quirk, same as extract_parameter_type_names):
+            # its array_type and identifier sit loose under the list.
             if child.type == cs.TS_CSHARP_ARRAY_TYPE:
                 prev_loose_type = safe_decode_text(child)
                 continue
@@ -193,13 +193,13 @@ class CSharpTypeInferenceEngine:
                 types[name] = annotate_type_ref(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
-        # (H) One type map per method (as every language engine here builds), so
-        # (H) sibling blocks are not distinguished: two `{ var x = ... }` blocks
-        # (H) that declare `x` as DIFFERENT types cannot both be modelled. Rather
-        # (H) than let the last declaration win and confidently misbind the other
-        # (H) block's calls, a name seen with conflicting types is dropped so it
-        # (H) falls back to (correct-when-unambiguous) bare-name resolution. Full
-        # (H) block-scoped precision needs the Roslyn semantic model (follow-up).
+        # One type map per method (as every language engine here builds), so
+        # sibling blocks are not distinguished: two `{ var x = ... }` blocks
+        # that declare `x` as DIFFERENT types cannot both be modelled. Rather
+        # than let the last declaration win and confidently misbind the other
+        # block's calls, a name seen with conflicting types is dropped so it
+        # falls back to (correct-when-unambiguous) bare-name resolution. Full
+        # block-scoped precision needs the Roslyn semantic model (follow-up).
         conflicted: set[str] = set()
         for decl in self._local_variable_declarations(scope_node):
             declared = self._declared_type_name(decl)
@@ -236,13 +236,13 @@ class CSharpTypeInferenceEngine:
             types[var_name] = var_type
 
     def _infer_initializer_type(self, declarator: Node) -> str | None:
-        # (H) `var x = new T(...)` -> T (the object_creation `type` field). Other
-        # (H) initializers (method calls, literals) are left untyped; chained
-        # (H) return-type inference is Roslyn-follow-up territory. The initializer
-        # (H) may be a direct child of the declarator or wrapped in an
-        # (H) equals_value_clause depending on grammar version, so search the
-        # (H) declarator's own subtree (a lambda body would be a separate scope,
-        # (H) but an initializer expression is small and self-contained).
+        # `var x = new T(...)` -> T (the object_creation `type` field). Other
+        # initializers (method calls, literals) are left untyped; chained
+        # return-type inference is Roslyn-follow-up territory. The initializer
+        # may be a direct child of the declarator or wrapped in an
+        # equals_value_clause depending on grammar version, so search the
+        # declarator's own subtree (a lambda body would be a separate scope,
+        # but an initializer expression is small and self-contained).
         for node in self._descendants_of_type(
             declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
         ):
@@ -251,12 +251,12 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
-        # (H) The declared type of `field_name` on class_qn or any base class,
-        # (H) read from the per-class maps recorded at ingestion (so it reaches a
-        # (H) field inherited from a base in another file). Seed the BFS with every
-        # (H) partial part of the class so a field declared on ANOTHER part
-        # (H) (`helper` on P1, used in a method on P2) is found. BFS with a visited
-        # (H) guard so a malformed inheritance cycle cannot loop.
+        # The declared type of `field_name` on class_qn or any base class,
+        # read from the per-class maps recorded at ingestion (so it reaches a
+        # field inherited from a base in another file). Seed the BFS with every
+        # partial part of the class so a field declared on ANOTHER part
+        # (`helper` on P1, used in a method on P2) is found. BFS with a visited
+        # guard so a malformed inheritance cycle cannot loop.
         seen: set[str] = set()
         queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
@@ -270,7 +270,7 @@ class CSharpTypeInferenceEngine:
             queue.extend(self.class_inheritance.get(current, []))
         return None
 
-    # (H) --- typed method-call resolution ------------------------------------
+    # --- typed method-call resolution ------------------------------------
 
     def resolve_csharp_method_call(
         self,
@@ -279,21 +279,21 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
-        # (H) A Roslyn call fact for this exact site wins over every heuristic:
-        # (H) it is the compiler's own overload resolution (argument types, not
-        # (H) arity) and covers receivers no syntax walk can type (chained
-        # (H) returns) plus reduced extension methods. Any key miss falls
-        # (H) through to the heuristics below.
+        # A Roslyn call fact for this exact site wins over every heuristic:
+        # it is the compiler's own overload resolution (argument types, not
+        # arity) and covers receivers no syntax walk can type (chained
+        # returns) plus reduced extension methods. Any key miss falls
+        # through to the heuristics below.
         if semantic := self._semantic_call_target(call_node, module_qn):
             return semantic
         func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is None:
             return None
         if func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # (H) A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
-            # (H) an in-scope local function first (it shadows same-name method
-            # (H) overloads), then an arity-matched member of the enclosing
-            # (H) type. A miss falls to the generic simple-name path.
+            # A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
+            # an in-scope local function first (it shadows same-name method
+            # overloads), then an arity-matched member of the enclosing
+            # type. A miss falls to the generic simple-name path.
             if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
                 return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
             return None
@@ -301,17 +301,17 @@ class CSharpTypeInferenceEngine:
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
             return None
-        # (H) `Policy.Handle<TException>()`: a generic member's NAME field is a
-        # (H) generic_name; methods register generic-free, so strip the type
-        # (H) arguments or the fluent entry point never matches.
+        # `Policy.Handle<TException>()`: a generic member's NAME field is a
+        # generic_name; methods register generic-free, so strip the type
+        # arguments or the fluent entry point never matches.
         method_name = method_name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
 
-        # (H) `base.X()` binds the BASE chain only: a first-party base's member
-        # (H) when one exists, otherwise the base is external (object.Equals in
-        # (H) Polly's hide-object-members regions) and the call must emit
-        # (H) nothing -- the trie fallback was self-looping it onto the
-        # (H) caller's own override.
+        # `base.X()` binds the BASE chain only: a first-party base's member
+        # when one exists, otherwise the base is external (object.Equals in
+        # Polly's hide-object-members regions) and the call must emit
+        # nothing -- the trie fallback was self-looping it onto the
+        # caller's own override.
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
             if class_qn := self._containing_class_qn(caller_qn):
                 seen: set[str] = set()
@@ -331,25 +331,25 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
-        # (H) Resolution order matters: an EXACT-ARITY instance method wins, then
-        # (H) an (always arity-exact) extension method, and only then the instance
-        # (H) name-only fallback. Trying the name-only fallback before extensions
-        # (H) would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
-        # (H) arity-correct `static Foo(this C, int)` extension.
+        # Resolution order matters: an EXACT-ARITY instance method wins, then
+        # an (always arity-exact) extension method, and only then the instance
+        # name-only fallback. Trying the name-only fallback before extensions
+        # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
+        # arity-correct `static Foo(this C, int)` extension.
         if receiver_class_qn is not None:
             if arity_hit := self._find_arity_across_parts(
                 receiver_class_qn, method_name, arg_count
             ):
-                # (H) A delegate-typed PROPERTY registers as a METHOD node with
-                # (H) a bare (arity-0) qn, so a 0-arg invoke slips through the
-                # (H) ARITY path too: `entry.Callback()` is Delegate.Invoke,
-                # (H) not a call to the property node.
+                # A delegate-typed PROPERTY registers as a METHOD node with
+                # a bare (arity-0) qn, so a 0-arg invoke slips through the
+                # ARITY path too: `entry.Callback()` is Delegate.Invoke,
+                # not a call to the property node.
                 if self.function_registry.is_property(arity_hit):
                     return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, arity_hit
-        # (H) An extension method (`static M(this T x, ...)` on an unrelated static
-        # (H) class) whose `this` receiver type matches the call's receiver -- the
-        # (H) only path that binds `x.M()` to a method not in x's hierarchy.
+        # An extension method (`static M(this T x, ...)` on an unrelated static
+        # class) whose `this` receiver type matches the call's receiver -- the
+        # only path that binds `x.M()` to a method not in x's hierarchy.
         if ext := self._try_extension_call(
             receiver,
             local_var_types or {},
@@ -361,17 +361,17 @@ class CSharpTypeInferenceEngine:
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None:
             if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
-                # (H) A delegate-typed PROPERTY invoked with call syntax
-                # (H) (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
-                # (H) method call; binding the property as a METHOD fabricates
-                # (H) an edge. Its reachability comes from the read pass.
+                # A delegate-typed PROPERTY invoked with call syntax
+                # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
+                # method call; binding the property as a METHOD fabricates
+                # an edge. Its reachability comes from the read pass.
                 if self.function_registry.is_property(name_hit):
                     return CSHARP_EXTERNAL_TARGET
                 return cs.NodeLabel.METHOD.value, name_hit
-        # (H) An object-virtual miss on a TYPED receiver (`severity.ToString()`
-        # (H) on an enum, `options.GetType()`) resolves to System.Object/Enum;
-        # (H) falling to the trie lands on whatever unrelated
-        # (H) hide-object-members override exists (Polly's PolicyBuilder).
+        # An object-virtual miss on a TYPED receiver (`severity.ToString()`
+        # on an enum, `options.GetType()`) resolves to System.Object/Enum;
+        # falling to the trie lands on whatever unrelated
+        # hide-object-members override exists (Polly's PolicyBuilder).
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return CSHARP_EXTERNAL_TARGET
         if receiver_class_qn is None and self._externally_targeted(
@@ -387,11 +387,11 @@ class CSharpTypeInferenceEngine:
         local_var_types: dict[str, str],
         caller_qn: str | None,
     ) -> bool:
-        # (H) Only for UNTYPED receivers (a typed miss keeps today's trie
-        # (H) rescue): (a) a PascalCase identifier/dotted path that is no
-        # (H) local, no field, and no registered type is an external TYPE
-        # (H) (`Console`, `System.Console`); (b) an object-virtual member name
-        # (H) on an untyped receiver resolves to System.Object.
+        # Only for UNTYPED receivers (a typed miss keeps today's trie
+        # rescue): (a) a PascalCase identifier/dotted path that is no
+        # local, no field, and no registered type is an external TYPE
+        # (`Console`, `System.Console`); (b) an object-virtual member name
+        # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
         unwrapped = self._unwrap_receiver(receiver)
@@ -409,10 +409,10 @@ class CSharpTypeInferenceEngine:
         segments = text.split(cs.SEPARATOR_DOT)
         head = segments[0]
         if head in local_var_types:
-            # (H) A local/param (any casing) whose DECLARED type resolves to
-            # (H) no registered type (`string[]`, reflection FieldInfo) is
-            # (H) external; its members cannot be attributed by name
-            # (H) (`names.Contains(x)` bound Context.Contains).
+            # A local/param (any casing) whose DECLARED type resolves to
+            # no registered type (`string[]`, reflection FieldInfo) is
+            # external; its members cannot be attributed by name
+            # (`names.Contains(x)` bound Context.Contains).
             return not self._registered_type_declares(
                 local_var_types[head], method_name
             )
@@ -424,8 +424,8 @@ class CSharpTypeInferenceEngine:
             )
             if verdict is not None:
                 return verdict
-        # (H) Any registered type with this simple name means the receiver may
-        # (H) be first-party (even when twin ambiguity kept it untyped).
+        # Any registered type with this simple name means the receiver may
+        # be first-party (even when twin ambiguity kept it untyped).
         if any(
             self.function_registry.get(qn) in _TYPE_DECLS
             for qn in self.simple_name_lookup.get(head, set())
@@ -440,22 +440,22 @@ class CSharpTypeInferenceEngine:
         method_name: str,
         caller_qn: str | None,
     ) -> bool | None:
-        # (H) Tri-state: True/False decide externality from what the enclosing
-        # (H) type knows about the receiver head; None leaves it to the
-        # (H) registered-simple-name sweep.
+        # Tri-state: True/False decide externality from what the enclosing
+        # type knows about the receiver head; None leaves it to the
+        # registered-simple-name sweep.
         if member_type := self._field_type(class_qn, head):
-            # (H) A field/property receiver whose declared type is external
-            # (H) (`Wrapper` of BCL RateLimiter) makes the call external (the
-            # (H) trie self-looped `Wrapper.DisposeAsync()` onto the enclosing
-            # (H) class).
+            # A field/property receiver whose declared type is external
+            # (`Wrapper` of BCL RateLimiter) makes the call external (the
+            # trie self-looped `Wrapper.DisposeAsync()` onto the enclosing
+            # class).
             return not self._registered_type_declares(member_type, method_name)
         if prop_qn := self.resolve_property_read(head, caller_qn):
             if entry := self.csharp_method_return_types.get(prop_qn):
                 return not self._registered_type_declares(entry[0], method_name)
-        # (H) A PascalCase receiver is very often a PROPERTY or member of
-        # (H) the enclosing type (`Pipeline.Execute(...)`); anything the
-        # (H) enclosing type declares by that name is first-party, not an
-        # (H) external type.
+        # A PascalCase receiver is very often a PROPERTY or member of
+        # the enclosing type (`Pipeline.Execute(...)`); anything the
+        # enclosing type declares by that name is first-party, not an
+        # external type.
         if self._find_name_across_parts(class_qn, head) is not None:
             return False
         return None
@@ -470,19 +470,19 @@ class CSharpTypeInferenceEngine:
         name = safe_decode_text(func)
         if not name:
             return None
-        # (H) `Handle<TException>(...)`: the callee name is the identifier
-        # (H) without its type arguments (matching how methods register).
+        # `Handle<TException>(...)`: the callee name is the identifier
+        # without its type arguments (matching how methods register).
         name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
         if local := self._find_in_scope_local_function(
             name, arg_count, caller_qn, module_qn
         ):
             return cs.NodeLabel.FUNCTION.value, local
-        # (H) Same-arity twins (`M(X) => M<Void>(x)` beside `M<T>(X)` on another
-        # (H) partial part, Polly's ResiliencePipeline Get*/Initialize*Context):
-        # (H) parameter arity cannot tell them apart, so prefer the overload
-        # (H) whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
-        # (H) generic_name, `M(...)` a plain identifier).
+        # Same-arity twins (`M(X) => M<Void>(x)` beside `M<T>(X)` on another
+        # partial part, Polly's ResiliencePipeline Get*/Initialize*Context):
+        # parameter arity cannot tell them apart, so prefer the overload
+        # whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
+        # generic_name, `M(...)` a plain identifier).
         generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
         for class_qn in self._caller_class_candidates(caller_qn, module_qn):
             matches = self._find_arity_matches_across_parts(class_qn, name, arg_count)
@@ -493,11 +493,11 @@ class CSharpTypeInferenceEngine:
                     if (m in self.csharp_generic_methods) == generic_call
                 ]
                 return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
-        # (H) A bare object-virtual with no local declaration is
-        # (H) `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
-        # (H) a bare name that IS a delegate-typed member of the enclosing type
-        # (H) (`Callback();` on a record positional property) is
-        # (H) Delegate.Invoke. Neither may fall to the bare-name trie.
+        # A bare object-virtual with no local declaration is
+        # `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
+        # a bare name that IS a delegate-typed member of the enclosing type
+        # (`Callback();` on a record positional property) is
+        # Delegate.Invoke. Neither may fall to the bare-name trie.
         if name in cs.CSHARP_OBJECT_VIRTUALS:
             return CSHARP_EXTERNAL_TARGET
         if self.resolve_property_read(name, caller_qn) is not None:
@@ -511,15 +511,15 @@ class CSharpTypeInferenceEngine:
     def _find_in_scope_local_function(
         self, name: str, arg_count: int, caller_qn: str | None, module_qn: str
     ) -> str | None:
-        # (H) Walk the caller's scope chain probing for a registered local
-        # (H) function. Each level is probed both as-is and with the overload
-        # (H) signature suffix stripped, because local functions register under
-        # (H) the BARE method scope name while the caller_qn carries the host
-        # (H) overload's signatured identity (`Handle(System.Func)` hosts
-        # (H) `Handle.Handle`). A hit must match the call's arity AND be
-        # (H) declared in a host the caller sits inside -- C# scoping, without
-        # (H) which the parameterless sibling overload would capture the local
-        # (H) fn textually nested under its own bare qn.
+        # Walk the caller's scope chain probing for a registered local
+        # function. Each level is probed both as-is and with the overload
+        # signature suffix stripped, because local functions register under
+        # the BARE method scope name while the caller_qn carries the host
+        # overload's signatured identity (`Handle(System.Func)` hosts
+        # `Handle.Handle`). A hit must match the call's arity AND be
+        # declared in a host the caller sits inside -- C# scoping, without
+        # which the parameterless sibling overload would capture the local
+        # fn textually nested under its own bare qn.
         if not caller_qn:
             return None
         scope = caller_qn
@@ -527,12 +527,12 @@ class CSharpTypeInferenceEngine:
             stripped = scope.split(cs.CHAR_PAREN_OPEN, 1)[0]
             for probe_scope in dict.fromkeys((scope, stripped)):
                 candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
-                # (H) Same-name local fns in SIBLING BLOCKS flatten to one scope
-                # (H) qn; later declarations carry an `@line` duplicate suffix,
-                # (H) so probe every registered variant, not just the natural qn
-                # (H) (else an arity-matched later declaration is missed and the
-                # (H) arity-blind fallback's duplicate fan-out fabricates a
-                # (H) phantom edge onto the uncalled sibling).
+                # Same-name local fns in SIBLING BLOCKS flatten to one scope
+                # qn; later declarations carry an `@line` duplicate suffix,
+                # so probe every registered variant, not just the natural qn
+                # (else an arity-matched later declaration is missed and the
+                # arity-blind fallback's duplicate fan-out fabricates a
+                # phantom edge onto the uncalled sibling).
                 for variant in self.function_registry.variants(candidate):
                     entry = self.csharp_local_functions.get(variant)
                     if (
@@ -549,12 +549,12 @@ class CSharpTypeInferenceEngine:
     def csharp_local_function_group(
         self, name: str, caller_qn: str | None, module_qn: str
     ) -> list[str]:
-        # (H) Every in-scope local function with this name, arity-blind: a
-        # (H) method GROUP argument (`return new(..., Dispose)` handing
-        # (H) Serilog's CreateLogger locals to the Logger ctor) carries no call
-        # (H) arity, so the whole registered group at the nearest declaring
-        # (H) scope is the referenced set. Locals shadow members, matching
-        # (H) _find_in_scope_local_function's scope-chain discipline.
+        # Every in-scope local function with this name, arity-blind: a
+        # method GROUP argument (`return new(..., Dispose)` handing
+        # Serilog's CreateLogger locals to the Logger ctor) carries no call
+        # arity, so the whole registered group at the nearest declaring
+        # scope is the referenced set. Locals shadow members, matching
+        # _find_in_scope_local_function's scope-chain discipline.
         if not caller_qn:
             return []
         scope = caller_qn
@@ -582,11 +582,11 @@ class CSharpTypeInferenceEngine:
         return matches
 
     def _caller_within_host(self, caller_qn: str, host_key: FunctionSpanKey) -> bool:
-        # (H) True when the caller IS the local function's host scope or a local
-        # (H) function transitively hosted inside it (a sibling or nested local
-        # (H) fn calling across/into its own nest). Spans join lazily against
-        # (H) function_locations because the host's signatured identity was not
-        # (H) registered yet when the local function was pinned.
+        # True when the caller IS the local function's host scope or a local
+        # function transitively hosted inside it (a sibling or nested local
+        # fn calling across/into its own nest). Spans join lazily against
+        # function_locations because the host's signatured identity was not
+        # registered yet when the local function was pinned.
         host_loc = self.function_locations.get(host_key)
         if host_loc is None:
             return False
@@ -609,10 +609,10 @@ class CSharpTypeInferenceEngine:
     def _caller_class_candidates(
         self, caller_qn: str | None, module_qn: str
     ) -> Iterator[str]:
-        # (H) Enclosing-type candidates for a bare member call, outermost last:
-        # (H) strip the overload signature (only the leaf carries one, and its
-        # (H) qualified parameter types contain dots that would break a plain
-        # (H) rsplit), then peel scope segments down to the module boundary.
+        # Enclosing-type candidates for a bare member call, outermost last:
+        # strip the overload signature (only the leaf carries one, and its
+        # qualified parameter types contain dots that would break a plain
+        # rsplit), then peel scope segments down to the module boundary.
         if not caller_qn:
             return
         scope = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -623,11 +623,11 @@ class CSharpTypeInferenceEngine:
             yield scope
 
     def resolve_property_read(self, name: str, caller_qn: str | None) -> str | None:
-        # (H) A bare-identifier read (`WrappedDictionary.Keys`) targets a
-        # (H) property of the caller's enclosing type (implicit this); resolve
-        # (H) across partial parts and base classes and accept ONLY a
-        # (H) registered property, so same-name methods stay out of the read
-        # (H) pass.
+        # A bare-identifier read (`WrappedDictionary.Keys`) targets a
+        # property of the caller's enclosing type (implicit this); resolve
+        # across partial parts and base classes and accept ONLY a
+        # registered property, so same-name methods stay out of the read
+        # pass.
         class_qn = self._containing_class_qn(caller_qn)
         if class_qn is None:
             return None
@@ -639,11 +639,11 @@ class CSharpTypeInferenceEngine:
     def resolve_member_property_read(
         self, receiver_type: str, name: str, module_qn: str
     ) -> str | None:
-        # (H) `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
-        # (H) receiver's type (a class name for a static read, an inferred
-        # (H) local/parameter type for an instance read). Accepts ONLY a
-        # (H) registered property; an unresolvable receiver yields nothing, so
-        # (H) unrelated `x.Value` chains never fabricate an edge.
+        # `Cfg.Value` / `w.Inner`: the NAME field read resolved against the
+        # receiver's type (a class name for a static read, an inferred
+        # local/parameter type for an instance read). Accepts ONLY a
+        # registered property; an unresolvable receiver yields nothing, so
+        # unrelated `x.Value` chains never fabricate an edge.
         class_qn = self._type_name_to_qn(receiver_type, module_qn)
         if class_qn is None:
             return None
@@ -653,9 +653,9 @@ class CSharpTypeInferenceEngine:
         return None
 
     def semantic_fact_resolved(self, call_node: Node, module_qn: str) -> bool:
-        # (H) True when a Roslyn call fact pinned this exact site: the target is
-        # (H) the compiler's own overload choice, so arity-based widening (the
-        # (H) same-arity family fan-out) must stay off for it.
+        # True when a Roslyn call fact pinned this exact site: the target is
+        # the compiler's own overload choice, so arity-based widening (the
+        # same-arity family fan-out) must stay off for it.
         return self._semantic_call_target(call_node, module_qn) is not None
 
     def _semantic_call_target(
@@ -672,10 +672,10 @@ class CSharpTypeInferenceEngine:
                 fact.target_file, fact.target_line, fact.target_col
             )
         if key in self.csharp_external_sites:
-            # (H) Roslyn resolved this site to a METADATA method: the call
-            # (H) provably leaves the repo, so return the external sentinel and
-            # (H) keep the name trie from fabricating a first-party edge (the
-            # (H) untypeable-receiver fp class the pure frontend cannot see).
+            # Roslyn resolved this site to a METADATA method: the call
+            # provably leaves the repo, so return the external sentinel and
+            # keep the name trie from fabricating a first-party edge (the
+            # untypeable-receiver fp class the pure frontend cannot see).
             return CSHARP_EXTERNAL_TARGET
         return None
 
@@ -690,9 +690,9 @@ class CSharpTypeInferenceEngine:
         if file_path is None:
             return None
         rel = cached_relative_path(file_path, self.repo_path).as_posix()
-        # (H) Keyed on the callee NAME token (nested invocations share an
-        # (H) expression start, never a name token), with generic arguments
-        # (H) stripped to match Roslyn's symbol name.
+        # Keyed on the callee NAME token (nested invocations share an
+        # expression start, never a name token), with generic arguments
+        # stripped to match Roslyn's symbol name.
         return (
             rel,
             name_node.start_point[0] + 1,
@@ -709,9 +709,9 @@ class CSharpTypeInferenceEngine:
         if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
             return func
         if func.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
-            # (H) `recv?.Method(...)`: the name lives on the member_binding child
-            # (H) (same token Roslyn keys its MemberBindingExpressionSyntax fact
-            # (H) on).
+            # `recv?.Method(...)`: the name lives on the member_binding child
+            # (same token Roslyn keys its MemberBindingExpressionSyntax fact
+            # on).
             binding = next(
                 (
                     child
@@ -727,9 +727,9 @@ class CSharpTypeInferenceEngine:
     def _declared_location(
         self, rel_file: str, line: int, col: int
     ) -> tuple[str, str] | None:
-        # (H) The fact's target declaration location resolves through the exact
-        # (H) (module_qn, start_line, start_col) record Pass 2 registered, so the
-        # (H) returned label/qn are the ingested node's, signature included.
+        # The fact's target declaration location resolves through the exact
+        # (module_qn, start_line, start_col) record Pass 2 registered, so the
+        # returned label/qn are the ingested node's, signature included.
         target_module = self._module_qn_for_rel_file(rel_file)
         if target_module is None:
             return None
@@ -739,8 +739,8 @@ class CSharpTypeInferenceEngine:
         return location.label, location.qualified_name
 
     def _module_qn_for_rel_file(self, rel_file: str) -> str | None:
-        # (H) Lazy inverse of module_qn_to_file_path (which Pass 2 fills after
-        # (H) this engine is constructed); rebuilt when new modules appeared.
+        # Lazy inverse of module_qn_to_file_path (which Pass 2 fills after
+        # this engine is constructed); rebuilt when new modules appeared.
         if len(self._rel_to_module) != len(self.module_qn_to_file_path):
             self._rel_to_module = {
                 cached_relative_path(path, self.repo_path).as_posix(): qn
@@ -778,27 +778,27 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        # (H) The receiver's declared type NAME (not its class qn), needed for the
-        # (H) extension-method fallback: extensions frequently target BCL types
-        # (H) (`string`, `int`) that are never registered as classes, so the raw
-        # (H) type name is all we can match on. Mirrors _resolve_receiver_class_qn's
-        # (H) branches but stops at the name.
+        # The receiver's declared type NAME (not its class qn), needed for the
+        # extension-method fallback: extensions frequently target BCL types
+        # (`string`, `int`) that are never registered as classes, so the raw
+        # type name is all we can match on. Mirrors _resolve_receiver_class_qn's
+        # branches but stops at the name.
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return None
         receiver = unwrapped
-        # (H) `((Widget)o).Ext()`: the cast target IS the receiver type, so an
-        # (H) extension-only method still binds on a cast receiver; same for a
-        # (H) `new Widget(...)` receiver.
+        # `((Widget)o).Ext()`: the cast target IS the receiver type, so an
+        # extension-only method still binds on a cast receiver; same for a
+        # `new Widget(...)` receiver.
         if receiver.type in (
             cs.TS_CSHARP_CAST_EXPRESSION,
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
         ):
             return self._annotated_type_field(receiver)
-        # (H) Same chained-receiver typing as the instance path, stopping at
-        # (H) the (arity-annotated) type name -- extensions often target
-        # (H) unregistered BCL types like `string`, and both sides of the
-        # (H) matcher carry the annotation consistently.
+        # Same chained-receiver typing as the instance path, stopping at
+        # the (arity-annotated) type name -- extensions often target
+        # unregistered BCL types like `string`, and both sides of the
+        # matcher carry the annotation consistently.
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             return self._invocation_return_type_name(
                 receiver, local_var_types, module_qn, caller_qn
@@ -834,8 +834,8 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _unwrap_receiver(self, receiver: Node) -> Node | None:
-        # (H) Peel interleaved parens and null-forgiving postfix wrappers
-        # (H) (`((Component)s)!` puts the `!` OUTSIDE the parens) to a fixpoint.
+        # Peel interleaved parens and null-forgiving postfix wrappers
+        # (`((Component)s)!` puts the `!` OUTSIDE the parens) to a fixpoint.
         while receiver.type in (
             cs.TS_PARENTHESIZED_EXPRESSION,
             cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION,
@@ -850,10 +850,10 @@ class CSharpTypeInferenceEngine:
         qn = self._containing_class_qn(caller_qn)
         if qn is None:
             return None
-        # (H) `this` names the exact containing class, so keep its
-        # (H) namespace-qualified form (`N1.Widget`, module prefix stripped) rather
-        # (H) than the bare simple name: that lets the matcher bind an exact `this
-        # (H) N1.Widget` extension even when another `N2.Widget` exists.
+        # `this` names the exact containing class, so keep its
+        # namespace-qualified form (`N1.Widget`, module prefix stripped) rather
+        # than the bare simple name: that lets the matcher bind an exact `this
+        # N1.Widget` extension even when another `N2.Widget` exists.
         if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
             return qn[len(module_qn) + 1 :]
         return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -879,10 +879,10 @@ class CSharpTypeInferenceEngine:
         if class_qn := self._containing_class_qn(caller_qn):
             if ftype := self._field_type(class_qn, name):
                 return ftype
-        # (H) An unknown bare identifier is a TYPE name (a static call
-        # (H) `Widget.M()`), not an instance -- extension methods bind on instances
-        # (H) only, so do NOT treat it as an extension receiver (else `Widget.Poke()`
-        # (H) would wrongly bind `static Poke(this Widget)`, invalid in C#).
+        # An unknown bare identifier is a TYPE name (a static call
+        # `Widget.M()`), not an instance -- extension methods bind on instances
+        # only, so do NOT treat it as an extension receiver (else `Widget.Poke()`
+        # would wrongly bind `static Poke(this Widget)`, invalid in C#).
         return None
 
     def _receiver_type_arity(
@@ -892,10 +892,10 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> int | None:
-        # (H) The receiver's WRITTEN generic arity where it is knowable
-        # (H) (object-creation/cast text, a chained call's recorded return, or
-        # (H) `this` inside a generic type); None when unknowable (an untyped
-        # (H) identifier), which skips the arity gate rather than guessing.
+        # The receiver's WRITTEN generic arity where it is knowable
+        # (object-creation/cast text, a chained call's recorded return, or
+        # `this` inside a generic type); None when unknowable (an untyped
+        # identifier), which skips the arity gate rather than guessing.
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return None
@@ -909,8 +909,8 @@ class CSharpTypeInferenceEngine:
             raw = safe_decode_text(type_node) if type_node else None
             return generic_arity_of_type_text(raw) if raw else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            # (H) Full caller context: locals and imports participate in the
-            # (H) inner resolution exactly as they did for the instance path.
+            # Full caller context: locals and imports participate in the
+            # inner resolution exactly as they did for the instance path.
             inner = self.resolve_csharp_method_call(
                 receiver, local_var_types, module_qn, caller_qn
             )
@@ -926,11 +926,11 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _registered_type_declares(self, type_name: str, method_name: str) -> bool:
-        # (H) A registered type merely SHARING the receiver type's simple name
-        # (H) (Polly's Snippets.Docs.RateLimiter demo class vs BCL RateLimiter)
-        # (H) must not defeat the external gate: the candidate counts only if
-        # (H) it actually DECLARES the called member somewhere in its
-        # (H) parts/bases.
+        # A registered type merely SHARING the receiver type's simple name
+        # (Polly's Snippets.Docs.RateLimiter demo class vs BCL RateLimiter)
+        # must not defeat the external gate: the candidate counts only if
+        # it actually DECLARES the called member somewhere in its
+        # parts/bases.
         simple = split_type_ref(type_name)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
         for qn in self.simple_name_lookup.get(simple, set()):
             if self.function_registry.get(qn) in _TYPE_DECLS:
@@ -950,22 +950,22 @@ class CSharpTypeInferenceEngine:
             return None
         recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         recv_qualified = cs.SEPARATOR_DOT in receiver_type_name
-        # (H) An UNqualified receiver whose simple name maps to more than one
-        # (H) registered first-party type (`N1.Widget` vs `N2.Widget`) is
-        # (H) genuinely ambiguous -- we can't tell which one it is, so an
-        # (H) unqualified-vs-unqualified match must not guess. A qualified receiver
-        # (H) or a BCL name (not registered) is not affected.
+        # An UNqualified receiver whose simple name maps to more than one
+        # registered first-party type (`N1.Widget` vs `N2.Widget`) is
+        # genuinely ambiguous -- we can't tell which one it is, so an
+        # unqualified-vs-unqualified match must not guess. A qualified receiver
+        # or a BCL name (not registered) is not affected.
         same_name_decls = [
             qn
             for qn in self.simple_name_lookup.get(recv_simple, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
-        # (H) Same-name declarations that all differ by GENERIC ARITY (`Builder`
-        # (H) beside `Builder<TResult>`, Polly's dual pipeline builders) are not
-        # (H) the namespace ambiguity this guard exists for: a compilable call
-        # (H) binds the unique matching extension regardless of which twin the
-        # (H) receiver is. Only same-arity twins (true `N1.Widget`/`N2.Widget`
-        # (H) namespace splits) stay ambiguous.
+        # Same-name declarations that all differ by GENERIC ARITY (`Builder`
+        # beside `Builder<TResult>`, Polly's dual pipeline builders) are not
+        # the namespace ambiguity this guard exists for: a compilable call
+        # binds the unique matching extension regardless of which twin the
+        # receiver is. Only same-arity twins (true `N1.Widget`/`N2.Widget`
+        # namespace splits) stay ambiguous.
         distinct_arities = {
             self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
         }
@@ -976,28 +976,28 @@ class CSharpTypeInferenceEngine:
         )
         matches: list[str] = []
         for qn, recv_type, ext_namespace, cand_recv_arity in candidates:
-            # (H) A receiver of KNOWN written arity never binds an extension
-            # (H) declared for the other generic twin (`new Builder<int>()`
-            # (H) cannot take a `this Builder` extension).
+            # A receiver of KNOWN written arity never binds an extension
+            # declared for the other generic twin (`new Builder<int>()`
+            # cannot take a `this Builder` extension).
             if receiver_arity is not None and cand_recv_arity != receiver_arity:
                 continue
-            # (H) `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
-            # (H) leaf-split on `.` would land inside a qualified param type.
+            # `_arity` reads the first `(`/last `)`, so pass the whole qn -- a
+            # leaf-split on `.` would land inside a qualified param type.
             if _arity(qn) != arg_count + 1:
                 continue
             if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] != recv_simple:
                 continue
             cand_qualified = cs.SEPARATOR_DOT in recv_type
-            # (H) Namespace consistency between the call receiver and the stored
-            # (H) `this` type, by qualification:
-            # (H)  - both qualified: require the SAME fully-qualified name
-            # (H)    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
-            # (H)  - recv qualified, cand not: resolve the ext's unqualified
-            # (H)    `this Widget` to `<ext-namespace>.Widget` and require equality
-            # (H)    (`N.Widget` binds a same-namespace `this Widget`);
-            # (H)  - recv unqualified, cand qualified: the receiver's namespace is
-            # (H)    unknown without a semantic model, so don't guess;
-            # (H)  - both unqualified: match by simple name unless it's ambiguous.
+            # Namespace consistency between the call receiver and the stored
+            # `this` type, by qualification:
+            #  - both qualified: require the SAME fully-qualified name
+            #    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
+            #  - recv qualified, cand not: resolve the ext's unqualified
+            #    `this Widget` to `<ext-namespace>.Widget` and require equality
+            #    (`N.Widget` binds a same-namespace `this Widget`);
+            #  - recv unqualified, cand qualified: the receiver's namespace is
+            #    unknown without a semantic model, so don't guess;
+            #  - both unqualified: match by simple name unless it's ambiguous.
             if recv_qualified and cand_qualified:
                 if recv_type != receiver_type_name:
                     continue
@@ -1009,13 +1009,13 @@ class CSharpTypeInferenceEngine:
                 )
                 if cand_qualified_name != receiver_type_name:
                     continue
-            elif cand_qualified:  # (H) recv unqualified, cand qualified
+            elif cand_qualified:  # recv unqualified, cand qualified
                 continue
             elif ambiguous_unqualified:
                 continue
             matches.append(qn)
-        # (H) Bind only on a unique match; an ambiguous name across static classes
-        # (H) is left unresolved rather than guessed.
+        # Bind only on a unique match; an ambiguous name across static classes
+        # is left unresolved rather than guessed.
         return matches[0] if len(matches) == 1 else None
 
     def _count_arguments(self, call_node: Node) -> int:
@@ -1031,10 +1031,10 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        # (H) A cast receiver `((Component)s!).Reload()` (Polly's
-        # (H) CancellationToken.Register callback): the cast TYPE is the
-        # (H) receiver's type by construction (mirrors the Java cast-receiver
-        # (H) handling).
+        # A cast receiver `((Component)s!).Reload()` (Polly's
+        # CancellationToken.Register callback): the cast TYPE is the
+        # receiver's type by construction (mirrors the Java cast-receiver
+        # handling).
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return None
@@ -1043,15 +1043,15 @@ class CSharpTypeInferenceEngine:
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             raw = safe_decode_text(type_node) if type_node else None
             if raw:
-                # (H) The cast's WRITTEN arity picks between simple-name twins
-                # (H) (`(Opt<int>)o` names the generic Opt<T>, never plain Opt).
+                # The cast's WRITTEN arity picks between simple-name twins
+                # (`(Opt<int>)o` names the generic Opt<T>, never plain Opt).
                 return self._type_name_to_qn(
                     _normalize_type_name(raw),
                     module_qn,
                     generic_arity_of_type_text(raw),
                 )
             return None
-        # (H) `new Builder().Add()`: an object-creation receiver IS its type.
+        # `new Builder().Add()`: an object-creation receiver IS its type.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             if type_text := safe_decode_text(type_node) if type_node else None:
@@ -1061,9 +1061,9 @@ class CSharpTypeInferenceEngine:
                     generic_arity_of_type_text(type_text),
                 )
             return None
-        # (H) `Policy.Handle<T>().Wrap(...)`: an invocation receiver types the
-        # (H) next hop via the resolved inner call's recorded return type
-        # (H) (Polly's whole fluent surface). Depth is bounded by chain length.
+        # `Policy.Handle<T>().Wrap(...)`: an invocation receiver types the
+        # next hop via the resolved inner call's recorded return type
+        # (Polly's whole fluent surface). Depth is bounded by chain length.
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             inner = self.resolve_csharp_method_call(
                 receiver, local_var_types, module_qn, caller_qn
@@ -1076,8 +1076,8 @@ class CSharpTypeInferenceEngine:
             return None
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._containing_class_qn(caller_qn)
-        # (H) An explicit `this.field` receiver: the field's (possibly inherited)
-        # (H) type on the enclosing class.
+        # An explicit `this.field` receiver: the field's (possibly inherited)
+        # type on the enclosing class.
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
             field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
@@ -1090,9 +1090,9 @@ class CSharpTypeInferenceEngine:
             name = safe_decode_text(receiver)
             if not name:
                 return None
-            # (H) A local/parameter of a known type resolves via its type; else a
-            # (H) bare (possibly inherited) field of the enclosing class; else the
-            # (H) receiver may itself be a type name (a static call `Foo.Bar()`).
+            # A local/parameter of a known type resolves via its type; else a
+            # bare (possibly inherited) field of the enclosing class; else the
+            # receiver may itself be a type name (a static call `Foo.Bar()`).
             type_name = local_var_types.get(name)
             if type_name is not None:
                 return self._type_name_to_qn(type_name, module_qn)
@@ -1105,8 +1105,8 @@ class CSharpTypeInferenceEngine:
     def _containing_class_qn(self, caller_qn: str | None) -> str | None:
         if not caller_qn:
             return None
-        # (H) Strip any parameter signature before splitting off the method leaf,
-        # (H) so a qualified param type (`M(System.String)`) does not fool rsplit.
+        # Strip any parameter signature before splitting off the method leaf,
+        # so a qualified param type (`M(System.String)`) does not fool rsplit.
         base = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
         class_qn = base.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
@@ -1117,13 +1117,13 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         generic_arity: int | None = None,
     ) -> str | None:
-        # (H) Stored type refs carry their written generic arity CLR-style
-        # (H) (`Options`0` is implicit: plain means arity 0); parse it so twin
-        # (H) filtering works for every map-sourced reference.
+        # Stored type refs carry their written generic arity CLR-style
+        # (`Options`0` is implicit: plain means arity 0); parse it so twin
+        # filtering works for every map-sourced reference.
         if generic_arity is None:
             type_name, generic_arity = split_type_ref(type_name)
-        # (H) An already-qualified name that IS a registered type resolves directly,
-        # (H) skipping the ambiguous simple-name sweep.
+        # An already-qualified name that IS a registered type resolves directly,
+        # skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:
             return type_name
         simple = type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -1144,10 +1144,10 @@ class CSharpTypeInferenceEngine:
         generic_arity: int | None,
         module_qn: str,
     ) -> str | None:
-        # (H) `Builder` vs `Builder<TResult>` share a simple name; when the
-        # (H) reference's WRITTEN generic arity is known, keep only the
-        # (H) declarations with that type-parameter count (Polly's dual
-        # (H) builders, where the ambiguity killed every fluent second hop).
+        # `Builder` vs `Builder<TResult>` share a simple name; when the
+        # reference's WRITTEN generic arity is known, keep only the
+        # declarations with that type-parameter count (Polly's dual
+        # builders, where the ambiguity killed every fluent second hop).
         if generic_arity is not None and len(candidates) > 1:
             arity_matched = [
                 qn
@@ -1159,23 +1159,23 @@ class CSharpTypeInferenceEngine:
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
-            # (H) Several candidates that are all parts of ONE partial class are a
-            # (H) single logical type, not a real ambiguity; return one part (method
-            # (H) resolution then spans the whole group).
+            # Several candidates that are all parts of ONE partial class are a
+            # single logical type, not a real ambiguity; return one part (method
+            # resolution then spans the whole group).
             if part := self._single_partial_group_member(candidates):
                 return part
-            # (H) Prefer a candidate in the calling file's module; ambiguity across
-            # (H) unrelated files is left unresolved rather than guessed.
+            # Prefer a candidate in the calling file's module; ambiguity across
+            # unrelated files is left unresolved rather than guessed.
             same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
             if len(same_module) == 1:
                 return same_module[0]
         return None
 
     def _single_partial_group_member(self, candidates: list[str]) -> str | None:
-        # (H) If every candidate belongs to the SAME partial-class group, they are
-        # (H) one logical type; return its lexicographically-first part (stable
-        # (H) across runs). A candidate outside the group (its group is None) means
-        # (H) a genuine cross-type ambiguity, left unresolved.
+        # If every candidate belongs to the SAME partial-class group, they are
+        # one logical type; return its lexicographically-first part (stable
+        # across runs). A candidate outside the group (its group is None) means
+        # a genuine cross-type ambiguity, left unresolved.
         group = self.csharp_partial_groups.get(candidates[0])
         if group is None:
             return None
@@ -1183,14 +1183,14 @@ class CSharpTypeInferenceEngine:
             return min(group)
         return None
 
-    # (H) An exact-arity match ANYWHERE up the hierarchy (_find_arity_across_parts)
-    # (H) wins before any same-name fallback, so an inherited correct-arity overload
-    # (H) (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
-    # (H) (`Derived.Foo(int)`). resolve_csharp_method_call sequences the two around
-    # (H) the extension-method lookup so an arity-correct extension is preferred over
-    # (H) a lone-same-name instance fallback. Both phases span every part of a
-    # (H) partial class (and each part's bases), so a member/base on another part
-    # (H) binds.
+    # An exact-arity match ANYWHERE up the hierarchy (_find_arity_across_parts)
+    # wins before any same-name fallback, so an inherited correct-arity overload
+    # (`Base.Foo(int, int)`) is not lost to a wrong-arity same-name method
+    # (`Derived.Foo(int)`). resolve_csharp_method_call sequences the two around
+    # the extension-method lookup so an arity-correct extension is preferred over
+    # a lone-same-name instance fallback. Both phases span every part of a
+    # partial class (and each part's bases), so a member/base on another part
+    # binds.
     def _partial_roots(self, class_qn: str) -> list[str]:
         return self.csharp_partial_groups.get(class_qn) or [class_qn]
 
@@ -1208,9 +1208,9 @@ class CSharpTypeInferenceEngine:
     def _find_arity_matches_across_parts(
         self, class_qn: str, method_name: str, arg_count: int
     ) -> list[str]:
-        # (H) ALL exact-arity same-name overloads across partial parts and
-        # (H) bases (the single-hit variant returns the first, which is
-        # (H) arbitrary when same-arity twins exist).
+        # ALL exact-arity same-name overloads across partial parts and
+        # bases (the single-hit variant returns the first, which is
+        # arbitrary when same-arity twins exist).
         seen: set[str] = set()
         out: list[str] = []
         for root in self._partial_roots(class_qn):
@@ -1238,10 +1238,10 @@ class CSharpTypeInferenceEngine:
             self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
 
     def csharp_same_arity_family(self, method_qn: str) -> list[str]:
-        # (H) Signature-suffixed siblings of a resolved bare call that differ
-        # (H) only in parameter TYPES: a switch-arm dispatch
-        # (H) (`FormatExact(i, o)` / `FormatExact(s, o)`) is untypeable by
-        # (H) arity alone, so the whole same-arity family stays reachable.
+        # Signature-suffixed siblings of a resolved bare call that differ
+        # only in parameter TYPES: a switch-arm dispatch
+        # (`FormatExact(i, o)` / `FormatExact(s, o)`) is untypeable by
+        # arity alone, so the whole same-arity family stays reachable.
         if cs.CHAR_PAREN_OPEN not in method_qn:
             return []
         base = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1257,12 +1257,12 @@ class CSharpTypeInferenceEngine:
         ]
 
     def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
-        # (H) Every same-name METHOD of the caller's enclosing type (across
-        # (H) partial parts and base classes): a bare method-group pass binds
-        # (H) the enclosing type's method group, and which overload the
-        # (H) delegate selects is invisible to syntax, so the whole family is
-        # (H) referenced. Properties are excluded (a method group never names
-        # (H) a property).
+        # Every same-name METHOD of the caller's enclosing type (across
+        # partial parts and base classes): a bare method-group pass binds
+        # the enclosing type's method group, and which overload the
+        # delegate selects is invisible to syntax, so the whole family is
+        # referenced. Properties are excluded (a method group never names
+        # a property).
         class_qn = self._containing_class_qn(caller_qn)
         if class_qn is None:
             return []
@@ -1297,8 +1297,8 @@ class CSharpTypeInferenceEngine:
                 continue
             leaf = qn[len(prefix) :]
             base = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
-            # (H) Directly on this class only (a nested class's method has an extra
-            # (H) dot in its name portion).
+            # Directly on this class only (a nested class's method has an extra
+            # dot in its name portion).
             if cs.SEPARATOR_DOT in base or base != method_name:
                 continue
             matches.append(qn)
@@ -1335,7 +1335,7 @@ class CSharpTypeInferenceEngine:
                 return resolved
         return None
 
-    # (H) --- ast helpers ------------------------------------------------------
+    # --- ast helpers ------------------------------------------------------
 
     def _descendants_of_type(self, node: Node, node_type: str) -> list[Node]:
         found: list[Node] = []
@@ -1348,10 +1348,10 @@ class CSharpTypeInferenceEngine:
         return found
 
     def _local_variable_declarations(self, scope_node: Node) -> list[Node]:
-        # (H) Every variable_declaration lexically in this method's own scope,
-        # (H) pruning nested callables (lambdas, local functions, anonymous
-        # (H) methods): their locals belong to a separate scope and must not leak
-        # (H) into -- or shadow -- the enclosing method's type map.
+        # Every variable_declaration lexically in this method's own scope,
+        # pruning nested callables (lambdas, local functions, anonymous
+        # methods): their locals belong to a separate scope and must not leak
+        # into -- or shadow -- the enclosing method's type map.
         found: list[Node] = []
         stack = list(scope_node.children)
         while stack:

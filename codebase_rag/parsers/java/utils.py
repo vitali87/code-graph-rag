@@ -122,14 +122,14 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
         case cs.TS_TYPE_IDENTIFIER:
             return safe_decode_text(node)
         case cs.TS_SCOPED_TYPE_IDENTIFIER:
-            # (H) `Outer.Base`/`pkg.Base`: keep the full scoped name rather than
-            # (H) descending to the first segment (the outer/package), which would
-            # (H) point resolution at the wrong class.
+            # `Outer.Base`/`pkg.Base`: keep the full scoped name rather than
+            # descending to the first segment (the outer/package), which would
+            # point resolution at the wrong class.
             return safe_decode_text(node)
         case cs.TS_GENERIC_TYPE:
-            # (H) The base of a generic type is its first type_identifier/scoped child
-            # (H) (e.g. `Box<T>` -> Box, `Outer.Base<T>` -> Outer.Base); ignore the
-            # (H) type_arguments that follow.
+            # The base of a generic type is its first type_identifier/scoped child
+            # (e.g. `Box<T>` -> Box, `Outer.Base<T>` -> Outer.Base); ignore the
+            # type_arguments that follow.
             for child in node.children:
                 if child.type in (
                     cs.TS_TYPE_IDENTIFIER,
@@ -138,8 +138,8 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
                     return safe_decode_text(child)
             return None
         case _:
-            # (H) `extends X` exposes a `superclass` wrapper node, not the type itself;
-            # (H) descend into it to reach the type_identifier/generic_type.
+            # `extends X` exposes a `superclass` wrapper node, not the type itself;
+            # descend into it to reach the type_identifier/generic_type.
             for child in node.children:
                 if name := _extract_type_identifier_name(child):
                     return name
@@ -336,12 +336,12 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
 
 
 def _java_cast_target_type(object_node: ASTNode) -> str | None:
-    # (H) The target type of a cast receiver: unwrap a parenthesized wrapper to the
-    # (H) cast_expression, read its `type` field, strip generic args so
-    # (H) `((a.b.Reader<T>) x)` -> `a.b.Reader`. The package is KEPT so a qualified cast
-    # (H) resolves to the right class (the resolver handles dotted/alternate-module
-    # (H) names); stripping it would collapse it onto a same-package/imported same-leaf
-    # (H) type. None when there is no cast type.
+    # The target type of a cast receiver: unwrap a parenthesized wrapper to the
+    # cast_expression, read its `type` field, strip generic args so
+    # `((a.b.Reader<T>) x)` -> `a.b.Reader`. The package is KEPT so a qualified cast
+    # resolves to the right class (the resolver handles dotted/alternate-module
+    # names); stripping it would collapse it onto a same-package/imported same-leaf
+    # type. None when there is no cast type.
     cast = object_node
     while cast.type == cs.TS_PARENTHESIZED_EXPRESSION:
         cast = next(
@@ -362,11 +362,11 @@ def _java_cast_target_type(object_node: ASTNode) -> str | None:
 
 
 def _java_paren_receiver(object_node: ASTNode) -> str | None:
-    # (H) A parenthesized NON-cast receiver `(reader).m()` (or nested `((reader))`):
-    # (H) unwrap the parentheses and return the inner identifier/field-access text so the
-    # (H) call resolves through that variable's type, instead of falling to the
-    # (H) unqualified resolver and binding a same-named decoy. None when the inner
-    # (H) expression is neither an identifier nor a field access.
+    # A parenthesized NON-cast receiver `(reader).m()` (or nested `((reader))`):
+    # unwrap the parentheses and return the inner identifier/field-access text so the
+    # call resolves through that variable's type, instead of falling to the
+    # unqualified resolver and binding a same-named decoy. None when the inner
+    # expression is neither an identifier nor a field access.
     node = object_node
     while node.type == cs.TS_PARENTHESIZED_EXPRESSION:
         node = next(
@@ -397,11 +397,11 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
             case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
                 obj = safe_decode_text(object_node)
             case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
-                # (H) A cast receiver `((T) x).m()`: the cast's target type is the
-                # (H) receiver type, so m resolves on T. A parenthesized non-cast receiver
-                # (H) `(reader).m()` keeps its inner identifier/field-access receiver.
-                # (H) Without this the call falls to the unqualified path and never finds
-                # (H) a cross-file/sibling T or the variable's type.
+                # A cast receiver `((T) x).m()`: the cast's target type is the
+                # receiver type, so m resolves on T. A parenthesized non-cast receiver
+                # `(reader).m()` keeps its inner identifier/field-access receiver.
+                # Without this the call falls to the unqualified path and never finds
+                # a cross-file/sibling T or the variable's type.
                 obj = _java_cast_target_type(object_node) or _java_paren_receiver(
                     object_node
                 )

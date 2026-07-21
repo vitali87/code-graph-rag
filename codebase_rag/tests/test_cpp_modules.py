@@ -806,7 +806,7 @@ void showcaseModuleFeatures() {
         call for call in call_relationships if "module_usage" in call.args[0][2]
     ]
 
-    # (H) builtin operator edges no longer emitted (#652)
+    # builtin operator edges no longer emitted (#652)
     assert len(module_function_calls) >= 4, (
         f"Expected at least 5 module function calls, found {len(module_function_calls)}"
     )

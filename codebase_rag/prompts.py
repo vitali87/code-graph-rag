@@ -208,7 +208,7 @@ def build_rag_orchestrator_prompt(
 
 
 def _cypher_literal(name: str) -> str:
-    # (H) Escape for a single-quoted Cypher literal so apostrophe names stay valid.
+    # Escape for a single-quoted Cypher literal so apostrophe names stay valid.
     return name.replace("\\", "\\\\").replace("'", "\\'")
 
 
@@ -304,11 +304,11 @@ Provide only the Cypher query.
 """
 
 
-# (H) Backwards-compatible default (no project scope injected)
+# Backwards-compatible default (no project scope injected)
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
 
 
-# (H) Stricter prompt for less capable open-source/local models (e.g., Ollama)
+# Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
@@ -388,7 +388,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 """
 
 
-# (H) Backwards-compatible default (no project scope injected)
+# Backwards-compatible default (no project scope injected)
 LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 

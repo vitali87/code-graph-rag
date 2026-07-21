@@ -15,11 +15,11 @@ def _make_file(root: Path) -> None:
 
 
 def test_java_method_caller_qn_carries_signature(tmp_path: Path) -> None:
-    # (H) The definition pass registers a Java method node with its parameter
-    # (H) signature (demo.T.T.caller()), but the call pass built the caller qn
-    # (H) without it (demo.T.T.caller) -> the CALLS from-endpoint matched no node
-    # (H) and the edge would not attach in Memgraph. The caller qn must carry the
-    # (H) same signature as the registered Method node.
+    # The definition pass registers a Java method node with its parameter
+    # signature (demo.T.T.caller()), but the call pass built the caller qn
+    # without it (demo.T.T.caller) -> the CALLS from-endpoint matched no node
+    # and the edge would not attach in Memgraph. The caller qn must carry the
+    # same signature as the registered Method node.
     _make_file(tmp_path)
     ingestor = _capture(tmp_path, "demo")
     node_qns = {str(uid) for (_label, uid) in ingestor.nodes}
@@ -41,8 +41,8 @@ def _make_cross_package(root: Path) -> None:
         "package pkgb;\npublic class T {\n    public static int make() { return 1; }\n}\n",
         encoding="utf-8",
     )
-    # (H) Use references bare `T.make()` with NO import; in Java this only compiles
-    # (H) for a same-package or imported T, never a class in another package.
+    # Use references bare `T.make()` with NO import; in Java this only compiles
+    # for a same-package or imported T, never a class in another package.
     (root / "pkga" / "Use.java").write_text(
         "package pkga;\nclass Use {\n    int run() { return T.make(); }\n}\n",
         encoding="utf-8",
@@ -52,9 +52,9 @@ def _make_cross_package(root: Path) -> None:
 def test_java_unimported_cross_package_static_call_does_not_resolve(
     tmp_path: Path,
 ) -> None:
-    # (H) A bare class-name receiver with no import must not resolve to a class in
-    # (H) a different package (directory): the same-package fallback is exhausted,
-    # (H) so leave the receiver unlinked rather than emit a wrong cross-package edge.
+    # A bare class-name receiver with no import must not resolve to a class in
+    # a different package (directory): the same-package fallback is exhausted,
+    # so leave the receiver unlinked rather than emit a wrong cross-package edge.
     _make_cross_package(tmp_path)
     ingestor = _capture(tmp_path, "demo")
     calls = {

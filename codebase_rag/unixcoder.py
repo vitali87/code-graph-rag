@@ -1,6 +1,6 @@
-# (H) Adapted from https://github.com/microsoft/unixcoder
-# (H) Copyright (c) Microsoft Corporation.
-# (H) Licensed under the MIT license.
+# Adapted from https://github.com/microsoft/unixcoder
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
 
 import torch
 from torch import nn
@@ -113,7 +113,7 @@ class UniXcoder(nn.Module):
         beam_size: int = 5,
         max_length: int = 64,
     ) -> torch.Tensor:
-        # (H) self.bias is registered as buffer (Tensor) but typed as Module by ty
+        # self.bias is registered as buffer (Tensor) but typed as Module by ty
         bias: torch.Tensor = getattr(self, cs.UNIXCODER_BUFFER_BIAS)
         pad_id = self.config.pad_token_id
         assert pad_id is not None
@@ -125,9 +125,9 @@ class UniXcoder(nn.Module):
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
-            # (H) transformers 5.5 widened config.eos_token_id to int | list[int] |
-            # (H) None (models may declare several EOS tokens); Beam accepts either
-            # (H) form and stops on any of them.
+            # transformers 5.5 widened config.eos_token_id to int | list[int] |
+            # None (models may declare several EOS tokens); Beam accepts either
+            # form and stops on any of them.
             eos_id = self.config.eos_token_id
         assert eos_id is not None
 
@@ -209,8 +209,8 @@ class Beam:
         self.scores: torch.Tensor = torch.FloatTensor(size).zero_().to(device)
         self.prevKs: list[torch.Tensor] = []
         self.nextYs: list[torch.Tensor] = [torch.LongTensor(size).fill_(0).to(device)]
-        # (H) Normalize to a set of stop ids so a config with multiple EOS tokens
-        # (H) terminates on any of them (transformers 5.5 typing).
+        # Normalize to a set of stop ids so a config with multiple EOS tokens
+        # terminates on any of them (transformers 5.5 typing).
         self._eos: frozenset[int] = frozenset(eos if isinstance(eos, list) else [eos])
         self.eosTop = False
         self.finished: list[tuple[torch.Tensor, int, int]] = []

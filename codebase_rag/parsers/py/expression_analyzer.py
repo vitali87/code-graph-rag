@@ -82,12 +82,12 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _attribute_constructor_type(self, method_call_text: str) -> str | None:
-        # (H) alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
-        # (H) genai.Client, models.Helper), not a method call: the variable's type is
-        # (H) the dotted class itself. Without this the receiver stays untyped, the
-        # (H) known-external suppression cannot fire, and a later member call on it
-        # (H) (df.apply) rebinds by bare name to an unrelated first-party method.
-        # (H) Mirrors the bare `ClassName(...)` uppercase heuristic.
+        # alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
+        # genai.Client, models.Helper), not a method call: the variable's type is
+        # the dotted class itself. Without this the receiver stays untyped, the
+        # known-external suppression cannot fire, and a later member call on it
+        # (df.apply) rebinds by bare name to an unrelated first-party method.
+        # Mirrors the bare `ClassName(...)` uppercase heuristic.
         simple_name = method_call_text.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if simple_name and simple_name[0].isupper():
             return method_call_text
@@ -135,9 +135,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and func_node.text is not None
                 and (callee := safe_decode_text(func_node))
             ):
-                # (H) `r = make_widget()`: type the local from the free-function
-                # (H) factory's return so the later `r.run()` does not depend on
-                # (H) the bare-name trie fallback.
+                # `r = make_widget()`: type the local from the free-function
+                # factory's return so the later `r.run()` does not depend on
+                # the bare-name trie fallback.
                 return self._infer_free_function_return_type(callee, module_qn)
 
         return None
@@ -163,9 +163,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             )
 
         if cs.SEPARATOR_DOT not in method_call and cs.CHAR_PAREN_OPEN in method_call:
-            # (H) A bare call as chain receiver (`get_resolver()._is_callback()`,
-            # (H) django) is a free-function factory or a constructor; type it from
-            # (H) the callee's return.
+            # A bare call as chain receiver (`get_resolver()._is_callback()`,
+            # django) is a free-function factory or a constructor; type it from
+            # the callee's return.
             callee = method_call.split(cs.CHAR_PAREN_OPEN, 1)[0].strip()
             if callee.isidentifier():
                 return self._infer_free_function_return_type(callee, module_qn)
@@ -176,17 +176,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     def _infer_free_function_return_type(
         self, callee: str, module_qn: str
     ) -> str | None:
-        # (H) Resolve a bare callee in the caller's scope only (same module, then
-        # (H) imports) -- Python scoping admits nothing else for a bare name, and a
-        # (H) global simple-name fallback would rebind common names. A CLASS callee
-        # (H) is a constructor: the returned type is the class itself.
+        # Resolve a bare callee in the caller's scope only (same module, then
+        # imports) -- Python scoping admits nothing else for a bare name, and a
+        # global simple-name fallback would rebind common names. A CLASS callee
+        # is a constructor: the returned type is the class itself.
         local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{callee}"
         candidates = [local_qn]
         if imported := self.import_processor.import_mapping.get(module_qn, {}).get(
             callee
         ):
-            # (H) The import may name a package re-export hop (django's
-            # (H) `from django.urls import get_resolver`), not the definition.
+            # The import may name a package re-export hop (django's
+            # `from django.urls import get_resolver`), not the definition.
             candidates.append(
                 follow_reexports(
                     imported,
@@ -220,8 +220,8 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             else None
         )
         if result and cs.SEPARATOR_DOT not in result:
-            # (H) Resolve a bare class name in the FACTORY's module scope before it
-            # (H) crosses into a caller module where the class is not imported.
+            # Resolve a bare class name in the FACTORY's module scope before it
+            # crosses into a caller module where the class is not imported.
             result = self._resolve_class_name(result, fn_module_qn) or result
         self._method_return_type_cache[fn_qn] = result
         return result

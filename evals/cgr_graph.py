@@ -86,26 +86,26 @@ _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
 
 def _text(value: PropertyValue) -> str | None:
-    # (H) path / qualified_name / absolute_path are always textual; narrow the
-    # (H) general PropertyValue (which includes list[str]) so the row matches the
-    # (H) ResultValue shape the prune query consumer expects.
+    # path / qualified_name / absolute_path are always textual; narrow the
+    # general PropertyValue (which includes list[str]) so the row matches the
+    # ResultValue shape the prune query consumer expects.
     return value if isinstance(value, str) else None
 
 
 def _int(value: PropertyValue) -> int | None:
-    # (H) start_line / end_line are always integral; narrow the general
-    # (H) PropertyValue (whose list[str] member is invariant-incompatible with
-    # (H) ResultValue) so the row matches the ResultValue shape. bool is an int
-    # (H) subclass but line numbers are never bool, so the guard is exact.
+    # start_line / end_line are always integral; narrow the general
+    # PropertyValue (whose list[str] member is invariant-incompatible with
+    # ResultValue) so the row matches the ResultValue shape. bool is an int
+    # subclass but line numbers are never bool, so the guard is exact.
     return value if isinstance(value, int) else None
 
 
 class _StatefulIngestor:
-    # (H) A faithful in-memory stand-in for the persistent graph store. Unlike
-    # (H) _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
-    # (H) the incremental updater issues, so a graph mutated by an incremental run
-    # (H) can be compared against a clean re-index. Only the exact queries cgr
-    # (H) emits are emulated (matched by identity), nothing more.
+    # A faithful in-memory stand-in for the persistent graph store. Unlike
+    # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
+    # the incremental updater issues, so a graph mutated by an incremental run
+    # can be compared against a clean re-index. Only the exact queries cgr
+    # emits are emulated (matched by identity), nothing more.
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
@@ -366,10 +366,10 @@ def _lang_endpoint_key(
     suffix: str | tuple[str, ...],
     exclude_suffix: str | None = None,
 ) -> NodeKey | None:
-    # (H) Resolve any node (incl. the per-file Module, which carries no
-    # (H) start_line) to a NodeKey so containment edges can join on it. cgr keys
-    # (H) module-level DEFINES parents at the module node; mirror the ast oracle
-    # (H) by placing the module at MODULE_START_LINE.
+    # Resolve any node (incl. the per-file Module, which carries no
+    # start_line) to a NodeKey so containment edges can join on it. cgr keys
+    # module-level DEFINES parents at the module node; mirror the ast oracle
+    # by placing the module at MODULE_START_LINE.
     path = props.get(cs.KEY_PATH)
     if path is None:
         return None
@@ -380,9 +380,9 @@ def _lang_endpoint_key(
         return None
     raw_start = props.get(cs.KEY_START_LINE)
     if label == cs.NodeLabel.MODULE.value:
-        # (H) The per-file module carries no start line (keyed at line 0); an
-        # (H) inline module (Rust `mod`) carries its declaration line, which keeps
-        # (H) it distinct from the file module so nested containment can join.
+        # The per-file module carries no start line (keyed at line 0); an
+        # inline module (Rust `mod`) carries its declaration line, which keeps
+        # it distinct from the file module so nested containment can join.
         if isinstance(raw_start, int | float):
             return NodeKey(label, file, int(raw_start))
         return NodeKey(label, file, ec.MODULE_START_LINE)
@@ -421,15 +421,15 @@ def extract_cgr_lang_graph(
             if parent is not None and child is not None:
                 edges.add(EdgeKey(rel_type, parent, child))
         elif rel_type in ec.INHERITANCE_NAME_EDGE_TYPE_VALUES:
-            # (H) Inheritance is graded by the base's SIMPLE NAME (cgr's to-value
-            # (H) is the resolved base qn, or the bare name when unresolved).
+            # Inheritance is graded by the base's SIMPLE NAME (cgr's to-value
+            # is the resolved base qn, or the bare name when unresolved).
             source = by_uid.get((from_label, from_val))
             if source is not None:
-                # (H) Base simple name: cgr's resolved target may be a dotted qn
-                # (H) (`module.Base`) or a Rust path (`std::io::Read`), so split on
-                # (H) both `.` and `::`. A same-scope collision registers the base
-                # (H) as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
-                # (H) grades by the written name, so strip the marker.
+                # Base simple name: cgr's resolved target may be a dotted qn
+                # (`module.Base`) or a Rust path (`std::io::Read`), so split on
+                # both `.` and `::`. A same-scope collision registers the base
+                # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
+                # grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
                 target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
                     cs.DUP_QN_MARKER, 1
@@ -439,12 +439,12 @@ def extract_cgr_lang_graph(
 
 
 def restrict_to_files(graph: GraphData, files: set[str]) -> GraphData:
-    # (H) Scope a graph to a file universe. A compile_commands.json oracle only
-    # (H) "sees" files its compiled TUs reach, while cgr indexes the whole tree
-    # (H) (bundled test deps, uncompiled sources). Grading cgr's out-of-universe
-    # (H) nodes against that oracle is meaningless, so restrict cgr to the files
-    # (H) the oracle actually parsed before scoring. Drops only false positives:
-    # (H) no oracle node lives outside its own universe, so recall is untouched.
+    # Scope a graph to a file universe. A compile_commands.json oracle only
+    # "sees" files its compiled TUs reach, while cgr indexes the whole tree
+    # (bundled test deps, uncompiled sources). Grading cgr's out-of-universe
+    # nodes against that oracle is meaningless, so restrict cgr to the files
+    # the oracle actually parsed before scoring. Drops only false positives:
+    # no oracle node lives outside its own universe, so recall is untouched.
     nodes = {k: v for k, v in graph.nodes.items() if k.file in files}
     edges = {e for e in graph.edges if e.parent.file in files and e.child.file in files}
     name_edges = {n for n in graph.name_edges if n.source.file in files}
@@ -567,7 +567,7 @@ def extract_cgr_ts_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNo
         if path is None:
             continue
         file = str(path)
-        # (H) Match the oracle: real .ts/.tsx sources, excluding .d.ts type stubs.
+        # Match the oracle: real .ts/.tsx sources, excluding .d.ts type stubs.
         if not file.endswith(ec.TS_SUFFIXES) or file.endswith(ec.TS_DTS_SUFFIX):
             continue
         raw_start = props.get(cs.KEY_START_LINE)
@@ -638,11 +638,11 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
             edges.add(EdgeKey(rel_type, parent, child))
 
     prefix = project_name + cs.SEPARATOR_DOT
-    # (H) Only real in-repo Python modules count as internal import targets. cgr
-    # (H) also emits placeholder MODULE nodes for unresolved imports whose path is
-    # (H) the dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a
-    # (H) .py path excludes those so IMPORTS is graded against real files only,
-    # (H) consistent with the .py node filter and the ast oracle.
+    # Only real in-repo Python modules count as internal import targets. cgr
+    # also emits placeholder MODULE nodes for unresolved imports whose path is
+    # the dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a
+    # .py path excludes those so IMPORTS is graded against real files only,
+    # consistent with the .py node filter and the ast oracle.
     internal_modules: dict[str, str] = {
         str(uid): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()
@@ -660,8 +660,8 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if source is None:
             continue
         if rel_type == cs.RelationshipType.INHERITS.value:
-            # (H) Same DUP_QN_MARKER strip as the multi-language reducer: a base
-            # (H) registered as a duplicate variant grades by its written name.
+            # Same DUP_QN_MARKER strip as the multi-language reducer: a base
+            # registered as a duplicate variant grades by its written name.
             target = (
                 str(to_val)
                 .rsplit(cs.SEPARATOR_DOT, 1)[-1]

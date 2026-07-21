@@ -1,10 +1,10 @@
-# (H) Covers the C++ structure oracle (evals/oracles/cpp_oracle.py): a libclang
-# (H) oracle driven by a compile_commands.json resolves #includes and expands
-# (H) macros to the true translation-unit AST, which tree-sitter cannot do. cgr's
-# (H) C++ nodes, containment edges, and spans are graded against it on
-# (H) (kind, file, start_line). The sample exercises a header-declared class
-# (H) (resolved via an -I include path), a macro-typed method, out-of-class method
-# (H) definitions, a constructor, an inline method, a struct, and a free function.
+# Covers the C++ structure oracle (evals/oracles/cpp_oracle.py): a libclang
+# oracle driven by a compile_commands.json resolves #includes and expands
+# macros to the true translation-unit AST, which tree-sitter cannot do. cgr's
+# C++ nodes, containment edges, and spans are graded against it on
+# (kind, file, start_line). The sample exercises a header-declared class
+# (resolved via an -I include path), a macro-typed method, out-of-class method
+# definitions, a constructor, an inline method, a struct, and a free function.
 from __future__ import annotations
 
 import json
@@ -89,9 +89,9 @@ def test_cgr_matches_libclang_oracle_on_cpp_structure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _require_cpp()
-    # (H) The L1 structure eval grades the TREE-SITTER extraction against the
-    # (H) libclang oracle; the default HYBRID frontend would add macro Function
-    # (H) nodes the oracle does not model (the fixture's compdb triggers it).
+    # The L1 structure eval grades the TREE-SITTER extraction against the
+    # libclang oracle; the default HYBRID frontend would add macro Function
+    # nodes the oracle does not model (the fixture's compdb triggers it).
     from codebase_rag.config import settings
 
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
@@ -127,7 +127,7 @@ def test_cgr_matches_libclang_oracle_on_cpp_structure(
             aggregate,
             result.diff,
         )
-    # (H) Guard the sample is non-trivial (class + struct + 4 methods + function).
+    # Guard the sample is non-trivial (class + struct + 4 methods + function).
     node_aggregate = _aggregate(
         score_node_kinds(cgr, oracle, ec.CPP_SCORED_NODE_KINDS).rows
     )
@@ -152,9 +152,9 @@ int use(Derived d) {
 
 
 def test_libclang_oracle_emits_inherits_edges(tmp_path: Path) -> None:
-    # (H) The oracle must emit a base-class (CXX_BASE_SPECIFIER) edge as an INHERITS
-    # (H) name edge keyed by the base's simple name, matching cgr; otherwise cgr's
-    # (H) real inheritance edges are graded against an empty oracle set (all fp).
+    # The oracle must emit a base-class (CXX_BASE_SPECIFIER) edge as an INHERITS
+    # name edge keyed by the base's simple name, matching cgr; otherwise cgr's
+    # real inheritance edges are graded against an empty oracle set (all fp).
     _require_cpp()
     project = tmp_path / "inh_proj"
     (project / "include").mkdir(parents=True)
@@ -187,9 +187,9 @@ def test_libclang_oracle_emits_inherits_edges(tmp_path: Path) -> None:
 
 
 def test_restrict_to_files_scopes_graph_to_universe() -> None:
-    # (H) Scale grading over a compile_commands.json must score cgr only on the
-    # (H) files the oracle actually compiled; restrict_to_files drops cgr nodes,
-    # (H) edges, and name edges that touch any out-of-universe file.
+    # Scale grading over a compile_commands.json must score cgr only on the
+    # files the oracle actually compiled; restrict_to_files drops cgr nodes,
+    # edges, and name edges that touch any out-of-universe file.
     keep = "include/a.h"
     drop = "test/gtest.h"
     mod_keep = NodeKey(cs.NodeLabel.MODULE.value, keep, ec.MODULE_START_LINE)

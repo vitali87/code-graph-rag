@@ -1,4 +1,4 @@
-# (H) Provider validation errors
+# Provider validation errors
 GOOGLE_GLA_NO_KEY = (
     "Gemini GLA provider requires api_key. "
     "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
@@ -37,10 +37,10 @@ LITELLM_NOT_RUNNING = (
 )
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
 
-# (H) Dependency errors
+# Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
 
-# (H) OpenAI-compatible embedding errors
+# OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
     "OpenAI-compatible embedding request failed with status {status}: {body}"
 )
@@ -55,7 +55,7 @@ OPENAI_EMBEDDING_BAD_INDEX = (
     "OpenAI-compatible embedding response has an invalid or duplicate index: {index}"
 )
 
-# (H) Configuration errors
+# Configuration errors
 PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
 MODEL_ID_EMPTY = "Model ID cannot be empty."
 MODEL_FORMAT_INVALID = (
@@ -64,17 +64,17 @@ MODEL_FORMAT_INVALID = (
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
 
-# (H) Graph loading errors
+# Graph loading errors
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 FAILED_TO_LOAD_DATA = "Failed to load data from file"
 NODES_NOT_LOADED = "Nodes should be loaded"
 RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
 DATA_NOT_LOADED = "Data should be loaded"
 
-# (H) Parser errors
+# Parser errors
 NO_LANGUAGES = "No Tree-sitter languages available."
 
-# (H) LLM errors
+# LLM errors
 LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
 LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
 LLM_DANGEROUS_QUERY = "LLM generated a destructive Cypher query (found '{keyword}'). Query rejected: {query}"
@@ -90,7 +90,7 @@ LLM_DISALLOWED_PROCEDURE = (
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 
-# (H) Graph service errors
+# Graph service errors
 BATCH_SIZE = "batch_size must be a positive integer"
 CONN = "Not connected to Memgraph."
 AUTH_INCOMPLETE = (
@@ -98,10 +98,10 @@ AUTH_INCOMPLETE = (
     "Either provide both or neither."
 )
 
-# (H) Access control errors (used with raise)
+# Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
-# (H) Exception classes
+# Exception classes
 class LLMGenerationError(Exception):
     pass

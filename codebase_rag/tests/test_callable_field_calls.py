@@ -1,8 +1,8 @@
-# (H) L3 finding from the evals/ harness: fqn_config.get_name(node) invokes a
-# (H) function stored in a NamedTuple Callable field (FQNSpec), where fqn_config
-# (H) comes from LANGUAGE_FQN_SPECS.get(language). Every function bound to that
-# (H) field at a construction site is a possible callee, so resolving to all of
-# (H) them is a sound call graph and captures the traced (Python) edge.
+# L3 finding from the evals/ harness: fqn_config.get_name(node) invokes a
+# function stored in a NamedTuple Callable field (FQNSpec), where fqn_config
+# comes from LANGUAGE_FQN_SPECS.get(language). Every function bound to that
+# field at a construction site is a possible callee, so resolving to all of
+# them is a sound call graph and captures the traced (Python) edge.
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,8 +14,8 @@ from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
 PROJECT = "proj"
 
-# (H) fetch_name is a callable field of exactly one NamedTuple, mirroring how
-# (H) get_name is unique to FQNSpec, so it resolves without a receiver type.
+# fetch_name is a callable field of exactly one NamedTuple, mirroring how
+# get_name is unique to FQNSpec, so it resolves without a receiver type.
 MODULE_SRC = """from typing import Callable, NamedTuple
 
 
@@ -42,8 +42,8 @@ def use(lang: str) -> str:
     return spec.fetch_name()
 """
 
-# (H) Two classes share the field name, so with no receiver type the targets are
-# (H) ambiguous and must NOT be emitted (precision guard).
+# Two classes share the field name, so with no receiver type the targets are
+# ambiguous and must NOT be emitted (precision guard).
 AMBIGUOUS_SRC = """from typing import Callable, NamedTuple
 
 

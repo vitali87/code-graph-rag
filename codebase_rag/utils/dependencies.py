@@ -56,8 +56,8 @@ def has_vector_store_dependencies() -> bool:
 def has_semantic_dependencies() -> bool:
     from codebase_rag.config import settings
 
-    # (H) An OpenAI-compatible endpoint computes embeddings server-side, so
-    # (H) only the vector store dependency is needed locally.
+    # An OpenAI-compatible endpoint computes embeddings server-side, so
+    # only the vector store dependency is needed locally.
     if settings.EMBEDDING_PROVIDER == EmbeddingProvider.OPENAI:
         return has_vector_store_dependencies()
     return has_vector_store_dependencies() and has_torch() and has_transformers()

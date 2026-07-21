@@ -1,13 +1,13 @@
-# (H) TS declaration merging (`class Calculator` + `namespace Calculator`)
-# (H) registers the namespace under a `qn@line` duplicate, and its members
-# (H) under `Calculator@line.create`. Pass-3 caller attribution re-derived the
-# (H) natural `Calculator.create` from the AST, so every edge FROM a merged
-# (H) namespace member had a phantom endpoint; and variant fan-out emitted the
-# (H) namespace duplicate with the CALLEE's label (Function Logger@13 for a
-# (H) Class node), a label mismatch the database drops (issue #652). Pass 3
-# (H) must reuse the registered qn (the C++ record-and-reuse rule, extended to
-# (H) every language) and fan out only to variants whose registered type
-# (H) matches the edge.
+# TS declaration merging (`class Calculator` + `namespace Calculator`)
+# registers the namespace under a `qn@line` duplicate, and its members
+# under `Calculator@line.create`. Pass-3 caller attribution re-derived the
+# natural `Calculator.create` from the AST, so every edge FROM a merged
+# namespace member had a phantom endpoint; and variant fan-out emitted the
+# namespace duplicate with the CALLEE's label (Function Logger@13 for a
+# Class node), a label mismatch the database drops (issue #652). Pass 3
+# must reuse the registered qn (the C++ record-and-reuse rule, extended to
+# every language) and fan out only to variants whose registered type
+# matches the edge.
 from __future__ import annotations
 
 from pathlib import Path
@@ -69,8 +69,8 @@ def test_merged_namespace_member_calls_attribute_to_registered_qn(
         (call.args[0][2], call.args[2][2])
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
     }
-    # (H) info() calls the sibling namespace function log(); both live under
-    # (H) the namespace's registered (duplicate-suffixed) qn.
+    # info() calls the sibling namespace function log(); both live under
+    # the namespace's registered (duplicate-suffixed) qn.
     log_edges = [(f, t) for f, t in calls if f.endswith(".info") and t.endswith(".log")]
     assert log_edges, calls
     for from_qn, to_qn in log_edges:
@@ -78,7 +78,7 @@ def test_merged_namespace_member_calls_attribute_to_registered_qn(
             from_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             == to_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         ), (from_qn, to_qn)
-    # (H) The module-level Logger("hi") call still reaches the merged function.
+    # The module-level Logger("hi") call still reaches the merged function.
     assert (f"{project}.namespace_merging", f"{project}.namespace_merging.Logger") in (
         calls
     ), calls

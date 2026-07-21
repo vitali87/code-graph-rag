@@ -76,8 +76,8 @@ def test_process_env_typescript(
 def test_shadowed_process_emits_no_env_read(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `process` bound locally (a parameter) is not the Node global, so
-    # (H) process.env.X must not emit an ENV read.
+    # `process` bound locally (a parameter) is not the Node global, so
+    # process.env.X must not emit an ENV read.
     _build(
         memgraph_ingestor,
         tmp_path,

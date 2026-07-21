@@ -1,12 +1,12 @@
-# (H) Retrieval benchmark: graph-augmented call localization vs grep. For every
-# (H) first-party symbol S, the task is to find the files that call S. The graph
-# (H) condition uses cgr's resolved CALLS/INSTANTIATES edges; the grep conditions
-# (H) use ripgrep (bare-name and call-tuned patterns). All three are scored
-# (H) against the same Python ast oracle over the same file and symbol universe,
-# (H) as a set of (caller_file, callee_simple_name) name-edges restricted to
-# (H) first-party, non-dunder callees -- the set cgr can emit. This isolates
-# (H) retrieval quality (does the graph beat grep) from any LLM in the loop, the
-# (H) decoupled measurement the GitLab GKG eval flagged as out of scope.
+# Retrieval benchmark: graph-augmented call localization vs grep. For every
+# first-party symbol S, the task is to find the files that call S. The graph
+# condition uses cgr's resolved CALLS/INSTANTIATES edges; the grep conditions
+# use ripgrep (bare-name and call-tuned patterns). All three are scored
+# against the same Python ast oracle over the same file and symbol universe,
+# as a set of (caller_file, callee_simple_name) name-edges restricted to
+# first-party, non-dunder callees -- the set cgr can emit. This isolates
+# retrieval quality (does the graph beat grep) from any LLM in the loop, the
+# decoupled measurement the GitLab GKG eval flagged as out of scope.
 import ast
 import re
 import shutil
@@ -101,11 +101,11 @@ def oracle_call_edges(
             if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
                 if name in first_party:
                     edges.add(_edge(rel, name))
-            # (H) A bare READ of a first-party property getter invokes it; cgr emits
-            # (H) a CALLS edge, so credit it here too (a property is never
-            # (H) syntactically called with parens, so this cannot double-count). Only
-            # (H) a Load counts: a Store (`self.x = v`) invokes the setter and a Del
-            # (H) the deleter, neither of which cgr models as a plain getter call.
+            # A bare READ of a first-party property getter invokes it; cgr emits
+            # a CALLS edge, so credit it here too (a property is never
+            # syntactically called with parens, so this cannot double-count). Only
+            # a Load counts: a Store (`self.x = v`) invokes the setter and a Del
+            # the deleter, neither of which cgr models as a plain getter call.
             elif (
                 isinstance(node, ast.Attribute)
                 and node.attr in properties
@@ -134,8 +134,8 @@ def cgr_call_edges(
             continue
         segments = str(to_val).split(ec.SEP)
         name = segments[-1]
-        # (H) A constructor call resolves via CALLS to `X.__init__` (a METHOD); the
-        # (H) oracle sees the class name `X`, so credit the class, matching L2.
+        # A constructor call resolves via CALLS to `X.__init__` (a METHOD); the
+        # oracle sees the class name `X`, so credit the class, matching L2.
         if name == ec.INIT_STEM and to_label == _METHOD and len(segments) >= 2:
             name = segments[-2]
         if _is_dunder(name) or name not in first_party:
@@ -187,8 +187,8 @@ def grep_call_edges(
         path_text, sep, matched = line.partition(ec.RG_NULL_SEP)
         if not sep:
             continue
-        # (H) Path(...).as_posix() strips the leading ./ and folds Windows
-        # (H) backslashes to the forward-slash form parse_py_trees keys files on.
+        # Path(...).as_posix() strips the leading ./ and folds Windows
+        # backslashes to the forward-slash form parse_py_trees keys files on.
         rel = Path(path_text).as_posix()
         if rel not in files:
             continue

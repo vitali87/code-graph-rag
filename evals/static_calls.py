@@ -1,12 +1,12 @@
-# (H) Static CALLS eval. Function-level call recall against an ast oracle that
-# (H) resolves only the calls a reader can resolve without type inference: a bare
-# (H) name call (foo()) whose target is a first-party function reached via a
-# (H) `from ... import foo` or a same-module top-level def. Each becomes a
-# (H) (caller_qn, callee_qn) edge. Method / attribute / dynamic calls need cgr's
-# (H) type inference and are out of scope, so only RECALL is graded: every
-# (H) statically-certain call must appear in cgr's CALLS graph (cgr resolving more
-# (H) than the oracle is expected, not a false positive). Independent of cgr's
-# (H) resolver -- it uses ast import resolution, not the function-registry trie.
+# Static CALLS eval. Function-level call recall against an ast oracle that
+# resolves only the calls a reader can resolve without type inference: a bare
+# name call (foo()) whose target is a first-party function reached via a
+# `from ... import foo` or a same-module top-level def. Each becomes a
+# (caller_qn, callee_qn) edge. Method / attribute / dynamic calls need cgr's
+# type inference and are out of scope, so only RECALL is graded: every
+# statically-certain call must appear in cgr's CALLS graph (cgr resolving more
+# than the oracle is expected, not a false positive). Independent of cgr's
+# resolver -- it uses ast import resolution, not the function-registry trie.
 import ast
 from pathlib import Path
 from typing import Annotated
@@ -64,9 +64,9 @@ def _enclosing_function(
 
 
 def _decorator_calls(tree: ast.Module) -> set[ast.Call]:
-    # (H) Calls that live inside a decorator expression (@deco(...)). These are
-    # (H) decorator applications, not calls the decorated function makes, so cgr
-    # (H) emits no CALLS edge for them and the oracle must exclude them.
+    # Calls that live inside a decorator expression (@deco(...)). These are
+    # decorator applications, not calls the decorated function makes, so cgr
+    # emits no CALLS edge for them and the oracle must exclude them.
     calls: set[ast.Call] = set()
     for node in ast.walk(tree):
         if isinstance(node, _SCOPE_NODES):
@@ -78,7 +78,7 @@ def _decorator_calls(tree: ast.Module) -> set[ast.Call]:
 
 
 def _import_map(tree: ast.Module, rel: str, project: str) -> dict[str, str]:
-    # (H) local name -> resolved target qn for `from <first-party> import name`.
+    # local name -> resolved target qn for `from <first-party> import name`.
     pkg_parts = [project, *Path(rel).parent.parts]
     mapping: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -150,9 +150,9 @@ def _edge_repr(edge: CallEdge) -> str:
 
 
 def score_static_calls(cgr: set[CallEdge], oracle: set[CallEdge]) -> ScoreResult:
-    # (H) Recall only: hits are oracle edges cgr also has. cgr's extra edges
-    # (H) (method / type-inferred calls) are expected, not false positives, so
-    # (H) precision is not graded here.
+    # Recall only: hits are oracle edges cgr also has. cgr's extra edges
+    # (method / type-inferred calls) are expected, not false positives, so
+    # precision is not graded here.
     hits = oracle & cgr
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}

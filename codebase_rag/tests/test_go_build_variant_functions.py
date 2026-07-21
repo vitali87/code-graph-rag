@@ -1,19 +1,19 @@
-# (H) Go package-level functions are visible package-wide, but cgr keys each file as
-# (H) its own module (pkgdir.file.name). Two same-package functions with the same name
-# (H) can only be mutually-exclusive build-tag variants (gin's `validate` under
-# (H) `//go:build !nomsgpack` vs `//go:build nomsgpack`), since the compiler rejects
-# (H) duplicate top-level identifiers otherwise. A bare call resolves to just one file's
-# (H) copy, so the other build's copy looks dead unless every same-package same-name
-# (H) sibling is also referenced.
+# Go package-level functions are visible package-wide, but cgr keys each file as
+# its own module (pkgdir.file.name). Two same-package functions with the same name
+# can only be mutually-exclusive build-tag variants (gin's `validate` under
+# `//go:build !nomsgpack` vs `//go:build nomsgpack`), since the compiler rejects
+# duplicate top-level identifiers otherwise. A bare call resolves to just one file's
+# copy, so the other build's copy looks dead unless every same-package same-name
+# sibling is also referenced.
 from pathlib import Path
 
 from evals.cgr_graph import _capture
 
 
 def test_build_variant_sibling_function_is_called(tmp_path: Path) -> None:
-    # (H) Two `validate` funcs in the same package (build variants) + a caller in a
-    # (H) third file. The bare `validate(x)` call must reach BOTH copies, so neither
-    # (H) build's variant is reported dead.
+    # Two `validate` funcs in the same package (build variants) + a caller in a
+    # third file. The bare `validate(x)` call must reach BOTH copies, so neither
+    # build's variant is reported dead.
     (tmp_path / "a.go").write_text(
         "package p\nfunc validate(x int) int { return x }\n",
         encoding="utf-8",
@@ -35,8 +35,8 @@ def test_build_variant_sibling_function_is_called(tmp_path: Path) -> None:
 
 
 def test_different_package_same_name_is_not_fanned_out(tmp_path: Path) -> None:
-    # (H) Guard: a same-name function in a DIFFERENT package (subdirectory) is a
-    # (H) distinct function, never a build variant, so the caller must NOT reach it.
+    # Guard: a same-name function in a DIFFERENT package (subdirectory) is a
+    # distinct function, never a build variant, so the caller must NOT reach it.
     (tmp_path / "a.go").write_text(
         "package p\nfunc validate(x int) int { return x }\n"
         "func caller() int { return validate(1) }\n",
@@ -57,11 +57,11 @@ def test_different_package_same_name_is_not_fanned_out(tmp_path: Path) -> None:
 
 
 def test_external_test_package_sibling_is_not_fanned_out(tmp_path: Path) -> None:
-    # (H) Guard: Go allows an external test package `package p_test` in the SAME
-    # (H) directory as `package p` (both compile from the same dir but are distinct
-    # (H) packages). Production code can never call a function defined in a `_test.go`
-    # (H) file, so a same-directory `_test.go` sibling must NOT receive a fan-out edge
-    # (H) -- otherwise a genuinely test-only dead function is masked as live.
+    # Guard: Go allows an external test package `package p_test` in the SAME
+    # directory as `package p` (both compile from the same dir but are distinct
+    # packages). Production code can never call a function defined in a `_test.go`
+    # file, so a same-directory `_test.go` sibling must NOT receive a fan-out edge
+    # -- otherwise a genuinely test-only dead function is masked as live.
     (tmp_path / "a.go").write_text(
         "package p\nfunc validate(x int) int { return x }\n"
         "func caller() int { return validate(1) }\n",

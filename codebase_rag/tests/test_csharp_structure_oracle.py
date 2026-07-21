@@ -1,11 +1,11 @@
-# (H) Covers the C# structure oracle harness (evals/oracles/csharp_oracle +
-# (H) evals/csharp_l1.py): the Roslyn syntax-tree oracle is authoritative ground
-# (H) truth, and cgr's captured C# graph is graded against it on
-# (H) (kind, file, start_line) for nodes, on containment edges, on inheritance
-# (H) name-edges, and on end_line spans. Covers class/struct/record -> Class,
-# (H) interface, enum, members -> Method, a local function -> Function, a nested
-# (H) type, an attribute-prefixed member (start line includes the attribute), and
-# (H) base class vs interface split.
+# Covers the C# structure oracle harness (evals/oracles/csharp_oracle +
+# evals/csharp_l1.py): the Roslyn syntax-tree oracle is authoritative ground
+# truth, and cgr's captured C# graph is graded against it on
+# (kind, file, start_line) for nodes, on containment edges, on inheritance
+# name-edges, and on end_line spans. Covers class/struct/record -> Class,
+# interface, enum, members -> Method, a local function -> Function, a nested
+# type, an attribute-prefixed member (start line includes the attribute), and
+# base class vs interface split.
 from __future__ import annotations
 
 from pathlib import Path
@@ -93,10 +93,10 @@ def test_cgr_matches_roslyn_oracle_on_nodes(
 def test_oracle_agrees_with_cgr_nodes_exactly(
     tmp_path: Path,
 ) -> None:
-    # (H) A record/struct is a Class, an interface an Interface, an enum an Enum,
-    # (H) a local function a Function, and the [Obsolete]-tagged member's start
-    # (H) line is the attribute line -- assert the raw (kind, line) sets agree so a
-    # (H) label or line-convention drift on either side is caught directly.
+    # A record/struct is a Class, an interface an Interface, an enum an Enum,
+    # a local function a Function, and the [Obsolete]-tagged member's start
+    # line is the attribute line -- assert the raw (kind, line) sets agree so a
+    # label or line-convention drift on either side is caught directly.
     _require_csharp()
     project = tmp_path / "csharp_nodes"
     project.mkdir()
@@ -126,8 +126,8 @@ def test_cgr_matches_roslyn_oracle_on_containment(
 def test_cgr_matches_roslyn_oracle_on_inheritance(
     graphs: tuple[GraphData, GraphData],
 ) -> None:
-    # (H) Dog : Animal, IDrawable -> INHERITS Animal (base class) and IMPLEMENTS
-    # (H) IDrawable (interface); the oracle splits by what the sources declare.
+    # Dog : Animal, IDrawable -> INHERITS Animal (base class) and IMPLEMENTS
+    # IDrawable (interface); the oracle splits by what the sources declare.
     cgr, oracle = graphs
     result = score_name_edge_types(cgr, oracle, ec.INHERITANCE_NAME_EDGE_TYPES)
     by_label = {row["label"]: row for row in result.rows}
@@ -140,12 +140,12 @@ def test_cgr_matches_roslyn_oracle_on_inheritance(
 def test_oracle_ignores_cgr_ignored_dirs_for_classification(
     tmp_path: Path,
 ) -> None:
-    # (H) A type declared only under a cgr-ignored directory (`.venv/`, absent from
-    # (H) the oracle's hardcoded fallback set) must not enter the oracle's declared
-    # (H) universe: otherwise a base `Drawable` there would flip a real class's edge
-    # (H) from INHERITS to IMPLEMENTS, diverging from cgr (which never indexes the
-    # (H) ignored file). The oracle skips it via cgr's IGNORE_PATTERNS, so the real
-    # (H) `Widget : Drawable` stays INHERITS and no ignored-dir node is emitted.
+    # A type declared only under a cgr-ignored directory (`.venv/`, absent from
+    # the oracle's hardcoded fallback set) must not enter the oracle's declared
+    # universe: otherwise a base `Drawable` there would flip a real class's edge
+    # from INHERITS to IMPLEMENTS, diverging from cgr (which never indexes the
+    # ignored file). The oracle skips it via cgr's IGNORE_PATTERNS, so the real
+    # `Widget : Drawable` stays INHERITS and no ignored-dir node is emitted.
     _require_csharp()
     project = tmp_path / "csharp_ignore"
     project.mkdir()
@@ -165,10 +165,10 @@ def test_oracle_ignores_cgr_ignored_dirs_for_classification(
 
 
 def test_oracle_interface_bases_are_inherits(tmp_path: Path) -> None:
-    # (H) An interface extending an interface is INHERITS in cgr's model (the
-    # (H) Java oracle already matches this), so the oracle must classify a base
-    # (H) by the DECLARING type, not by the base's own kind; otherwise every
-    # (H) interface-to-interface edge grades as a false positive (26 on Polly).
+    # An interface extending an interface is INHERITS in cgr's model (the
+    # Java oracle already matches this), so the oracle must classify a base
+    # by the DECLARING type, not by the base's own kind; otherwise every
+    # interface-to-interface edge grades as a false positive (26 on Polly).
     _require_csharp()
     project = tmp_path / "csharp_iface_bases"
     project.mkdir()
@@ -185,11 +185,11 @@ def test_oracle_interface_bases_are_inherits(tmp_path: Path) -> None:
 
 
 def test_same_scope_arity_pair_inherits_grades_clean(tmp_path: Path) -> None:
-    # (H) Issue #764: a same-file arity pair registers the second type as a
-    # (H) DUP_QN_MARKER variant (ITtl@3); the recovered INHERITS edge targets
-    # (H) that variant qn, and the eval's simple-name reduction must strip the
-    # (H) marker or the true edge grades as one fp + one fn against the
-    # (H) oracle's clean base name.
+    # Issue #764: a same-file arity pair registers the second type as a
+    # DUP_QN_MARKER variant (ITtl@3); the recovered INHERITS edge targets
+    # that variant qn, and the eval's simple-name reduction must strip the
+    # marker or the true edge grades as one fp + one fn against the
+    # oracle's clean base name.
     _require_csharp()
     project = tmp_path / "csharp_arity_pair"
     project.mkdir()
@@ -211,13 +211,13 @@ def test_same_scope_arity_pair_inherits_grades_clean(tmp_path: Path) -> None:
 def test_oracle_suppresses_preprocessor_split_phantom_members(
     tmp_path: Path,
 ) -> None:
-    # (H) Issue #768: an expression-bodied member whose body is split across
-    # (H) #if/#else has TWO bodies once the directives are neutralized, which is
-    # (H) ill-formed C#; Roslyn ends the member at the first branch's `;` and
-    # (H) error-recovers the second branch's expression as a phantom member
-    # (H) declaration (a Method named `Substring` on Polly's KeyHelper). Error
-    # (H) recovery artifacts are never something cgr should be graded against,
-    # (H) so the oracle must drop them while keeping the real member.
+    # Issue #768: an expression-bodied member whose body is split across
+    # #if/#else has TWO bodies once the directives are neutralized, which is
+    # ill-formed C#; Roslyn ends the member at the first branch's `;` and
+    # error-recovers the second branch's expression as a phantom member
+    # declaration (a Method named `Substring` on Polly's KeyHelper). Error
+    # recovery artifacts are never something cgr should be graded against,
+    # so the oracle must drop them while keeping the real member.
     _require_csharp()
     project = tmp_path / "csharp_split_body"
     project.mkdir()
@@ -244,10 +244,10 @@ def test_oracle_suppresses_preprocessor_split_phantom_members(
 
 
 def test_oracle_keeps_members_with_warning_diagnostics(tmp_path: Path) -> None:
-    # (H) The phantom filter must key on ERROR severity only: `#warning` inside
-    # (H) a member body attaches a Warning diagnostic to the member's subtree,
-    # (H) and blanket ContainsDiagnostics would wrongly suppress the valid,
-    # (H) compiling member.
+    # The phantom filter must key on ERROR severity only: `#warning` inside
+    # a member body attaches a Warning diagnostic to the member's subtree,
+    # and blanket ContainsDiagnostics would wrongly suppress the valid,
+    # compiling member.
     _require_csharp()
     project = tmp_path / "csharp_warning_member"
     project.mkdir()
@@ -269,11 +269,11 @@ def test_oracle_keeps_members_with_warning_diagnostics(tmp_path: Path) -> None:
 
 
 def test_oracle_anchors_top_level_functions_to_module(tmp_path: Path) -> None:
-    # (H) A Cake-style build script declares functions at the top level
-    # (H) (local functions of the implicit main); cgr anchors them
-    # (H) Module -> Function, so the oracle must emit the same containment
-    # (H) instead of nothing (which graded cgr's correct edges as false
-    # (H) positives on Polly's cake.cs).
+    # A Cake-style build script declares functions at the top level
+    # (local functions of the implicit main); cgr anchors them
+    # Module -> Function, so the oracle must emit the same containment
+    # instead of nothing (which graded cgr's correct edges as false
+    # positives on Polly's cake.cs).
     _require_csharp()
     project = tmp_path / "csharp_script"
     project.mkdir()
@@ -298,11 +298,11 @@ def test_oracle_anchors_top_level_functions_to_module(tmp_path: Path) -> None:
 def test_oracle_includes_declarations_in_inactive_if_regions(
     tmp_path: Path,
 ) -> None:
-    # (H) cgr has no preprocessor: it parses every `#if`/`#else` branch, so a method
-    # (H) guarded by an undefined symbol IS in cgr's graph. The Roslyn oracle must
-    # (H) match that view (neutralize conditional directives so all branches parse),
-    # (H) otherwise real declarations inside `#if` blocks read as cgr false positives
-    # (H) (e.g. ~871 phantom Method FPs on Newtonsoft.Json).
+    # cgr has no preprocessor: it parses every `#if`/`#else` branch, so a method
+    # guarded by an undefined symbol IS in cgr's graph. The Roslyn oracle must
+    # match that view (neutralize conditional directives so all branches parse),
+    # otherwise real declarations inside `#if` blocks read as cgr false positives
+    # (e.g. ~871 phantom Method FPs on Newtonsoft.Json).
     _require_csharp()
     project = tmp_path / "csharp_if"
     project.mkdir()
@@ -320,7 +320,7 @@ def test_oracle_includes_declarations_in_inactive_if_regions(
     oracle = run_csharp_oracle(project)
     oracle_keys = {(n.kind, n.start_line) for n in oracle.nodes}
     cgr_keys = {(n.kind, n.start_line) for n in cgr.nodes}
-    # (H) OnlyWhenDefined() is on line 5, inside the undefined `#if HAVE_SOMETHING`.
+    # OnlyWhenDefined() is on line 5, inside the undefined `#if HAVE_SOMETHING`.
     assert (cs.NodeLabel.METHOD.value, 5) in oracle_keys, oracle_keys
     assert cgr_keys == oracle_keys, {
         "cgr_only": cgr_keys - oracle_keys,
@@ -331,9 +331,9 @@ def test_oracle_includes_declarations_in_inactive_if_regions(
 def test_cgr_matches_roslyn_oracle_on_spans(
     graphs: tuple[GraphData, GraphData],
 ) -> None:
-    # (H) score_span grades each matched def's end_line: a per-label row scores
-    # (H) 1.0 only when cgr's node span (end_line) equals the oracle's, so this
-    # (H) asserts the declaration extents agree, not just the start lines.
+    # score_span grades each matched def's end_line: a per-label row scores
+    # 1.0 only when cgr's node span (end_line) equals the oracle's, so this
+    # asserts the declaration extents agree, not just the start lines.
     cgr, oracle = graphs
     result = score_span(cgr, oracle, ec.CSHARP_SCORED_NODE_KINDS)
     assert result.rows, "no span rows produced"

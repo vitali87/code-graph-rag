@@ -26,10 +26,10 @@ class FilteringIngestor:
         *args: PropertyDict | None,
         **kwargs: PropertyDict | None,
     ) -> None:
-        # (H) Transparent passthrough of the optional `properties` arg: emission
-        # (H) sites pass it positionally (INHERITS) or by keyword
-        # (H) (DEPENDS_ON_EXTERNAL), and downstream tests assert the exact call
-        # (H) shape, so the wrapper must not normalise one form into the other.
+        # Transparent passthrough of the optional `properties` arg: emission
+        # sites pass it positionally (INHERITS) or by keyword
+        # (DEPENDS_ON_EXTERNAL), and downstream tests assert the exact call
+        # shape, so the wrapper must not normalise one form into the other.
         if self._selection.rel_enabled(RelationshipType(rel_type)):
             self._inner.ensure_relationship_batch(
                 from_spec, rel_type, to_spec, *args, **kwargs

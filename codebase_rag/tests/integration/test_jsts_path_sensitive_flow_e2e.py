@@ -59,9 +59,9 @@ def _has_resource(flows: list[dict[str, str | None]], frm: str, to: str) -> bool
 def test_conditional_kill_survives_skip_path(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) MAY: the kill happens only on the if-path, so the skip path keeps the taint;
-    # (H) after the merge `secret` is still tainted and the flow must survive. The flat
-    # (H) walk wrongly applied the kill unconditionally (false negative).
+    # MAY: the kill happens only on the if-path, so the skip path keeps the taint;
+    # after the merge `secret` is still tainted and the flow must survive. The flat
+    # walk wrongly applied the kill unconditionally (false negative).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -82,8 +82,8 @@ def test_conditional_kill_survives_skip_path(
 def test_kill_on_all_branches_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Killed on BOTH the if and the else path, so after the merge `secret` carries
-    # (H) no taint and no resource flow may appear.
+    # Killed on BOTH the if and the else path, so after the merge `secret` carries
+    # no taint and no resource flow may appear.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -101,7 +101,7 @@ def test_kill_on_all_branches_no_flow(
 def test_taint_introduced_in_one_branch_survives(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Taint introduced on only the if-path still reaches the sink after the merge.
+    # Taint introduced on only the if-path still reaches the sink after the merge.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -122,7 +122,7 @@ def test_taint_introduced_in_one_branch_survives(
 def test_else_if_branch_taint_survives(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) An else-if chain: taint introduced in the middle branch survives the merge.
+    # An else-if chain: taint introduced in the middle branch survives the merge.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -145,9 +145,9 @@ def test_else_if_branch_taint_survives(
 def test_loop_carried_taint_reaches_earlier_sink(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The write happens BEFORE the tainting assignment in source order, but a later
-    # (H) loop iteration carries the taint back to it; the body is walked twice so the
-    # (H) NETWORK -> FILE flow is caught. The flat walk missed this (false negative).
+    # The write happens BEFORE the tainting assignment in source order, but a later
+    # loop iteration carries the taint back to it; the body is walked twice so the
+    # NETWORK -> FILE flow is caught. The flat walk missed this (false negative).
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -170,10 +170,10 @@ def test_loop_carried_taint_reaches_earlier_sink(
 def test_for_increment_carries_taint_to_next_iteration(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) The C-style `for` increment `x = y` runs AFTER the body each iteration: it
-    # (H) picks up the taint the body put on `y` and carries it into `x` for the next
-    # (H) iteration's write. Walking the increment in the header (before the body)
-    # (H) missed this; it is now walked after each body pass.
+    # The C-style `for` increment `x = y` runs AFTER the body each iteration: it
+    # picks up the taint the body put on `y` and carries it into `x` for the next
+    # iteration's write. Walking the increment in the header (before the body)
+    # missed this; it is now walked after each body pass.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -197,7 +197,7 @@ def test_for_increment_carries_taint_to_next_iteration(
 def test_try_body_taint_survives_to_after(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) Taint assigned in the try body reaches the sink after the try/catch merge.
+    # Taint assigned in the try body reaches the sink after the try/catch merge.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -218,7 +218,7 @@ def test_try_body_taint_survives_to_after(
 def test_straight_line_still_works(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) No branches: behaves exactly like the old flat walk.
+    # No branches: behaves exactly like the old flat walk.
     _build(
         memgraph_ingestor,
         tmp_path,

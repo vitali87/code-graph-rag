@@ -1,6 +1,6 @@
-# (H) Agentic tool wrapper for ast-grep structural replace (#415). Rewrites are
-# (H) gated twice: dry_run defaults to a preview, and the tool requires approval
-# (H) before any invocation actually touches disk.
+# Agentic tool wrapper for ast-grep structural replace (#415). Rewrites are
+# gated twice: dry_run defaults to a preview, and the tool requires approval
+# before any invocation actually touches disk.
 from __future__ import annotations
 
 import asyncio
@@ -32,9 +32,9 @@ def create_structural_editor_tool(service: AstGrepService) -> Tool:
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:
-            # (H) offload to a thread: replace does blocking os.walk, file reads
-            # (H) and writes, and CPU-bound AST parsing, which would stall the
-            # (H) event loop.
+            # offload to a thread: replace does blocking os.walk, file reads
+            # and writes, and CPU-bound AST parsing, which would stall the
+            # event loop.
             changes = await asyncio.to_thread(
                 service.replace,
                 pattern,
@@ -42,8 +42,8 @@ def create_structural_editor_tool(service: AstGrepService) -> Tool:
                 language=language,
                 dry_run=dry_run,
             )
-        # (H) catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
-        # (H) (RuntimeError and others); report it rather than crash the turn.
+        # catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
+        # (RuntimeError and others); report it rather than crash the turn.
         except Exception as e:
             return str(e)
         if not changes:

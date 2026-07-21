@@ -1,9 +1,9 @@
-# (H) L3 finding from the evals/ harness: DefinitionProcessor._extract_decorators calls
-# (H) self._handler.extract_decorators(node), where _handler is annotated as the Protocol
-# (H) LanguageHandler (class-level annotation) and assigned dynamically via
-# (H) get_handler(language). The runtime type is one of several conformers, so the sound
-# (H) call graph emits an edge to extract_decorators on every conformer (capturing the
-# (H) traced PythonHandler edge) and never to the Protocol stub, which never runs.
+# L3 finding from the evals/ harness: DefinitionProcessor._extract_decorators calls
+# self._handler.extract_decorators(node), where _handler is annotated as the Protocol
+# LanguageHandler (class-level annotation) and assigned dynamically via
+# get_handler(language). The runtime type is one of several conformers, so the sound
+# call graph emits an edge to extract_decorators on every conformer (capturing the
+# traced PythonHandler edge) and never to the Protocol stub, which never runs.
 from __future__ import annotations
 
 from pathlib import Path

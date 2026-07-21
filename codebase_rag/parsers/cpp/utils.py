@@ -157,10 +157,10 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
                 cs.CppNodeType.REFERENCE_DECLARATOR,
                 cs.CppNodeType.FUNCTION_DECLARATOR,
                 cs.CppNodeType.PARENTHESIZED_DECLARATOR,
-                # (H) A macro-attributed ctor buries its REAL declarator inside
-                # (H) the ERROR while the base-initializer (`: exception(...)`)
-                # (H) survives as a sibling declarator; depth-first source order
-                # (H) must enter the ERROR so the ctor's own name wins.
+                # A macro-attributed ctor buries its REAL declarator inside
+                # the ERROR while the base-initializer (`: exception(...)`)
+                # survives as a sibling declarator; depth-first source order
+                # must enter the ERROR so the ctor's own name wins.
                 cs.TS_ERROR,
             ):
                 result = find_function_declarator(child)
@@ -229,8 +229,8 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
 
 
 def _find_rightmost_name(node: Node) -> str | None:
-    # (H) Handle out-of-class method definitions like Calculator::add
-    # (H) or deeply nested like Outer::Inner::MyClass::method
+    # Handle out-of-class method definitions like Calculator::add
+    # or deeply nested like Outer::Inner::MyClass::method
     last_name = None
     for qchild in node.children:
         match qchild.type:
@@ -269,8 +269,8 @@ def _enclosing_class_name(node: Node) -> str | None:
             name = current.child_by_field_name(cs.FIELD_NAME)
             if name is None:
                 return None
-            # (H) A specialization's name (`formatter<T, char>`) is a
-            # (H) template_type; the ctor identifier repeats only the bare name.
+            # A specialization's name (`formatter<T, char>`) is a
+            # template_type; the ctor identifier repeats only the bare name.
             if name.type == cs.CppNodeType.TEMPLATE_TYPE:
                 inner = name.child_by_field_name(cs.FIELD_NAME)
                 return safe_decode_text(inner) if inner is not None else None
@@ -280,21 +280,21 @@ def _enclosing_class_name(node: Node) -> str | None:
 
 
 def _has_named_parameter(declarator: Node) -> bool:
-    # (H) A macro invocation's "parameters" are expressions -- `(...)`, bare
-    # (H) identifiers (parsed as type-only declarations), or call shapes -- so
-    # (H) none of them ever carries a NAMED declarator. A real definition's
-    # (H) `int fd` / `const S& s` does. One named parameter is proof of a
-    # (H) genuine declaration even when recovery orphaned it from its class.
+    # A macro invocation's "parameters" are expressions -- `(...)`, bare
+    # identifiers (parsed as type-only declarations), or call shapes -- so
+    # none of them ever carries a NAMED declarator. A real definition's
+    # `int fd` / `const S& s` does. One named parameter is proof of a
+    # genuine declaration even when recovery orphaned it from its class.
     params = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return False
 
     def declares_identifier(node: Node) -> bool:
-        # (H) Follow only the declarator-field spine (plus the two wrapper
-        # (H) nodes that hold their declarator as a bare child): identifiers
-        # (H) reachable ONLY off that path are array bounds (`int[MAX_SIZE]`)
-        # (H) or an inner fn-ptr's parameter names (`void (*)(int x)`), not
-        # (H) names of THIS parameter.
+        # Follow only the declarator-field spine (plus the two wrapper
+        # nodes that hold their declarator as a bare child): identifiers
+        # reachable ONLY off that path are array bounds (`int[MAX_SIZE]`)
+        # or an inner fn-ptr's parameter names (`void (*)(int x)`), not
+        # names of THIS parameter.
         if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
             return True
         inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
@@ -322,15 +322,15 @@ def _has_named_parameter(declarator: Node) -> bool:
 
 
 def is_recovery_artifact_shape(func_node: Node) -> bool:
-    # (H) `FMT_CATCH(...) {}` -- a macro invocation followed by a block -- parses
-    # (H) as a TYPE-LESS function_definition (or declaration, when member-init
-    # (H) recovery sweeps it into a class body) named after the macro. Valid C++
-    # (H) only omits the return type on a constructor, whose plain-identifier
-    # (H) declarator repeats the enclosing class name; every OTHER type-less
-    # (H) plain-identifier definition shares one shape with two meanings: a
-    # (H) macro invocation, or a real definition the recovery orphaned from its
-    # (H) class / stripped of its type. The registered-class tiebreak and the
-    # (H) named-parameter evidence (see is_macro_invocation_artifact) decide.
+    # `FMT_CATCH(...) {}` -- a macro invocation followed by a block -- parses
+    # as a TYPE-LESS function_definition (or declaration, when member-init
+    # recovery sweeps it into a class body) named after the macro. Valid C++
+    # only omits the return type on a constructor, whose plain-identifier
+    # declarator repeats the enclosing class name; every OTHER type-less
+    # plain-identifier definition shares one shape with two meanings: a
+    # macro invocation, or a real definition the recovery orphaned from its
+    # class / stripped of its type. The registered-class tiebreak and the
+    # named-parameter evidence (see is_macro_invocation_artifact) decide.
     if func_node.type not in (
         cs.CppNodeType.FUNCTION_DEFINITION,
         cs.CppNodeType.DECLARATION,
@@ -353,18 +353,18 @@ def has_named_parameter(func_node: Node) -> bool:
 
 
 def is_macro_invocation_artifact(func_node: Node) -> bool:
-    # (H) A macro invocation's "parameters" are expressions, so the artifact
-    # (H) shape WITH a named parameter is proof of a genuine (recovery-mangled)
-    # (H) definition; without one, only a registered class bearing the name
-    # (H) (an orphaned zero-param ctor) saves the node from being dropped.
+    # A macro invocation's "parameters" are expressions, so the artifact
+    # shape WITH a named parameter is proof of a genuine (recovery-mangled)
+    # definition; without one, only a registered class bearing the name
+    # (an orphaned zero-param ctor) saves the node from being dropped.
     return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
 
 
 def extract_function_name(func_node: Node) -> str | None:
     name = _extract_function_name_by_type(func_node)
-    # (H) A reserved keyword in declarator position is an error-recovery
-    # (H) artifact (macro access-label + `const decltype(MACRO_)` members), not
-    # (H) a definition; registering it mints a phantom Method (reader.decltype).
+    # A reserved keyword in declarator position is an error-recovery
+    # artifact (macro access-label + `const decltype(MACRO_)` members), not
+    # a definition; registering it mints a phantom Method (reader.decltype).
     if name in cs.CPP_RESERVED_DEF_NAMES:
         return None
     return name
@@ -404,10 +404,10 @@ def _get_inner_function_node(node: Node) -> Node:
 
 
 def _scope_segment_name(scope: Node) -> str | None:
-    # (H) The name of one scope segment of a qualified return type. A namespace or
-    # (H) plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
-    # (H) must reduce to its `type_identifier` -- the raw text carries `<T>` template
-    # (H) arguments that no registry class QN holds, so it would never suffix-match.
+    # The name of one scope segment of a qualified return type. A namespace or
+    # plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
+    # must reduce to its `type_identifier` -- the raw text carries `<T>` template
+    # arguments that no registry class QN holds, so it would never suffix-match.
     if scope.type == cs.CppNodeType.TEMPLATE_TYPE:
         name = scope.child_by_field_name(cs.FIELD_NAME)
         return safe_decode_text(name) if name is not None else None
@@ -415,14 +415,14 @@ def _scope_segment_name(scope: Node) -> str | None:
 
 
 def _return_type_path(type_node: Node) -> str | None:
-    # (H) Reduce a return-type node to a dotted namespace-qualified class path:
-    # (H) `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
-    # (H) `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
-    # (H) collecting each `scope` namespace, and unwrap a template_type
-    # (H) (`parser<J, A>`) to its `type_identifier`. A primitive/auto/other return
-    # (H) type has no class name and yields None so a chained hop off it stays
-    # (H) unresolved. The qualified path disambiguates a factory-returned class from
-    # (H) a same-named factory method (nlohmann's basic_json has both).
+    # Reduce a return-type node to a dotted namespace-qualified class path:
+    # `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
+    # `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
+    # collecting each `scope` namespace, and unwrap a template_type
+    # (`parser<J, A>`) to its `type_identifier`. A primitive/auto/other return
+    # type has no class name and yields None so a chained hop off it stays
+    # unresolved. The qualified path disambiguates a factory-returned class from
+    # a same-named factory method (nlohmann's basic_json has both).
     parts: list[str] = []
     current: Node | None = type_node
     while current is not None:
@@ -444,9 +444,9 @@ def _return_type_path(type_node: Node) -> str | None:
 
 
 def extract_return_type_name(func_node: Node) -> str | None:
-    # (H) The qualified class path a C++ function/method returns, for chained-call
-    # (H) typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
-    # (H) inner function_definition, then reduces its `type` field to a class path.
+    # The qualified class path a C++ function/method returns, for chained-call
+    # typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
+    # inner function_definition, then reduces its `type` field to a class path.
     inner = _get_inner_function_node(func_node)
     type_node = inner.child_by_field_name(cs.FIELD_TYPE)
     if type_node is None:

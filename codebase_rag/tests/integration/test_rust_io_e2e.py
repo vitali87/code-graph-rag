@@ -58,10 +58,10 @@ fn leak(name: String) {
 def test_rust_direct_io_sinks(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) std::env::var reads ENV::SECRET; println!/print!/eprintln!/eprint! macros
-    # (H) write STDOUT; std::fs::write / create_dir / read_to_string are direct FILE
-    # (H) write/read. First Rust increment of issue #714 -- direct calls + print
-    # (H) macros, no handles.
+    # std::env::var reads ENV::SECRET; println!/print!/eprintln!/eprint! macros
+    # write STDOUT; std::fs::write / create_dir / read_to_string are direct FILE
+    # write/read. First Rust increment of issue #714 -- direct calls + print
+    # macros, no handles.
     _build(memgraph_ingestor, tmp_path, _RUST_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
@@ -74,10 +74,10 @@ def test_rust_direct_io_sinks(
 def test_rust_call_inside_print_macro_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A sink call written INLINE in macro args -- `println!("{}", env::var("X"))`
-    # (H) -- must still emit its READS_FROM. tree-sitter flattens macro bodies into a
-    # (H) token_tree of raw tokens (no call_expression node), so the walk reconstructs
-    # (H) scoped calls from the token stream. The canonical "log a secret" taint case.
+    # A sink call written INLINE in macro args -- `println!("{}", env::var("X"))`
+    # -- must still emit its READS_FROM. tree-sitter flattens macro bodies into a
+    # token_tree of raw tokens (no call_expression node), so the walk reconstructs
+    # scoped calls from the token stream. The canonical "log a secret" taint case.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -94,8 +94,8 @@ def test_rust_call_inside_print_macro_emits(
 def test_rust_use_imported_short_path(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) `use std::fs;` then `fs::write(..)` is the idiomatic short form; the sink is
-    # (H) keyed on both the full `std::fs::write` and the `fs::write` short path.
+    # `use std::fs;` then `fs::write(..)` is the idiomatic short form; the sink is
+    # keyed on both the full `std::fs::write` and the `fs::write` short path.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -113,9 +113,9 @@ def test_rust_use_imported_short_path(
 def test_rust_local_module_does_not_match_std_sink(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A local `mod fs` with its own write() must NOT be mistaken for std::fs::write.
-    # (H) A bare short path (`fs::write`) resolves to std only when `fs` is imported
-    # (H) (`use std::fs;`); with a local module and no import, no FILE edge is emitted.
+    # A local `mod fs` with its own write() must NOT be mistaken for std::fs::write.
+    # A bare short path (`fs::write`) resolves to std only when `fs` is imported
+    # (`use std::fs;`); with a local module and no import, no FILE edge is emitted.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -132,8 +132,8 @@ def test_rust_local_module_does_not_match_std_sink(
 def test_rust_nested_closure_not_credited(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) A macro sink inside a nested closure is not the enclosing fn's I/O; the walk
-    # (H) prunes nested scopes, and the closure is not a registered caller here.
+    # A macro sink inside a nested closure is not the enclosing fn's I/O; the walk
+    # prunes nested scopes, and the closure is not a registered caller here.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -145,8 +145,8 @@ def test_rust_nested_closure_not_credited(
 def test_rust_file_handle_methods(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    # (H) issue #714 handle walk: File::open (through `?`) and File::create
-    # (H) (through .unwrap()) bind FILE handles; read/write methods carry the I/O.
+    # issue #714 handle walk: File::open (through `?`) and File::create
+    # (through .unwrap()) bind FILE handles; read/write methods carry the I/O.
     _build(
         memgraph_ingestor,
         tmp_path,

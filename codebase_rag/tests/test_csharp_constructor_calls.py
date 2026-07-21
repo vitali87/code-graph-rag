@@ -1,5 +1,5 @@
-# (H) C# Phase 3: `new X(...)` emits INSTANTIATES to the class and CALLS to
-# (H) its constructor(s).
+# C# Phase 3: `new X(...)` emits INSTANTIATES to the class and CALLS to
+# its constructor(s).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -46,8 +46,8 @@ public class App {
     assert any(
         s.endswith("N.App.Run") and t.endswith("N.Widget") for s, t in instantiates
     ), instantiates
-    # (H) `new Widget(5)` runs a constructor; every declared ctor is edged for
-    # (H) reachability (overload selection is unnecessary).
+    # `new Widget(5)` runs a constructor; every declared ctor is edged for
+    # reachability (overload selection is unnecessary).
     assert any(s.endswith("N.App.Run") and "N.Widget.Widget" in t for s, t in calls), (
         calls
     )
@@ -56,9 +56,9 @@ public class App {
 def test_target_typed_new_in_local_declaration_emits_instantiates(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) C# 9 target-typed `Widget w = new();` parses as
-    # (H) implicit_object_creation_expression (no `type` field); the constructed
-    # (H) type is the enclosing declaration's declared type (issue #773).
+    # C# 9 target-typed `Widget w = new();` parses as
+    # implicit_object_creation_expression (no `type` field); the constructed
+    # type is the enclosing declaration's declared type (issue #773).
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
@@ -86,8 +86,8 @@ public class App {
 def test_target_typed_new_in_field_initializer_emits_instantiates(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `private readonly Widget _w = new();`: the target type is the field's
-    # (H) declared type (a field_declaration wraps a variable_declaration).
+    # `private readonly Widget _w = new();`: the target type is the field's
+    # declared type (a field_declaration wraps a variable_declaration).
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
@@ -109,8 +109,8 @@ public class App {
 def test_target_typed_new_in_return_position_emits_instantiates(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `return new();` takes the enclosing method's return type; the
-    # (H) expression-bodied form `=> new()` is the same shape one wrapper up.
+    # `return new();` takes the enclosing method's return type; the
+    # expression-bodied form `=> new()` is the same shape one wrapper up.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
@@ -138,15 +138,15 @@ public class App {
 def test_target_typed_new_in_indexer_body_emits_instantiates(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) An indexer's return position is typed like a property's: both the
-    # (H) expression-bodied form and a `return new();` inside a get accessor.
+    # An indexer's return position is typed like a property's: both the
+    # expression-bodied form and a `return new();` inside a get accessor.
     (csharp_project / "Widget.cs").write_text(
         "namespace N;\npublic class Widget {\n    public Widget() {}\n}\n",
         encoding="utf-8",
     )
-    # (H) Two files: an indexer is not a function node, so its creation sites
-    # (H) attribute to the file module and same-file sites would collapse into
-    # (H) one (source, target) pair.
+    # Two files: an indexer is not a function node, so its creation sites
+    # attribute to the file module and same-file sites would collapse into
+    # one (source, target) pair.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
@@ -176,8 +176,8 @@ public class App2 {
 def test_target_typed_new_strips_generic_arguments(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Box<int> b = new();` resolves to the Box class, generic args stripped
-    # (H) like the explicit `new Box<int>()` path.
+    # `Box<int> b = new();` resolves to the Box class, generic args stripped
+    # like the explicit `new Box<int>()` path.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
@@ -201,8 +201,8 @@ public class App {
 def test_target_typed_new_in_argument_position_stays_unresolved(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `Take(new())` needs overload resolution to type; the syntactic walk
-    # (H) bails at the argument boundary rather than guess a wrong class.
+    # `Take(new())` needs overload resolution to type; the syntactic walk
+    # bails at the argument boundary rather than guess a wrong class.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;

@@ -555,15 +555,15 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
     fallback_label: str | None = None
     fallback_qn: str | None = None
-    # (H) Span key of the parent's NODE when the guess qn cannot carry the
-    # (H) registered identity (a C# overload registers signature-suffixed, so
-    # (H) the parameterless sibling exactly shadows the guess); the resolver
-    # (H) prefers the location recorded for this span over the qn match.
+    # Span key of the parent's NODE when the guess qn cannot carry the
+    # registered identity (a C# overload registers signature-suffixed, so
+    # the parameterless sibling exactly shadows the guess); the resolver
+    # prefers the location recorded for this span over the qn match.
     parent_span: tuple[str, int, int] | None = None
 
 
-# (H) (module_qn, 1-based start line, 0-based start column) of a function
-# (H) node; the full span identifies the function even on shared lines.
+# (module_qn, 1-based start line, 0-based start column) of a function
+# node; the full span identifies the function even on shared lines.
 type FunctionSpanKey = tuple[str, int, int]
 
 
@@ -582,10 +582,10 @@ class FunctionLocation(NamedTuple):
     label: str
     qualified_name: str
     container_qn: str | None
-    # (H) False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
-    # (H) lets an unnamed JS/TS function expression adopt a NAMED record (the
-    # (H) node a named pass registered for `exports.f = function`), while a
-    # (H) generated record keeps the historical bubble-to-module attribution.
+    # False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
+    # lets an unnamed JS/TS function expression adopt a NAMED record (the
+    # node a named pass registered for `exports.f = function`), while a
+    # generated record keeps the historical bubble-to-module attribution.
     is_named: bool = True
 
 
@@ -689,7 +689,7 @@ class RelationshipSchema(NamedTuple):
     targets: tuple[NodeLabel, ...]
 
 
-# (H) shared property string for the ast-grep finding node labels (issue #413)
+# shared property string for the ast-grep finding node labels (issue #413)
 _FINDING_NODE_PROPS = (
     "{qualified_name: string, name: string, message: string, "
     "start_line: int, end_line: int, path: string, snippet: string?}"
@@ -830,9 +830,9 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        # (H) ExternalModule: a positively-external base (typing.Protocol,
-        # (H) js builtin.Error) keeps its edge by targeting the same external
-        # (H) node the import pass mints, mirroring Module IMPORTS.
+        # ExternalModule: a positively-external base (typing.Protocol,
+        # js builtin.Error) keeps its edge by targeting the same external
+        # node the import pass mints, mirroring Module IMPORTS.
         (
             NodeLabel.CLASS,
             NodeLabel.INTERFACE,
@@ -843,8 +843,8 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        # (H) CLASS/ENUM targets: Dart has no `interface` keyword, so `implements
-        # (H) X` names a concrete class (its implicit interface) or an enum.
+        # CLASS/ENUM targets: Dart has no `interface` keyword, so `implements
+        # X` names a concrete class (its implicit interface) or an enum.
         (
             NodeLabel.INTERFACE,
             NodeLabel.CLASS,
@@ -853,8 +853,8 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         ),
     ),
     RelationshipSchema(
-        # (H) A method-body anonymous-class override is registered as a Function node,
-        # (H) so it can be the source of an OVERRIDES edge onto the base Method.
+        # A method-body anonymous-class override is registered as a Function node,
+        # so it can be the source of an OVERRIDES edge onto the base Method.
         (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),

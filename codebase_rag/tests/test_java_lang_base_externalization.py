@@ -1,11 +1,11 @@
-# (H) Java implicitly imports java.lang, so `extends Exception` or
-# (H) `implements Runnable` names a POSITIVELY external base with no import
-# (H) statement to map it. The deferred-inherits resolver used to treat these
-# (H) as unresolvable module-anchored guesses and emit nothing, losing real
-# (H) inheritance knowledge the graph should keep. Mirroring the JS global
-# (H) rule (Error -> builtin.Error), a bare base in the java.lang table now
-# (H) emits onto an ExternalModule node (java.lang.Exception), reusing the
-# (H) JAVA_LANG_PREFIX machinery the receiver type resolver already has.
+# Java implicitly imports java.lang, so `extends Exception` or
+# `implements Runnable` names a POSITIVELY external base with no import
+# statement to map it. The deferred-inherits resolver used to treat these
+# as unresolvable module-anchored guesses and emit nothing, losing real
+# inheritance knowledge the graph should keep. Mirroring the JS global
+# rule (Error -> builtin.Error), a bare base in the java.lang table now
+# emits onto an ExternalModule node (java.lang.Exception), reusing the
+# JAVA_LANG_PREFIX machinery the receiver type resolver already has.
 from __future__ import annotations
 
 from pathlib import Path
@@ -100,12 +100,12 @@ def test_java_lang_interfaces_emit_external_implements(
 def test_unknown_bare_base_externalizes_under_written_name(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A bare base NOT in the java.lang table is still a syntactic
-    # (H) inheritance fact, and a name resolving to no indexed class is by
-    # (H) construction defined outside the indexed tree (a generated Iface, a
-    # (H) dependency class). The thrift oracle re-measure showed dropping
-    # (H) these loses real recall, so the WRITTEN name externalizes; the
-    # (H) java.lang table now only refines the qn for known java.lang types.
+    # A bare base NOT in the java.lang table is still a syntactic
+    # inheritance fact, and a name resolving to no indexed class is by
+    # construction defined outside the indexed tree (a generated Iface, a
+    # dependency class). The thrift oracle re-measure showed dropping
+    # these loses real recall, so the WRITTEN name externalizes; the
+    # java.lang table now only refines the qn for known java.lang types.
     (temp_repo / "FancyWidget.java").write_text(UNKNOWN_BASE_JAVA)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
 

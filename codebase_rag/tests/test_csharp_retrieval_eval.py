@@ -48,12 +48,12 @@ def test_oracle_captures_first_party_csharp_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared = oracle_csharp_call_edges(tmp_path)
 
-    # (H) this.Helper(), T.Make(), Util.Free(), t.Caller() are first-party calls.
+    # this.Helper(), T.Make(), Util.Free(), t.Caller() are first-party calls.
     assert ("T.cs", "Helper") in edges
     assert ("Use.cs", "Make") in edges
     assert ("Use.cs", "Free") in edges
     assert ("Use.cs", "Caller") in edges
-    # (H) Orphan is declared but never called -> never a call edge.
+    # Orphan is declared but never called -> never a call edge.
     assert ("T.cs", "Orphan") not in edges
     assert {"Helper", "Caller", "Make", "Free", "Orphan", "UseIt"} <= declared
 
@@ -70,12 +70,12 @@ def test_cgr_matches_oracle_on_clean_csharp_project(tmp_path: Path) -> None:
 def test_creation_of_implicit_ctor_class_counts_via_instantiates(
     tmp_path: Path,
 ) -> None:
-    # (H) `new Builder()` where Builder declares NO explicit constructor: the
-    # (H) oracle records the creation site by type name, and cgr has no ctor
-    # (H) node to CALL, only an INSTANTIATES edge to the class -- which must
-    # (H) count (Polly's ResiliencePipelineBuilder, 65 sites). A ctor
-    # (H) declared on an arity sibling (Builder<T>) puts the name in the
-    # (H) declared universe either way.
+    # `new Builder()` where Builder declares NO explicit constructor: the
+    # oracle records the creation site by type name, and cgr has no ctor
+    # node to CALL, only an INSTANTIATES edge to the class -- which must
+    # count (Polly's ResiliencePipelineBuilder, 65 sites). A ctor
+    # declared on an arity sibling (Builder<T>) puts the name in the
+    # declared universe either way.
     (tmp_path / "Builder.cs").write_text(
         "namespace N;\npublic sealed class Builder {\n"
         "    public void Add() { }\n"
@@ -99,10 +99,10 @@ def test_creation_of_implicit_ctor_class_counts_via_instantiates(
 
 @needs_dotnet
 def test_creation_of_ctorless_type_is_in_the_graded_universe(tmp_path: Path) -> None:
-    # (H) A type with NO explicit constructor anywhere still has creation
-    # (H) sites; type names join the declared universe (as Python's retrieval
-    # (H) does, where a class IS a callable) so those sites are graded rather
-    # (H) than silently dropped from both sides.
+    # A type with NO explicit constructor anywhere still has creation
+    # sites; type names join the declared universe (as Python's retrieval
+    # does, where a class IS a callable) so those sites are graded rather
+    # than silently dropped from both sides.
     (tmp_path / "Plain.cs").write_text(
         "namespace N;\npublic sealed class Plain {\n    public int Value;\n}\n",
         encoding="utf-8",
@@ -122,10 +122,10 @@ def test_creation_of_ctorless_type_is_in_the_graded_universe(tmp_path: Path) -> 
 
 @needs_dotnet
 def test_target_typed_new_is_graded_symmetrically(tmp_path: Path) -> None:
-    # (H) C# 9 target-typed `Plain p = new();` (issue #773): both sides infer
-    # (H) the constructed type from the enclosing declaration with the same
-    # (H) syntactic walk, so the site is graded rather than dropped -- and stays
-    # (H) symmetric (no phantom `extra`/`missing`).
+    # C# 9 target-typed `Plain p = new();` (issue #773): both sides infer
+    # the constructed type from the enclosing declaration with the same
+    # syntactic walk, so the site is graded rather than dropped -- and stays
+    # symmetric (no phantom `extra`/`missing`).
     (tmp_path / "Plain.cs").write_text(
         "namespace N;\npublic sealed class Plain {\n    public int Value;\n}\n",
         encoding="utf-8",
@@ -155,11 +155,11 @@ def test_score_csharp_retrieval_prf() -> None:
 def test_oracle_excludes_bcl_calls_colliding_with_first_party_names(
     tmp_path: Path,
 ) -> None:
-    # (H) `sb.Clear()` resolves to BCL StringBuilder.Clear; the oracle must not
-    # (H) count it just because an unrelated first-party `Clear` exists (Polly:
-    # (H) ~130 phantom "missing" edges from cts.Cancel/HashSet.Add/Dispose
-    # (H) colliding with first-party names). The first-party call in the same
-    # (H) project must still count.
+    # `sb.Clear()` resolves to BCL StringBuilder.Clear; the oracle must not
+    # count it just because an unrelated first-party `Clear` exists (Polly:
+    # ~130 phantom "missing" edges from cts.Cancel/HashSet.Add/Dispose
+    # colliding with first-party names). The first-party call in the same
+    # project must still count.
     (tmp_path / "Own.cs").write_text(
         "namespace N;\npublic class Own {\n    public void Clear() { }\n}\n",
         encoding="utf-8",
@@ -178,8 +178,8 @@ def test_oracle_excludes_bcl_calls_colliding_with_first_party_names(
 
     assert ("App.cs", "Clear") in edges
     site_count = sum(1 for e in edges if e == ("App.cs", "Clear"))
-    # (H) Edges are a SET of (file, name); the reduction cannot distinguish the
-    # (H) two Clear sites, so instead pin the BCL-only file shape directly:
+    # Edges are a SET of (file, name); the reduction cannot distinguish the
+    # two Clear sites, so instead pin the BCL-only file shape directly:
     (tmp_path / "OnlyBcl.cs").write_text(
         "namespace N;\npublic class OnlyBcl {\n"
         "    public void Run() {\n"
@@ -197,11 +197,11 @@ def test_oracle_excludes_bcl_calls_colliding_with_first_party_names(
 
 @needs_dotnet
 def test_oracle_resolves_across_namespaces_without_usings(tmp_path: Path) -> None:
-    # (H) SDK ImplicitUsings materialize as generated GlobalUsings.g.cs under
-    # (H) obj/, which the oracle's file walk rightly skips; the oracle must
-    # (H) synthesize global usings for every in-source namespace or a
-    # (H) cross-namespace call (Polly's bench GetPipeline) becomes an
-    # (H) unresolvable receiver and silently drops from the truth set.
+    # SDK ImplicitUsings materialize as generated GlobalUsings.g.cs under
+    # obj/, which the oracle's file walk rightly skips; the oracle must
+    # synthesize global usings for every in-source namespace or a
+    # cross-namespace call (Polly's bench GetPipeline) becomes an
+    # unresolvable receiver and silently drops from the truth set.
     (tmp_path / "Prov.cs").write_text(
         "namespace Lib.Registry;\npublic class Provider {\n"
         "    public int GetPipeline(string key) { return 1; }\n"

@@ -1,9 +1,9 @@
-# (H) A function-local Go type (`type alias T` inside a method body, `type
-# (H) otherType string` inside a closure) is a node on both sides, but the
-# (H) oracle emitted no containment for it while cgr parents it to the nearest
-# (H) NODE-BEARING enclosing function (Go func literals have no nodes, and a
-# (H) receiver method's node is receiver-qualified). Both sides must agree
-# (H) (thrift lib/go surfaced 2 such edges as false positives).
+# A function-local Go type (`type alias T` inside a method body, `type
+# otherType string` inside a closure) is a node on both sides, but the
+# oracle emitted no containment for it while cgr parents it to the nearest
+# NODE-BEARING enclosing function (Go func literals have no nodes, and a
+# receiver method's node is receiver-qualified). Both sides must agree
+# (thrift lib/go surfaced 2 such edges as false positives).
 from __future__ import annotations
 
 from pathlib import Path

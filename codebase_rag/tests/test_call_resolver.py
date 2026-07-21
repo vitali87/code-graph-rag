@@ -1141,8 +1141,8 @@ class TestChainedMethodPattern:
 
 class TestDeterministicResolution:
     def test_trie_tiebreak_by_qualified_name(self, call_resolver: CallResolver) -> None:
-        # (H) Register multiple functions with the same simple name in different modules
-        # (H) at equal import distance from the caller
+        # Register multiple functions with the same simple name in different modules
+        # at equal import distance from the caller
         call_resolver.function_registry["proj.alpha.utils.helper"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.beta.utils.helper"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.gamma.utils.helper"] = NodeType.FUNCTION
@@ -1153,14 +1153,14 @@ class TestDeterministicResolution:
             assert result is not None
             results.append(result[1])
 
-        # (H) All 20 runs must resolve to the same candidate (lexicographically first)
+        # All 20 runs must resolve to the same candidate (lexicographically first)
         assert all(r == results[0] for r in results)
         assert results[0] == "proj.alpha.utils.helper"
 
     def test_trie_tiebreak_picks_lexicographic_first(
         self, call_resolver: CallResolver
     ) -> None:
-        # (H) Deliberately insert in reverse lexicographic order
+        # Deliberately insert in reverse lexicographic order
         call_resolver.function_registry["proj.zoo.compute"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.mid.compute"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.aaa.compute"] = NodeType.FUNCTION
@@ -1172,19 +1172,19 @@ class TestDeterministicResolution:
     def test_trie_tiebreak_distance_still_wins(
         self, call_resolver: CallResolver
     ) -> None:
-        # (H) Closer module should win even if lexicographically later
+        # Closer module should win even if lexicographically later
         call_resolver.function_registry["proj.far.away.process"] = NodeType.FUNCTION
         call_resolver.function_registry["proj.module.process"] = NodeType.FUNCTION
 
         result = call_resolver._try_resolve_via_trie("process", "proj.module.caller")
         assert result is not None
-        # (H) proj.module.process is closer to proj.module.caller
+        # proj.module.process is closer to proj.module.caller
         assert result[1] == "proj.module.process"
 
     def test_trie_many_candidates_deterministic(
         self, call_resolver: CallResolver
     ) -> None:
-        # (H) Register 10 equidistant candidates
+        # Register 10 equidistant candidates
         names = [
             "proj.m09.run",
             "proj.m05.run",
@@ -1219,7 +1219,7 @@ class TestDeterministicResolution:
             assert result is not None
             results.add(result[1])
 
-        # (H) Must resolve to exactly one candidate across all runs
+        # Must resolve to exactly one candidate across all runs
         assert len(results) == 1
 
 
@@ -1229,7 +1229,7 @@ class TestDeterministicFileOrder:
     ) -> None:
         parsers, queries = load_parsers()
 
-        # (H) Create files in non-alphabetical order
+        # Create files in non-alphabetical order
         for name in ["zebra.py", "alpha.py", "middle.py", "beta.py"]:
             (temp_repo / name).write_text(f"def func_{name[0]}(): pass\n")
 
@@ -1274,7 +1274,7 @@ class TestDeterministicFileOrder:
             calls.sort()
             results.append(calls)
 
-        # (H) All 5 runs must produce identical call graphs
+        # All 5 runs must produce identical call graphs
         assert len(results[0]) > 0
         for i in range(1, len(results)):
             assert results[i] == results[0]

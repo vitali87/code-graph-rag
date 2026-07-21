@@ -13,10 +13,10 @@ from evals.oracles import typescript_available
 
 
 def _js_grammar_available() -> bool:
-    # (H) cgr loads the JavaScript tree-sitter grammar only when the optional
-    # (H) grammar extra is installed; without it cgr indexes zero .js functions, so
-    # (H) the cgr-vs-oracle test must skip (like the Go/Rust/Java evals do on a
-    # (H) missing toolchain) rather than hard-fail on an empty cgr graph.
+    # cgr loads the JavaScript tree-sitter grammar only when the optional
+    # grammar extra is installed; without it cgr indexes zero .js functions, so
+    # the cgr-vs-oracle test must skip (like the Go/Rust/Java evals do on a
+    # missing toolchain) rather than hard-fail on an empty cgr graph.
     from codebase_rag.parser_loader import load_parsers
 
     try:
@@ -69,7 +69,7 @@ def test_oracle_captures_first_party_js_calls(tmp_path: Path) -> None:
     assert ("use.js", "free") in edges
     assert ("use.js", "dbl") in edges
     assert ("use.js", "caller") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("t.js", "orphan") not in edges
     assert {"helper", "caller", "orphan", "free", "dbl", "useIt"} <= declared
 

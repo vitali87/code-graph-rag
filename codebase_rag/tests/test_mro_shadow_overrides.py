@@ -1,10 +1,10 @@
-# (H) A mixin's method can shadow a same-name method from a SIBLING base branch
-# (H) only in a combining subclass's MRO: django's
-# (H) SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
-# (H) `self._combine()` calls to SearchVectorCombinable._combine, yet the mixin
-# (H) never inherits Combinable, so the per-class override walk sees nothing
-# (H) and dead-code reports the mixin method. The shadow pass must link the
-# (H) first provider in a class's linearized ancestry to the later ones.
+# A mixin's method can shadow a same-name method from a SIBLING base branch
+# only in a combining subclass's MRO: django's
+# SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
+# `self._combine()` calls to SearchVectorCombinable._combine, yet the mixin
+# never inherits Combinable, so the per-class override walk sees nothing
+# and dead-code reports the mixin method. The shadow pass must link the
+# first provider in a class's linearized ancestry to the later ones.
 from __future__ import annotations
 
 from pathlib import Path
@@ -73,8 +73,8 @@ def test_sibling_mixin_shadow_method_is_not_dead(tmp_path: Path) -> None:
 
 
 def test_unrelated_same_name_methods_stay_independent(tmp_path: Path) -> None:
-    # (H) No class combines Left and Right, so Right._helper is not a dispatch
-    # (H) target of Left's call and must stay reported.
+    # No class combines Left and Right, so Right._helper is not a dispatch
+    # target of Left's call and must stay reported.
     root = tmp_path / "unrelated"
     root.mkdir()
     (root / "mod.py").write_text(UNRELATED_PY, encoding="utf-8")
@@ -129,11 +129,11 @@ class E(B, C):
 
 
 def test_diamond_common_ancestor_does_not_shadow_sibling(tmp_path: Path) -> None:
-    # (H) D(B, C) with B(A), C(A): the C3 MRO is [D, B, C, A], so C.m is D's
-    # (H) dispatch target and the normal per-method walk already links
-    # (H) C.m -> A.m. A depth-first ancestry would visit A (via B) before C
-    # (H) and emit the REVERSED edge A.m -> C.m, wrongly reviving a dead A.m
-    # (H) whenever C.m is live.
+    # D(B, C) with B(A), C(A): the C3 MRO is [D, B, C, A], so C.m is D's
+    # dispatch target and the normal per-method walk already links
+    # C.m -> A.m. A depth-first ancestry would visit A (via B) before C
+    # and emit the REVERSED edge A.m -> C.m, wrongly reviving a dead A.m
+    # whenever C.m is live.
     root = tmp_path / "diamond"
     root.mkdir()
     (root / "d.py").write_text(DIAMOND_PY, encoding="utf-8")
@@ -142,9 +142,9 @@ def test_diamond_common_ancestor_does_not_shadow_sibling(tmp_path: Path) -> None
 
 
 def test_inherited_branch_method_shadows_later_sibling(tmp_path: Path) -> None:
-    # (H) E(B, C) with B(A) and standalone C: the C3 MRO is [E, B, A, C], so
-    # (H) A.m (inherited through B) shadows C.m for E instances and the edge
-    # (H) A.m -> C.m is correct.
+    # E(B, C) with B(A) and standalone C: the C3 MRO is [E, B, A, C], so
+    # A.m (inherited through B) shadows C.m for E instances and the edge
+    # A.m -> C.m is correct.
     root = tmp_path / "precedence"
     root.mkdir()
     (root / "p.py").write_text(PRECEDENCE_PY, encoding="utf-8")
@@ -176,8 +176,8 @@ class SearchText(SearchVectorCombinable, Combinable):
 
 
 def test_shadow_edge_emitted_once_across_combining_classes(tmp_path: Path) -> None:
-    # (H) Two classes combining the same mixin pair surface the same shadow
-    # (H) pair twice; the edge must be emitted exactly once.
+    # Two classes combining the same mixin pair surface the same shadow
+    # pair twice; the edge must be emitted exactly once.
     root = tmp_path / "twocombine"
     root.mkdir()
     (root / "s.py").write_text(TWO_COMBINERS_PY, encoding="utf-8")

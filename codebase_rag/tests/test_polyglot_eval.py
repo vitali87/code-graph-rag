@@ -1,11 +1,11 @@
-# (H) Cross-language / polyglot ingestion regression guard. Drives the
-# (H) evals.polyglot corpus (one file per SupportedLanguage, plus a three-way
-# (H) same-basename collision) through a single cgr graph build and asserts the
-# (H) cross-language integrity invariants: every available language is
-# (H) represented, basename collisions are disambiguated rather than
-# (H) overwritten, no semantic edge crosses a language boundary, the recorded
-# (H) graph is dangling/orphan free, and the whole thing is deterministic. No
-# (H) eval before this one indexed more than one language at a time.
+# Cross-language / polyglot ingestion regression guard. Drives the
+# evals.polyglot corpus (one file per SupportedLanguage, plus a three-way
+# same-basename collision) through a single cgr graph build and asserts the
+# cross-language integrity invariants: every available language is
+# represented, basename collisions are disambiguated rather than
+# overwritten, no semantic edge crosses a language boundary, the recorded
+# graph is dangling/orphan free, and the whole thing is deterministic. No
+# eval before this one indexed more than one language at a time.
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,9 +24,9 @@ from evals.polyglot import (
 
 
 def _available_languages() -> frozenset[cs.SupportedLanguage]:
-    # (H) Only grade languages whose parser actually loaded, so a missing
-    # (H) optional grammar skips that language instead of failing the suite --
-    # (H) but any loaded language that drops out of the graph is a real bug.
+    # Only grade languages whose parser actually loaded, so a missing
+    # optional grammar skips that language instead of failing the suite --
+    # but any loaded language that drops out of the graph is a real bug.
     parsers, _ = load_parsers()
     return EXPECTED_LANGUAGES & frozenset(parsers)
 
@@ -46,10 +46,10 @@ def test_every_available_language_is_represented(polyglot_corpus: Path) -> None:
         "languages dropped from the polyglot graph: "
         f"{sorted(lang.value for lang in dropped)}"
     )
-    # (H) each present language must also contribute at least one definition,
-    # (H) not just an empty module node.
-    # (H) sorted() so iteration order is deterministic across runs (StrEnum
-    # (H) members hash by string, whose order varies with hash randomization).
+    # each present language must also contribute at least one definition,
+    # not just an empty module node.
+    # sorted() so iteration order is deterministic across runs (StrEnum
+    # members hash by string, whose order varies with hash randomization).
     empty = [
         lang.value
         for lang in sorted(available)
@@ -70,12 +70,12 @@ def test_cross_language_basename_collision_is_disambiguated(
     if not trio <= available:
         pytest.skip("collision trio needs the rust, cpp and typescript parsers")
     report = cgr_polyglot(polyglot_corpus, polyglot_corpus.name)
-    # (H) shapes.rs / shapes.cpp / shapes.ts strip to the same module qn; each
-    # (H) must end up with its OWN qn or one silently overwrites the others
-    # (H) under the qualified_name uniqueness constraint (issue #652 class).
-    # (H) Assert all three files produced a module FIRST: cgr_polyglot keys its
-    # (H) path map by qn, so a real collapse would drop a path and a bare
-    # (H) uniqueness check could still pass on the survivors (Greptile #824 P1).
+    # shapes.rs / shapes.cpp / shapes.ts strip to the same module qn; each
+    # must end up with its OWN qn or one silently overwrites the others
+    # under the qualified_name uniqueness constraint (issue #652 class).
+    # Assert all three files produced a module FIRST: cgr_polyglot keys its
+    # path map by qn, so a real collapse would drop a path and a bare
+    # uniqueness check could still pass on the survivors (Greptile #824 P1).
     assert set(report.collision_qns) == {"shapes.rs", "shapes.cpp", "shapes.ts"}, (
         f"a colliding-basename file lost its module: {report.collision_qns}"
     )
@@ -87,19 +87,19 @@ def test_cross_language_basename_collision_is_disambiguated(
 
 def test_no_edge_crosses_a_language_boundary(polyglot_corpus: Path) -> None:
     report = cgr_polyglot(polyglot_corpus, polyglot_corpus.name)
-    # (H) cgr does not resolve references across languages; a CALLS/INHERITS/etc.
-    # (H) edge whose endpoints live in different-language modules means a qn from
-    # (H) one language bled into another's resolution.
+    # cgr does not resolve references across languages; a CALLS/INHERITS/etc.
+    # edge whose endpoints live in different-language modules means a qn from
+    # one language bled into another's resolution.
     assert not report.cross_language_edges, (
         f"edges crossing a language boundary: {sorted(report.cross_language_edges)}"
     )
 
 
 def test_polyglot_graph_is_dangling_and_orphan_free(polyglot_corpus: Path) -> None:
-    # (H) create_and_run_updater runs the structural integrity audit (schema,
-    # (H) orphans, dangling relationships) over the recorded batches; a
-    # (H) violation raises. This proves mixing every language in one build does
-    # (H) not produce an edge with a phantom endpoint.
+    # create_and_run_updater runs the structural integrity audit (schema,
+    # orphans, dangling relationships) over the recorded batches; a
+    # violation raises. This proves mixing every language in one build does
+    # not produce an edge with a phantom endpoint.
     mock_ingestor = MagicMock()
     mock_ingestor.ensure_node_batch = MagicMock()
     mock_ingestor.ensure_relationship_batch = MagicMock()
@@ -109,9 +109,9 @@ def test_polyglot_graph_is_dangling_and_orphan_free(polyglot_corpus: Path) -> No
 def test_polyglot_report_is_deterministic(
     temp_repo: Path, polyglot_corpus: Path
 ) -> None:
-    # (H) The collision winner is decided by file-processing order; two builds of
-    # (H) the same corpus must produce identical qns, or incremental re-index and
-    # (H) cross-project references key on a moving target.
+    # The collision winner is decided by file-processing order; two builds of
+    # the same corpus must produce identical qns, or incremental re-index and
+    # cross-project references key on a moving target.
     second = temp_repo / "poly_again"
     build_polyglot_corpus(second)
     a = cgr_polyglot(polyglot_corpus, "poly")

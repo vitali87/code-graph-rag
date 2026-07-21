@@ -20,12 +20,12 @@ def resolve_class_name(
         import_map = import_processor.import_mapping[module_qn]
         if class_name in import_map:
             mapped = import_map[class_name]
-            # (H) C++ include entries map header STEMS to MODULE qns; when the
-            # (H) stem coincides with a class name (Directive.h defining class
-            # (H) Directive, the dominant C++ layout) the map answer is a module,
-            # (H) not a class. Callers that need a real registered node (call
-            # (H) attribution in Pass 3) must fall through to the registry-backed
-            # (H) steps below (issue #652: 11k phantom callers on souffle).
+            # C++ include entries map header STEMS to MODULE qns; when the
+            # stem coincides with a class name (Directive.h defining class
+            # Directive, the dominant C++ layout) the map answer is a module,
+            # not a class. Callers that need a real registered node (call
+            # attribution in Pass 3) must fall through to the registry-backed
+            # steps below (issue #652: 11k phantom callers on souffle).
             if not require_registered or function_registry.get(mapped) is not None:
                 return mapped
 
@@ -41,11 +41,11 @@ def resolve_class_name(
             return potential_qn
 
     matches = function_registry.find_ending_with(class_name)
-    # (H) Among same-named candidates in different files (gson's per-factory nested
-    # (H) `Adapter`), prefer one nested in the CURRENT module: a sibling/enclosing
-    # (H) nested class shadows a same-named class elsewhere, so `class Sub extends
-    # (H) Adapter` binds to its own file's Adapter, not another file's that merely
-    # (H) sorts first. Fall back to the first full-segment match otherwise.
+    # Among same-named candidates in different files (gson's per-factory nested
+    # `Adapter`), prefer one nested in the CURRENT module: a sibling/enclosing
+    # nested class shadows a same-named class elsewhere, so `class Sub extends
+    # Adapter` binds to its own file's Adapter, not another file's that merely
+    # sorts first. Fall back to the first full-segment match otherwise.
     module_prefix = f"{module_qn}{SEPARATOR_DOT}"
     same_module = [
         match
@@ -64,13 +64,13 @@ def resolve_class_name(
 
 
 def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
-    # (H) Method names defined by any EXTERNAL stdlib base among a class's parents
-    # (H) (`textwrap.TextWrapper` -> its full attribute set). A subclass method with
-    # (H) one of these names overrides the stdlib base and is invoked by the base's
-    # (H) machinery (click's `_wrap_chunks` via textwrap's `wrap()`), so callers mark
-    # (H) it as an external-override reachability root. Only stdlib modules are
-    # (H) imported (sys.stdlib_module_names gate): importing them is side-effect-safe
-    # (H) and requires no third-party environment.
+    # Method names defined by any EXTERNAL stdlib base among a class's parents
+    # (`textwrap.TextWrapper` -> its full attribute set). A subclass method with
+    # one of these names overrides the stdlib base and is invoked by the base's
+    # machinery (click's `_wrap_chunks` via textwrap's `wrap()`), so callers mark
+    # it as an external-override reachability root. Only stdlib modules are
+    # imported (sys.stdlib_module_names gate): importing them is side-effect-safe
+    # and requires no third-party environment.
     import importlib
     import sys
 
@@ -86,10 +86,10 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
             module = importlib.import_module(module_path)
             base = getattr(module, class_name, None)
         except Exception:
-            # (H) Broad on purpose: importing a stdlib module executes its
-            # (H) module-level code, which can raise arbitrary platform-specific
-            # (H) errors; the parser must degrade to "no external base info"
-            # (H) rather than crash the indexing run.
+            # Broad on purpose: importing a stdlib module executes its
+            # module-level code, which can raise arbitrary platform-specific
+            # errors; the parser must degrade to "no external base info"
+            # rather than crash the indexing run.
             continue
         if isinstance(base, type):
             names.update(dir(base))

@@ -33,8 +33,8 @@ def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def test_go_callback_invoked_directly_is_traced(tmp_path: Path) -> None:
-    # (H) apply invokes its parameter cb directly; the function value passed at the
-    # (H) call site must be traced apply -> target.
+    # apply invokes its parameter cb directly; the function value passed at the
+    # call site must be traced apply -> target.
     src = (
         "package m\n\n"
         "func apply(cb func() int) int {\n"
@@ -48,7 +48,7 @@ def test_go_callback_invoked_directly_is_traced(tmp_path: Path) -> None:
 
 
 def test_go_callback_invoked_in_closure_is_traced(tmp_path: Path) -> None:
-    # (H) apply invokes cb only inside a returned func_literal closure.
+    # apply invokes cb only inside a returned func_literal closure.
     src = (
         "package m\n\n"
         "func apply(cb func() int) func() int {\n"
@@ -63,10 +63,10 @@ def test_go_callback_invoked_in_closure_is_traced(tmp_path: Path) -> None:
 
 
 def test_go_factory_alias_callback_stays_reachable(tmp_path: Path) -> None:
-    # (H) run := makeRunner(); run(target): run is unresolved (holds a returned func
-    # (H) value), so target is kept reachable by the reference edge from the calling
-    # (H) scope. The precise closure edge needs the func literal to be a registered
-    # (H) function, which Go does not provide, but the callback must not be dropped.
+    # run := makeRunner(); run(target): run is unresolved (holds a returned func
+    # value), so target is kept reachable by the reference edge from the calling
+    # scope. The precise closure edge needs the func literal to be a registered
+    # function, which Go does not provide, but the callback must not be dropped.
     src = (
         "package m\n\n"
         "func makeRunner() func(func() int) int {\n"

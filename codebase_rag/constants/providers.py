@@ -1,4 +1,4 @@
-# (H) LLM/embedding provider defaults, env vars, and model metadata.
+# LLM/embedding provider defaults, env vars, and model metadata.
 
 from enum import StrEnum
 
@@ -38,7 +38,7 @@ class GoogleProviderType(StrEnum):
     VERTEX = "vertex"
 
 
-# (H) Provider endpoints
+# Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
@@ -46,7 +46,7 @@ OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
-# (H) HTTP status codes
+# HTTP status codes
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
@@ -73,13 +73,13 @@ class VectorStoreBackend(StrEnum):
     MILVUS = "milvus"
 
 
-# (H) Batches between torch.mps.empty_cache() calls: dropping the Metal
-# (H) allocator cache every batch costs ~21% throughput (measured on an M-series
-# (H) UniXcoder run), so release it periodically just to bound growth.
+# Batches between torch.mps.empty_cache() calls: dropping the Metal
+# allocator cache every batch costs ~21% throughput (measured on an M-series
+# UniXcoder run), so release it periodically just to bound growth.
 EMBEDDING_MPS_CACHE_DROP_INTERVAL = 64
 
 
-# (H) ModelConfig field names
+# ModelConfig field names
 FIELD_PROVIDER = "provider"
 FIELD_MODEL_ID = "model_id"
 FIELD_API_KEY = "api_key"

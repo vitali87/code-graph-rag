@@ -1,6 +1,6 @@
-# (H) Hybrid C++ macro call edges must go through the capture filter, not the
-# (H) raw ingestor, so `--capture none` drops them like every other CALLS edge
-# (H) (PR #638 review).
+# Hybrid C++ macro call edges must go through the capture filter, not the
+# raw ingestor, so `--capture none` drops them like every other CALLS edge
+# (PR #638 review).
 
 from __future__ import annotations
 

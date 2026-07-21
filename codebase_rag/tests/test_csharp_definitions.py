@@ -1,4 +1,4 @@
-# (H) C# Phase 1: definition extraction (namespaces, types, members, FQNs).
+# C# Phase 1: definition extraction (namespaces, types, members, FQNs).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -38,7 +38,7 @@ def test_file_scoped_and_block_namespace_fold_identically(
     methods = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # (H) Both spellings must place the type under the Foo.Bar namespace.
+    # Both spellings must place the type under the Foo.Bar namespace.
     assert _endswith_any(classes, "Foo.Bar.Widget")
     assert _endswith_any(classes, "Foo.Bar.Gadget")
     assert _endswith_any(methods, "Foo.Bar.Widget.Run")
@@ -60,8 +60,8 @@ public record struct RS(int Z);
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # (H) class, struct and records map to Class; interface -> Interface;
-    # (H) enum -> Enum (C# reuses determine_node_type's node-type mapping).
+    # class, struct and records map to Class; interface -> Interface;
+    # enum -> Enum (C# reuses determine_node_type's node-type mapping).
     classes = get_node_names(mock_ingestor, NodeType.CLASS)
     for name in ("N.C", "N.S", "N.R", "N.RS"):
         assert _endswith_any(classes, name), f"missing type {name}: {classes}"
@@ -91,17 +91,17 @@ public class Box<T> {
     members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # (H) Generic type parameters must not leak into names; methods with
-    # (H) parameters carry a signature so overloads stay distinct (Phase 3).
+    # Generic type parameters must not leak into names; methods with
+    # parameters carry a signature so overloads stay distinct (Phase 3).
     assert _endswith_any(classes, "N.Box")
     assert _endswith_any(members, "N.Box.Get(U)")
     assert _endswith_any(members, "N.Box.Size")
-    # (H) Constructor is named after the type; destructor is distinct from it.
+    # Constructor is named after the type; destructor is distinct from it.
     assert _endswith_any(members, "N.Box.Box(T)")
-    # (H) Operators and destructors must register as members too. The operator
-    # (H) has no `name` field (synthesize `operator_<symbol>` + signature so
-    # (H) overloaded operators stay distinct); the destructor's identifier
-    # (H) collides with the ctor unless prefixed with `~`.
+    # Operators and destructors must register as members too. The operator
+    # has no `name` field (synthesize `operator_<symbol>` + signature so
+    # overloaded operators stay distinct); the destructor's identifier
+    # collides with the ctor unless prefixed with `~`.
     assert _endswith_any(members, "N.Box.operator_+(Box, Box)")
     assert _endswith_any(members, "N.Box.~Box")
 
@@ -127,11 +127,11 @@ public struct Vec {
     members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
         mock_ingestor, NodeType.FUNCTION
     )
-    # (H) Two `operator +` overloads differ only by parameter type, so the
-    # (H) signature must keep them as two nodes (not one @line-suffixed collision).
+    # Two `operator +` overloads differ only by parameter type, so the
+    # signature must keep them as two nodes (not one @line-suffixed collision).
     assert _endswith_any(members, "N.Vec.operator_+(Vec, Vec)")
     assert _endswith_any(members, "N.Vec.operator_+(Vec, int)")
-    # (H) Conversion operators are named by their target type.
+    # Conversion operators are named by their target type.
     assert _endswith_any(members, "N.Vec.operator_int(Vec)")
     assert _endswith_any(members, "N.Vec.operator_string(Vec)")
 
@@ -154,11 +154,11 @@ def test_nested_types(csharp_project: Path, mock_ingestor: MagicMock) -> None:
 def test_local_function_in_parameterized_method_parents_to_method(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A parameterized method registers with an overload-suffixed qn
-    # (H) (`Run(int)`), so the local function's structurally re-derived parent
-    # (H) (`Run`) misses the registry and the DEFINES edge silently degrades to
-    # (H) the Module (Polly's BulkheadEngine shape). The recorded method
-    # (H) identity must be reused instead.
+    # A parameterized method registers with an overload-suffixed qn
+    # (`Run(int)`), so the local function's structurally re-derived parent
+    # (`Run`) misses the registry and the DEFINES edge silently degrades to
+    # the Module (Polly's BulkheadEngine shape). The recorded method
+    # identity must be reused instead.
     (csharp_project / "Engine.cs").write_text(
         """
 namespace N;
@@ -190,10 +190,10 @@ public class Sample {
 def test_local_function_binds_to_the_hosting_overload(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Polly's PredicateBuilder shape: a parameterless overload registers
-    # (H) WITHOUT a signature suffix, exactly matching the structural parent
-    # (H) guess, so a local function inside the parameterized overload was
-    # (H) attached to the wrong method. The recorded span identity must win.
+    # Polly's PredicateBuilder shape: a parameterless overload registers
+    # WITHOUT a signature suffix, exactly matching the structural parent
+    # guess, so a local function inside the parameterized overload was
+    # attached to the wrong method. The recorded span identity must win.
     (csharp_project / "Overloads.cs").write_text(
         """
 namespace N;

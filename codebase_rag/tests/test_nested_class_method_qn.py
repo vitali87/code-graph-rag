@@ -28,10 +28,10 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
 
 
 def test_nested_class_method_call_edge_uses_full_qn(tmp_path: Path) -> None:
-    # (H) A method of a nested class (Outer.Inner.run) must emit its CALLS edge
-    # (H) from the FULL qn that the definition pass registered
-    # (H) (module.Outer.Inner.run), not the enclosing-class-dropping
-    # (H) module.Inner.run, or the edge dangles off a phantom node.
+    # A method of a nested class (Outer.Inner.run) must emit its CALLS edge
+    # from the FULL qn that the definition pass registered
+    # (module.Outer.Inner.run), not the enclosing-class-dropping
+    # module.Inner.run, or the edge dangles off a phantom node.
     files = {
         "m.py": (
             "def helper():\n"
@@ -54,8 +54,8 @@ def test_nested_class_method_call_edge_uses_full_qn(tmp_path: Path) -> None:
 
 
 def test_nested_class_method_qn_matches_registered_node(tmp_path: Path) -> None:
-    # (H) The caller qn of a nested-class method CALLS edge must be a real
-    # (H) registered node, so an INSTANTIATES/CALLS traversal reaches it.
+    # The caller qn of a nested-class method CALLS edge must be a real
+    # registered node, so an INSTANTIATES/CALLS traversal reaches it.
     files = {
         "m.py": (
             "def helper():\n"

@@ -96,7 +96,7 @@ def test_go_free_function_not_a_method(
         for node in get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     }
     assert f"{project}.shapes.NewPoint" in function_qns
-    # (H) A receiver method must not also be emitted as a plain Function.
+    # A receiver method must not also be emitted as a plain Function.
     assert f"{project}.shapes.Area" not in function_qns
     assert f"{project}.shapes.Point.Area" not in function_qns
 
@@ -119,9 +119,9 @@ def test_go_method_defined_by_receiver_type(
 
 @pytest.fixture
 def go_crossfile_project(temp_repo: Path) -> Path:
-    # (H) Same Go package split across two files: the receiver type lives in
-    # (H) types.go, a method on it lives in ops.go. A Go package spans every
-    # (H) file in its directory, so the method must bind to the type's node.
+    # Same Go package split across two files: the receiver type lives in
+    # types.go, a method on it lives in ops.go. A Go package spans every
+    # file in its directory, so the method must bind to the type's node.
     project_path = temp_repo / "go_xfile_test"
     project_path.mkdir()
     (project_path / "go.mod").write_text(
@@ -143,8 +143,8 @@ def test_go_crossfile_method_binds_to_declaring_type(
 ) -> None:
     create_and_run_updater(go_crossfile_project, mock_ingestor, skip_if_missing="go")
     project = go_crossfile_project.name
-    # (H) Point is declared in types.go, so its Class node and the method's qn
-    # (H) are anchored to the types module, not the ops module that holds Scale.
+    # Point is declared in types.go, so its Class node and the method's qn
+    # are anchored to the types module, not the ops module that holds Scale.
     assert f"{project}.types.Point.Scale" in _method_qns(mock_ingestor)
     defines_method = get_relationships(
         mock_ingestor, RelationshipType.DEFINES_METHOD.value

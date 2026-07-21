@@ -1,10 +1,10 @@
-# (H) C# Roslyn hybrid frontend (issue #738), the full semantic set: exact
-# (H) overload resolution and extension binding via per-invocation call facts,
-# (H) exact partial-class symbol identity via declaration-location groups, and
-# (H) LINQ query-operator CALLS edges that query syntax hides from tree-sitter
-# (H) (a query expression has no invocation nodes). All joins are location-keyed
-# (H) and degrade to the tree-sitter heuristics on any key miss, so these tests
-# (H) drive the wiring with synthetic facts and need no dotnet toolchain.
+# C# Roslyn hybrid frontend (issue #738), the full semantic set: exact
+# overload resolution and extension binding via per-invocation call facts,
+# exact partial-class symbol identity via declaration-location groups, and
+# LINQ query-operator CALLS edges that query syntax hides from tree-sitter
+# (a query expression has no invocation nodes). All joins are location-keyed
+# and degrade to the tree-sitter heuristics on any key miss, so these tests
+# drive the wiring with synthetic facts and need no dotnet toolchain.
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -32,8 +32,8 @@ _CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
 
 
 def _loc(source: str, needle: str) -> tuple[int, int]:
-    # (H) (1-based line, 0-based col) of the first occurrence of `needle`,
-    # (H) matching tree-sitter/Roslyn location conventions for ASCII sources.
+    # (1-based line, 0-based col) of the first occurrence of `needle`,
+    # matching tree-sitter/Roslyn location conventions for ASCII sources.
     for line_no, line in enumerate(source.splitlines(), 1):
         if (col := line.find(needle)) >= 0:
             return line_no, col
@@ -106,8 +106,8 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
 
 
 def test_parse_payload_without_new_sections_yields_empty_facts() -> None:
-    # (H) An older tool build (stale cached DLL) emits only `types`; the new
-    # (H) sections must default to empty instead of raising.
+    # An older tool build (stale cached DLL) emits only `types`; the new
+    # sections must default to empty instead of raising.
     facts = _parse_payload(json.dumps({"types": []}))
     assert facts.call_sites == {}
     assert facts.partial_groups == []
@@ -142,11 +142,11 @@ public class App
 def test_call_fact_resolves_chained_receiver_to_exact_overload(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) `Make().Handle("x")`: the receiver is a chained call the tree-sitter
-    # (H) engine cannot type, and the two overloads share arity 1 so no
-    # (H) heuristic may guess. The Roslyn call fact (keyed on the callee NAME
-    # (H) token, since nested invocations share an expression start) binds the
-    # (H) exact string overload.
+    # `Make().Handle("x")`: the receiver is a chained call the tree-sitter
+    # engine cannot type, and the two overloads share arity 1 so no
+    # heuristic may guess. The Roslyn call fact (keyed on the callee NAME
+    # token, since nested invocations share an expression start) binds the
+    # exact string overload.
     root = temp_repo / "overloadproj"
     root.mkdir()
     (root / "Code.cs").write_text(_OVERLOAD_SRC, encoding="utf-8")
@@ -172,8 +172,8 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
 
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
-    # (H) Scoped to the fact-driven caller: GoSafe has no fact in THIS test, so
-    # (H) its call legitimately falls back to the arity heuristic's guess.
+    # Scoped to the fact-driven caller: GoSafe has no fact in THIS test, so
+    # its call legitimately falls back to the arity heuristic's guess.
     assert not any(
         ca.endswith("N.App.Go") and ce.endswith("Handle(int)") for ca, ce in calls
     ), calls
@@ -182,10 +182,10 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
 def test_call_fact_resolves_conditional_access_invocation(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) `c?.Handle("y")`: tree-sitter wraps the callee in a
-    # (H) conditional_access_expression (not a member_access_expression), so the
-    # (H) heuristic path never types it; the Roslyn fact keyed on the
-    # (H) member_binding name token must still join.
+    # `c?.Handle("y")`: tree-sitter wraps the callee in a
+    # conditional_access_expression (not a member_access_expression), so the
+    # heuristic path never types it; the Roslyn fact keyed on the
+    # member_binding name token must still join.
     root = temp_repo / "condproj"
     root.mkdir()
     (root / "Code.cs").write_text(_OVERLOAD_SRC, encoding="utf-8")
@@ -232,11 +232,11 @@ public class C
 def test_call_fact_suppresses_same_arity_family_fanout(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) A bare `Format(1)` with a Roslyn call fact is the COMPILER's overload
-    # (H) choice: the same-arity family fan-out (which keeps type-dispatched
-    # (H) switch families reachable when only arity is known) must NOT fire, or
-    # (H) it would revive the provably-uncalled `Format(string)` sibling in
-    # (H) dead-code output.
+    # A bare `Format(1)` with a Roslyn call fact is the COMPILER's overload
+    # choice: the same-arity family fan-out (which keeps type-dispatched
+    # switch families reachable when only arity is known) must NOT fire, or
+    # it would revive the provably-uncalled `Format(string)` sibling in
+    # dead-code output.
     root = temp_repo / "barefanproj"
     root.mkdir()
     (root / "Code.cs").write_text(_BARE_FANOUT_SRC, encoding="utf-8")
@@ -291,11 +291,11 @@ public class App
 def test_external_site_fact_suppresses_name_trie_fallback(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) `disposable.Dispose()` on a pattern variable: the local-type collector
-    # (H) never tracks it, so the name trie fabricates a CALLS edge onto the
-    # (H) unrelated first-party Helper.Dispose. Roslyn KNOWS the site resolves
-    # (H) to metadata; its external-site fact must suppress the fallback (the
-    # (H) measured Polly residual: 55 fps, all of this class).
+    # `disposable.Dispose()` on a pattern variable: the local-type collector
+    # never tracks it, so the name trie fabricates a CALLS edge onto the
+    # unrelated first-party Helper.Dispose. Roslyn KNOWS the site resolves
+    # to metadata; its external-site fact must suppress the fallback (the
+    # measured Polly residual: 55 fps, all of this class).
     root = temp_repo / "extsiteproj"
     root.mkdir()
     (root / "Code.cs").write_text(_EXTERNAL_SITE_SRC, encoding="utf-8")
@@ -354,13 +354,13 @@ public class User
 def test_partial_fact_merges_parts_across_directories(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) The syntactic grouping deliberately under-merges: partial parts in
-    # (H) DIFFERENT directories of one project stay separate (the directory key
-    # (H) exists to avoid cross-project merges), so `w.FromOther()` is ambiguous
-    # (H) between two W candidates and stays unresolved (Decoy's same-named
-    # (H) method blocks the simple-name fallback). The Roslyn partial fact
-    # (H) carries exact symbol identity, so the parts merge and the member on
-    # (H) the other part binds.
+    # The syntactic grouping deliberately under-merges: partial parts in
+    # DIFFERENT directories of one project stay separate (the directory key
+    # exists to avoid cross-project merges), so `w.FromOther()` is ambiguous
+    # between two W candidates and stays unresolved (Decoy's same-named
+    # method blocks the simple-name fallback). The Roslyn partial fact
+    # carries exact symbol identity, so the parts merge and the member on
+    # the other part binds.
     root = temp_repo / "partialproj"
     (root / "dirA").mkdir(parents=True)
     (root / "dirB").mkdir()
@@ -421,9 +421,9 @@ public class Q
 def test_query_fact_emits_calls_edge_for_linq_operator(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) Query syntax has NO invocation nodes, so tree-sitter can never emit
-    # (H) the `select` -> Ops.Select edge; the Roslyn query fact adds it, keyed
-    # (H) on the enclosing member's declaration location.
+    # Query syntax has NO invocation nodes, so tree-sitter can never emit
+    # the `select` -> Ops.Select edge; the Roslyn query fact adds it, keyed
+    # on the enclosing member's declaration location.
     root = temp_repo / "linqproj"
     root.mkdir()
     (root / "Ops.cs").write_text(_LINQ_OPS, encoding="utf-8")
@@ -535,10 +535,10 @@ public class Q
 
 
 def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
-    # (H) End-to-end against the real bundled tool: the compiled Roslyn frontend
-    # (H) must emit exact-overload call facts, reduced extension-method call
-    # (H) facts, partial declaration groups, and first-party LINQ query-operator
-    # (H) facts, all with locations matching the source layout.
+    # End-to-end against the real bundled tool: the compiled Roslyn frontend
+    # must emit exact-overload call facts, reduced extension-method call
+    # facts, partial declaration groups, and first-party LINQ query-operator
+    # facts, all with locations matching the source layout.
     from codebase_rag.parsers.csharp_frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
@@ -594,8 +594,8 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
         for q in facts.query_calls
     ), facts.query_calls
 
-    # (H) `System.Console.WriteLine` resolves to metadata: the tool must report
-    # (H) it as an external site (and never as a positive call fact).
+    # `System.Console.WriteLine` resolves to metadata: the tool must report
+    # it as an external site (and never as a positive call fact).
     writeline_line, _ = _loc(_E2E_CODE, 'System.Console.WriteLine("done");')
     assert any(
         k[0] == "E2E.cs" and k[1] == writeline_line and k[3] == "WriteLine"
@@ -603,12 +603,12 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     ), facts.external_sites
     assert not any(k[3] == "WriteLine" for k in facts.call_sites), facts.call_sites
 
-    # (H) A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
-    # (H) but its DEFINITION is first-party (Polly's Log.cs): the call must be
-    # (H) a positive fact targeting the definition, never an external site. The
-    # (H) target anchors at the ATTRIBUTE line: both Roslyn's declaration span
-    # (H) and tree-sitter's method_declaration include the attribute list, so
-    # (H) that line is what the location join matches.
+    # A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
+    # but its DEFINITION is first-party (Polly's Log.cs): the call must be
+    # a positive fact targeting the definition, never an external site. The
+    # target anchors at the ATTRIBUTE line: both Roslyn's declaration span
+    # and tree-sitter's method_declaration include the attribute list, so
+    # that line is what the location join matches.
     hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "[LoggerMessage(EventId = 1")
     hi = [f for k, f in facts.call_sites.items() if k[3] == "Hi"]
     assert any(f.target_file == "Gen.cs" and f.target_line == hi_line for f in hi), (
@@ -621,9 +621,9 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
 def test_hybrid_end_to_end_produces_semantic_edges(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) The full pipeline with REAL Roslyn facts (no synthetic maps): proves
-    # (H) the tool's emitted line/col keys actually match tree-sitter's node
-    # (H) positions and the Pass-2 registries, end to end.
+    # The full pipeline with REAL Roslyn facts (no synthetic maps): proves
+    # the tool's emitted line/col keys actually match tree-sitter's node
+    # positions and the Pass-2 registries, end to end.
     from codebase_rag.parsers.csharp_frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
@@ -651,7 +651,7 @@ def test_hybrid_end_to_end_produces_semantic_edges(
 
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.App.Go", "N.C.Handle(string)"), calls
-    # (H) The conditional-access form binds through the real Roslyn fact too.
+    # The conditional-access form binds through the real Roslyn fact too.
     assert _has(calls, "N.App.GoSafe(C)", "N.C.Handle(string)"), calls
     assert not any(ce.endswith("Handle(int)") for _, ce in calls), calls
     assert _has(calls, "N.User.Go(W)", "N.W.FromOther"), calls
@@ -683,10 +683,10 @@ public class App
 def test_call_fact_survives_non_ascii_prefix_on_line(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) tree-sitter columns are BYTE offsets; Roslyn's LinePosition.Character
-    # (H) is UTF-16 code units. A non-ASCII character before the callee name
-    # (H) token on the same line makes the two diverge, so the tool must emit
-    # (H) byte columns or the join silently misses. Real facts end to end.
+    # tree-sitter columns are BYTE offsets; Roslyn's LinePosition.Character
+    # is UTF-16 code units. A non-ASCII character before the callee name
+    # token on the same line makes the two diverge, so the tool must emit
+    # byte columns or the join silently misses. Real facts end to end.
     from codebase_rag.parsers.csharp_frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
@@ -715,8 +715,8 @@ def test_call_fact_survives_non_ascii_prefix_on_line(
 def test_frontend_off_clears_stale_semantic_facts(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (H) Watch-mode reset must cover the new fact stores, not just base kinds:
-    # (H) a later run with the frontend off may not keep binding stale targets.
+    # Watch-mode reset must cover the new fact stores, not just base kinds:
+    # a later run with the frontend off may not keep binding stale targets.
     from codebase_rag.parser_loader import load_parsers
 
     parsers, queries = load_parsers()

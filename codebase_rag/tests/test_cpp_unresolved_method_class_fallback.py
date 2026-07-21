@@ -1,8 +1,8 @@
-# (H) An out-of-line C++ method whose class cannot be resolved (macro-corrupted
-# (H) declarations, or no such class parsed at all) used to get a
-# (H) DEFINES_METHOD edge to a phantom fallback class qn, which the database
-# (H) drops, orphaning the Method node (issue #650, the span.h make_span case).
-# (H) The node must instead anchor to its module so it stays reachable.
+# An out-of-line C++ method whose class cannot be resolved (macro-corrupted
+# declarations, or no such class parsed at all) used to get a
+# DEFINES_METHOD edge to a phantom fallback class qn, which the database
+# drops, orphaning the Method node (issue #650, the span.h make_span case).
+# The node must instead anchor to its module so it stays reachable.
 from __future__ import annotations
 
 from pathlib import Path

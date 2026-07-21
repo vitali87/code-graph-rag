@@ -1,11 +1,11 @@
-# (H) L3 finding from the evals/ harness: a function passed as an argument and
-# (H) invoked via a parameter name (extract_decorators_func(node) inside
-# (H) ingest_method) or handed to an eager higher-order builtin (sorted(...,
-# (H) key=_span_key)). The traced CALLS edge points from the function that
-# (H) actually invokes the callable: the callee for a parameter it calls, the
-# (H) enclosing function for a synchronous builtin. Sibling-class methods of the
-# (H) same name make the callback targets ambiguous so trie uniqueness cannot
-# (H) accidentally mask a real miss.
+# L3 finding from the evals/ harness: a function passed as an argument and
+# invoked via a parameter name (extract_decorators_func(node) inside
+# ingest_method) or handed to an eager higher-order builtin (sorted(...,
+# key=_span_key)). The traced CALLS edge points from the function that
+# actually invokes the callable: the callee for a parameter it calls, the
+# enclosing function for a synchronous builtin. Sibling-class methods of the
+# same name make the callback targets ambiguous so trie uniqueness cannot
+# accidentally mask a real miss.
 from __future__ import annotations
 
 from pathlib import Path
@@ -101,7 +101,7 @@ class TestHigherOrderCalls:
         self, tmp_path: Path
     ) -> None:
         calls = _calls(tmp_path)
-        # (H) driver passes helper but never invokes it; apply_cb does.
+        # driver passes helper but never invokes it; apply_cb does.
         assert ("proj.m.driver", "proj.m.helper") not in calls, calls
 
     def test_callable_parameter_prefers_module_function_over_sibling_method(

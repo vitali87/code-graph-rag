@@ -53,19 +53,19 @@ def _process_mro_shadow_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
 ) -> None:
-    # (H) A mixin's method can shadow a same-name method from a SIBLING base
-    # (H) branch only in a combining subclass's MRO: django's
-    # (H) SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
-    # (H) `self._combine()` to SearchVectorCombinable._combine, yet the mixin
-    # (H) never inherits Combinable, so the per-method ancestor walk above
-    # (H) cannot see the relation. For every class, linearize its ancestry in
-    # (H) reverse post-order (a C3-compatible MRO stand-in) and link each
-    # (H) method name's FIRST provider (the runtime dispatch target here)
-    # (H) to every later provider; dead-code override expansion then revives
-    # (H) the shadowing method when the shadowed one has live callers.
-    # (H) Interfaces are not walked: default-method shadowing is rare and
-    # (H) Java resolves it differently. ponytail: name-exact matching only, so
-    # (H) a Java generic type-var rename across branches is not linked.
+    # A mixin's method can shadow a same-name method from a SIBLING base
+    # branch only in a combining subclass's MRO: django's
+    # SearchVector(SearchVectorCombinable, Func) dispatches Combinable's
+    # `self._combine()` to SearchVectorCombinable._combine, yet the mixin
+    # never inherits Combinable, so the per-method ancestor walk above
+    # cannot see the relation. For every class, linearize its ancestry in
+    # reverse post-order (a C3-compatible MRO stand-in) and link each
+    # method name's FIRST provider (the runtime dispatch target here)
+    # to every later provider; dead-code override expansion then revives
+    # the shadowing method when the shadowed one has live callers.
+    # Interfaces are not walked: default-method shadowing is rare and
+    # Java resolves it differently. ponytail: name-exact matching only, so
+    # a Java generic type-var rename across branches is not linked.
     method_names_cache: dict[str, list[str]] = {}
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
@@ -81,9 +81,9 @@ def _process_mro_shadow_overrides(
         for name, classes in providers.items():
             if len(classes) < 2:
                 continue
-            # (H) Same-branch pairs (the provider inherits the shadowed class)
-            # (H) are the per-method walk's territory and already linked; this
-            # (H) pass adds only cross-branch sibling shadows.
+            # Same-branch pairs (the provider inherits the shadowed class)
+            # are the per-method walk's territory and already linked; this
+            # pass adds only cross-branch sibling shadows.
             if classes[0] not in ancestor_cache:
                 ancestor_cache[classes[0]] = set(
                     _linearized_ancestors(classes[0], class_inheritance)[1:]
@@ -111,13 +111,13 @@ def _process_mro_shadow_overrides(
 def _linearized_ancestors(
     class_qn: str, class_inheritance: dict[str, list[str]]
 ) -> list[str]:
-    # (H) Reverse post-order over the ancestor DAG: a subclass always precedes
-    # (H) its bases and a diamond's common ancestor sinks below BOTH branches
-    # (H) (D(B, C) with B(A), C(A) linearizes [D, B, C, A], matching the C3
-    # (H) MRO), so a shadowed common base can never outrank the sibling branch
-    # (H) that shadows it. A plain depth-first preorder gets diamonds backwards
-    # (H) and would emit reversed OVERRIDES edges. The `expanded` guard also
-    # (H) keeps a malformed inheritance cycle from looping.
+    # Reverse post-order over the ancestor DAG: a subclass always precedes
+    # its bases and a diamond's common ancestor sinks below BOTH branches
+    # (D(B, C) with B(A), C(A) linearizes [D, B, C, A], matching the C3
+    # MRO), so a shadowed common base can never outrank the sibling branch
+    # that shadows it. A plain depth-first preorder gets diamonds backwards
+    # and would emit reversed OVERRIDES edges. The `expanded` guard also
+    # keeps a malformed inheritance cycle from looping.
     order: list[str] = []
     expanded: set[str] = set()
     stack: list[tuple[str, bool]] = [(class_qn, False)]
@@ -152,13 +152,13 @@ def _direct_method_names(
 def _invert_implementers(
     interface_implementers: dict[str, set[str]],
 ) -> dict[str, list[str]]:
-    # (H) class_inheritance holds only superclasses (an `implements` clause or a
-    # (H) Rust `impl Trait for Type` never enters it), so the override walk needs
-    # (H) the implementer -> interfaces direction too, or no interface/trait
-    # (H) implementation ever gets an OVERRIDES edge. Both loops sorted: the
-    # (H) map and its sets are hash-ordered and edge emission must be
-    # (H) deterministic (each implementer's interface list follows the outer
-    # (H) sort; the inner sort makes the dict order deterministic too).
+    # class_inheritance holds only superclasses (an `implements` clause or a
+    # Rust `impl Trait for Type` never enters it), so the override walk needs
+    # the implementer -> interfaces direction too, or no interface/trait
+    # implementation ever gets an OVERRIDES edge. Both loops sorted: the
+    # map and its sets are hash-ordered and edge emission must be
+    # deterministic (each implementer's interface list follows the outer
+    # sort; the inner sort makes the dict order deterministic too).
     inverted: dict[str, list[str]] = {}
     for interface_qn, implementer_qns in sorted(interface_implementers.items()):
         for implementer_qn in sorted(implementer_qns):
@@ -167,10 +167,10 @@ def _invert_implementers(
 
 
 def _signature_arity(method_name: str) -> int | None:
-    # (H) Number of top-level parameters in a signatured method name
-    # (H) (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
-    # (H) name carries no signature (Python/JS methods). Commas inside generics
-    # (H) (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
+    # Number of top-level parameters in a signatured method name
+    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
+    # name carries no signature (Python/JS methods). Commas inside generics
+    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
     open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
     if open_idx < 0:
         return None
@@ -194,11 +194,11 @@ def _find_override_by_arity(
     method_name: str,
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str | None:
-    # (H) Override matching by exact signature fails when a subclass renames a generic
-    # (H) type parameter (base `readField(A,...)` vs override `readField(T,...)`), which
-    # (H) is a distinct qn. Java overriding is by name + erased parameter types, so fall
-    # (H) back to a UNIQUE parent method with the same simple name and arity; ambiguous
-    # (H) overloads (>1 candidate) are left unmatched rather than guessed.
+    # Override matching by exact signature fails when a subclass renames a generic
+    # type parameter (base `readField(A,...)` vs override `readField(T,...)`), which
+    # is a distinct qn. Java overriding is by name + erased parameter types, so fall
+    # back to a UNIQUE parent method with the same simple name and arity; ambiguous
+    # overloads (>1 candidate) are left unmatched rather than guessed.
     arity = _signature_arity(method_name)
     if arity is None:
         return None
@@ -210,7 +210,7 @@ def _find_override_by_arity(
             continue
         leaf = qn[len(prefix) :]
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
-            continue  # (H) a method of a nested class, not directly on parent_class
+            continue  # a method of a nested class, not directly on parent_class
         if leaf.split(cs.CHAR_PAREN_OPEN, 1)[0] == base_name and (
             _signature_arity(leaf) == arity
         ):
@@ -233,9 +233,9 @@ def check_method_overrides(
     if class_qn not in class_inheritance and class_qn not in implemented:
         return
 
-    # (H) A C# method overrides a base CLASS member only with the explicit
-    # (H) `override` modifier; a `new`/implicit-hide member must not. Interface
-    # (H) members need no modifier, so gate only class-parent matches.
+    # A C# method overrides a base CLASS member only with the explicit
+    # `override` modifier; a `new`/implicit-hide member must not. Interface
+    # members need no modifier, so gate only class-parent matches.
     csharp_gated = (
         csharp_methods is not None
         and method_qn in csharp_methods
@@ -253,8 +253,8 @@ def check_method_overrides(
         if current_class != class_qn:
             parent_method_qn = f"{current_class}.{method_name}"
             if parent_method_qn not in function_registry:
-                # (H) Fall back to name+arity so a generic type-var rename in the
-                # (H) override signature still matches the base method.
+                # Fall back to name+arity so a generic type-var rename in the
+                # override signature still matches the base method.
                 parent_method_qn = (
                     _find_override_by_arity(
                         current_class, method_name, function_registry
@@ -262,13 +262,13 @@ def check_method_overrides(
                     or parent_method_qn
                 )
 
-            # (H) The parent member must BE a method: a ctor of a nested class
-            # (H) that inherits its encloser (node::inner_node : node) shares
-            # (H) its name with the nested CLASS registered at parent.name, and
-            # (H) an OVERRIDES onto that class qn is a label-mismatched phantom.
+            # The parent member must BE a method: a ctor of a nested class
+            # that inherits its encloser (node::inner_node : node) shares
+            # its name with the nested CLASS registered at parent.name, and
+            # an OVERRIDES onto that class qn is a label-mismatched phantom.
             if function_registry.get(parent_method_qn) == NodeType.METHOD:
-                # (H) Skip a gated C# member's CLASS-parent match, but keep
-                # (H) walking: it may still implement an interface member deeper.
+                # Skip a gated C# member's CLASS-parent match, but keep
+                # walking: it may still implement an interface member deeper.
                 parent_is_interface = (
                     function_registry.get(current_class) == NodeType.INTERFACE
                 )
@@ -289,9 +289,9 @@ def check_method_overrides(
                     )
                     return
 
-        # (H) Superclasses first: when both a base class and an interface declare
-        # (H) the method, the edge lands on the base, matching Java resolution.
-        # (H) chain() instead of list concat: this runs per BFS node per method.
+        # Superclasses first: when both a base class and an interface declare
+        # the method, the edge lands on the base, matching Java resolution.
+        # chain() instead of list concat: this runs per BFS node per method.
         for parent_class_qn in chain(
             class_inheritance.get(current_class, ()),
             implemented.get(current_class, ()),

@@ -9,9 +9,9 @@ from ..utils import cpp_declarator_name
 from .constants import DYNAMIC_TARGET
 from .descriptor import LanguageDescriptor
 
-# (H) Definition nodes whose BODY is a separate scope but whose HEADER (default
-# (H) arg values, annotations, base classes, decorators) executes in the
-# (H) enclosing scope at definition time.
+# Definition nodes whose BODY is a separate scope but whose HEADER (default
+# arg values, annotations, base classes, decorators) executes in the
+# enclosing scope at definition time.
 _PY_DEFINITION_TYPES = (
     cs.TS_PY_FUNCTION_DEFINITION,
     cs.TS_PY_CLASS_DEFINITION,
@@ -29,18 +29,18 @@ def _definition_body(node: Node) -> Node | None:
 
 
 def scope_seed_nodes(caller_node: Node) -> list[Node]:
-    # (H) The top-level nodes of the caller's OWN scope. For a function/class the
-    # (H) own scope is just its body block; its header (params/decorators/bases)
-    # (H) belongs to the enclosing scope. For a module it is every child.
+    # The top-level nodes of the caller's OWN scope. For a function/class the
+    # own scope is just its body block; its header (params/decorators/bases)
+    # belongs to the enclosing scope. For a module it is every child.
     body = _definition_body(caller_node)
     return list(body.children) if body is not None else list(caller_node.children)
 
 
 def definition_header_nodes(node: Node) -> list[Node]:
-    # (H) The parts of a nested definition that execute in the ENCLOSING scope at
-    # (H) definition time: default arg values, return/parameter annotations, base
-    # (H) classes, and decorators. The body block (own scope) is excluded, so the
-    # (H) enclosing DFS descends into these but never into the nested body.
+    # The parts of a nested definition that execute in the ENCLOSING scope at
+    # definition time: default arg values, return/parameter annotations, base
+    # classes, and decorators. The body block (own scope) is excluded, so the
+    # enclosing DFS descends into these but never into the nested body.
     if node.type == cs.TS_PY_DECORATED_DEFINITION:
         out = [c for c in node.children if c.type == cs.TS_PY_DECORATOR]
         inner = node.child_by_field_name(cs.FIELD_DEFINITION)
@@ -66,10 +66,10 @@ def call_name(call_node: Node) -> str | None:
     fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
     if fn is not None:
         return fn.text.decode(cs.ENCODING_UTF8) if fn.text is not None else None
-    # (H) Java `method_invocation` has no `function` field: it exposes `object` (the
-    # (H) receiver, absent for an unqualified/static-imported call) and `name`.
-    # (H) Reconstruct the dotted callee (`System.out.println`) so it matches the
-    # (H) registry keys, exactly as the `function` field's text would for other langs.
+    # Java `method_invocation` has no `function` field: it exposes `object` (the
+    # receiver, absent for an unqualified/static-imported call) and `name`.
+    # Reconstruct the dotted callee (`System.out.println`) so it matches the
+    # registry keys, exactly as the `function` field's text would for other langs.
     name = call_node.child_by_field_name(cs.TS_FIELD_NAME)
     if name is None or name.text is None:
         return None
@@ -81,9 +81,9 @@ def call_name(call_node: Node) -> str | None:
 
 
 def is_require_alias(declarator: Node, call_type: str) -> bool:
-    # (H) A `const fs = require('fs')` declarator binds an import alias (the genuine
-    # (H) module), not a shadowing local, so it must not count as a local shadow --
-    # (H) unlike `const fs = {}`, which does. Detected by a `require(...)` value.
+    # A `const fs = require('fs')` declarator binds an import alias (the genuine
+    # module), not a shadowing local, so it must not count as a local shadow --
+    # unlike `const fs = {}`, which does. Detected by a `require(...)` value.
     value = declarator.child_by_field_name(cs.FIELD_VALUE)
     if value is None or value.type != call_type:
         return False
@@ -106,13 +106,13 @@ def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
 
 
 def default_export_collapsed(name: str) -> str | None:
-    # (H) A JS default import maps the local name to `<module>.default` (and a
-    # (H) node: builtin to `node:<module>.default`), but sink registries are
-    # (H) keyed by the module's own dotted API (`fs.readFileSync`). Collapse
-    # (H) the default-export segment and scheme for a lookup candidate; a
-    # (H) local-module base keeps its project-qualified prefix, so its
-    # (H) collapsed form can never collide with a sink key. Returns None when
-    # (H) nothing collapsed.
+    # A JS default import maps the local name to `<module>.default` (and a
+    # node: builtin to `node:<module>.default`), but sink registries are
+    # keyed by the module's own dotted API (`fs.readFileSync`). Collapse
+    # the default-export segment and scheme for a lookup candidate; a
+    # local-module base keeps its project-qualified prefix, so its
+    # collapsed form can never collide with a sink key. Returns None when
+    # nothing collapsed.
     collapsed = name.removeprefix(cs.NODE_BUILTIN_PREFIX).replace(
         ".default.", cs.SEPARATOR_DOT, 1
     )
@@ -122,14 +122,14 @@ def default_export_collapsed(name: str) -> str | None:
 def registry_match[T](
     mapping: dict[str, T], raw_name: str | None, import_map: dict[str, str]
 ) -> T | None:
-    # (H) Match a call against an I/O registry keyed by canonical dotted names
-    # (H) (`sqlite3.connect`, `os.getenv`). Try the import-normalised name first;
-    # (H) if that misses AND the raw callee is module-qualified (has a dot), fall
-    # (H) back to the raw name. That recovers a stdlib module re-exported under its
-    # (H) own name (`from .utils import sqlite3`, which remaps the head off
-    # (H) `sqlite3`), which is common in real projects. A bare callee gets NO raw
-    # (H) fallback: a remapped bare name (`from .myio import open`) must stay
-    # (H) shadowed rather than hit the `open` sink.
+    # Match a call against an I/O registry keyed by canonical dotted names
+    # (`sqlite3.connect`, `os.getenv`). Try the import-normalised name first;
+    # if that misses AND the raw callee is module-qualified (has a dot), fall
+    # back to the raw name. That recovers a stdlib module re-exported under its
+    # own name (`from .utils import sqlite3`, which remaps the head off
+    # `sqlite3`), which is common in real projects. A bare callee gets NO raw
+    # fallback: a remapped bare name (`from .myio import open`) must stay
+    # shadowed rather than hit the `open` sink.
     if raw_name is None:
         return None
     name = normalise(raw_name, import_map)
@@ -147,11 +147,11 @@ def registry_match[T](
 
 
 def head_is_genuine_module(base: str | None, head: str) -> bool:
-    # (H) True when `head` names the genuine imported module (so its raw dotted call
-    # (H) may match a sink). None base = an unimported global. Otherwise the import
-    # (H) base's module identity must equal head: drop any member suffix and node:
-    # (H) scheme. A local `import fs from './fake'` resolves elsewhere and is rejected.
-    # (H) Path-based (Go) imports are handled separately by package-name matching.
+    # True when `head` names the genuine imported module (so its raw dotted call
+    # may match a sink). None base = an unimported global. Otherwise the import
+    # base's module identity must equal head: drop any member suffix and node:
+    # scheme. A local `import fs from './fake'` resolves elsewhere and is rejected.
+    # Path-based (Go) imports are handled separately by package-name matching.
     if base is None:
         return True
     return base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) == head
@@ -160,10 +160,10 @@ def head_is_genuine_module(base: str | None, head: str) -> bool:
 def match_normalised[T](
     raw: str, import_map: dict[str, str], mapping: dict[str, T]
 ) -> T | None:
-    # (H) Match a call's import-normalised name against a registry, also trying the
-    # (H) node:-stripped form so a `node:fs` named/destructured import (which maps a
-    # (H) local to `node:fs.writeFileSync`) resolves to the bare `fs.writeFileSync`
-    # (H) entry. Used for JS/TS shadow-aware sink matching (issue #714).
+    # Match a call's import-normalised name against a registry, also trying the
+    # node:-stripped form so a `node:fs` named/destructured import (which maps a
+    # local to `node:fs.writeFileSync`) resolves to the bare `fs.writeFileSync`
+    # entry. Used for JS/TS shadow-aware sink matching (issue #714).
     normalised = normalise(raw, import_map)
     if normalised is None:
         return None
@@ -194,12 +194,12 @@ def iter_token_tree_calls(
     identifier_type: str,
     token_tree_type: str,
 ) -> Iterator[tuple[str, Node]]:
-    # (H) tree-sitter flattens a Rust macro body to a token_tree of raw tokens, so an
-    # (H) inlined scoped call (`std::env::var("X")`) is a run of `identifier` joined by
-    # (H) the scope token (whose node type IS the separator, e.g. "::") followed by its
-    # (H) args token_tree -- no call_expression node. Yield (reconstructed dotted name,
-    # (H) args token_tree) for each such run, recursing into nested groups. Shared by
-    # (H) the io walk (sink emission) and the flow walk (taint into a macro sink).
+    # tree-sitter flattens a Rust macro body to a token_tree of raw tokens, so an
+    # inlined scoped call (`std::env::var("X")`) is a run of `identifier` joined by
+    # the scope token (whose node type IS the separator, e.g. "::") followed by its
+    # args token_tree -- no call_expression node. Yield (reconstructed dotted name,
+    # args token_tree) for each such run, recursing into nested groups. Shared by
+    # the io walk (sink emission) and the flow walk (taint into a macro sink).
     path: list[str] = []
     expect_sep = False
     for child in token_tree.children:
@@ -220,9 +220,9 @@ def iter_token_tree_calls(
 
 
 def first_token_arg_string(args: Node, string_type: str, content_type: str) -> str:
-    # (H) arg0 of a flattened call's token_tree: the tokens before the first top-level
-    # (H) comma. It is a resource path only when it is a lone string literal
-    # (H) (`write(path, "x")` has a variable arg0 -> <dynamic>, not "x").
+    # arg0 of a flattened call's token_tree: the tokens before the first top-level
+    # comma. It is a resource path only when it is a lone string literal
+    # (`write(path, "x")` has a variable arg0 -> <dynamic>, not "x").
     arg0: list[Node] = []
     for child in args.children:
         if child.type in (cs.CHAR_PAREN_OPEN, cs.CHAR_PAREN_CLOSE):
@@ -238,10 +238,10 @@ def first_token_arg_string(args: Node, string_type: str, content_type: str) -> s
 def lean_binding_targets(
     node: Node, descriptor: LanguageDescriptor
 ) -> list[str | None]:
-    # (H) LHS name(s) of a lean binding: a bare identifier, or a Go expression_list
-    # (H) of them. A non-identifier target (JS destructuring, a field/index write)
-    # (H) yields None so its RHS position is still consumed but no var is bound.
-    # (H) Shared by the flow taint walk and the I/O handle walk (issue #714).
+    # LHS name(s) of a lean binding: a bare identifier, or a Go expression_list
+    # of them. A non-identifier target (JS destructuring, a field/index write)
+    # yields None so its RHS position is still consumed but no var is bound.
+    # Shared by the flow taint walk and the I/O handle walk (issue #714).
     if node.type == descriptor.identifier_type:
         return [node.text.decode(cs.ENCODING_UTF8) if node.text else None]
     if node.type == cs.TS_GO_EXPRESSION_LIST:
@@ -269,12 +269,12 @@ def lean_binding_values(
 def binding_targets_values(
     node: Node, descriptor: LanguageDescriptor
 ) -> tuple[list[str | None], list[Node]]:
-    # (H) The (LHS names, RHS value nodes) of one binding node across the lean
-    # (H) grammars: JS uses `name`/`value` (declarator) or `left`/`right`
-    # (H) (assignment); Go uses `left`/`right` expression_lists (`:=`, `=`) or
-    # (H) `name`/`value` (`var`/`const`); Rust `let` binds via `pattern`, C++
-    # (H) `int x = ..` via a nested `declarator` (unwrapped through pointer/
-    # (H) reference declarators).
+    # The (LHS names, RHS value nodes) of one binding node across the lean
+    # grammars: JS uses `name`/`value` (declarator) or `left`/`right`
+    # (assignment); Go uses `left`/`right` expression_lists (`:=`, `=`) or
+    # `name`/`value` (`var`/`const`); Rust `let` binds via `pattern`, C++
+    # `int x = ..` via a nested `declarator` (unwrapped through pointer/
+    # reference declarators).
     left = node.child_by_field_name(cs.FIELD_LEFT)
     if left is not None:
         return (
@@ -309,11 +309,11 @@ def binding_targets_values(
 
 
 def _last_named_declarator_value(node: Node) -> Node | None:
-    # (H) C# `variable_declarator` = `name = <expr>` with the initializer as an
-    # (H) unfielded child: its value is the last named child. An uninitialised
-    # (H) declaration has a single named child (the name identifier), so require at
-    # (H) least two -- robust even when the `name` field is absent under parser
-    # (H) error recovery (a lone child is never a real initializer).
+    # C# `variable_declarator` = `name = <expr>` with the initializer as an
+    # unfielded child: its value is the last named child. An uninitialised
+    # declaration has a single named child (the name identifier), so require at
+    # least two -- robust even when the `name` field is absent under parser
+    # error recovery (a lone child is never a real initializer).
     if node.named_child_count < 2:
         return None
     return node.named_child(node.named_child_count - 1)
@@ -331,8 +331,8 @@ def keyword_value(args: Node, keyword: str) -> Node | None:
 
 
 def _wrapper_arg_name(node: Node, wrapper_type: str | None) -> str | None:
-    # (H) The parameter name of a C# named argument (`path: "x"` -> "path"), read
-    # (H) from the `argument` wrapper's `name` field; None for a positional arg.
+    # The parameter name of a C# named argument (`path: "x"` -> "path"), read
+    # from the `argument` wrapper's `name` field; None for a positional arg.
     if wrapper_type is None or node.type != wrapper_type:
         return None
     name = node.child_by_field_name(cs.TS_FIELD_NAME)
@@ -342,9 +342,9 @@ def _wrapper_arg_name(node: Node, wrapper_type: str | None) -> str | None:
 
 
 def unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
-    # (H) C# wraps each call arg in an `argument` node; the real expression is its
-    # (H) last named child (a named arg's `name` identifier is an earlier named
-    # (H) child). Unwrap so the string reader sees the literal. No-op elsewhere.
+    # C# wraps each call arg in an `argument` node; the real expression is its
+    # last named child (a named arg's `name` identifier is an earlier named
+    # child). Unwrap so the string reader sees the literal. No-op elsewhere.
     if (
         wrapper_type is not None
         and node.type == wrapper_type
@@ -355,9 +355,9 @@ def unwrap_argument(node: Node, wrapper_type: str | None) -> Node:
 
 
 def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node | None:
-    # (H) Find a C# named argument (`variable: "X"`) by its parameter name and
-    # (H) return its value expression, so a reordered named arg resolves to the
-    # (H) right resource identity regardless of position.
+    # Find a C# named argument (`variable: "X"`) by its parameter name and
+    # return its value expression, so a reordered named arg resolves to the
+    # right resource identity regardless of position.
     for child in args.named_children:
         if _wrapper_arg_name(child, wrapper_type) == keyword:
             return unwrap_argument(child, wrapper_type)
@@ -367,10 +367,10 @@ def _wrapper_keyword_value(args: Node, keyword: str, wrapper_type: str) -> Node 
 def positional_arg_node(
     call_node: Node, arg_index: int, wrapper_type: str | None
 ) -> Node | None:
-    # (H) The unwrapped expression node at a positional argument index, excluding
-    # (H) comments and C# named-argument wrappers (so the index maps to a real
-    # (H) positional arg). Used to resolve a handle passed as an argument
-    # (H) (`new SqlCommand(sql, conn)` -> conn at index 1).
+    # The unwrapped expression node at a positional argument index, excluding
+    # comments and C# named-argument wrappers (so the index maps to a real
+    # positional arg). Used to resolve a handle passed as an argument
+    # (`new SqlCommand(sql, conn)` -> conn at index 1).
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return None
@@ -399,15 +399,15 @@ def literal_target(
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     if args is None:
         return DYNAMIC_TARGET
-    # (H) A C# named argument (`path: "x"`) is matched by name FIRST: named args
-    # (H) can be reordered, so they must not count toward the positional index.
+    # A C# named argument (`path: "x"`) is matched by name FIRST: named args
+    # can be reordered, so they must not count toward the positional index.
     if arg_keyword is not None and wrapper_type is not None:
         named = _wrapper_keyword_value(args, arg_keyword, wrapper_type)
         if named is not None:
             return string_literal(named, string_type, content_type)
-    # (H) Exclude keyword args, comment nodes (tree-sitter keeps comments as named
-    # (H) children), and C# named-argument wrappers so the positional index maps
-    # (H) to the real positional argument.
+    # Exclude keyword args, comment nodes (tree-sitter keeps comments as named
+    # children), and C# named-argument wrappers so the positional index maps
+    # to the real positional argument.
     positional = [
         c
         for c in args.named_children

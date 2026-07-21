@@ -1,9 +1,9 @@
-# (H) A C# declaration whose attribute is wrapped in a conditional-compilation
-# (H) block (`#if ... [Attr] ... #endif`) parses with a leading
-# (H) preproc_if_in_attribute_list child, so the raw declaration node starts on
-# (H) the `#if` line. cgr must record the declaration's start line as the real
-# (H) first token (the conditional attribute), matching Roslyn's span, not the
-# (H) `#if` directive line.
+# A C# declaration whose attribute is wrapped in a conditional-compilation
+# block (`#if ... [Attr] ... #endif`) parses with a leading
+# preproc_if_in_attribute_list child, so the raw declaration node starts on
+# the `#if` line. cgr must record the declaration's start line as the real
+# first token (the conditional attribute), matching Roslyn's span, not the
+# `#if` directive line.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,7 +26,7 @@ def test_class_start_line_skips_leading_if_directive(
 ) -> None:
     project = temp_repo / "cs_preproc_class"
     project.mkdir()
-    # (H) Lines: 1 ns, 2 blank, 3 doc, 4 #if, 5 [attr], 6 #endif, 7 class.
+    # Lines: 1 ns, 2 blank, 3 doc, 4 #if, 5 [attr], 6 #endif, 7 class.
     (project / "Broken.cs").write_text(
         "namespace N;\n"
         "\n"
@@ -38,8 +38,8 @@ def test_class_start_line_skips_leading_if_directive(
         encoding="utf-8",
     )
     run_updater(project, mock_ingestor, skip_if_missing=SKIP)
-    # (H) The conditional attribute is on line 5; the `#if` directive on line 4
-    # (H) must not be counted as the class's start.
+    # The conditional attribute is on line 5; the `#if` directive on line 4
+    # must not be counted as the class's start.
     assert _start_line(mock_ingestor, cs.NodeLabel.CLASS.value, "Broken") == 5
 
 
@@ -48,7 +48,7 @@ def test_method_start_line_skips_leading_if_directive(
 ) -> None:
     project = temp_repo / "cs_preproc_method"
     project.mkdir()
-    # (H) Lines: 1 ns, 2 class, 3 #if, 4 [attr], 5 #endif, 6 method.
+    # Lines: 1 ns, 2 class, 3 #if, 4 [attr], 5 #endif, 6 method.
     (project / "Host.cs").write_text(
         "namespace N;\n"
         "public class Host {\n"
@@ -66,11 +66,11 @@ def test_method_start_line_skips_leading_if_directive(
 def test_plain_attribute_start_line_unchanged(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Guard the fix does not shift the normal (non-conditional) attribute case:
-    # (H) a plain `[Attr]` above a class is already the class's first token.
+    # Guard the fix does not shift the normal (non-conditional) attribute case:
+    # a plain `[Attr]` above a class is already the class's first token.
     project = temp_repo / "cs_plain_attr"
     project.mkdir()
-    # (H) Lines: 1 ns, 2 [attr], 3 class.
+    # Lines: 1 ns, 2 [attr], 3 class.
     (project / "Tagged.cs").write_text(
         "namespace N;\n[System.Serializable]\npublic class Tagged { }\n",
         encoding="utf-8",

@@ -1,8 +1,8 @@
-# (H) Dart/Flutter structural support (issue #140): classes, mixins, extensions,
-# (H) enhanced enums, factory/named constructors, functions/methods, imports and
-# (H) pubspec dependencies. The tree-sitter-dart grammar splits a definition into
-# (H) a signature node and a sibling function_body and has no call-expression
-# (H) node, so cgr provides structural nodes/imports/inheritance (no CALLS edges).
+# Dart/Flutter structural support (issue #140): classes, mixins, extensions,
+# enhanced enums, factory/named constructors, functions/methods, imports and
+# pubspec dependencies. The tree-sitter-dart grammar splits a definition into
+# a signature node and a sibling function_body and has no call-expression
+# node, so cgr provides structural nodes/imports/inheritance (no CALLS edges).
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -106,9 +106,9 @@ class Repo {
 def test_function_span_covers_body(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The signature/body split means a naive capture ends the node at the
-    # (H) signature line; dart_definition_end_point extends it over the body so
-    # (H) the snippet spans the whole function.
+    # The signature/body split means a naive capture ends the node at the
+    # signature line; dart_definition_end_point extends it over the body so
+    # the snippet spans the whole function.
     (dart_project / "span.dart").write_text(
         "int compute(int x) {\n  var y = x + 1;\n  return y;\n}\n",
         encoding="utf-8",
@@ -138,8 +138,8 @@ void run() {}
 
     imports = get_relationships(mock_ingestor, "IMPORTS")
     targets = {c.args[2][2] for c in imports}
-    # (H) External package + dart core kept verbatim; relative import resolves
-    # (H) to the internal module qn.
+    # External package + dart core kept verbatim; relative import resolves
+    # to the internal module qn.
     assert any("package:flutter/material.dart" in t for t in targets), targets
     assert any("dart:async" in t for t in targets), targets
     assert any(t.endswith("lib.helper") for t in targets), targets
@@ -170,8 +170,8 @@ mixin Diver on StatefulWidget {}
         (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
         for c in get_relationships(mock_ingestor, "IMPLEMENTS")
     }
-    # (H) `with Swimmer` (mixin) and `mixin Diver on StatefulWidget` (on-clause)
-    # (H) are both INHERITS; `implements Comparable` is IMPLEMENTS.
+    # `with Swimmer` (mixin) and `mixin Diver on StatefulWidget` (on-clause)
+    # are both INHERITS; `implements Comparable` is IMPLEMENTS.
     assert ("Counter", "StatefulWidget") in inherits, inherits
     assert ("Fish", "StatefulWidget") in inherits, inherits
     assert ("Fish", "Swimmer") in inherits, inherits
@@ -182,9 +182,9 @@ mixin Diver on StatefulWidget {}
 def test_generic_supertypes_strip_type_arguments(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A generic supertype's `type_arguments` (`State<HomePage>`) is a sibling
-    # (H) of the base `type_identifier`, so extraction yields the bare base name
-    # (H) (State/Comparable) - the common Flutter `extends State<T>` pattern.
+    # A generic supertype's `type_arguments` (`State<HomePage>`) is a sibling
+    # of the base `type_identifier`, so extraction yields the bare base name
+    # (State/Comparable) - the common Flutter `extends State<T>` pattern.
     (dart_project / "gen.dart").write_text(
         """
 class State<T> {}
@@ -213,8 +213,8 @@ class _HomePageState extends State<HomePage> with Mix implements Comparable<int>
 def test_enum_implements_interface(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A Dart enum (plain or enhanced) can `implements` an interface. Enums use
-    # (H) the shared `enum_declaration` node type, so they ride the IMPLEMENTS gate.
+    # A Dart enum (plain or enhanced) can `implements` an interface. Enums use
+    # the shared `enum_declaration` node type, so they ride the IMPLEMENTS gate.
     (dart_project / "en.dart").write_text(
         """
 abstract class Shape {}
@@ -239,10 +239,10 @@ enum Kind implements Shape {
 def test_pubspec_indentation_variants(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Dependency blocks may be indented by any consistent amount (2 spaces,
-    # (H) 4 spaces, ...); entries at the block's own indent level are packages
-    # (H) regardless of that width. Nested blocks (sdk:) sit deeper and are
-    # (H) recorded name-only via their parent key.
+    # Dependency blocks may be indented by any consistent amount (2 spaces,
+    # 4 spaces, ...); entries at the block's own indent level are packages
+    # regardless of that width. Nested blocks (sdk:) sit deeper and are
+    # recorded name-only via their parent key.
     (dart_project / "pubspec.yaml").write_text(
         """
 name: deep_app

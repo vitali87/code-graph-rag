@@ -1,9 +1,9 @@
-# (H) A Python class inheriting a SUBSCRIPTED generic base (`class IntRange(
-# (H) _NumberRangeBase[int, int], IntParamType)`, click's numeric types) got NO
-# (H) INHERITS edge for that base: the superclass walk only accepted identifier and
-# (H) attribute children, skipping `subscript` nodes entirely. Without the edge the
-# (H) subclass has no OVERRIDES, so `self._clamp(...)` dispatch from the base never
-# (H) reaches the override and it reports dead.
+# A Python class inheriting a SUBSCRIPTED generic base (`class IntRange(
+# _NumberRangeBase[int, int], IntParamType)`, click's numeric types) got NO
+# INHERITS edge for that base: the superclass walk only accepted identifier and
+# attribute children, skipping `subscript` nodes entirely. Without the edge the
+# subclass has no OVERRIDES, so `self._clamp(...)` dispatch from the base never
+# reaches the override and it reports dead.
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,9 +1,9 @@
-# (H) ast-grep pattern-driven language tier (issue #414). For languages with no
-# (H) tree-sitter LanguageSpec, this extracts Module/Function/Class nodes and
-# (H) DEFINES/IMPORTS edges from per-language YAML pattern configs, so adding a
-# (H) new language is a config file rather than a hand-written tree-sitter
-# (H) traversal. It is a BASIC structural tier: names are flat (no nested
-# (H) namespace qualification) and there is no call-graph resolution.
+# ast-grep pattern-driven language tier (issue #414). For languages with no
+# tree-sitter LanguageSpec, this extracts Module/Function/Class nodes and
+# DEFINES/IMPORTS edges from per-language YAML pattern configs, so adding a
+# new language is a config file rather than a hand-written tree-sitter
+# traversal. It is a BASIC structural tier: names are flat (no nested
+# namespace qualification) and there is no call-graph resolution.
 from __future__ import annotations
 
 import logging
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PATTERNS_DIR = Path(__file__).parent / "ast_grep_patterns"
-# (H) Metavar conventions contributors must follow in the YAML patterns.
+# Metavar conventions contributors must follow in the YAML patterns.
 _NAME_METAVAR = "NAME"
 _PATH_METAVAR = "PATH"
 
@@ -83,12 +83,12 @@ class AstGrepTier:
 
             self._configs = load_pattern_configs()
         except ImportError:
-            # (H) ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
+            # ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
             logger.warning("ast-grep-py unavailable; ast-grep language tier disabled")
             self._configs = {}
         except Exception as exc:  # noqa: BLE001
-            # (H) a malformed shipped config must not crash GraphUpdater
-            # (H) construction; disable the tier and surface the reason.
+            # a malformed shipped config must not crash GraphUpdater
+            # construction; disable the tier and surface the reason.
             logger.warning("ast-grep language tier disabled: %s", exc)
             self._configs = {}
 
@@ -117,10 +117,10 @@ class AstGrepTier:
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
-        # (H) Functions then classes; dedupe by start line PER label so a specific
-        # (H) pattern (def self.$NAME) wins over a general one (def $NAME) on the
-        # (H) same line, while a class and a function sharing a line (one-liners)
-        # (H) both still land.
+        # Functions then classes; dedupe by start line PER label so a specific
+        # pattern (def self.$NAME) wins over a general one (def $NAME) on the
+        # same line, while a class and a function sharing a line (one-liners)
+        # both still land.
         for label, patterns in (
             (cs.NodeLabel.FUNCTION, config.functions),
             (cs.NodeLabel.CLASS, config.classes),
@@ -191,9 +191,9 @@ class AstGrepTier:
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
         relative_path = cached_relative_path(file_path, self._repo_path)
-        # (H) flat module qn, no init/mod special-case or stem
-        # (H) disambiguation; add if a config language collides with another
-        # (H) file's stem in the same directory.
+        # flat module qn, no init/mod special-case or stem
+        # disambiguation; add if a config language collides with another
+        # file's stem in the same directory.
         module_qn = cs.SEPARATOR_DOT.join(
             [self._project_name, *relative_path.with_suffix("").parts]
         )
@@ -242,8 +242,8 @@ class AstGrepTier:
                 cs.KEY_START_LINE: node_range.start.line + 1,
                 cs.KEY_END_LINE: node_range.end.line + 1,
                 cs.KEY_DOCSTRING: None,
-                # (H) no visibility analysis for these languages; mark
-                # (H) exported so dead-code does not false-flag everything.
+                # no visibility analysis for these languages; mark
+                # exported so dead-code does not false-flag everything.
                 cs.KEY_IS_EXPORTED: True,
                 cs.KEY_PATH: relative_path,
                 cs.KEY_ABSOLUTE_PATH: absolute_path,
@@ -258,8 +258,8 @@ class AstGrepTier:
     def _emit_import(self, target: str, module_qn: str) -> None:
         if not target:
             return
-        # (H) every require target is treated as an external module; local
-        # (H) require_relative resolution needs path handling this tier skips.
+        # every require target is treated as an external module; local
+        # require_relative resolution needs path handling this tier skips.
         self._ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_MODULE,
             {

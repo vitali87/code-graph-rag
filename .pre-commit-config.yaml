@@ -26,14 +26,6 @@ repos:
         pass_filenames: false
   - repo: local
     hooks:
-      - id: check-no-docs
-        name: no module docstrings or inline comments
-        entry: uv run python scripts/check_no_docs.py
-        language: system
-        types: [python]
-        exclude: ^(codec/schema_pb2\.py|benchmarks/|optimize/)
-  - repo: local
-    hooks:
       - id: generate-readme
         name: generate README sections
         entry: uv run python scripts/hooks/generate_readme.py

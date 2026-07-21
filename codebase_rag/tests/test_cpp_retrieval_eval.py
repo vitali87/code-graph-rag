@@ -17,10 +17,10 @@ needs_clang = pytest.mark.skipif(
 
 def _make_project(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    # (H) No #includes: the fixture parses cleanly regardless of whether an SDK
-    # (H) libc++ is discoverable, so coverage is deterministic in any CI. All decls
-    # (H) live inside a namespace, exercising the namespaced caller-qn path (free
-    # (H) functions and an inline method) that the libclang oracle grades cgr against.
+    # No #includes: the fixture parses cleanly regardless of whether an SDK
+    # libc++ is discoverable, so coverage is deterministic in any CI. All decls
+    # live inside a namespace, exercising the namespaced caller-qn path (free
+    # functions and an inline method) that the libclang oracle grades cgr against.
     (root / "lib.cc").write_text(
         "namespace demo {\n"
         "int add(int a, int b) { return a + b; }\n"
@@ -48,14 +48,14 @@ def test_oracle_captures_first_party_cpp_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared, covered = oracle_cpp_call_edges(tmp_path)
 
-    # (H) add(), mul() (in compute), compute() (in Runner::run) are first-party.
+    # add(), mul() (in compute), compute() (in Runner::run) are first-party.
     assert ("main.cc", "add") in edges
     assert ("main.cc", "mul") in edges
     assert ("main.cc", "compute") in edges
-    # (H) orphan is defined but never called -> never a call edge.
+    # orphan is defined but never called -> never a call edge.
     assert ("lib.cc", "orphan") not in edges
     assert {"add", "mul", "compute", "run", "orphan"} <= declared
-    # (H) Both header-free sources parse cleanly, so both are graded.
+    # Both header-free sources parse cleanly, so both are graded.
     assert {"main.cc", "lib.cc"} <= covered
 
 

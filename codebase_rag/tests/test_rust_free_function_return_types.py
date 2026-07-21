@@ -1,10 +1,10 @@
-# (H) Two adjacent gaps left open by the trait-object receiver fix: a free
-# (H) Rust fn's return type was never recorded in method_return_types (only
-# (H) impl methods were, in class ingest), and a bare `let s = make()`
-# (H) single-segment chain bailed out of call-return inference. Together they
-# (H) left a free-function factory's result untyped, so a call on it fell to
-# (H) the name-only trie fallback (or was dropped as external) instead of
-# (H) binding the trait method.
+# Two adjacent gaps left open by the trait-object receiver fix: a free
+# Rust fn's return type was never recorded in method_return_types (only
+# impl methods were, in class ingest), and a bare `let s = make()`
+# single-segment chain bailed out of call-return inference. Together they
+# left a free-function factory's result untyped, so a call on it fell to
+# the name-only trie fallback (or was dropped as external) instead of
+# binding the trait method.
 from __future__ import annotations
 
 from pathlib import Path
@@ -66,9 +66,9 @@ def test_free_fn_factory_result_binds_to_trait_method(
 def test_imported_free_fn_factory_result_binds_to_trait_method(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The factory lives in another module and is brought in by `use`; the
-    # (H) bare-name call must resolve through the import's `::` path to the
-    # (H) function's registry qn before the return-type lookup.
+    # The factory lives in another module and is brought in by `use`; the
+    # bare-name call must resolve through the import's `::` path to the
+    # function's registry qn before the return-type lookup.
     files = {
         "factory.rs": TRAIT_AND_IMPLS
         + "pub fn make() -> Box<dyn Svc> { Box::new(Alpha) }\n",
@@ -97,9 +97,9 @@ def test_free_fn_factory_keeps_all_impls_alive(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="tree-sitter-rust not installed")
 def test_bare_identifier_binding_is_not_a_call() -> None:
-    # (H) `let f = make;` is a move/fn-pointer binding, not a call: `f` holds
-    # (H) the function itself, not a value of its return type, so no chain
-    # (H) binding may be collected for it. Only an invoked base qualifies.
+    # `let f = make;` is a move/fn-pointer binding, not a call: `f` holds
+    # the function itself, not a value of its return type, so no chain
+    # binding may be collected for it. Only an invoked base qualifies.
     parser = Parser(Language(tsrust.language()))
     src = b"fn user() { let f = make; let s = make(); }\n"
     fn_node = parser.parse(src).root_node.children[0]

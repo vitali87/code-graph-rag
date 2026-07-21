@@ -14,11 +14,11 @@ def _make(root: Path) -> None:
 
 
 def test_php_plain_function_call_resolves(tmp_path: Path) -> None:
-    # (H) A bare PHP function call (`helper()`) is a function_call_expression whose
-    # (H) callee is a `name` node under the `function` field. _get_call_target_name
-    # (H) did not handle the `name` type, so no callee name was extracted and the
-    # (H) CALLS edge was dropped -- only method/static calls (which expose a `name`
-    # (H) field directly) resolved.
+    # A bare PHP function call (`helper()`) is a function_call_expression whose
+    # callee is a `name` node under the `function` field. _get_call_target_name
+    # did not handle the `name` type, so no callee name was extracted and the
+    # CALLS edge was dropped -- only method/static calls (which expose a `name`
+    # field directly) resolved.
     _make(tmp_path)
     ingestor = _capture(tmp_path, "p")
     calls = {

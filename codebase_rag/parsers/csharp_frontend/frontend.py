@@ -1,14 +1,14 @@
-# (H) Roslyn semantic frontend for C# hybrid mode (issue #738). Runs a bundled net
-# (H) console tool (`roslyn/`) that loads the target repo's real .csproj/.sln via
-# (H) MSBuildWorkspace and emits location-keyed semantic facts the tree-sitter
-# (H) heuristics cannot derive: per-type base classifications (INHERITS vs
-# (H) IMPLEMENTS), per-invocation exact call targets (overloads by argument
-# (H) types, extension methods via the reduced form), partial-type declaration
-# (H) groups (exact symbol identity across files), and LINQ query-operator
-# (H) calls (query syntax has no invocation nodes). Every join key that misses
-# (H) falls back to the tree-sitter heuristics, and no dotnet, no project, or a
-# (H) build/restore failure all leave the facts empty, so indexing stays pure
-# (H) tree-sitter.
+# Roslyn semantic frontend for C# hybrid mode (issue #738). Runs a bundled net
+# console tool (`roslyn/`) that loads the target repo's real .csproj/.sln via
+# MSBuildWorkspace and emits location-keyed semantic facts the tree-sitter
+# heuristics cannot derive: per-type base classifications (INHERITS vs
+# IMPLEMENTS), per-invocation exact call targets (overloads by argument
+# types, extension methods via the reduced form), partial-type declaration
+# groups (exact symbol identity across files), and LINQ query-operator
+# calls (query syntax has no invocation nodes). Every join key that misses
+# falls back to the tree-sitter heuristics, and no dotnet, no project, or a
+# build/restore failure all leave the facts empty, so indexing stays pure
+# tree-sitter.
 from __future__ import annotations
 
 import json
@@ -27,14 +27,14 @@ from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
 
-# (H) Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
+# Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
 BaseKindMap = dict[tuple[str, int], dict[str, str]]
 
-# (H) Call-site join key: (rel_file, name_token_line, name_token_col, simple_name).
-# (H) The NAME token, not the expression start: nested invocations
-# (H) (`Make().Handle(x)` wraps `Make()`) share a start position, but their name
-# (H) tokens never collide. Columns are BYTE offsets on both sides: the tool
-# (H) re-measures Roslyn's UTF-16 columns in UTF-8 bytes to match tree-sitter.
+# Call-site join key: (rel_file, name_token_line, name_token_col, simple_name).
+# The NAME token, not the expression start: nested invocations
+# (`Make().Handle(x)` wraps `Make()`) share a start position, but their name
+# tokens never collide. Columns are BYTE offsets on both sides: the tool
+# re-measures Roslyn's UTF-16 columns in UTF-8 bytes to match tree-sitter.
 CallSiteKey = tuple[str, int, int, str]
 
 
@@ -65,15 +65,15 @@ class CSharpSemanticFacts(NamedTuple):
     call_sites: dict[CallSiteKey, CSharpCallSite]
     partial_groups: list[list[tuple[str, int]]]
     query_calls: list[CSharpQueryCall]
-    # (H) Sites Roslyn resolved to a METADATA method (no first-party
-    # (H) declaration): the compiler proof that the call leaves the repo, so
-    # (H) the name-trie fallback must not fabricate a first-party edge there.
+    # Sites Roslyn resolved to a METADATA method (no first-party
+    # declaration): the compiler proof that the call leaves the repo, so
+    # the name-trie fallback must not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
 
 
 def _empty_facts() -> CSharpSemanticFacts:
-    # (H) A fresh instance per failure path: the maps are handed to mutable
-    # (H) processor state, so a shared constant would alias across runs.
+    # A fresh instance per failure path: the maps are handed to mutable
+    # processor state, so a shared constant would alias across runs.
     return CSharpSemanticFacts({}, {}, [], [], set())
 
 
@@ -82,8 +82,8 @@ _TOOL_SRC = Path(__file__).parent / "roslyn"
 _TOOL_SOURCES = ("Frontend.csproj", "Program.cs", "Frontend.cs")
 _DLL_NAME = "Frontend.dll"
 _BUILD_LOCK = ".build-lock"
-# (H) Same mkdir-lock discipline as the eval oracle: build the assembly ONCE, then
-# (H) parallel workers run the DLL read-only and never race a shared MSBuild output.
+# Same mkdir-lock discipline as the eval oracle: build the assembly ONCE, then
+# parallel workers run the DLL read-only and never race a shared MSBuild output.
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
 _RESTORE_TIMEOUT = 600
@@ -97,12 +97,12 @@ def csharp_frontend_available() -> bool:
 
 
 def resolve_csharp_frontend() -> cs.CSharpFrontend:
-    # (H) The single source of truth for the EFFECTIVE frontend: without a
-    # (H) dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
-    # (H) HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
-    # (H) warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
-    # (H) parser fingerprint resolves through here so a graph's recorded
-    # (H) identity always matches the frontend that actually ran.
+    # The single source of truth for the EFFECTIVE frontend: without a
+    # dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
+    # HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
+    # warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
+    # parser fingerprint resolves through here so a graph's recorded
+    # identity always matches the frontend that actually ran.
     mode = settings.CSHARP_FRONTEND
     if mode == cs.CSharpFrontend.TREESITTER:
         return mode
@@ -123,9 +123,9 @@ def _project_candidates(repo_path: Path) -> list[Path]:
             key=lambda p: len(str(p)),
         )
 
-    # (H) Both solution formats count: repos migrated to the XML format ship a
-    # (H) .slnx and no .sln (e.g. Polly), and missing it degrades the whole run
-    # (H) to the facts of one fallback csproj.
+    # Both solution formats count: repos migrated to the XML format ship a
+    # .slnx and no .sln (e.g. Polly), and missing it degrades the whole run
+    # to the facts of one fallback csproj.
     for pattern in ("*.sln", "*.slnx", "*.csproj"):
         if candidates := shortest_first(pattern):
             return candidates
@@ -137,14 +137,14 @@ def find_csharp_project(repo_path: Path) -> Path | None:
     return candidates[0] if candidates else None
 
 
-# (H) Matches the project path (second quoted field) of a classic .sln entry:
-# (H) Project("{type-guid}") = "Name", "rel\path.csproj", "{project-guid}".
+# Matches the project path (second quoted field) of a classic .sln entry:
+# Project("{type-guid}") = "Name", "rel\path.csproj", "{project-guid}".
 _SLN_PROJECT_RE = re.compile(r'^Project\("[^"]*"\)\s*=\s*"[^"]*",\s*"([^"]+)"', re.M)
 
 
 def _solution_member_projects(project: Path) -> set[Path]:
-    # (H) The set of .csproj files a solution covers, resolved absolute. A bare
-    # (H) .csproj input covers only itself.
+    # The set of .csproj files a solution covers, resolved absolute. A bare
+    # .csproj input covers only itself.
     suffix = project.suffix.lower()
     base = project.parent
     if suffix == ".sln":
@@ -170,10 +170,10 @@ def _solution_member_projects(project: Path) -> set[Path]:
 
 
 def uncovered_csharp_projects(repo_path: Path, project: Path) -> list[Path]:
-    # (H) Repos routinely keep bench/samples projects OUTSIDE the solution
-    # (H) (Polly's bench/), so a solution-scoped workspace emits no facts for
-    # (H) their files and every call in them degrades to tree-sitter
-    # (H) heuristics. These uncovered projects load additively.
+    # Repos routinely keep bench/samples projects OUTSIDE the solution
+    # (Polly's bench/), so a solution-scoped workspace emits no facts for
+    # their files and every call in them degrades to tree-sitter
+    # heuristics. These uncovered projects load additively.
     members = _solution_member_projects(project)
 
     def not_ignored(p: Path) -> bool:
@@ -199,9 +199,9 @@ def _dll_fresh(dll: Path) -> bool:
 
 
 def _acquire_build_lock(lock: Path, dll: Path) -> bool:
-    # (H) Serialise the one build across parallel workers. Returns True holding the
-    # (H) lock (caller must rmdir); False if it gave up because another worker
-    # (H) already produced a fresh DLL or the tries ran out.
+    # Serialise the one build across parallel workers. Returns True holding the
+    # lock (caller must rmdir); False if it gave up because another worker
+    # already produced a fresh DLL or the tries ran out.
     for _ in range(_LOCK_TRIES):
         try:
             lock.mkdir()
@@ -238,8 +238,8 @@ def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
 
 
 def _build_tool(dotnet: str) -> Path | None:
-    # (H) Build from a copy in the writable cache, never the bundled source dir,
-    # (H) which is read-only under a pip install (obj/ intermediates would fail).
+    # Build from a copy in the writable cache, never the bundled source dir,
+    # which is read-only under a pip install (obj/ intermediates would fail).
     cache = _cache_dir()
     src = cache / "src"
     out = cache / "out"
@@ -259,9 +259,9 @@ def _build_tool(dotnet: str) -> Path | None:
 
 
 def _restore(dotnet: str, project: Path) -> None:
-    # (H) Best-effort: MSBuildWorkspace needs project.assets.json to resolve NuGet +
-    # (H) framework references. A restore failure (offline, private feed) just leaves
-    # (H) unresolved bases as kind "unknown" -> the Python heuristic handles those.
+    # Best-effort: MSBuildWorkspace needs project.assets.json to resolve NuGet +
+    # framework references. A restore failure (offline, private feed) just leaves
+    # unresolved bases as kind "unknown" -> the Python heuristic handles those.
     try:
         subprocess.run(
             [dotnet, "restore", str(project), "--verbosity", "quiet"],
@@ -278,7 +278,7 @@ def _restore(dotnet: str, project: Path) -> None:
 def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
-        # (H) No output at all: the tool crashed before printing its JSON line.
+        # No output at all: the tool crashed before printing its JSON line.
         logger.error(
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
@@ -286,8 +286,8 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
     try:
         payload = json.loads(lines[-1])
     except json.JSONDecodeError:
-        # (H) A decode failure means the tool emitted non-JSON after building;
-        # (H) surface both streams so it can be debugged, not silently degraded.
+        # A decode failure means the tool emitted non-JSON after building;
+        # surface both streams so it can be debugged, not silently degraded.
         logger.error(
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
@@ -331,19 +331,19 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
         },
     )
     if not any(facts) and stderr.strip():
-        # (H) A well-formed but entirely empty payload means the workspace load
-        # (H) went wrong (SDK pin mismatch, unloadable solution) -- surface the
-        # (H) tool's diagnostics instead of looking identical to success.
+        # A well-formed but entirely empty payload means the workspace load
+        # went wrong (SDK pin mismatch, unloadable solution) -- surface the
+        # tool's diagnostics instead of looking identical to success.
         logger.warning(ls.CSHARP_FRONTEND_NO_FACTS.format(stderr=stderr.strip()))
     return facts
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
-    # (H) Fold one type's bases to {simple_name: kind}. Two bases sharing a simple
-    # (H) name but differing in kind (e.g. `: A.Widget, B.Widget`, one class + one
-    # (H) interface) cannot be told apart by simple name on either side, so the
-    # (H) name is dropped and split_csharp_bases falls back to the heuristic rather
-    # (H) than letting the last-written kind silently win.
+    # Fold one type's bases to {simple_name: kind}. Two bases sharing a simple
+    # name but differing in kind (e.g. `: A.Widget, B.Widget`, one class + one
+    # interface) cannot be told apart by simple name on either side, so the
+    # name is dropped and split_csharp_bases falls back to the heuristic rather
+    # than letting the last-written kind silently win.
     kinds: dict[str, str] = {}
     conflicting: set[str] = set()
     for base in bases:

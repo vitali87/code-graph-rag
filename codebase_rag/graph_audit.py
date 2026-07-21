@@ -1,8 +1,8 @@
-# (H) Structural integrity audit of a generated knowledge graph (issue #646).
-# (H) Validates recorded node and relationship batches against the documented
-# (H) schema (types_defs.NODE_SCHEMAS / RELATIONSHIP_SCHEMAS): orphan nodes,
-# (H) required-property completeness, and undocumented labels, properties, and
-# (H) relationship endpoint triples.
+# Structural integrity audit of a generated knowledge graph (issue #646).
+# Validates recorded node and relationship batches against the documented
+# schema (types_defs.NODE_SCHEMAS / RELATIONSHIP_SCHEMAS): orphan nodes,
+# required-property completeness, and undocumented labels, properties, and
+# relationship endpoint triples.
 from collections.abc import Callable, Sequence
 
 from . import constants as cs
@@ -26,8 +26,8 @@ def documented_node_properties() -> dict[str, dict[str, bool]]:
         for entry in schema.properties.strip(cs.SCHEMA_PROPS_BRACES).split(
             cs.SEPARATOR_COMMA
         ):
-            # (H) A trailing comma or stray whitespace in a schema string must
-            # (H) not register an empty-named required property.
+            # A trailing comma or stray whitespace in a schema string must
+            # not register an empty-named required property.
             if not (entry := entry.strip()):
                 continue
             name, _, type_part = entry.partition(cs.SEPARATOR_COLON)
@@ -83,17 +83,17 @@ def find_orphans(
     identities = _node_identities(nodes)
     connected: set[tuple[str, PropertyValue]] = set()
     for rel in relationships:
-        # (H) The database MERGEs a relationship by MATCHing both endpoints, so
-        # (H) an edge with a nonexistent endpoint is silently dropped and must
-        # (H) not count as connectivity for the endpoint that does exist.
+        # The database MERGEs a relationship by MATCHing both endpoints, so
+        # an edge with a nonexistent endpoint is silently dropped and must
+        # not count as connectivity for the endpoint that does exist.
         endpoints = [(label, value) for label, _, value in (rel.from_spec, rel.to_spec)]
         if all(endpoint in identities for endpoint in endpoints):
             connected.update(endpoints)
     return [
         node
         for node in merge_node_records(nodes)
-        # (H) A repo with no indexable content is just its Project root, so a
-        # (H) zero-degree Project is valid rather than a construction failure.
+        # A repo with no indexable content is just its Project root, so a
+        # zero-degree Project is valid rather than a construction failure.
         if node.label != cs.NodeLabel.PROJECT.value
         and (node.label, _node_key(node)) not in connected
     ]
@@ -234,7 +234,7 @@ def collect_live_violations(
                 )
             )
     for row in fetch_all(cq.CYPHER_AUDIT_LABEL_PROPS):
-        # (H) Unknown labels are already reported above; only grade documented ones.
+        # Unknown labels are already reported above; only grade documented ones.
         if (schema_props := documented_props.get(str(row["label"]))) and str(
             row["key"]
         ) not in schema_props:
@@ -248,8 +248,8 @@ def collect_live_violations(
             )
     for label, schema_props in documented_props.items():
         required = [prop for prop, is_required in schema_props.items() if is_required]
-        # (H) An all-optional schema would render an empty WHERE clause, which
-        # (H) is a Cypher syntax error.
+        # An all-optional schema would render an empty WHERE clause, which
+        # is a Cypher syntax error.
         if not required:
             continue
         rows = fetch_all(build_missing_required_query(label, required))

@@ -12,10 +12,10 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-# (H) rich draws the options table with box-drawing borders whose glyphs land
-# (H) BETWEEN the words of a wrapped cell (legacy Windows consoles render one
-# (H) column narrower, wrapping cells that fit elsewhere), so phrase asserts
-# (H) must strip them along with the ANSI codes before whitespace-joining.
+# rich draws the options table with box-drawing borders whose glyphs land
+# BETWEEN the words of a wrapped cell (legacy Windows consoles render one
+# column narrower, wrapping cells that fit elsewhere), so phrase asserts
+# must strip them along with the ANSI codes before whitespace-joining.
 _BOX_DRAWING_RE = re.compile(r"[─-╿]")
 _RUNNER = CliRunner()
 
@@ -82,9 +82,9 @@ def test_version_flag() -> None:
 def test_help_command_shows_task_grouped_index() -> None:
     result = _RUNNER.invoke(app, ["help"], prog_name="cgr")
 
-    # (H) rich colorizes help when it detects an ANSI-capable log sink (GitHub
-    # (H) Actions among them), so the raw stdout carries escape codes there and
-    # (H) plain-substring asserts must run on the normalized text.
+    # rich colorizes help when it detects an ANSI-capable log sink (GitHub
+    # Actions among them), so the raw stdout carries escape codes there and
+    # plain-substring asserts must run on the normalized text.
     plain_stdout = _normalized_help(result.stdout)
     assert result.exit_code == 0
     assert "Usage: cgr [OPTIONS] COMMAND" in plain_stdout

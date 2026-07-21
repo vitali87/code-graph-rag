@@ -203,13 +203,13 @@ def test_php_multiple_distinct_attributes() -> None:
 
 
 def test_every_language_loads_a_highlights_query() -> None:
-    # (H) A highlights query that fails to compile degrades SILENTLY to None
-    # (H) (a debug log at startup), zeroing modifiers and decorators for the
-    # (H) whole language -- javascript.scm shipped TS-only tokens for months
-    # (H) unnoticed (issue #525). Every parsed language must load one.
+    # A highlights query that fails to compile degrades SILENTLY to None
+    # (a debug log at startup), zeroing modifiers and decorators for the
+    # whole language -- javascript.scm shipped TS-only tokens for months
+    # unnoticed (issue #525). Every parsed language must load one.
     parsers, queries = load_parsers()
-    # (H) Iterate parsers, not queries: a language absent from the queries
-    # (H) dict entirely must fail here too, not be skipped.
+    # Iterate parsers, not queries: a language absent from the queries
+    # dict entirely must fail here too, not be skipped.
     missing = sorted(
         str(lang)
         for lang in parsers
@@ -219,9 +219,9 @@ def test_every_language_loads_a_highlights_query() -> None:
 
 
 def test_js_method_modifiers_and_decorators_captured() -> None:
-    # (H) The JS grammar has no public/private/protected tokens (those are
-    # (H) TS-only); the fallback query must still capture the JS-valid
-    # (H) modifiers and decorators.
+    # The JS grammar has no public/private/protected tokens (those are
+    # TS-only); the fallback query must still capture the JS-valid
+    # modifiers and decorators.
     parsers, queries = load_parsers()
     code = "class A {\n  @dec\n  static async foo() {}\n}"
     root = parse_code(code, cs.SupportedLanguage.JS, parsers)
@@ -247,10 +247,10 @@ def test_dart_annotations_and_modifiers_captured() -> None:
 
 
 def test_dart_const_and_final_builtins_captured() -> None:
-    # (H) Dart `const`/`final` are NAMED nodes (const_builtin/final_builtin),
-    # (H) not anonymous keyword tokens: a quoted "const" fails to compile and
-    # (H) a quoted "final" compiles but never matches, so both must be
-    # (H) captured via their named forms.
+    # Dart `const`/`final` are NAMED nodes (const_builtin/final_builtin),
+    # not anonymous keyword tokens: a quoted "const" fails to compile and
+    # a quoted "final" compiles but never matches, so both must be
+    # captured via their named forms.
     parsers, queries = load_parsers()
     code = "class A {\n  const A();\n}"
     root = parse_code(code, cs.SupportedLanguage.DART, parsers)

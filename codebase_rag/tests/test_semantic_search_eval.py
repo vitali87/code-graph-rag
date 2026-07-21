@@ -59,7 +59,7 @@ def test_cgr_semantic_search_retrieves_expected_function(tmp_path: Path) -> None
     ranking = cgr_semantic_ranking(src, "proj", queries, ec.SEMANTIC_TOP_K)
     result = score_semantic(_CASES, ranking)
     row = next(r for r in result.rows if r["label"] == ec.SEMANTIC_LABEL)
-    # (H) Each query's clearly-relevant function should rank in the top k.
+    # Each query's clearly-relevant function should rank in the top k.
     assert row["recall"] == 1.0
     assert row["fn"] == 0
 

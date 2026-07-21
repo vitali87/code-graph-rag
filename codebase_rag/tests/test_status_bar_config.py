@@ -76,9 +76,9 @@ def test_abbreviated_repo_keeps_absolute_for_outside_paths() -> None:
 
 
 def test_abbreviated_repo_survives_unresolvable_home() -> None:
-    # (H) Path.home() raises RuntimeError when no home env vars are set (Windows
-    # (H) without USERPROFILE, bare containers); the status bar must fall back to
-    # (H) the absolute path instead of crashing.
+    # Path.home() raises RuntimeError when no home env vars are set (Windows
+    # without USERPROFILE, bare containers); the status bar must fall back to
+    # the absolute path instead of crashing.
     with patch.object(main_mod.Path, "home", side_effect=RuntimeError):
         assert main_mod._abbreviated_repo(Path("/etc/hosts")) == "/etc/hosts"
 

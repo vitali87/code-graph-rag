@@ -1,10 +1,10 @@
-# (H) Indexing the same repo twice must produce identical batch sequences.
-# (H) Replaces the digest-baseline CI artifacts proposed in #522/#646: rather
-# (H) than comparing a stored hash across runs, index the same fixture twice
-# (H) in-process and require byte-identical node and relationship output.
-# (H) Known blind spot: both runs share one hash seed, so set/dict iteration
-# (H) nondeterminism under PYTHONHASHSEED randomization across processes is
-# (H) not exercised here; parser code must sort such collections regardless.
+# Indexing the same repo twice must produce identical batch sequences.
+# Replaces the digest-baseline CI artifacts proposed in #522/#646: rather
+# than comparing a stored hash across runs, index the same fixture twice
+# in-process and require byte-identical node and relationship output.
+# Known blind spot: both runs share one hash seed, so set/dict iteration
+# nondeterminism under PYTHONHASHSEED randomization across processes is
+# not exercised here; parser code must sort such collections regardless.
 from __future__ import annotations
 
 from pathlib import Path
@@ -139,11 +139,11 @@ def test_indexing_twice_is_deterministic(
 
 
 def test_same_start_captures_order_by_span() -> None:
-    # (H) A chained constructor call (`Greeter().greet("x")`) yields two call
-    # (H) captures with the SAME start byte: the outer chain and the inner
-    # (H) constructor. Raw tree-sitter capture order flips between runs, so
-    # (H) sorted_captures must break the tie by end_byte (inner span first) or
-    # (H) the two emitted edges swap and indexing is nondeterministic.
+    # A chained constructor call (`Greeter().greet("x")`) yields two call
+    # captures with the SAME start byte: the outer chain and the inner
+    # constructor. Raw tree-sitter capture order flips between runs, so
+    # sorted_captures must break the tie by end_byte (inner span first) or
+    # the two emitted edges swap and indexing is nondeterministic.
     from tree_sitter import QueryCursor
 
     from codebase_rag import constants as cs

@@ -1,11 +1,11 @@
-# (H) Dart CALLS extraction (follow-up to #140): the tree-sitter-dart grammar
-# (H) has no call-expression node -- an invocation is an identifier (or
-# (H) selector chain) followed by a `selector` holding an `argument_part` --
-# (H) and it splits every definition into a signature node plus a SIBLING
-# (H) function_body, so both call capture and caller attribution need
-# (H) Dart-specific handling. Also fixes named constructors: the grammar's
-# (H) `name` field on constructor_signature is the CLASS identifier, which
-# (H) collapsed `Greeter.named` into a duplicate `Greeter` method.
+# Dart CALLS extraction (follow-up to #140): the tree-sitter-dart grammar
+# has no call-expression node -- an invocation is an identifier (or
+# selector chain) followed by a `selector` holding an `argument_part` --
+# and it splits every definition into a signature node plus a SIBLING
+# function_body, so both call capture and caller attribution need
+# Dart-specific handling. Also fixes named constructors: the grammar's
+# `name` field on constructor_signature is the CLASS identifier, which
+# collapsed `Greeter.named` into a duplicate `Greeter` method.
 from __future__ import annotations
 
 from pathlib import Path
@@ -85,9 +85,9 @@ def test_module_function_call(dart_calls_project: Path, mock_ingestor: MagicMock
 def test_same_class_method_call(dart_calls_project: Path, mock_ingestor: MagicMock):
     run_updater(dart_calls_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS.value)
-    # (H) implicit-this member call
+    # implicit-this member call
     assert _has(calls, ".Greeter.greet", ".Greeter.sayHello"), sorted(calls)
-    # (H) explicit this.method()
+    # explicit this.method()
     assert _has(calls, ".Greeter.describe", ".Greeter.greet"), sorted(calls)
 
 
@@ -99,7 +99,7 @@ def test_construction_emits_instantiates_and_ctor_call(
     inst = _edges(mock_ingestor, cs.RelationshipType.INSTANTIATES.value)
     assert _has(inst, ".app.main", ".app.Greeter"), sorted(inst)
     assert _has(calls, ".app.main", ".Greeter.Greeter"), sorted(calls)
-    # (H) construction inside a static method of the class itself
+    # construction inside a static method of the class itself
     assert _has(calls, ".Greeter.create", ".Greeter.Greeter"), sorted(calls)
 
 
@@ -112,8 +112,8 @@ def test_named_constructor_registers_and_receives_call(
         for c in mock_ingestor.ensure_node_batch.call_args_list
         if str(c.args[0]) == cs.NodeLabel.METHOD.value
     }
-    # (H) the grammar's name field on constructor_signature is the CLASS name;
-    # (H) the ctor's declared name is its LAST identifier
+    # the grammar's name field on constructor_signature is the CLASS name;
+    # the ctor's declared name is its LAST identifier
     assert any(q.endswith(".Greeter.named") for q in methods), sorted(methods)
     assert not any("Greeter@" in q for q in methods), sorted(methods)
 
@@ -130,8 +130,8 @@ def test_static_method_call_via_class_name(
 
 
 def test_call_name_shapes() -> None:
-    # (H) unit coverage of every chain shape dart_call_name handles, straight
-    # (H) off real parse trees
+    # unit coverage of every chain shape dart_call_name handles, straight
+    # off real parse trees
     import pytest as _pytest
 
     from codebase_rag.parser_loader import load_parsers
@@ -176,24 +176,24 @@ class A extends B {
     assert "plain" in calls
     assert "obj.member" in calls
     assert "obj.maybe" in calls
-    # (H) this./super. bases drop so the member resolves against the class
+    # this./super. bases drop so the member resolves against the class
     assert "step" in calls
     assert "init" in calls
     assert "b.first" in calls
     assert "b.second" in calls
-    # (H) a cascade on a member chain keeps the full receiver; resolving it as
-    # (H) a bare name would risk binding an unrelated same-name function
-    # (H) (PR #804 review)
+    # a cascade on a member chain keeps the full receiver; resolving it as
+    # a bare name would risk binding an unrelated same-name function
+    # (PR #804 review)
     assert "obj.field.chainCascade" in calls
     assert "brokenCascade" not in calls
     assert "Widget.of" in calls
-    # (H) a call-result receiver is now preserved as a `()` chain form so the
-    # (H) resolver can type it (`f().chained` -> f's return type); an index
-    # (H) receiver and a cascade on a call result still have no static name
+    # a call-result receiver is now preserved as a `()` chain form so the
+    # resolver can type it (`f().chained` -> f's return type); an index
+    # receiver and a cascade on a call result still have no static name
     assert "f().chained" in calls
     assert calls.count(None) >= 2
 
-    # (H) span helpers pass non-signature nodes through unchanged
+    # span helpers pass non-signature nodes through unchanged
     root = tree.root_node
     assert dart_body_node(root) is None
     assert dart_definition_end_byte(root) == root.end_byte
@@ -204,8 +204,8 @@ def test_body_calls_not_attributed_to_module(
 ):
     run_updater(dart_calls_project, mock_ingestor, skip_if_missing=SKIP)
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS.value)
-    # (H) helper(41) runs inside main's body; the signature/body split must not
-    # (H) leak it up to the module
+    # helper(41) runs inside main's body; the signature/body split must not
+    # leak it up to the module
     assert not _has(calls, "dcalls.app", ".app.helper") or _has(
         calls, ".app.main", ".app.helper"
     ), sorted(calls)

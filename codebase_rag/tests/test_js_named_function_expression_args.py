@@ -1,8 +1,8 @@
-# (H) A NAMED function expression passed as a call argument (express's
-# (H) `this.on('mount', function onmount(parent) {...})`, `defineGetter(req,
-# (H) 'path', function path() {...})`) registers by its own NAME, but the inline
-# (H) argument reference is built from the arg's POSITION only -- so the named
-# (H) node never matches and reports dead. Name candidates must be tried too.
+# A NAMED function expression passed as a call argument (express's
+# `this.on('mount', function onmount(parent) {...})`, `defineGetter(req,
+# 'path', function path() {...})`) registers by its own NAME, but the inline
+# argument reference is built from the arg's POSITION only -- so the named
+# node never matches and reports dead. Name candidates must be tried too.
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,8 +41,8 @@ def test_named_function_expression_arg_is_referenced(
 def test_named_function_expression_getter_value_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) express's request.js shape: the named fn-expr is the third argument of
-    # (H) a module-scope helper call.
+    # express's request.js shape: the named fn-expr is the third argument of
+    # a module-scope helper call.
     root = temp_repo / "exget"
     root.mkdir(parents=True)
     (root / "request.js").write_text(

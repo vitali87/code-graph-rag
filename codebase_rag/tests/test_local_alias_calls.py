@@ -1,7 +1,7 @@
-# (H) L3 finding from the evals/ harness: a function bound to a local variable and
-# (H) then called through that alias (g = self._method; g()) runs the aliased
-# (H) callable at runtime, but cgr saw a bare-name call that resolved to nothing.
-# (H) A call through a local alias must produce a CALLS edge to the aliased target.
+# L3 finding from the evals/ harness: a function bound to a local variable and
+# then called through that alias (g = self._method; g()) runs the aliased
+# callable at runtime, but cgr saw a bare-name call that resolved to nothing.
+# A call through a local alias must produce a CALLS edge to the aliased target.
 from __future__ import annotations
 
 from pathlib import Path

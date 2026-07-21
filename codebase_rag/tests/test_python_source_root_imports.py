@@ -10,7 +10,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
-    # (H) Build the graph for `files` (repo-relative paths) and return CALLS edges.
+    # Build the graph for `files` (repo-relative paths) and return CALLS edges.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -47,7 +47,7 @@ DISPATCH = "from {pkg}.impls import _handler\n\nhandlers = {{'a': _handler}}\n"
 
 
 def test_flat_layout_absolute_import(tmp_path: Path) -> None:
-    # (H) Regression: package at the repo root, absolute import (already worked).
+    # Regression: package at the repo root, absolute import (already worked).
     calls = _run_calls(
         tmp_path,
         {
@@ -60,9 +60,9 @@ def test_flat_layout_absolute_import(tmp_path: Path) -> None:
 
 
 def test_src_layout_absolute_import(tmp_path: Path) -> None:
-    # (H) src-layout: the package's import name (pkg) differs from its repo-relative
-    # (H) path (packages/a/src/pkg). The absolute import must resolve to the
-    # (H) path-based node, not be judged an external import and dropped.
+    # src-layout: the package's import name (pkg) differs from its repo-relative
+    # path (packages/a/src/pkg). The absolute import must resolve to the
+    # path-based node, not be judged an external import and dropped.
     calls = _run_calls(
         tmp_path,
         {
@@ -75,8 +75,8 @@ def test_src_layout_absolute_import(tmp_path: Path) -> None:
 
 
 def test_src_layout_dispatch_dict_value(tmp_path: Path) -> None:
-    # (H) The dead-code trigger shape: a module-level dispatch dict referencing the
-    # (H) imported handler must produce a Module -> CALLS -> handler reference edge.
+    # The dead-code trigger shape: a module-level dispatch dict referencing the
+    # imported handler must produce a Module -> CALLS -> handler reference edge.
     calls = _run_calls(
         tmp_path,
         {
@@ -89,7 +89,7 @@ def test_src_layout_dispatch_dict_value(tmp_path: Path) -> None:
 
 
 def test_monorepo_cross_package_absolute_import(tmp_path: Path) -> None:
-    # (H) Two packages, each under its own src root; libb absolutely imports liba.
+    # Two packages, each under its own src root; libb absolutely imports liba.
     calls = _run_calls(
         tmp_path,
         {
@@ -103,8 +103,8 @@ def test_monorepo_cross_package_absolute_import(tmp_path: Path) -> None:
 
 
 def test_package_dir_remap_absolute_import(tmp_path: Path) -> None:
-    # (H) setuptools package-dir remap: import name (mypkg) maps to a directory with
-    # (H) a DIFFERENT name (lib/), declared in pyproject.toml.
+    # setuptools package-dir remap: import name (mypkg) maps to a directory with
+    # a DIFFERENT name (lib/), declared in pyproject.toml.
     calls = _run_calls(
         tmp_path,
         {
@@ -123,8 +123,8 @@ def test_package_dir_remap_absolute_import(tmp_path: Path) -> None:
 
 
 def test_namespace_package_under_src(tmp_path: Path) -> None:
-    # (H) PEP 420 namespace package: no __init__.py anywhere, package under a src
-    # (H) root. The import must still map to the path-based nodes.
+    # PEP 420 namespace package: no __init__.py anywhere, package under a src
+    # root. The import must still map to the path-based nodes.
     calls = _run_calls(
         tmp_path,
         {
@@ -136,8 +136,8 @@ def test_namespace_package_under_src(tmp_path: Path) -> None:
 
 
 def test_same_named_packages_disambiguate_by_submodule(tmp_path: Path) -> None:
-    # (H) Two source roots each expose a top-level `common`, with different
-    # (H) submodules. The import of common.only_in_a must bind to package a's copy.
+    # Two source roots each expose a top-level `common`, with different
+    # submodules. The import of common.only_in_a must bind to package a's copy.
     calls = _run_calls(
         tmp_path,
         {
@@ -157,9 +157,9 @@ def test_same_named_packages_disambiguate_by_submodule(tmp_path: Path) -> None:
 
 
 def test_package_dir_default_key_remap(tmp_path: Path) -> None:
-    # (H) setuptools' default remap `"" = "lib"` relocates the whole package
-    # (H) namespace; a namespace package under it (no __init__.py, dir not named
-    # (H) src) has no other discovery signal and must still resolve.
+    # setuptools' default remap `"" = "lib"` relocates the whole package
+    # namespace; a namespace package under it (no __init__.py, dir not named
+    # src) has no other discovery signal and must still resolve.
     calls = _run_calls(
         tmp_path,
         {
@@ -174,9 +174,9 @@ def test_package_dir_default_key_remap(tmp_path: Path) -> None:
 
 
 def test_single_module_under_src_resolves_to_module(tmp_path: Path) -> None:
-    # (H) A single-module file directly under src (src/mymod.py) is importable as
-    # (H) `mymod`; the import must resolve to the module's own path QN, not to the
-    # (H) containing src directory.
+    # A single-module file directly under src (src/mymod.py) is importable as
+    # `mymod`; the import must resolve to the module's own path QN, not to the
+    # containing src directory.
     calls = _run_calls(
         tmp_path,
         {
@@ -192,8 +192,8 @@ def test_single_module_under_src_resolves_to_module(tmp_path: Path) -> None:
 
 
 def test_package_dir_escaping_repo_does_not_crash(tmp_path: Path) -> None:
-    # (H) A package-dir pointing outside the repo (`..`) must be skipped, not crash
-    # (H) discovery with a relative_to ValueError; sibling code still resolves.
+    # A package-dir pointing outside the repo (`..`) must be skipped, not crash
+    # discovery with a relative_to ValueError; sibling code still resolves.
     (tmp_path.parent / "outside").mkdir(exist_ok=True)
     calls = _run_calls(
         tmp_path,
@@ -213,9 +213,9 @@ def test_package_dir_escaping_repo_does_not_crash(tmp_path: Path) -> None:
 
 
 def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
-    # (H) The discovery map must key a single-module file to the module's OWN dotted
-    # (H) path (…src.mymod), not its containing directory (…src), or resolution
-    # (H) returns a directory QN and downstream lookups depend on trie luck.
+    # The discovery map must key a single-module file to the module's OWN dotted
+    # path (…src.mymod), not its containing directory (…src), or resolution
+    # returns a directory QN and downstream lookups depend on trie luck.
     from codebase_rag.parsers.python_source_roots import (
         discover_python_source_roots,
         resolve_via_source_roots,
@@ -228,10 +228,10 @@ def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
 
 
 def test_package_dir_dotted_key_remap(tmp_path: Path) -> None:
-    # (H) package-dir keys can name a dotted subpackage ("acme.widgets" =
-    # (H) "lib/widgets"); the import's top-level segment (acme) has no entry of its
-    # (H) own, so resolution must match the longest dotted prefix, not just the
-    # (H) top-level name.
+    # package-dir keys can name a dotted subpackage ("acme.widgets" =
+    # "lib/widgets"); the import's top-level segment (acme) has no entry of its
+    # own, so resolution must match the longest dotted prefix, not just the
+    # top-level name.
     calls = _run_calls(
         tmp_path,
         {

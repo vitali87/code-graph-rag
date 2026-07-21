@@ -1,17 +1,17 @@
-# (H) PHP tree-sitter node types.
+# PHP tree-sitter node types.
 
-# (H) Tree-sitter PHP node types
+# Tree-sitter PHP node types
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
 TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
-# (H) PHP inheritance clauses: `extends ...` (base_clause, for class AND
-# (H) interface) and `implements ...` (class_interface_clause); each lists `name`
-# (H) nodes naming the base types.
+# PHP inheritance clauses: `extends ...` (base_clause, for class AND
+# interface) and `implements ...` (class_interface_clause); each lists `name`
+# nodes naming the base types.
 TS_PHP_BASE_CLAUSE = "base_clause"
 TS_PHP_CLASS_INTERFACE_CLAUSE = "class_interface_clause"
 TS_PHP_NAME = "name"
-# (H) PHP fully-qualified base (`\Exception`, `\App\Base`); its trailing `name`
-# (H) child is the simple name cgr resolves against.
+# PHP fully-qualified base (`\Exception`, `\App\Base`); its trailing `name`
+# child is the simple name cgr resolves against.
 TS_PHP_QUALIFIED_NAME = "qualified_name"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"

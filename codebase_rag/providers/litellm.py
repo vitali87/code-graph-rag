@@ -1,4 +1,4 @@
-# (H) LiteLLM provider using pydantic-ai's native LiteLLMProvider.
+# LiteLLM provider using pydantic-ai's native LiteLLMProvider.
 from __future__ import annotations
 
 from loguru import logger

@@ -39,13 +39,13 @@ def test_oracle_captures_first_party_lua_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared = oracle_lua_call_edges(tmp_path)
 
-    # (H) local_add(), M.mul() (in M.use), mod.use() (in compute), compute()
-    # (H) (top level) are first-party calls reduced to their simple names.
+    # local_add(), M.mul() (in M.use), mod.use() (in compute), compute()
+    # (top level) are first-party calls reduced to their simple names.
     assert ("mod.lua", "local_add") in edges
     assert ("mod.lua", "mul") in edges
     assert ("main.lua", "use") in edges
     assert ("main.lua", "compute") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("mod.lua", "orphan") not in edges
     assert {"local_add", "mul", "use", "orphan", "compute"} <= declared
 
@@ -60,11 +60,11 @@ def test_cgr_matches_oracle_on_clean_lua_project(tmp_path: Path) -> None:
 
 @needs_node
 def test_cgr_resolves_function_expression_body_calls(tmp_path: Path) -> None:
-    # (H) A function expression bound to a table field (`M.runner = function()...`)
-    # (H) is named by cgr's definition pass (qn M.runner), so the calls in its body
-    # (H) must attribute to that node. cgr previously skipped the whole body because
-    # (H) the call pass could not derive the caller name from the nameless function
-    # (H) expression (same family as the JS/TS arrow-caller gap).
+    # A function expression bound to a table field (`M.runner = function()...`)
+    # is named by cgr's definition pass (qn M.runner), so the calls in its body
+    # must attribute to that node. cgr previously skipped the whole body because
+    # the call pass could not derive the caller name from the nameless function
+    # expression (same family as the JS/TS arrow-caller gap).
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "fnexpr.lua").write_text(
         "local M = {}\n"

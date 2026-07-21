@@ -1,9 +1,9 @@
-# (H) A method declared in an anonymous class body (`new Runnable(){ run(){} }`)
-# (H) is modelled as a standalone Function by both cgr and the oracle, but cgr
-# (H) anchors it to the module with DEFINES (the orphan-prevention fallback)
-# (H) while the oracle emitted no containment at all, so every such member
-# (H) graded as a false-positive edge on thrift (103 in crossTest). The
-# (H) oracle must model the fallback.
+# A method declared in an anonymous class body (`new Runnable(){ run(){} }`)
+# is modelled as a standalone Function by both cgr and the oracle, but cgr
+# anchors it to the module with DEFINES (the orphan-prevention fallback)
+# while the oracle emitted no containment at all, so every such member
+# graded as a false-positive edge on thrift (103 in crossTest). The
+# oracle must model the fallback.
 from __future__ import annotations
 
 from pathlib import Path

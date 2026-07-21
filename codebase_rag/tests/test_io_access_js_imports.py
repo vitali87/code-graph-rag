@@ -45,8 +45,8 @@ def _reads_file(rels: set[tuple[str, str, str]], caller_suffix: str) -> bool:
 
 
 def test_default_import_matches_file_sink(tmp_path: Path) -> None:
-    # (H) `import fs from 'fs'` maps fs -> fs.default; the sink lookup must
-    # (H) collapse the default-export segment to hit `fs.readFileSync`.
+    # `import fs from 'fs'` maps fs -> fs.default; the sink lookup must
+    # collapse the default-export segment to hit `fs.readFileSync`.
     rels = _run_io(
         tmp_path,
         {
@@ -60,8 +60,8 @@ def test_default_import_matches_file_sink(tmp_path: Path) -> None:
 
 
 def test_aliased_default_import_matches_file_sink(tmp_path: Path) -> None:
-    # (H) `import myFs from 'fs'` leaves no raw-text `fs.` prefix, so only the
-    # (H) normalised form (myFs -> fs.default) can match the sink.
+    # `import myFs from 'fs'` leaves no raw-text `fs.` prefix, so only the
+    # normalised form (myFs -> fs.default) can match the sink.
     rels = _run_io(
         tmp_path,
         {
@@ -75,9 +75,9 @@ def test_aliased_default_import_matches_file_sink(tmp_path: Path) -> None:
 
 
 def test_node_prefixed_default_import_matches_file_sink(tmp_path: Path) -> None:
-    # (H) `import fs from 'node:fs'` (the officially recommended builtin form)
-    # (H) maps fs -> node:fs.default: both the scheme and the default-export
-    # (H) segment must be stripped for the sink key to match.
+    # `import fs from 'node:fs'` (the officially recommended builtin form)
+    # maps fs -> node:fs.default: both the scheme and the default-export
+    # segment must be stripped for the sink key to match.
     rels = _run_io(
         tmp_path,
         {
@@ -132,8 +132,8 @@ def test_node_prefixed_named_import_matches_file_sink(tmp_path: Path) -> None:
 
 
 def test_local_default_import_does_not_hit_builtin_sink(tmp_path: Path) -> None:
-    # (H) A default import of FIRST-PARTY code named like a builtin must stay
-    # (H) unmatched: ./fs resolves to a local module, not the node builtin.
+    # A default import of FIRST-PARTY code named like a builtin must stay
+    # unmatched: ./fs resolves to a local module, not the node builtin.
     rels = _run_io(
         tmp_path,
         {

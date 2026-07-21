@@ -1,4 +1,4 @@
-# (H) Java tree-sitter node types, modifiers, and JVM layout constants.
+# Java tree-sitter node types, modifiers, and JVM layout constants.
 
 from .ast_nodes import (
     TS_CLASS_DECLARATION,
@@ -7,16 +7,16 @@ from .ast_nodes import (
 )
 from .core import ENTITY_FUNCTION, ENTITY_METHOD
 
-# (H) Tree-sitter Java node types for language_spec
+# Tree-sitter Java node types for language_spec
 TS_JAVA_METHOD_INVOCATION = "method_invocation"
 TS_JAVA_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 
-# (H) Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
+# Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
 TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
 
 TS_JAVA_CAST_EXPRESSION = "cast_expression"
 
-# (H) Java tree-sitter node types
+# Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
@@ -31,25 +31,25 @@ TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_METHOD_DECLARATION = "method_declaration"
 TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"
-# (H) Switch family: colon groups may fall through, arrow rules are exclusive;
-# (H) a default arm is a switch_label with no named children.
+# Switch family: colon groups may fall through, arrow rules are exclusive;
+# a default arm is a switch_label with no named children.
 TS_JAVA_SWITCH_EXPRESSION = "switch_expression"
 TS_JAVA_SWITCH_RULE = "switch_rule"
 TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP = "switch_block_statement_group"
 TS_JAVA_SWITCH_LABEL = "switch_label"
 TS_TRY_WITH_RESOURCES_STATEMENT = "try_with_resources_statement"
-# (H) One declaration inside a try-with-resources header; binds via `name`/`value`
-# (H) fields exactly like a variable_declarator.
+# One declaration inside a try-with-resources header; binds via `name`/`value`
+# fields exactly like a variable_declarator.
 TS_JAVA_RESOURCE = "resource"
 TS_RECORD_DECLARATION = "record_declaration"
 TS_TRUE = "true"
 TS_FALSE = "false"
 
-# (H) Java I/O direct-sink walk node types (issue #714). string_literal wraps a
-# (H) `string_fragment` (shared with JS); `block` is the method-body lexical scope;
-# (H) `lambda_expression` is a nested scope pruned from the enclosing walk. field_access
-# (H) / array_access describe member/subscript access (inert for Java, which has no
-# (H) IO_MEMBER_READS entry -- Java env access is a call, System.getenv, not a member).
+# Java I/O direct-sink walk node types (issue #714). string_literal wraps a
+# `string_fragment` (shared with JS); `block` is the method-body lexical scope;
+# `lambda_expression` is a nested scope pruned from the enclosing walk. field_access
+# / array_access describe member/subscript access (inert for Java, which has no
+# IO_MEMBER_READS entry -- Java env access is a call, System.getenv, not a member).
 TS_JAVA_STRING_LITERAL = "string_literal"
 TS_JAVA_BLOCK = "block"
 TS_JAVA_LAMBDA_EXPRESSION = "lambda_expression"
@@ -57,7 +57,7 @@ TS_JAVA_ARRAY_ACCESS = "array_access"
 JAVA_FIELD_FIELD = "field"
 JAVA_FIELD_INDEX = "index"
 
-# (H) Tree-sitter field names for child_by_field_name
+# Tree-sitter field names for child_by_field_name
 TS_FIELD_NAME = "name"
 TS_FIELD_TYPE = "type"
 TS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
@@ -78,11 +78,11 @@ QUERY_CAPTURE_FUNCTION = "function"
 QUERY_KEY_CLASSES = "classes"
 QUERY_KEY_FUNCTIONS = "functions"
 
-# (H) Java type inference keywords
+# Java type inference keywords
 JAVA_KEYWORD_THIS = "this"
 JAVA_KEYWORD_SUPER = "super"
 
-# (H) Java heuristic patterns
+# Java heuristic patterns
 JAVA_GETTER_PATTERN = "get"
 JAVA_NAME_PATTERN = "name"
 JAVA_ID_PATTERN = "id"
@@ -95,19 +95,19 @@ JAVA_HAS_PATTERN = "has"
 JAVA_USER_PATTERN = "user"
 JAVA_ORDER_PATTERN = "order"
 
-# (H) Java entity type names
+# Java entity type names
 ENTITY_CONSTRUCTOR = "Constructor"
 
-# (H) Java callable entity types for method resolution
-# (H) FUNCTION is included so an unqualified call inside a method-body anonymous class
-# (H) can reach the anon's OWN methods (registered as Function nodes under the enclosing
-# (H) scope, e.g. gson's `delegate()` called by the same anon's `read()`); the module
-# (H) scan is a last-resort fallback after precise class/anon-base/enclosing lookups.
+# Java callable entity types for method resolution
+# FUNCTION is included so an unqualified call inside a method-body anonymous class
+# can reach the anon's OWN methods (registered as Function nodes under the enclosing
+# scope, e.g. gson's `delegate()` called by the same anon's `read()`); the module
+# scan is a last-resort fallback after precise class/anon-base/enclosing lookups.
 JAVA_CALLABLE_ENTITY_TYPES = frozenset(
     {ENTITY_METHOD, ENTITY_CONSTRUCTOR, ENTITY_FUNCTION}
 )
 
-# (H) Java primitive type names
+# Java primitive type names
 JAVA_TYPE_STRING = "String"
 JAVA_TYPE_INT = "int"
 JAVA_TYPE_DOUBLE = "double"
@@ -116,11 +116,11 @@ JAVA_TYPE_LONG = "java.lang.Long"
 JAVA_TYPE_STRING_FQN = "java.lang.String"
 JAVA_TYPE_OBJECT = "Object"
 
-# (H) Java heuristic return type names
+# Java heuristic return type names
 JAVA_HEURISTIC_USER = "User"
 JAVA_HEURISTIC_ORDER = "Order"
 
-# (H) Java tree-sitter node types for java_utils
+# Java tree-sitter node types for java_utils
 TS_PACKAGE_DECLARATION = "package_declaration"
 TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
@@ -134,7 +134,7 @@ TS_PROGRAM = "program"
 TS_THIS = "this"
 TS_SUPER = "super"
 
-# (H) Java modifier node types
+# Java modifier node types
 JAVA_MODIFIER_PUBLIC = "public"
 JAVA_MODIFIER_PRIVATE = "private"
 JAVA_MODIFIER_PROTECTED = "protected"
@@ -180,18 +180,18 @@ JAVA_FIELD_MODIFIERS = frozenset(
     }
 )
 
-# (H) Java visibility values
+# Java visibility values
 JAVA_VISIBILITY_PUBLIC = "public"
 JAVA_VISIBILITY_PROTECTED = "protected"
 JAVA_VISIBILITY_PRIVATE = "private"
 JAVA_VISIBILITY_PACKAGE = "package"
 
-# (H) Java class type suffixes and names
+# Java class type suffixes and names
 JAVA_DECLARATION_SUFFIX = "_declaration"
 JAVA_TYPE_METHOD = "method"
 JAVA_TYPE_CONSTRUCTOR = "constructor"
 
-# (H) Java class node types for matching
+# Java class node types for matching
 JAVA_CLASS_NODE_TYPES = frozenset(
     {
         TS_CLASS_DECLARATION,
@@ -202,7 +202,7 @@ JAVA_CLASS_NODE_TYPES = frozenset(
     }
 )
 
-# (H) Java method node types
+# Java method node types
 JAVA_METHOD_NODE_TYPES = frozenset(
     {
         TS_METHOD_DECLARATION,
@@ -210,13 +210,13 @@ JAVA_METHOD_NODE_TYPES = frozenset(
     }
 )
 
-# (H) Java main method constants
+# Java main method constants
 JAVA_MAIN_METHOD_NAME = "main"
 JAVA_MAIN_PARAM_ARRAY = "String[]"
 JAVA_MAIN_PARAM_VARARGS = "String..."
 JAVA_MAIN_PARAM_TYPE = "String"
 
-# (H) Java path parsing constants
+# Java path parsing constants
 JAVA_PATH_JAVA = "java"
 JAVA_PATH_KOTLIN = "kotlin"
 JAVA_PATH_SCALA = "scala"

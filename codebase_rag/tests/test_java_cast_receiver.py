@@ -1,7 +1,7 @@
-# (H) A method call on a cast receiver `((T) x).m()` (gson's
-# (H) `((JsonTreeReader) in).nextJsonElement()`) dropped: the object extractor ignored
-# (H) cast/parenthesized receivers, so the call fell to the unqualified path and never
-# (H) resolved m on T (cross-file/sibling T). The cast's target type is the receiver.
+# A method call on a cast receiver `((T) x).m()` (gson's
+# `((JsonTreeReader) in).nextJsonElement()`) dropped: the object extractor ignored
+# cast/parenthesized receivers, so the call fell to the unqualified path and never
+# resolved m on T (cross-file/sibling T). The cast's target type is the receiver.
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,8 +16,8 @@ def test_cast_receiver_resolves_cross_file(
     root = temp_repo / "jcast"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
-    # (H) Target Reader.nextX is in a sibling file; a decoy Other.nextX ensures the
-    # (H) unqualified fallback can't coincidentally pick the right one.
+    # Target Reader.nextX is in a sibling file; a decoy Other.nextX ensures the
+    # unqualified fallback can't coincidentally pick the right one.
     (pkg / "Reader.java").write_text(
         "package com.example;\n"
         "public class Reader { public int nextX() { return 1; } }\n",
@@ -50,9 +50,9 @@ def test_cast_receiver_resolves_cross_file(
 def test_nested_parenthesized_cast_receiver_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A cast wrapped in multiple parentheses `(((Reader) in)).m()` must still yield
-    # (H) the cast target type: parenthesized wrappers are unwrapped to the innermost
-    # (H) cast, not just one layer.
+    # A cast wrapped in multiple parentheses `(((Reader) in)).m()` must still yield
+    # the cast target type: parenthesized wrappers are unwrapped to the innermost
+    # cast, not just one layer.
     root = temp_repo / "jncast"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
@@ -80,9 +80,9 @@ def test_nested_parenthesized_cast_receiver_resolves(
 def test_parenthesized_identifier_receiver_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A parenthesized non-cast receiver `(reader).nextX()` must resolve through the
-    # (H) `reader` variable's type (Reader), not fall to the unqualified resolver and bind
-    # (H) a same-named decoy method on the enclosing class.
+    # A parenthesized non-cast receiver `(reader).nextX()` must resolve through the
+    # `reader` variable's type (Reader), not fall to the unqualified resolver and bind
+    # a same-named decoy method on the enclosing class.
     root = temp_repo / "jpid"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
@@ -91,7 +91,7 @@ def test_parenthesized_identifier_receiver_resolves(
         "public class Reader { public int nextX() { return 1; } }\n",
         encoding="utf-8",
     )
-    # (H) M declares a decoy nextX(): without a receiver the call mis-binds to it.
+    # M declares a decoy nextX(): without a receiver the call mis-binds to it.
     (pkg / "M.java").write_text(
         "package com.example;\n"
         "public class M {\n"
@@ -115,10 +115,10 @@ def test_parenthesized_identifier_receiver_resolves(
 def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A fully-qualified cast target `((com.other.Reader) in).m()` must NOT resolve to
-    # (H) a same-package `Reader` decoy. Stripping the package off the cast type collapses
-    # (H) `com.other.Reader` to `Reader` and binds it to the wrong same-package class;
-    # (H) keeping the qualified name prevents that wrong edge.
+    # A fully-qualified cast target `((com.other.Reader) in).m()` must NOT resolve to
+    # a same-package `Reader` decoy. Stripping the package off the cast type collapses
+    # `com.other.Reader` to `Reader` and binds it to the wrong same-package class;
+    # keeping the qualified name prevents that wrong edge.
     root = temp_repo / "jqcast"
     (root / "com" / "other").mkdir(parents=True)
     (root / "com" / "example").mkdir(parents=True)
@@ -127,7 +127,7 @@ def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
         "public class Reader { public int nextX() { return 1; } }\n",
         encoding="utf-8",
     )
-    # (H) same-package decoy Reader: without the qualified type the call mis-binds here.
+    # same-package decoy Reader: without the qualified type the call mis-binds here.
     (root / "com" / "example" / "Reader.java").write_text(
         "package com.example;\n"
         "public class Reader { public int nextX() { return 2; } }\n",

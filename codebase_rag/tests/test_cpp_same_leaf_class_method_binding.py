@@ -1,11 +1,11 @@
-# (H) Two classes sharing a leaf name (souffle::ast::Type and
-# (H) souffle::ast::analysis::Type) each define out-of-line methods in their
-# (H) own .cpp. The class lookup used to iterate an unordered candidate set
-# (H) and accept ANY same-leaf class, so a method could bind to the wrong
-# (H) class nondeterministically; Pass 3 then re-resolved independently and
-# (H) any disagreement became a phantom caller whose CALLS the database drops
-# (H) (issue #652). The definition pass now resolves once, namespace-scoped
-# (H) and deterministic, records the decision, and call attribution reuses it.
+# Two classes sharing a leaf name (souffle::ast::Type and
+# souffle::ast::analysis::Type) each define out-of-line methods in their
+# own .cpp. The class lookup used to iterate an unordered candidate set
+# and accept ANY same-leaf class, so a method could bind to the wrong
+# class nondeterministically; Pass 3 then re-resolved independently and
+# any disagreement became a phantom caller whose CALLS the database drops
+# (issue #652). The definition pass now resolves once, namespace-scoped
+# and deterministic, records the decision, and call attribution reuses it.
 from __future__ import annotations
 
 from pathlib import Path

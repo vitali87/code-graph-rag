@@ -46,12 +46,12 @@ def test_oracle_captures_first_party_java_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared = oracle_java_call_edges(tmp_path)
 
-    # (H) this.helper(), T.make(), Util.free(), t.caller() are first-party calls.
+    # this.helper(), T.make(), Util.free(), t.caller() are first-party calls.
     assert ("T.java", "helper") in edges
     assert ("Use.java", "make") in edges
     assert ("Use.java", "free") in edges
     assert ("Use.java", "caller") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("T.java", "orphan") not in edges
     assert {"helper", "caller", "make", "free", "orphan", "useIt"} <= declared
 

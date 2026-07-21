@@ -16,8 +16,8 @@ _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
 def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, resource_qn)
-    # (H) for READS_FROM / WRITES_TO edges only.
+    # Build the graph for `files` and return (caller_qn, rel_type, resource_qn)
+    # for READS_FROM / WRITES_TO edges only.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -63,14 +63,14 @@ def test_open_write_dynamic_target(tmp_path: Path) -> None:
 
 
 def test_open_keyword_mode_write(tmp_path: Path) -> None:
-    # (H) mode passed by keyword must still refine direction to WRITE.
+    # mode passed by keyword must still refine direction to WRITE.
     files = {"m.py": "def save():\n    open('out.txt', mode='w')\n"}
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.save", WRITES_TO, "resource::FILE::out.txt")
 
 
 def test_open_all_keyword_args(tmp_path: Path) -> None:
-    # (H) both target and mode by keyword: target and direction still resolve.
+    # both target and mode by keyword: target and direction still resolve.
     files = {"m.py": "def save():\n    open(file='out.txt', mode='w')\n"}
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.save", WRITES_TO, "resource::FILE::out.txt")
@@ -105,8 +105,8 @@ def test_file_handle_write(tmp_path: Path) -> None:
 
 
 def test_with_handle_binding_tracked(tmp_path: Path) -> None:
-    # (H) `with sqlite3.connect(...) as conn:` binds a handle whose constructor is
-    # (H) not itself a sink; the later conn.execute must still attribute the edge.
+    # `with sqlite3.connect(...) as conn:` binds a handle whose constructor is
+    # not itself a sink; the later conn.execute must still attribute the edge.
     files = {
         "m.py": (
             "import sqlite3\n\n"
@@ -120,8 +120,8 @@ def test_with_handle_binding_tracked(tmp_path: Path) -> None:
 
 
 def test_handle_use_before_assignment_emits_nothing(tmp_path: Path) -> None:
-    # (H) A handle method that appears before its binding must not resolve to a
-    # (H) later assignment (no false forward-reference edge).
+    # A handle method that appears before its binding must not resolve to a
+    # later assignment (no false forward-reference edge).
     files = {
         "m.py": (
             "import sqlite3\n\n"
@@ -135,9 +135,9 @@ def test_handle_use_before_assignment_emits_nothing(tmp_path: Path) -> None:
 
 
 def test_handle_reassignment_uses_last_binding(tmp_path: Path) -> None:
-    # (H) A rebind must resolve to the last assignment in source order. Uses
-    # (H) sqlite3.connect (a handle constructor that is NOT itself a sink) so the
-    # (H) only edge comes from handle attribution, isolating traversal order.
+    # A rebind must resolve to the last assignment in source order. Uses
+    # sqlite3.connect (a handle constructor that is NOT itself a sink) so the
+    # only edge comes from handle attribution, isolating traversal order.
     files = {
         "m.py": (
             "import sqlite3\n\n"
@@ -179,8 +179,8 @@ def test_db_handle_insert_is_write(tmp_path: Path) -> None:
 
 
 def test_write_only_capture_drops_dangling_read_resource(tmp_path: Path) -> None:
-    # (H) With only WRITES_TO enabled, a read-only sink must not persist a
-    # (H) Resource node whose READS_FROM edge the filter drops (no orphan node).
+    # With only WRITES_TO enabled, a read-only sink must not persist a
+    # Resource node whose READS_FROM edge the filter drops (no orphan node).
     capture = resolve_capture(
         [cs.CAPTURE_TOKEN_NONE, f"{cs.CAPTURE_ADD_PREFIX}{WRITES_TO}"]
     )
@@ -215,9 +215,9 @@ def test_plain_call_emits_no_io(tmp_path: Path) -> None:
 
 
 def test_nested_read_attributes_to_inner_scope_only(tmp_path: Path) -> None:
-    # (H) A read inside a nested def belongs to that nested caller alone; the
-    # (H) enclosing function (and the module) must NOT also be credited with it,
-    # (H) matching how FLOWS_TO and CALLS attribute to the immediate scope.
+    # A read inside a nested def belongs to that nested caller alone; the
+    # enclosing function (and the module) must NOT also be credited with it,
+    # matching how FLOWS_TO and CALLS attribute to the immediate scope.
     files = {
         "m.py": (
             "import os\n\ndef outer():\n    def inner():\n        os.getenv('K')\n"
@@ -229,8 +229,8 @@ def test_nested_read_attributes_to_inner_scope_only(tmp_path: Path) -> None:
 
 
 def test_module_scope_read_not_credited_with_function_read(tmp_path: Path) -> None:
-    # (H) A read inside a function must not also be attributed to the module
-    # (H) caller_spec (module-level IO is only genuine top-level statements).
+    # A read inside a function must not also be attributed to the module
+    # caller_spec (module-level IO is only genuine top-level statements).
     files = {"m.py": "import os\n\n\ndef load():\n    os.getenv('K')\n"}
     rels = _run_io(tmp_path, files)
     module_reads = [
@@ -242,9 +242,9 @@ def test_module_scope_read_not_credited_with_function_read(tmp_path: Path) -> No
 
 
 def test_default_argument_read_belongs_to_enclosing_scope(tmp_path: Path) -> None:
-    # (H) A default argument value is evaluated at definition time in the
-    # (H) ENCLOSING scope, not inside the function body. So a read there is the
-    # (H) module's, never the function's.
+    # A default argument value is evaluated at definition time in the
+    # ENCLOSING scope, not inside the function body. So a read there is the
+    # module's, never the function's.
     files = {"m.py": "import os\n\n\ndef f(x=os.getenv('K')):\n    pass\n"}
     rels = _run_io(tmp_path, files)
     assert _has(rels, ".m", READS_FROM, "resource::ENV::K")
@@ -252,8 +252,8 @@ def test_default_argument_read_belongs_to_enclosing_scope(tmp_path: Path) -> Non
 
 
 def test_decorator_read_belongs_to_enclosing_scope(tmp_path: Path) -> None:
-    # (H) A decorator expression is evaluated in the enclosing scope at
-    # (H) definition time, so its read is the module's, not the function's.
+    # A decorator expression is evaluated in the enclosing scope at
+    # definition time, so its read is the module's, not the function's.
     files = {
         "m.py": (
             "import os\n\n\n"
@@ -268,16 +268,16 @@ def test_decorator_read_belongs_to_enclosing_scope(tmp_path: Path) -> None:
 
 
 def test_body_read_still_belongs_to_the_function(tmp_path: Path) -> None:
-    # (H) Guard: a genuine body read stays attributed to the function after the
-    # (H) header/body split (not accidentally pushed to the module).
+    # Guard: a genuine body read stays attributed to the function after the
+    # header/body split (not accidentally pushed to the module).
     files = {"m.py": "import os\n\n\ndef load():\n    os.getenv('K')\n"}
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.load", READS_FROM, "resource::ENV::K")
 
 
-# (H) Cross-scope handle recall: a handle bound in one scope (an instance
-# (H) attribute set in __init__, or a module/enclosing-scope local) and used in
-# (H) another must attribute the I/O to the USING scope.
+# Cross-scope handle recall: a handle bound in one scope (an instance
+# attribute set in __init__, or a module/enclosing-scope local) and used in
+# another must attribute the I/O to the USING scope.
 def test_self_attr_db_handle_used_in_other_method(tmp_path: Path) -> None:
     files = {
         "m.py": (
@@ -290,8 +290,8 @@ def test_self_attr_db_handle_used_in_other_method(tmp_path: Path) -> None:
         )
     }
     rels = _run_io(tmp_path, files)
-    # (H) execute() with dynamic SQL stays READ_WRITE -> both edges, credited to
-    # (H) run (not __init__).
+    # execute() with dynamic SQL stays READ_WRITE -> both edges, credited to
+    # run (not __init__).
     assert _has(rels, "m.DB.run", READS_FROM, "resource::DATABASE::app.db")
     assert _has(rels, "m.DB.run", WRITES_TO, "resource::DATABASE::app.db")
     assert not _has(rels, "m.DB.__init__", READS_FROM, "resource::DATABASE::app.db")
@@ -321,7 +321,7 @@ def test_module_level_handle_used_in_function(tmp_path: Path) -> None:
         )
     }
     rels = _run_io(tmp_path, files)
-    # (H) executemany() is WRITE, credited to the function that uses the handle.
+    # executemany() is WRITE, credited to the function that uses the handle.
     assert _has(rels, "m.run", WRITES_TO, "resource::DATABASE::app.db")
 
 
@@ -339,9 +339,9 @@ def test_enclosing_function_handle_used_in_nested(tmp_path: Path) -> None:
 
 
 def test_reexported_stdlib_module_handle_recognized(tmp_path: Path) -> None:
-    # (H) A stdlib module re-exported under its own name (`from .utils import
-    # (H) sqlite3`, as sqlite-utils does) remaps the local head away from the
-    # (H) registry key; the raw dotted callee must still match `sqlite3.connect`.
+    # A stdlib module re-exported under its own name (`from .utils import
+    # sqlite3`, as sqlite-utils does) remaps the local head away from the
+    # registry key; the raw dotted callee must still match `sqlite3.connect`.
     files = {
         "pkg/__init__.py": "",
         "pkg/utils.py": "import sqlite3  # noqa: F401\n",
@@ -360,10 +360,10 @@ def test_reexported_stdlib_module_handle_recognized(tmp_path: Path) -> None:
 def test_local_rebind_shadows_inherited_handle_before_assignment(
     tmp_path: Path,
 ) -> None:
-    # (H) Any assignment to `conn` in the body makes it local for the WHOLE
-    # (H) function (Python scoping), so a use BEFORE that assignment is an
-    # (H) UnboundLocalError at runtime and must NOT resolve to the inherited
-    # (H) module-level handle. The later local rebind governs uses after it.
+    # Any assignment to `conn` in the body makes it local for the WHOLE
+    # function (Python scoping), so a use BEFORE that assignment is an
+    # UnboundLocalError at runtime and must NOT resolve to the inherited
+    # module-level handle. The later local rebind governs uses after it.
     files = {
         "m.py": (
             "import sqlite3\n\n"
@@ -381,8 +381,8 @@ def test_local_rebind_shadows_inherited_handle_before_assignment(
 
 
 def test_sql_commit_is_write_only(tmp_path: Path) -> None:
-    # (H) COMMIT/ROLLBACK/SAVEPOINT/REPLACE etc. are writes; without them the
-    # (H) first-keyword heuristic falls back to READ_WRITE and over-reports a read.
+    # COMMIT/ROLLBACK/SAVEPOINT/REPLACE etc. are writes; without them the
+    # first-keyword heuristic falls back to READ_WRITE and over-reports a read.
     files = {
         "m.py": (
             "import sqlite3\n\n"

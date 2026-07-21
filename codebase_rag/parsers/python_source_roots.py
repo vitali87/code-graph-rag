@@ -15,11 +15,11 @@ def _dotted(rel_dir: Path) -> str:
 
 
 def _package_dir_remaps(pyproject: Path, repo_path: Path) -> list[tuple[str, str]]:
-    # (H) setuptools `[tool.setuptools.package-dir]` maps an import name to the
-    # (H) directory that IS that package (`mypkg = "lib"` -> lib/__init__.py is
-    # (H) mypkg). The empty-string key is the DEFAULT remap (`"" = "lib"` -> the
-    # (H) whole package namespace lives under lib/), so lib's children become the
-    # (H) importable top-level names. A remap escaping the repo is skipped.
+    # setuptools `[tool.setuptools.package-dir]` maps an import name to the
+    # directory that IS that package (`mypkg = "lib"` -> lib/__init__.py is
+    # mypkg). The empty-string key is the DEFAULT remap (`"" = "lib"` -> the
+    # whole package namespace lives under lib/), so lib's children become the
+    # importable top-level names. A remap escaping the repo is skipped.
     try:
         data = tomllib.loads(pyproject.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, tomllib.TOMLDecodeError):
@@ -60,17 +60,17 @@ def _package_dir_remaps(pyproject: Path, repo_path: Path) -> list[tuple[str, str
 
 
 def discover_python_source_roots(repo_path: Path) -> dict[str, list[tuple[str, str]]]:
-    # (H) Map each importable top-level name to (import_prefix, dotted_dir) pairs,
-    # (H) where import_prefix is the importable name the directory answers for (a
-    # (H) bare name, or a dotted one from a `"acme.widgets" = "lib/widgets"`
-    # (H) package-dir remap) and dotted_dir is its repo-relative dotted path. Only
-    # (H) packages NOT at the repo root are mapped (root-level packages already
-    # (H) resolve via the import name == path assumption). Found from three
-    # (H) signals: a package (__init__.py) whose parent is not itself a package,
-    # (H) children of a `src` directory (covers PEP 420 namespace packages and
-    # (H) single-module files), and pyproject `package-dir` remaps. Multiple
-    # (H) same-named roots keep all candidates; resolution disambiguates by which
-    # (H) candidate actually contains the imported submodule on disk.
+    # Map each importable top-level name to (import_prefix, dotted_dir) pairs,
+    # where import_prefix is the importable name the directory answers for (a
+    # bare name, or a dotted one from a `"acme.widgets" = "lib/widgets"`
+    # package-dir remap) and dotted_dir is its repo-relative dotted path. Only
+    # packages NOT at the repo root are mapped (root-level packages already
+    # resolve via the import name == path assumption). Found from three
+    # signals: a package (__init__.py) whose parent is not itself a package,
+    # children of a `src` directory (covers PEP 420 namespace packages and
+    # single-module files), and pyproject `package-dir` remaps. Multiple
+    # same-named roots keep all candidates; resolution disambiguates by which
+    # candidate actually contains the imported submodule on disk.
     roots: dict[str, list[tuple[str, str]]] = {}
 
     def _add(name: str, dotted_dir: str) -> None:
@@ -114,13 +114,13 @@ def discover_python_source_roots(repo_path: Path) -> dict[str, list[tuple[str, s
 def resolve_via_source_roots(
     repo_path: Path, roots: dict[str, list[tuple[str, str]]], module_name: str
 ) -> str | None:
-    # (H) Translate an absolute import name (`pkg.impls`) whose top-level package
-    # (H) lives under a nested source root into the path-based dotted QN cgr
-    # (H) registers nodes under (`packages.a.src.pkg.impls`). Candidates whose
-    # (H) import_prefix is dotted match by longest prefix (a `"acme.widgets"`
-    # (H) remap answers `acme.widgets.impl`). Among matching roots, the one that
-    # (H) actually contains the imported submodule on disk wins; with no on-disk
-    # (H) confirmation, a sole match is trusted.
+    # Translate an absolute import name (`pkg.impls`) whose top-level package
+    # lives under a nested source root into the path-based dotted QN cgr
+    # registers nodes under (`packages.a.src.pkg.impls`). Candidates whose
+    # import_prefix is dotted match by longest prefix (a `"acme.widgets"`
+    # remap answers `acme.widgets.impl`). Among matching roots, the one that
+    # actually contains the imported submodule on disk wins; with no on-disk
+    # confirmation, a sole match is trusted.
     top_level = module_name.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
     candidates = roots.get(top_level)
     if not candidates:
