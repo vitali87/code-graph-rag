@@ -152,3 +152,40 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
     FindingAnalyzer(ing, tmp_path, resolve_capture([])).analyze({"proj.m": src})
     assert ing.nodes == []
     assert ing.rels == []
+
+
+def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
+    # (H) two matches of one rule on a single line must not collapse into one
+    # (H) node; the qualified_name has to distinguish them by column.
+    from codebase_rag.analyzers import FindingAnalyzer
+
+    src = tmp_path / "a.js"
+    src.write_text("console.log(1); console.log(2);\n", encoding="utf-8")
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {"proj.a": src}
+    )
+    qns = [
+        p[cs.KEY_QUALIFIED_NAME]
+        for label, p in ing.nodes
+        if label == CODE_SMELL and p[cs.KEY_NAME] == "console_log"
+    ]
+    assert len(qns) == 2, qns
+    assert len(set(qns)) == 2, qns
+
+
+def test_tsx_files_get_findings(tmp_path: Path) -> None:
+    from codebase_rag.analyzers import FindingAnalyzer
+    from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
+
+    assert ".tsx" in load_finding_rules()
+    src = tmp_path / "c.tsx"
+    src.write_text(
+        "const C = () => { console.log('x'); return null; };\n", encoding="utf-8"
+    )
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {"proj.c": src}
+    )
+    names = [p[cs.KEY_NAME] for label, p in ing.nodes if label == CODE_SMELL]
+    assert "console_log" in names, names

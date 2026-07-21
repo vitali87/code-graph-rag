@@ -170,10 +170,11 @@ class FindingAnalyzer:
         node_range = node.range()
         start_line = node_range.start.line + 1
         end_line = node_range.end.line + 1
-        # (H) qn scopes the finding to file+line+rule so repeat hits stay
-        # (H) distinct while re-indexing merges idempotently.
+        # (H) qn scopes the finding to file+line+column+rule so two matches of one
+        # (H) rule on the same line stay distinct, while re-indexing merges the
+        # (H) same site idempotently.
         qualified_name = cs.SEPARATOR_DOT.join(
-            [module_qn, str(start_line), rule.rule_id]
+            [module_qn, str(start_line), str(node_range.start.column), rule.rule_id]
         )
         snippet = node.text()
         if len(snippet) > _SNIPPET_MAX:
