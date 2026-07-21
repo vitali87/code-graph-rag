@@ -976,8 +976,8 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
-        elif cs.SEPARATOR_COLON in call_name:
-            separator = cs.SEPARATOR_COLON
+        elif cs.CHAR_COLON in call_name:
+            separator = cs.CHAR_COLON
         elif cs.SEPARATOR_DOT in call_name:
             separator = cs.SEPARATOR_DOT
         else:
@@ -1010,14 +1010,14 @@ class CallResolver:
         return (
             cs.SEPARATOR_DOT in call_name
             or cs.SEPARATOR_DOUBLE_COLON in call_name
-            or cs.SEPARATOR_COLON in call_name
+            or cs.CHAR_COLON in call_name
         )
 
     def _get_separator(self, call_name: str) -> str:
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             return cs.SEPARATOR_DOUBLE_COLON
-        if cs.SEPARATOR_COLON in call_name:
-            return cs.SEPARATOR_COLON
+        if cs.CHAR_COLON in call_name:
+            return cs.CHAR_COLON
         return cs.SEPARATOR_DOT
 
     def _try_resolve_wildcard_imports(
@@ -1248,7 +1248,7 @@ class CallResolver:
         )
 
         registry_separator = (
-            separator if separator == cs.SEPARATOR_COLON else cs.SEPARATOR_DOT
+            separator if separator == cs.CHAR_COLON else cs.SEPARATOR_DOT
         )
         method_qn = f"{class_qn}{registry_separator}{method_name}"
 

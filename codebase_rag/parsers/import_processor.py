@@ -1447,7 +1447,7 @@ class ImportProcessor:
                     parts, 2, module_qn, ls.IMP_CPP_MODULE_IFACE
                 )
         elif cs.CPP_IMPORT_PARTITION_PREFIX in decl_text:
-            colon_pos = decl_text.find(cs.SEPARATOR_COLON)
+            colon_pos = decl_text.find(cs.CHAR_COLON)
             if colon_pos != -1:
                 if partition_part := decl_text[colon_pos + 1 :].split(";")[0].strip():
                     partition_name = f"{cs.CPP_PARTITION_PREFIX}{partition_part}"

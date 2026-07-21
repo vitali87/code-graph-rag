@@ -18,14 +18,39 @@ rules:
         has: { field: field, regex: '^__index$' }
         stopBy: end
   - id: factory_function
+    # Decide on the function NAME only. The old `stopBy: end` scanned the whole
+    # body, so a function merely calling `results.new(...)` was flagged. Match a
+    # bare name (`function create()`) or the last segment of a dotted name
+    # (`function results.new()`), never an identifier deep in the body.
     message: "Factory function: name starts with new/create/make"
     rule:
       kind: function_declaration
-      has: { kind: identifier, regex: '^(new|create|make)', stopBy: end }
+      has:
+        any:
+          - all:
+              - kind: identifier
+              - regex: '^(new|create|make)'
+          - all:
+              - kind: dot_index_expression
+              - has: { field: field, regex: '^(new|create|make)' }
+          # Colon syntax `function Class:new()` is the idiomatic Lua constructor;
+          # its name is a method_index_expression, not a dot_index_expression.
+          - all:
+              - kind: method_index_expression
+              - has: { field: method, regex: '^(new|create|make)' }
   - id: module_return
+    # The idiomatic module export is the TOP-LEVEL trailing `return M`, not
+    # every `return x` inside a function; exclude returns nested in a function.
     message: "Module pattern: chunk returns a single table variable"
     rule:
       kind: return_statement
-      has:
-        kind: expression_list
-        has: { kind: identifier, nthChild: 1 }
+      all:
+        - has:
+            kind: expression_list
+            has: { kind: identifier, nthChild: 1 }
+        - not:
+            inside:
+              any:
+                - kind: function_declaration
+                - kind: function_definition
+              stopBy: end

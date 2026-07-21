@@ -1,3 +1,5 @@
+"""Interactive agent loop: turn natural-language questions into graph queries."""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,5 @@
+"""Command-line entry point wiring cgr subcommands to their handlers."""
+
 import asyncio
 import json
 import time

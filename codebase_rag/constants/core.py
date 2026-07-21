@@ -30,8 +30,6 @@ TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"
 TRIE_INTERNAL_PREFIX = "__"
 
-SEPARATOR_COMMA = ","
-
 BYTES_PER_MB = 1024 * 1024
 
 EMPTY_PARENS = "()"
@@ -93,7 +91,6 @@ TMP_EXTENSION = ".tmp"
 
 MOD_RS = "mod.rs"
 SEPARATOR_DOUBLE_COLON = "::"
-SEPARATOR_COLON = ":"
 SEPARATOR_PROTOTYPE = ".prototype."
 RUST_CRATE_PREFIX = "crate::"
 BUILTIN_PREFIX = "builtin"
