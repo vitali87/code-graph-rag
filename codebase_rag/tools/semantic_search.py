@@ -22,7 +22,10 @@ if TYPE_CHECKING:
 
 
 def semantic_code_search(
-    ingestor: QueryProtocol, query: str, top_k: int = 5
+    ingestor: QueryProtocol,
+    query: str,
+    top_k: int = 5,
+    project: str | None = None,
 ) -> list[SemanticSearchResult]:
     if not has_semantic_dependencies():
         logger.warning(ex.SEMANTIC_EXTRA)
@@ -34,7 +37,7 @@ def semantic_code_search(
 
         query_embedding = embed_code(query)
 
-        search_results = search_embeddings(query_embedding, top_k=top_k)
+        search_results = search_embeddings(query_embedding, top_k=top_k, project=project)
 
         if not search_results:
             logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
@@ -115,10 +118,14 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
 
 
 def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
-    async def semantic_search_functions(query: str, top_k: int = 5) -> str:
+    async def semantic_search_functions(
+        query: str, top_k: int = 5, project: str | None = None
+    ) -> str:
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
-        results = await asyncio.to_thread(semantic_code_search, ingestor, query, top_k)
+        results = await asyncio.to_thread(
+            semantic_code_search, ingestor, query, top_k, project
+        )
 
         if not results:
             return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)

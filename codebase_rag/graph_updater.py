@@ -883,7 +883,13 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
-        self._sink.ensure_node_batch(cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name})
+        self._sink.ensure_node_batch(
+            cs.NODE_PROJECT,
+            {
+                cs.KEY_NAME: self.project_name,
+                cs.KEY_ROOT_PATH: str(self.repo_path.resolve()),
+            },
+        )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
         if not force and self._single_file is None:
