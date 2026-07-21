@@ -1,0 +1,27 @@
+# ast-grep code-smell rules for C# (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: csharp
+extensions: [.cs]
+rules:
+  - id: console_writeline
+    message: "Console.WriteLine left in code reads like debug output"
+    rule:
+      any:
+        - pattern: "Console.WriteLine($$$)"
+        - pattern: "Console.Write($$$)"
+  - id: empty_catch
+    message: "Empty catch block swallows the exception silently"
+    rule:
+      kind: catch_clause
+      has: { kind: block, regex: '^\{\s*\}$' }
+  - id: broad_catch
+    message: "catch (Exception ...) catches too much"
+    rule:
+      kind: catch_clause
+      has:
+        kind: catch_declaration
+        has: { kind: identifier, regex: '^Exception$' }
+  - id: thread_sleep
+    message: "Thread.Sleep blocks the thread; prefer async waiting"
+    rule:
+      pattern: "Thread.Sleep($$$)"

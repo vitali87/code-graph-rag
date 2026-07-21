@@ -1,0 +1,24 @@
+# ast-grep code-smell rules for Lua (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: lua
+extensions: [.lua]
+rules:
+  - id: debug_print
+    message: "Leftover print() call looks like debug output"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^print$' }
+  - id: global_assignment
+    message: "Assignment without local leaks a global"
+    rule:
+      kind: assignment_statement
+      not: { inside: { kind: variable_declaration } }
+  - id: long_param_list
+    message: "Very long parameter list is hard to call correctly"
+    rule:
+      kind: parameters
+      has: { kind: identifier, nthChild: 8 }
+  - id: goto_statement
+    message: "goto makes control flow hard to follow"
+    rule:
+      kind: goto_statement

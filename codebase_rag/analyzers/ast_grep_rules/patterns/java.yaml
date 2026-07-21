@@ -1,0 +1,37 @@
+# ast-grep design-pattern rules for Java (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: java
+extensions: [.java]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static getInstance accessor"
+    rule:
+      kind: class_declaration
+      has:
+        kind: method_declaration
+        stopBy: end
+        all:
+          - has: { kind: modifiers, has: { regex: '^static$' } }
+          - has: { field: name, regex: '^getInstance$' }
+  - id: factory_method
+    message: "Factory method: name starts with create/make/build/newInstance"
+    rule:
+      kind: method_declaration
+      has: { field: name, regex: '^(create|make|build|newInstance)' }
+  - id: builder
+    message: "Builder: class name ends with Builder"
+    rule:
+      kind: class_declaration
+      has: { field: name, regex: 'Builder$' }
+  - id: fluent_builder
+    message: "Fluent builder: instance method returns this"
+    rule:
+      kind: method_declaration
+      has:
+        kind: block
+        has:
+          kind: return_statement
+          has: { kind: this }
+          stopBy: end
+        stopBy: end

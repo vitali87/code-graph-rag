@@ -1,0 +1,23 @@
+# ast-grep code-smell rules for Rust (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: rust
+extensions: [.rs]
+rules:
+  - id: unwrap_call
+    message: "unwrap() panics instead of handling the error case"
+    rule:
+      pattern: "$X.unwrap()"
+  - id: expect_call
+    message: "expect() panics instead of handling the error case"
+    rule:
+      pattern: "$X.expect($$$)"
+  - id: dbg_macro
+    message: "dbg! macro left in code"
+    rule:
+      kind: macro_invocation
+      has: { field: macro, regex: '^dbg$' }
+  - id: panic_macro
+    message: "panic!/unimplemented!/todo!/unreachable! macro aborts at runtime"
+    rule:
+      kind: macro_invocation
+      has: { field: macro, regex: '^(panic|unimplemented|todo|unreachable)$' }

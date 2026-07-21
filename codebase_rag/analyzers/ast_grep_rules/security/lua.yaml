@@ -1,0 +1,38 @@
+# ast-grep security rules for Lua (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: lua
+extensions: [.lua]
+rules:
+  - id: dynamic_code
+    message: "load()/loadstring() executes arbitrary code at runtime"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^(load|loadstring)$' }
+  - id: os_command
+    message: "Possible command injection: os.execute()/io.popen() runs a shell command"
+    rule:
+      kind: function_call
+      has:
+        kind: dot_index_expression
+        regex: '^(os\.execute|io\.popen)$'
+  - id: dofile_use
+    message: "dofile()/loadfile() loads and runs an external file"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^(dofile|loadfile)$' }
+  - id: hardcoded_secret
+    # Security rule: favour recall. Target name matches a credential keyword and
+    # the value is a non-trivial string literal. Covers both `local secret = ...`
+    # (assignment wrapped in variable_declaration) and bare `secret = ...` globals
+    # because both share the assignment_statement node.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: assignment_statement
+      all:
+        - has:
+            kind: variable_list
+            has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)', stopBy: end }
+        - has:
+            kind: expression_list
+            has: { kind: string, regex: '^.{8,}$', stopBy: end }
