@@ -50,7 +50,7 @@ git clone https://github.com/vitali87/code-graph-rag.git
 cd code-graph-rag
 uv sync
 
-docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
+cgr daemon up
 ```
 
 ## Available Tools

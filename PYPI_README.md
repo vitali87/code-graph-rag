@@ -8,7 +8,7 @@ A graph-based RAG system that parses multi-language codebases with Tree-sitter, 
 pip install code-graph-rag
 ```
 
-With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C++, Lua):
+With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, C#, PHP, Lua, Dart):
 
 ```bash
 pip install 'code-graph-rag[treesitter-full]'
@@ -161,7 +161,7 @@ Configure via `.env` or environment variables:
 |----------|---------|-------------|
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
-| `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `ollama` |
+| `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy` |
 | `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-4o`, `gemini-2.5-pro`) |
 | `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |
 | `CYPHER_PROVIDER` | | Provider for Cypher generation |

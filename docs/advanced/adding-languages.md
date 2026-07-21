@@ -40,28 +40,23 @@ When you add a language, the tool automatically:
 
 1. **Downloads the Grammar**: Clones the tree-sitter grammar repository as a git submodule
 2. **Detects Configuration**: Auto-extracts language metadata from `tree-sitter.json`
-3. **Analyses Node Types**: Automatically identifies AST node types for functions/methods, classes/structs, modules/files, and function calls
-4. **Compiles Bindings**: Builds Python bindings from the grammar source
-5. **Updates Configuration**: Adds the language to `codebase_rag/language_config.py`
-6. **Enables Parsing**: Makes the language immediately available for codebase analysis
+3. **Analyses Node Types**: Automatically identifies AST node types for functions/methods, classes/structs, modules/files, and function calls from `node-types.json`
+4. **Updates Configuration**: Adds the language to `codebase_rag/language_spec.py`
+5. **Enables Parsing**: Makes the language available for codebase analysis (the grammar itself is compiled on first use by the parser loader)
 
 ## Example: Adding C# Support
 
 ```bash
 $ cgr language add-grammar c-sharp
-Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
-Adding submodule from https://github.com/tree-sitter/tree-sitter-c-sharp...
-Successfully added submodule at grammars/tree-sitter-c-sharp
-Auto-detected language: c-sharp
-Auto-detected file extensions: ['cs']
-Auto-detected node types:
+Search: Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
+OK Submodule added at: grammars/tree-sitter-c-sharp
+Auto-detected extensions: ['.cs']
 Functions: ['destructor_declaration', 'method_declaration', 'constructor_declaration']
 Classes: ['struct_declaration', 'enum_declaration', 'interface_declaration', 'class_declaration']
 Modules: ['compilation_unit', 'file_scoped_namespace_declaration', 'namespace_declaration']
 Calls: ['invocation_expression']
-
-Language 'c-sharp' has been added to the configuration!
-Updated codebase_rag/language_config.py
+OK Language 'c-sharp' added
+Note: Updated codebase_rag/language_spec.py
 ```
 
 ## Managing Languages
@@ -74,11 +69,11 @@ cgr language remove-language <language-name>
 
 ## Language Configuration
 
-Each language is defined in `codebase_rag/language_config.py`:
+Each language is defined in the `LANGUAGE_SPECS` dict in `codebase_rag/language_spec.py`:
 
 ```python
-"language-name": LanguageConfig(
-    name="language-name",
+"language-name": LanguageSpec(
+    language="language-name",
     file_extensions=[".ext1", ".ext2"],
     function_node_types=["function_declaration", "method_declaration"],
     class_node_types=["class_declaration", "struct_declaration"],
@@ -101,4 +96,4 @@ cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-myl
 uv add tree-sitter@latest
 ```
 
-**Missing node types**: The tool automatically detects common node patterns, but you can manually adjust the configuration in `language_config.py` if needed.
+**Missing node types**: The tool automatically detects common node patterns, but you can manually adjust the configuration in `language_spec.py` if needed.

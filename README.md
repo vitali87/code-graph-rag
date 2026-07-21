@@ -98,7 +98,7 @@ See the [Architecture Overview](docs/architecture/overview.md) and [Graph Schema
 
 ## Supported Languages
 
-Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby has structural support (modules, functions, classes, and imports) through the pluggable ast-grep tier. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
 
 ## Installation
 
