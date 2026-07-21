@@ -708,6 +708,7 @@ def ingest_method(
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
     external_override_names: frozenset[str] = frozenset(),
+    root_annotated_overrides: bool = False,
     skip_cpp_artifact_check: bool = False,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
@@ -817,7 +818,9 @@ def ingest_method(
     # Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
     # subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
     # it, so the dead-code surfaces root this property.
-    if method_name in external_override_names:
+    if method_name in external_override_names or (
+        root_annotated_overrides and cs.DART_OVERRIDE_ANNOTATION in decorators
+    ):
         method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))

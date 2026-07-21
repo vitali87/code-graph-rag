@@ -1107,6 +1107,7 @@ class ClassIngestMixin:
         # the dead-code root property. Only unregistered (external) parents
         # contribute; first-party bases resolve via OVERRIDES edges.
         external_override_names: frozenset[str] = frozenset()
+        root_annotated_overrides = False
         if language == cs.SupportedLanguage.PYTHON:
             external_parents = [
                 p
@@ -1117,6 +1118,15 @@ class ClassIngestMixin:
                 external_override_names = external_stdlib_base_method_names(
                     external_parents
                 )
+        elif language == cs.SupportedLanguage.DART:
+            # An external base (a Flutter widget class) is not introspectable
+            # the way Python stdlib bases are, but Dart marks every override
+            # explicitly with @override: trust the annotation whenever any
+            # parent is unregistered.
+            root_annotated_overrides = any(
+                self.function_registry.get(p) is None
+                for p in self.class_inheritance.get(class_qn, [])
+            )
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
@@ -1156,6 +1166,7 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,
+                root_annotated_overrides=root_annotated_overrides,
             )
             if (
                 ingested_qn is not None
