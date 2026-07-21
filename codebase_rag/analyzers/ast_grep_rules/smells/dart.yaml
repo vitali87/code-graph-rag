@@ -25,4 +25,5 @@ rules:
     message: "Prefer null-aware operators over explicit == null checks scattered in code"
     rule:
       kind: equality_expression
-      regex: '(?:==\s*null|null\s*==)'
+      # Word boundaries so `null` matches only the literal, not `nullValue` etc.
+      regex: '(?:==\s*\bnull\b|\bnull\b\s*==)'

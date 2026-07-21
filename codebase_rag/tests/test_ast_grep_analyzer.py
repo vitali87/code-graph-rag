@@ -574,6 +574,12 @@ def test_multilang_security_rules_avoid_common_false_positives(
             "sqli_concat",
         ),
         ("u.dart", 'void f(x){ var label = "Select " + option; }\n', "sqli_concat"),
+        # `== nullValue` is a normal comparison, not an explicit null check
+        (
+            "n.dart",
+            "void f(x, nullValue){ if (x == nullValue) {} }\n",
+            "double_equals_null",
+        ),
         (
             "r.java",
             'class A { void f(){ executor.exec("Runtime configuration"); } }\n',
