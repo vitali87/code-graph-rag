@@ -82,3 +82,93 @@ class TestUrlTemplateMatch:
         from codebase_rag.parsers.endpoints import url_matches_template
 
         assert url_matches_template(url, template) is matches
+
+
+class TestEmitEndpoints:
+    def test_route_decorator_emits_endpoint_resource_and_exposes_edge(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.FUNCTION,
+            "user-service.api.get_user",
+            ['@app.get("/users/{id}")'],
+        )
+
+        ingestor.ensure_node_batch.assert_called_once_with(
+            cs.NodeLabel.RESOURCE,
+            {
+                "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+            },
+        )
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.FUNCTION, "qualified_name", "user-service.api.get_user"),
+            cs.RelationshipType.EXPOSES,
+            (
+                cs.NodeLabel.RESOURCE,
+                "qualified_name",
+                "resource::ENDPOINT::GET /users/{id}",
+            ),
+        )
+
+    def test_plain_decorators_emit_nothing(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor, cs.NodeLabel.FUNCTION, "proj.mod.fn", ["@staticmethod"]
+        )
+
+        ingestor.ensure_node_batch.assert_not_called()
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+
+class TestLinkEndpoints:
+    def test_network_urls_resolve_to_matching_endpoints(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        network_qn = "resource::NETWORK::http://user-service:8000/users/42"
+        endpoint_qn = "resource::ENDPOINT::GET /users/{id}"
+        other_endpoint_qn = "resource::ENDPOINT::POST /orders"
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {"qualified_name": network_qn, "name": "http://user-service:8000/users/42", "kind": "NETWORK"},
+            {"qualified_name": endpoint_qn, "name": "GET /users/{id}", "kind": "ENDPOINT"},
+            {"qualified_name": other_endpoint_qn, "name": "POST /orders", "kind": "ENDPOINT"},
+        ]
+
+        created = link_endpoints(ingestor)
+
+        assert created == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.RESOURCE, "qualified_name", network_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
+        )
+
+    def test_dynamic_urls_do_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {"qualified_name": "resource::NETWORK::<dynamic>", "name": "<dynamic>", "kind": "NETWORK"},
+            {"qualified_name": "resource::ENDPOINT::GET /users/{id}", "name": "GET /users/{id}", "kind": "ENDPOINT"},
+        ]
+
+        assert link_endpoints(ingestor) == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
