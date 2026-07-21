@@ -24,6 +24,11 @@ TS_DART_LABEL = "label"
 # [condition, consequence, alternative], not [body, condition, alternative].
 TS_DART_LIST_LITERAL = "list_literal"
 TS_DART_SET_OR_MAP_LITERAL = "set_or_map_literal"
+# Inside a set_or_map_literal: a MAP entry is a `pair` whose `value` field
+# holds the stored expression; `type_arguments` (`<String, T>{...}`) carry
+# types, never values.
+TS_DART_PAIR = "pair"
+TS_DART_TYPE_ARGUMENTS = "type_arguments"
 TS_DART_CASCADE_SECTION = "cascade_section"
 TS_DART_CASCADE_SELECTOR = "cascade_selector"
 TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR = "unconditional_assignable_selector"

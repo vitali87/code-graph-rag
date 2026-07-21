@@ -16,6 +16,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 REFERENCES = cs.RelationshipType.REFERENCES.value
+CALLS = cs.RelationshipType.CALLS.value
 
 
 def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
@@ -62,6 +63,9 @@ def test_positional_tearoff_to_external_callee_is_referenced(
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Controller.start", REFERENCES, ".Controller.tick"), rels
     assert not _has(rels, ".Controller.start", REFERENCES, ".Controller.unused")
+    # A tear-off hands the method over without invoking it; it must never
+    # double as a CALLS edge.
+    assert not _has(rels, ".Controller.start", CALLS, ".Controller.tick")
 
 
 def test_named_argument_tearoff_is_referenced(tmp_path: Path) -> None:
@@ -105,9 +109,9 @@ def test_conditional_tearoff_references_both_branches(tmp_path: Path) -> None:
             "class Selector {\n"
             "  void goRight() {}\n"
             "  void goLeft() {}\n"
-            "  bool isRight() => true;\n"
-            "  void build(bool flag) {\n"
-            "    render(onUpdate: flag ? goRight : goLeft);\n"
+            "  bool get isRight => true;\n"
+            "  void build() {\n"
+            "    render(onUpdate: isRight ? goRight : goLeft);\n"
             "  }\n"
             "}\n"
         ),
@@ -115,6 +119,9 @@ def test_conditional_tearoff_references_both_branches(tmp_path: Path) -> None:
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goRight"), rels
     assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goLeft"), rels
+    # The condition is only truthiness-tested, never handed over; expanding
+    # it would resurface the Python operand order on Dart's ternary.
+    assert not _has(rels, ".Selector.build", REFERENCES, ".Selector.isRight")
 
 
 def test_list_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
@@ -132,3 +139,30 @@ def test_list_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Registry.register", REFERENCES, ".Registry.first"), rels
     assert _has(rels, ".Registry.register", REFERENCES, ".Registry.second"), rels
+
+
+def test_map_and_set_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
+    # A dispatch table (`{"tap": onTap}`) stores its handlers in `pair`
+    # nodes whose value field holds the tear-off; a set literal exposes them
+    # directly. A typed map inserts a `type_arguments` child that carries no
+    # values at all.
+    files = {
+        "app.dart": (
+            "class Table {\n"
+            "  void onTap() {}\n"
+            "  void onDrag() {}\n"
+            "  void onSetA() {}\n"
+            "  void onTyped() {}\n"
+            "  void register() {\n"
+            '    addAll(handlers: {"tap": onTap, "drag": onDrag});\n'
+            "    addSet({onSetA});\n"
+            '    addTyped(<String, Function>{"t": onTyped});\n'
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, ".Table.register", REFERENCES, ".Table.onTap"), rels
+    assert _has(rels, ".Table.register", REFERENCES, ".Table.onDrag"), rels
+    assert _has(rels, ".Table.register", REFERENCES, ".Table.onSetA"), rels
+    assert _has(rels, ".Table.register", REFERENCES, ".Table.onTyped"), rels
