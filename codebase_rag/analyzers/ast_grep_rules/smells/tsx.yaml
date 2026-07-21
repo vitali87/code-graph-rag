@@ -7,9 +7,11 @@ rules:
     rule:
       kind: variable_declaration
   - id: loose_equality
-    message: "Loose equality (==); prefer strict ==="
+    message: "Loose equality/inequality (== or !=); prefer === / !=="
     rule:
-      pattern: "$A == $B"
+      any:
+        - pattern: "$A == $B"
+        - pattern: "$A != $B"
   - id: console_log
     message: "Leftover console.log"
     rule:

@@ -154,6 +154,100 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
     assert ing.rels == []
 
 
+def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
+    # (H) `!=` coerces types exactly like `==`, so the loose_equality smell must
+    # (H) catch it too; the strict `===`/`!==` forms must stay clean.
+    from codebase_rag.analyzers import FindingAnalyzer
+
+    src = tmp_path / "eq.js"
+    src.write_text(
+        "const a = (x === y);\n"
+        "const b = (x !== y);\n"
+        "const c = (x == y);\n"
+        "const d = (x != y);\n",
+        encoding="utf-8",
+    )
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {"proj.eq": src}
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for label, p in ing.nodes
+        if label == CODE_SMELL and p[cs.KEY_NAME] == "loose_equality"
+    )
+    assert lines == [3, 4], lines
+
+
+def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
+    # (H) Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
+    # (H) ast-grep's bundled grammar silently matches nothing (the f_string class of
+    # (H) bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
+    # (H) future typo that zeroes a rule fails here instead of shipping dead.
+    from codebase_rag.analyzers import FindingAnalyzer
+    from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
+
+    py = (
+        "from mod import *\n"
+        "class Config:\n    _instance = None\n"
+        "class Ctx:\n    def __enter__(self): return self\n"
+        "    def __exit__(self, *a): pass\n"
+        "class It:\n    def __iter__(self): return self\n"
+        "    def __next__(self): raise StopIteration\n"
+        "from abc import ABC\n"
+        "class Base(ABC): pass\n"
+        "def make_widget(): return 1\n"
+        "def bad(x=[], y={}):\n"
+        "    global COUNTER\n"
+        "    try: pass\n    except: pass\n"
+        "    try: pass\n    except Exception: pass\n"
+        "def sec(db, u):\n"
+        '    db.execute("SELECT " + u)\n'
+        '    db.execute(f"SELECT {u}")\n'
+        '    password = "supersecretvalue123"\n'
+        "    eval(u); exec(u)\n"
+        "    import os, subprocess, yaml, pickle\n"
+        '    os.system("rm " + u)\n'
+        "    subprocess.run(u, shell=True)\n"
+        "    yaml.load(u); pickle.loads(u)\n"
+    )
+    js = (
+        "class A { getInstance() { return 1; } }\n"
+        "const p = new Promise((res) => res(1));\n"
+        "function createThing() { return {}; }\n"
+        "var legacy = 1;\n"
+        "if (a == b) { doThing(); }\n"
+        'console.log("hi");\n'
+        "debugger;\n"
+        "el.innerHTML = userInput;\n"
+        "eval(userInput);\n"
+        "document.write(userInput);\n"
+        'const password = "supersecretvalue123";\n'
+    )
+    # (H) Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
+    # (H) share the javascript grammar and rule set, so one fixture covers them.
+    by_grammar = {"python": py, "javascript": js, "typescript": js, "tsx": js}
+    for ext, lang in load_finding_rules().items():
+        # (H) A new language with rules but no fixture would silently skip firing
+        # (H) coverage; force a fixture mapping to exist for every loaded grammar.
+        assert lang.ast_grep_id in by_grammar, (
+            f"{ext}: no fixture for {lang.ast_grep_id}"
+        )
+        ids = [r.rule_id for r in lang.rules]
+        # (H) The set comparison below is only sound if ids are unique per ext; a
+        # (H) duplicate id could let one rule fire while its twin stays dead.
+        assert len(ids) == len(set(ids)), f"{ext} duplicate rule ids: {ids}"
+        stem = ext.replace(".", "")
+        f = tmp_path / f"probe{stem}{ext}"
+        f.write_text(by_grammar[lang.ast_grep_id], encoding="utf-8")
+        ing = _FakeIngestor()
+        FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+            {f"probe{stem}": f}
+        )
+        fired = {p[cs.KEY_NAME] for _label, p in ing.nodes}
+        assert set(ids) <= fired, f"{ext} dead rules: {sorted(set(ids) - fired)}"
+
+
 def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
     # (H) two matches of one rule on a single line must not collapse into one
     # (H) node; the qualified_name has to distinguish them by column.
