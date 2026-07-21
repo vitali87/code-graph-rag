@@ -1,3 +1,5 @@
+"""Orchestrate parsing a repository into graph nodes and edges and ingest them."""
+
 import hashlib
 import json
 import os
@@ -486,6 +488,13 @@ def _touch_empty_json(cache_path: Path) -> None:
 
 
 class GraphUpdater:
+    """Drive a full or incremental ingest of a repository into the graph.
+
+    Parses each supported source file into definitions, imports, and calls,
+    resolves them across files, and streams the resulting nodes and edges to
+    the configured ingestor.
+    """
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -864,6 +873,7 @@ class GraphUpdater:
         )
 
     def run(self, force: bool = False) -> None:
+        """Ingest the repository; ``force`` rebuilds instead of updating incrementally."""
         py_engine = self.factory.type_inference._python_type_inference
         if py_engine is not None:
             py_engine._available_classes_cache.clear()
