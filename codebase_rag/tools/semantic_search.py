@@ -43,7 +43,9 @@ def semantic_code_search(
 
         query_embedding = embed_code(query)
 
-        search_results = search_embeddings(query_embedding, top_k=top_k, project=project)
+        search_results = search_embeddings(
+            query_embedding, top_k=top_k, project=project
+        )
 
         if not search_results:
             logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))

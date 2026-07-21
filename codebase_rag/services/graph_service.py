@@ -46,7 +46,6 @@ from ..cypher_queries import (
     build_merge_relationship_query,
     wrap_with_unwind,
 )
-from ..utils.path_utils import project_roots_from_rows
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -58,6 +57,7 @@ from ..types_defs import (
     RelBatchRow,
     ResultRow,
 )
+from ..utils.path_utils import project_roots_from_rows
 
 
 def _apply_memory_limit(query: str, mb: int) -> str:

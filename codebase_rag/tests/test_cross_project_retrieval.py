@@ -269,9 +269,7 @@ class TestBoundedAbsolutePathReads:
     """A recorded absolute_path is only honored inside its project's indexed
     root; unknown roots (legacy graphs) keep the permissive behavior."""
 
-    def _ingestor(
-        self, target: Path, roots: dict[str, str | None]
-    ) -> MagicMock:
+    def _ingestor(self, target: Path, roots: dict[str, str | None]) -> MagicMock:
         node_rows = [
             {
                 "name": "get_user",
@@ -282,9 +280,7 @@ class TestBoundedAbsolutePathReads:
                 "docstring": None,
             }
         ]
-        roots_rows = [
-            {"name": name, "root_path": root} for name, root in roots.items()
-        ]
+        roots_rows = [{"name": name, "root_path": root} for name, root in roots.items()]
         ingestor = MagicMock()
         ingestor.fetch_all.side_effect = lambda query, params=None: (
             roots_rows if query == CYPHER_LIST_PROJECTS else node_rows
@@ -306,9 +302,7 @@ class TestBoundedAbsolutePathReads:
         )
         retriever = CodeRetriever(str(current_repo), ingestor)
 
-        result = await retriever.find_code_snippet(
-            "user-service.src.handlers.get_user"
-        )
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
 
         assert result.found is False
 
@@ -327,9 +321,7 @@ class TestBoundedAbsolutePathReads:
         )
         retriever = CodeRetriever(str(current_repo), ingestor)
 
-        result = await retriever.find_code_snippet(
-            "user-service.src.handlers.get_user"
-        )
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
 
         assert result.found is True
         assert result.source_code == _SOURCE
@@ -347,9 +339,7 @@ class TestBoundedAbsolutePathReads:
         ingestor = self._ingestor(target, {})
         retriever = CodeRetriever(str(current_repo), ingestor)
 
-        result = await retriever.find_code_snippet(
-            "user-service.src.handlers.get_user"
-        )
+        result = await retriever.find_code_snippet("user-service.src.handlers.get_user")
 
         assert result.found is True
 

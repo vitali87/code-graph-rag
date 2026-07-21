@@ -30,6 +30,7 @@ def _filter_by_project(
     ]
     return matching[:top_k]
 
+
 _CLIENT: Any | None = None
 _CLIENT_BACKEND: VectorStoreBackend | None = None
 
@@ -336,9 +337,7 @@ class QdrantVectorStore:
         project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.QDRANT_TOP_K
-        fetch_k = (
-            effective_top_k * _PROJECT_OVERFETCH if project else effective_top_k
-        )
+        fetch_k = effective_top_k * _PROJECT_OVERFETCH if project else effective_top_k
         try:
             client = get_qdrant_client()
             result = client.query_points(
@@ -444,13 +443,9 @@ class MilvusVectorStore:
         project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.MILVUS_TOP_K
-        fetch_k = (
-            effective_top_k * _PROJECT_OVERFETCH if project else effective_top_k
-        )
+        fetch_k = effective_top_k * _PROJECT_OVERFETCH if project else effective_top_k
         output_fields = (
-            [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME]
-            if project
-            else [PAYLOAD_NODE_ID]
+            [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME] if project else [PAYLOAD_NODE_ID]
         )
         try:
             client = get_milvus_client()
@@ -484,9 +479,7 @@ class MilvusVectorStore:
 
 def _milvus_hit_qualified_name(hit: dict[str, Any]) -> str | None:
     entity = hit.get("entity")
-    if isinstance(entity, dict) and isinstance(
-        entity.get(PAYLOAD_QUALIFIED_NAME), str
-    ):
+    if isinstance(entity, dict) and isinstance(entity.get(PAYLOAD_QUALIFIED_NAME), str):
         return entity[PAYLOAD_QUALIFIED_NAME]
     return None
 
