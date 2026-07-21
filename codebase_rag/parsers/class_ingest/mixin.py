@@ -432,6 +432,10 @@ class ClassIngestMixin:
         self._deferred_inherits = []
         emitted = 0
         dart_external_children: set[str] = set()
+        # `implements` targets never enter class_inheritance, so the override
+        # ancestry walk needs the resolved first-party IMPLEMENTS parents
+        # collected here or a registered interface's method is wrongly rooted.
+        dart_implements: dict[str, list[str]] = {}
         for entry in deferred:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
@@ -472,6 +476,8 @@ class ClassIngestMixin:
                 self.interface_implementers.setdefault(parent_qn, set()).add(
                     entry.child_qn
                 )
+                if is_dart and not is_external:
+                    dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
             else:
                 bases = self.class_inheritance.get(entry.child_qn)
                 if bases is not None and entry.base_index < len(bases):
@@ -486,10 +492,14 @@ class ClassIngestMixin:
                     parent_label=external_label,
                 )
             emitted += 1
-        self._flag_dart_external_overrides(dart_external_children)
+        self._flag_dart_external_overrides(dart_external_children, dart_implements)
         return emitted
 
-    def _flag_dart_external_overrides(self, external_children: set[str]) -> None:
+    def _flag_dart_external_overrides(
+        self,
+        external_children: set[str],
+        implements_map: dict[str, list[str]],
+    ) -> None:
         # A Dart @override on a class with external ancestry roots the
         # dead-code walk (the framework invokes it), UNLESS a registered
         # ancestor defines the name, in which case the override resolves via
@@ -500,7 +510,9 @@ class ClassIngestMixin:
             for method_qn, method_name in self.dart_annotated_overrides.get(
                 child_qn, ()
             ):
-                if self._registered_ancestor_defines(child_qn, method_name):
+                if self._registered_ancestor_defines(
+                    child_qn, method_name, implements_map
+                ):
                     continue
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.METHOD,
@@ -510,9 +522,15 @@ class ClassIngestMixin:
                     },
                 )
 
-    def _registered_ancestor_defines(self, class_qn: str, name: str) -> bool:
+    def _registered_ancestor_defines(
+        self,
+        class_qn: str,
+        name: str,
+        implements_map: dict[str, list[str]],
+    ) -> bool:
         seen: set[str] = set()
         stack = list(self.class_inheritance.get(class_qn, []))
+        stack.extend(implements_map.get(class_qn, []))
         while stack:
             ancestor = stack.pop()
             if ancestor in seen:
@@ -526,6 +544,7 @@ class ClassIngestMixin:
             ):
                 return True
             stack.extend(self.class_inheritance.get(ancestor, []))
+            stack.extend(implements_map.get(ancestor, []))
         return False
 
     def _resolve_deferred_parent_qn(
