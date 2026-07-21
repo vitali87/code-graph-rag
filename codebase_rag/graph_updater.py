@@ -1098,10 +1098,15 @@ class GraphUpdater:
         fetch_all = getattr(self.ingestor, "fetch_all", None)
         if fetch_all is None:
             return
-        rows = fetch_all(
-            cs.CYPHER_COUNT_PROJECT_MODULES,
-            {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
-        )
+        try:
+            rows = fetch_all(
+                cs.CYPHER_COUNT_PROJECT_MODULES,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            # A graph that cannot answer (connection refused, a sink that
+            # rejects reads) cannot invalidate the cache: fail open.
+            return
         try:
             # count() always yields exactly one row; anything else means the
             # sink did not really answer and cannot invalidate the cache.
