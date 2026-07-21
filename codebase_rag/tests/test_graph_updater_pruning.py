@@ -91,6 +91,29 @@ class TestPruneOrphanNodes:
         ]
         assert len(external_calls) == 1
 
+    def test_prune_removes_unanchored_resource_nodes(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A rebuild that drops a route or literal URL leaves its shared
+        # (prefix-less) Resource node behind with no anchoring code edge.
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        updater._prune_orphan_nodes()
+
+        resource_calls = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_UNANCHORED_RESOURCES
+        ]
+        assert len(resource_calls) == 1
+
     def test_prune_skips_other_projects(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:

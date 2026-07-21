@@ -146,6 +146,56 @@ class TestDeleteProject:
 
         assert memgraph_ingestor.list_projects() == []
 
+    def test_delete_project_drops_unanchored_shared_nodes(
+        self,
+        memgraph_ingestor: MemgraphIngestor,
+        project1_path: Path,
+        project2_path: Path,
+    ) -> None:
+        # Shared prefix-less nodes (Resource, ExternalModule) hang off code
+        # nodes from any project; deleting a project must drop the ones it
+        # alone anchored, along with derived RESOLVES_TO edges, while nodes
+        # still anchored by another project survive.
+        index_project(memgraph_ingestor, project1_path)
+        index_project(memgraph_ingestor, project2_path)
+        memgraph_ingestor.execute_write(
+            "MATCH (f) WHERE f.qualified_name = 'project1.main.hello' "
+            "MERGE (e:Resource {qualified_name: 'resource::ENDPOINT::GET /users/{id}', "
+            "name: 'GET /users/{id}', kind: 'ENDPOINT'}) "
+            "MERGE (f)-[:EXPOSES]->(e)"
+        )
+        memgraph_ingestor.execute_write(
+            "MATCH (g) WHERE g.qualified_name = 'project2.app.greet' "
+            "MERGE (n:Resource {qualified_name: 'resource::NETWORK::http://svc/users/1', "
+            "name: 'http://svc/users/1', kind: 'NETWORK'}) "
+            "MERGE (g)-[:READS_FROM]->(n)"
+        )
+        memgraph_ingestor.execute_write(
+            "MATCH (n:Resource {kind: 'NETWORK'}), (e:Resource {kind: 'ENDPOINT'}) "
+            "MERGE (n)-[:RESOLVES_TO]->(e)"
+        )
+        memgraph_ingestor.execute_write(
+            "MATCH (m:Module) WHERE m.qualified_name = 'project1.main' "
+            "MERGE (x:ExternalModule {qualified_name: 'legacy_sdk', "
+            "name: 'legacy_sdk', path: 'legacy_sdk'}) "
+            "MERGE (m)-[:IMPORTS]->(x)"
+        )
+
+        memgraph_ingestor.delete_project("project1")
+
+        counts = memgraph_ingestor.fetch_all(
+            "OPTIONAL MATCH (e:Resource {kind: 'ENDPOINT'}) "
+            "OPTIONAL MATCH ()-[l:RESOLVES_TO]->() "
+            "OPTIONAL MATCH (n:Resource {kind: 'NETWORK'}) "
+            "OPTIONAL MATCH (x:ExternalModule) "
+            "RETURN count(DISTINCT e) AS endpoints, count(DISTINCT l) AS links, "
+            "count(DISTINCT n) AS networks, count(DISTINCT x) AS externals"
+        )[0]
+        assert counts["endpoints"] == 0
+        assert counts["links"] == 0
+        assert counts["networks"] == 1
+        assert counts["externals"] == 0
+
 
 class TestMultiProjectIsolation:
     def test_reindex_only_affects_target_project(
