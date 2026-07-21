@@ -174,6 +174,35 @@ def test_same_line_findings_get_distinct_ids(tmp_path: Path) -> None:
     assert len(set(qns)) == 2, qns
 
 
+def test_hardcoded_secret_ignores_non_secret_literals(tmp_path: Path) -> None:
+    # (H) empty strings, format/message templates, SCREAMING_SNAKE env-var-name
+    # (H) literals and URLs are not secrets even when the variable is credential
+    # (H) named; only a real opaque secret literal should trip hardcoded_secret.
+    # (H) AWS-key shapes (caps+digits, no underscore) must still be caught.
+    from codebase_rag.analyzers import FindingAnalyzer
+
+    src = tmp_path / "s.py"
+    src.write_text(
+        'token = ""\n'
+        'TOKEN_COUNT_FAILED = "Context token count failed: {error}"\n'
+        'ENV_OPENAI_API_KEY = "OPENAI_API_KEY"\n'
+        'API_URL_TOKEN = "https://api.example.com/v1/x"\n'
+        'API_KEY = "sk-abcd1234efgh5678"\n'
+        'AWS_SECRET = "AKIAIOSFODNN7EXAMPLE"\n',
+        encoding="utf-8",
+    )
+    ing = _FakeIngestor()
+    FindingAnalyzer(ing, tmp_path, resolve_capture(["+findings"])).analyze(
+        {"proj.s": src}
+    )
+    secrets = sorted(
+        p[cs.KEY_START_LINE]
+        for label, p in ing.nodes
+        if label == SECURITY_ISSUE and p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert secrets == [5, 6], secrets
+
+
 def test_tsx_files_get_findings(tmp_path: Path) -> None:
     from codebase_rag.analyzers import FindingAnalyzer
     from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules

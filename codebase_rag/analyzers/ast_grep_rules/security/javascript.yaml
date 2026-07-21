@@ -20,4 +20,13 @@ rules:
       kind: variable_declarator
       all:
         - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
-        - has: { field: value, kind: string }
+        - has:
+            field: value
+            all:
+              - kind: string
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '[\s{}%]'
+                    - regex: '://'
+                    - regex: '^[''"][A-Z0-9]+(_[A-Z0-9]+)+[''"]$'

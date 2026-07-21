@@ -16,12 +16,26 @@ rules:
         - has: { pattern: "execute", stopBy: end }
         - has: { kind: string, regex: '^f', stopBy: end }
   - id: hardcoded_secret
+    # Value must be a non-trivial opaque literal: >=8 chars, no whitespace,
+    # not a {}/%-format template, not a URL, not a SCREAMING_SNAKE env-var name.
+    # Ceiling: without entropy scoring, lowercase identifier/word literals
+    # (e.g. "cl100k_base", "x-api-key") still slip through; that residual is
+    # the known limit of regex-only secret detection, not a defect.
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
       kind: assignment
       all:
         - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
-        - has: { field: right, kind: string }
+        - has:
+            field: right
+            all:
+              - kind: string
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '[\s{}%]'
+                    - regex: '://'
+                    - regex: '^[''"][A-Z0-9]+(_[A-Z0-9]+)+[''"]$'
   - id: eval_use
     message: "eval() executes arbitrary code"
     rule:
