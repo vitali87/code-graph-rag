@@ -42,6 +42,7 @@ from .parsers.endpoints import link_endpoints
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
+from .services.resource_cleanup import prune_unanchored_resources
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
@@ -1850,9 +1851,9 @@ class GraphUpdater:
         # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
 
-        # Drop shared Resource nodes left without any anchoring code edge,
-        # e.g. an endpoint whose route changed on an incremental rebuild.
-        self.ingestor.execute_write(cs.CYPHER_DELETE_UNANCHORED_RESOURCES)
+        # Drop shared Resource nodes whose component no longer reaches any
+        # code node, e.g. an endpoint whose route changed on a rebuild.
+        prune_unanchored_resources(self.ingestor)
 
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)

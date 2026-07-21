@@ -18,7 +18,6 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
-    CYPHER_DELETE_UNANCHORED_RESOURCES,
     CYPHER_MEMORY_LIMIT_SUFFIX,
     CYPHER_MEMORY_LIMIT_TOKEN,
     CYPHER_SEMICOLON,
@@ -60,6 +59,7 @@ from ..types_defs import (
     ResultRow,
 )
 from ..utils.path_utils import project_roots_from_rows
+from .resource_cleanup import prune_unanchored_resources
 
 
 def _apply_memory_limit(query: str, mb: int) -> str:
@@ -282,7 +282,7 @@ class MemgraphIngestor:
         self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
-        self._execute_query(CYPHER_DELETE_UNANCHORED_RESOURCES)
+        prune_unanchored_resources(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 

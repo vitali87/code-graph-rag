@@ -348,14 +348,6 @@ CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
-# Removes shared (prefix-less) Resource nodes that no code node points at
-# anymore. Resource-to-Resource edges (RESOLVES_TO, FLOWS_TO) are derived
-# and must not keep a node alive on their own.
-CYPHER_DELETE_UNANCHORED_RESOURCES = (
-    "MATCH (r:Resource) OPTIONAL MATCH (s)-[]->(r) "
-    "WITH r, sum(CASE WHEN s IS NULL OR s:Resource THEN 0 ELSE 1 END) AS anchors "
-    "WHERE anchors = 0 DETACH DELETE r"
-)
 
 # Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (

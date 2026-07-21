@@ -59,6 +59,7 @@ class TestPruneOrphanNodes:
                 },
             ],
             [],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -81,7 +82,7 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
         updater._prune_orphan_nodes()
 
         external_calls = [
@@ -104,15 +105,13 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.side_effect = [[], [], []]
-        updater._prune_orphan_nodes()
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
+        with patch(
+            "codebase_rag.graph_updater.prune_unanchored_resources"
+        ) as prune_resources:
+            updater._prune_orphan_nodes()
 
-        resource_calls = [
-            c
-            for c in mock_ingestor.execute_write.call_args_list
-            if c.args[0] == cs.CYPHER_DELETE_UNANCHORED_RESOURCES
-        ]
-        assert len(resource_calls) == 1
+        prune_resources.assert_called_once_with(mock_ingestor)
 
     def test_prune_skips_other_projects(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -129,6 +128,7 @@ class TestPruneOrphanNodes:
             [{"path": "app.py", "absolute_path": "/other/project/app.py"}],
             [{"path": "app.py", "qualified_name": "other_project.app"}],
             [{"path": "data", "absolute_path": "/other/project/data"}],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -157,6 +157,7 @@ class TestPruneOrphanNodes:
             [{"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"}],
             [{"path": "module_a.py", "qualified_name": f"{project_name}.module_a"}],
             [{"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"}],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -179,7 +180,7 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
         updater._prune_orphan_nodes()
 
         path_deletes = [
@@ -208,6 +209,7 @@ class TestPruneOrphanNodes:
                 {"path": None, "qualified_name": f"{project_name}.something"},
                 {"path": "module_a.py", "qualified_name": f"{project_name}.module_a"},
             ],
+            [],
             [],
         ]
         updater._prune_orphan_nodes()
@@ -252,6 +254,7 @@ class TestPruneOrphanNodes:
                 {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
                 {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
             ],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -293,6 +296,7 @@ class TestPruneOrphanNodes:
                     "qualified_name": f"{project_name}.src.clipboard.macos",
                 },
             ],
+            [],
             [],
         ]
         updater._prune_orphan_nodes()
