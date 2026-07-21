@@ -696,7 +696,7 @@ _FINDING_NODE_PROPS = (
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
+    NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
     NodeSchema(
         NodeLabel.PACKAGE,
         "{qualified_name: string, name: string, path: string, absolute_path: string}",
