@@ -60,6 +60,12 @@ class CodeRetriever:
                 )
 
             full_path = self.project_root / file_path_str
+            if not full_path.is_file():
+                # The node may belong to another indexed project; its stored
+                # absolute_path is the only valid location then (issue #425).
+                absolute_path_str = res.get("absolute_path")
+                if absolute_path_str and Path(absolute_path_str).is_file():
+                    full_path = Path(absolute_path_str)
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
