@@ -24,6 +24,7 @@ class ResourceKind(StrEnum):
     STDERR = "STDERR"
     ENV = "ENV"
     SOCKET = "SOCKET"
+    ENDPOINT = "ENDPOINT"
 
 
 class IODirection(StrEnum):

@@ -900,6 +900,16 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
     ),
     RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.EXPOSES,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RESOURCE,),
+        RelationshipType.RESOLVES_TO,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.IMPLEMENTS_PATTERN,
         (NodeLabel.PATTERN,),

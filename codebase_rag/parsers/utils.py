@@ -23,6 +23,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from .endpoints import emit_endpoints
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
@@ -821,6 +822,9 @@ def ingest_method(
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+    emit_endpoints(
+        ingestor, cs.NodeLabel.METHOD, method_qn, method_props.get(cs.KEY_DECORATORS)
+    )
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
@@ -952,6 +956,12 @@ def ingest_exported_function(
         )
     )
     ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
+    emit_endpoints(
+        ingestor,
+        cs.NodeLabel.FUNCTION,
+        function_qn,
+        function_props.get(cs.KEY_DECORATORS),
+    )
     function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
     ingestor.ensure_relationship_batch(

@@ -57,6 +57,34 @@ single project: the agent's `semantic_search` tool accepts an optional
 project name and then only returns matches whose qualified names belong to
 that project. Without it, results are ranked across every indexed project.
 
+## Tracing calls between services
+
+With the `io` capture group enabled, a route handler such as
+`@app.get("/users/{id}")` becomes an endpoint resource
+(`resource::ENDPOINT::GET /users/{id}`) connected to its handler by an
+`EXPOSES` edge, and a client call like
+`requests.get("http://user-service:8000/users/42")` becomes a network
+resource connected to its caller by `READS_FROM`/`WRITES_TO`. After each
+indexing run, literal client URLs are matched against the endpoint path
+templates in the graph (`{id}` matches one path segment) and linked with
+`RESOLVES_TO`, so a request in one service traces to the handler in
+another:
+
+```bash
+cgr start --repo-path ~/services/user-service --update-graph --capture io
+cgr start --repo-path ~/services/order-service --update-graph --capture io
+```
+
+```cypher
+MATCH (caller)-[:READS_FROM|WRITES_TO]->(:Resource {kind: 'NETWORK'})
+      -[:RESOLVES_TO]->(:Resource {kind: 'ENDPOINT'})<-[:EXPOSES]-(handler)
+RETURN caller.qualified_name, handler.qualified_name
+```
+
+Matching uses the URL path only: dynamic (non-literal) URLs and requests
+whose paths match no known template stay unlinked. FastAPI and Flask style
+route decorators are recognized.
+
 ## Housekeeping
 
 ```bash
