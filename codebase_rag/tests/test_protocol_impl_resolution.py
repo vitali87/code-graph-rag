@@ -1,10 +1,8 @@
-# L3 finding from the evals/ harness: a call on a parameter typed as a
-# Protocol (function_registry.get() where function_registry is a
-# FunctionRegistryTrieProtocol) is traced to the concrete implementer
-# (FunctionRegistryTrie), not the Protocol stub. cgr infers the Protocol
-# type but stops at the stub; the XxxProtocol -> Xxx naming convention picks
-# the real implementer and disambiguates it from other structural conformers
-# such as a test mock.
+# L3 finding from the evals/ harness: a call on a parameter typed as a Protocol
+# (function_registry.get() where function_registry is a FunctionRegistryTrieProtocol)
+# is traced to the concrete implementer (FunctionRegistryTrie), not the stub. cgr
+# infers the Protocol type but stops there; the XxxProtocol -> Xxx naming convention
+# picks the real implementer, disambiguating it from other conformers like a test mock.
 from __future__ import annotations
 
 from pathlib import Path

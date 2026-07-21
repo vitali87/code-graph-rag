@@ -68,9 +68,9 @@ def test_typed_receiver_does_not_fan_out(tmp_path: Path) -> None:
 
 def test_default_type_arg_is_not_collected_as_template_param() -> None:
     # A template parameter's DEFAULT type (`typename SAX = Real`) is a concrete type,
-    # NOT a template parameter -- collecting it would put `Real` in the template-param
+    # NOT a template parameter; collecting it would put `Real` in the template-param
     # set and fan a real `Real r; r.work()` out to unrelated implementers. Only the
-    # parameter names (SAX, T, Ts) are collected, across default / plain / variadic
+    # parameter names (SAX, T, Ts) are collected across default, plain and variadic
     # forms; a non-type value param (`int N`) contributes no type name.
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp import CppTypeInferenceEngine

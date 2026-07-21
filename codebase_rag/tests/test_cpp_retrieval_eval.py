@@ -17,10 +17,10 @@ needs_clang = pytest.mark.skipif(
 
 def _make_project(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    # No #includes: the fixture parses cleanly regardless of whether an SDK
-    # libc++ is discoverable, so coverage is deterministic in any CI. All decls
-    # live inside a namespace, exercising the namespaced caller-qn path (free
-    # functions and an inline method) that the libclang oracle grades cgr against.
+    # No #includes: the fixture parses cleanly whether or not an SDK libc++ is
+    # discoverable, so coverage is deterministic in any CI. All decls live inside a
+    # namespace, exercising the namespaced caller-qn path (free functions and an
+    # inline method) that the libclang oracle grades cgr against.
     (root / "lib.cc").write_text(
         "namespace demo {\n"
         "int add(int a, int b) { return a + b; }\n"

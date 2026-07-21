@@ -17,9 +17,9 @@ def _make_file(root: Path) -> None:
 def test_java_method_caller_qn_carries_signature(tmp_path: Path) -> None:
     # The definition pass registers a Java method node with its parameter
     # signature (demo.T.T.caller()), but the call pass built the caller qn
-    # without it (demo.T.T.caller) -> the CALLS from-endpoint matched no node
+    # without it (demo.T.T.caller), so the CALLS from-endpoint matched no node
     # and the edge would not attach in Memgraph. The caller qn must carry the
-    # same signature as the registered Method node.
+    # signature of the registered Method node.
     _make_file(tmp_path)
     ingestor = _capture(tmp_path, "demo")
     node_qns = {str(uid) for (_label, uid) in ingestor.nodes}

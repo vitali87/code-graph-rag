@@ -19,10 +19,10 @@ def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
 
 
 def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
-    # The AST cache is bounded and evicts on large repos. Pass 3 must still
-    # emit calls for every parsed file, not just cache survivors. With the
-    # cache pinned to one entry, all but the last-parsed file are evicted
-    # during Pass 2; every module's intra-file call must still be recorded.
+    # The bounded AST cache evicts on large repos, but Pass 3 must still emit
+    # calls for every parsed file, not just cache survivors. With the cache
+    # pinned to one entry, all but the last file evict during Pass 2, yet every
+    # module's intra-file call must still be recorded.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -56,12 +56,11 @@ def test_calls_survive_ast_cache_eviction(tmp_path: Path) -> None:
 
 
 def test_factory_return_inference_survives_ast_cache_eviction(tmp_path: Path) -> None:
-    # Type inference reads OTHER modules' ASTs (factory return statements,
-    # class bodies, self-assignment maps). On a repo larger than
-    # CACHE_MAX_ENTRIES the factory's module is often evicted by the time
-    # the caller's calls are processed (django: urls/resolvers.py evicted
-    # before contrib/admindocs/views.py resolves get_resolver()); the
-    # lookup must reload from disk, not silently drop the inferred type.
+    # Type inference reads OTHER modules' ASTs (factory returns, class bodies,
+    # self-assignment maps). On a repo larger than CACHE_MAX_ENTRIES the
+    # factory's module is often evicted before the caller resolves (django:
+    # urls/resolvers.py evicted before contrib/admindocs/views.py resolves
+    # get_resolver()); the lookup must reload from disk, not drop the type.
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")

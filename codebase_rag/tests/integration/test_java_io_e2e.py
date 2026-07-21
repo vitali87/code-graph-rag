@@ -86,7 +86,7 @@ def test_java_local_shadows_system(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # A parameter named `System` shadows the java.lang.System global, so
-    # System.getenv here is not the stdlib sink -- no ENV read may be emitted.
+    # System.getenv here is not the stdlib sink; no ENV read may be emitted.
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -185,7 +185,7 @@ def test_java_multi_declarator_second_init_shadowed(
 ) -> None:
     # In `Object System = make(), x = System.getenv(...)` the first declarator binds
     # `System`, which is in scope for the second declarator's initializer (JLS 6.3),
-    # so System.getenv there is the local, not the global -- no ENV read.
+    # so System.getenv there is the local, not the global; no ENV read.
     _build(
         memgraph_ingestor,
         tmp_path,

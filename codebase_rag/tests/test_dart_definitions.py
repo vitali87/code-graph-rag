@@ -184,7 +184,7 @@ def test_generic_supertypes_strip_type_arguments(
 ) -> None:
     # A generic supertype's `type_arguments` (`State<HomePage>`) is a sibling
     # of the base `type_identifier`, so extraction yields the bare base name
-    # (State/Comparable) - the common Flutter `extends State<T>` pattern.
+    # (State/Comparable), the common Flutter `extends State<T>` pattern.
     (dart_project / "gen.dart").write_text(
         """
 class State<T> {}

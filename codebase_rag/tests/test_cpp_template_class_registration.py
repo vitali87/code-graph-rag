@@ -1,10 +1,9 @@
-# A bodied templated C++ class (`template<typename T> class Box { void open(); };`)
-# is captured twice by the class query: once as the template_declaration wrapper
-# (no `body` field -> no methods attach) and once as the inner class_specifier
-# (has the body -> methods attach). Registering both suffixes the second with
-# `@line`, so every method lives under `Box@N.*` while callers reference the
-# natural `Box.*` -> the whole class is unreachable. The class must register
-# exactly ONCE, under its natural qn, with methods and member calls on it.
+# A bodied templated C++ class is captured twice by the class query: once as the
+# template_declaration wrapper (no `body` field, no methods attach) and once as the
+# inner class_specifier (has the body, methods attach). Registering both suffixes the
+# second with `@line`, so methods live under `Box@N.*` while callers reference the
+# natural `Box.*` and the class is unreachable. It must register exactly ONCE, under
+# its natural qn, with methods and member calls on it.
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,8 +1,7 @@
 # Java implicitly imports java.lang, so `extends Exception` or
 # `implements Runnable` names a POSITIVELY external base with no import
-# statement to map it. The deferred-inherits resolver used to treat these
-# as unresolvable module-anchored guesses and emit nothing, losing real
-# inheritance knowledge the graph should keep. Mirroring the JS global
+# statement to map it. The deferred-inherits resolver used to emit nothing
+# for these, losing real inheritance knowledge. Mirroring the JS global
 # rule (Error -> builtin.Error), a bare base in the java.lang table now
 # emits onto an ExternalModule node (java.lang.Exception), reusing the
 # JAVA_LANG_PREFIX machinery the receiver type resolver already has.

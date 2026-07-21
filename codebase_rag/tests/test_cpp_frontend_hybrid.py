@@ -22,13 +22,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 # HYBRID mode: tree-sitter stays the backbone (every file gets its
-# tree-sitter definitions and CALLS; nothing is skipped) and libclang
-# layers on only the facts it is uniquely right about -- macro Function
-# nodes and #include IMPORTS. libclang/tree-sitter definition qns diverge
-# wherever macros hide namespaces, so the frontend must emit NO definition
-# nodes of its own; macro-use CALLS attribute to the tightest enclosing
-# TREE-SITTER definition span after Pass 2 (only module-level qns --
-# macros, Modules -- are scheme-identical and safe to emit directly).
+# definitions and CALLS, nothing skipped); libclang layers on only the
+# facts it is uniquely right about, macro Function nodes and #include
+# IMPORTS. Definition qns diverge wherever macros hide namespaces, so the
+# frontend emits NO definition nodes of its own; macro-use CALLS attribute
+# to the tightest enclosing tree-sitter span after Pass 2 (only module-level
+# qns, macros and Modules, are scheme-identical and safe to emit directly).
 _CALC_H = """\
 #ifndef CALC_H
 #define CALC_H
@@ -407,21 +406,19 @@ def test_hybrid_directive_only_macro_use_attributes_to_module(
     calls = _calls(ingestor)
     assert ("hybdirective.conf", "hybdirective.conf.USE_CACHE") in calls, sorted(calls)
     assert ("hybdirective.conf", "hybdirective.conf.HAS_MODE") in calls, sorted(calls)
-    # a condition inside a SKIPPED branch (#if 0) is never evaluated, so
-    # it is never tokenized and carries no edge -- the graph mirrors the
-    # build configuration
+    # a condition inside a SKIPPED branch (#if 0) is never evaluated, so it
+    # carries no edge; the graph mirrors the build configuration
     assert not any(t.endswith(".SKIPPED_FLAG") for _, t in calls), sorted(calls)
 
 
 # B3 fixtures. Aliases: tree-sitter emits NO Type nodes for C++
-# using/typedef at all, so namespace/file-scope aliases are a fact libclang
-# can add; a MEMBER alias would need a Class parent whose libclang qn
-# diverges from tree-sitter's wherever macros hide namespaces, so member
-# aliases stay out. Post-expansion calls: a call written INSIDE a macro
-# body exists only after expansion, invisible to tree-sitter; both its
-# caller (expansion site) and callee (referenced definition) join to
-# tree-sitter spans by location, so the emitted edge carries tree-sitter
-# scheme qns end to end.
+# using/typedef, so namespace/file-scope aliases are a fact libclang can add;
+# a MEMBER alias would need a Class parent whose libclang qn diverges from
+# tree-sitter's wherever macros hide namespaces, so member aliases stay out.
+# Post-expansion calls: a call written INSIDE a macro body exists only after
+# expansion; both its caller (expansion site) and callee (referenced
+# definition) join to tree-sitter spans by location, so the edge carries
+# tree-sitter scheme qns end to end.
 _B3_H = """\
 #ifndef B3_H
 #define B3_H

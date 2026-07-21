@@ -18,11 +18,10 @@ _INTEGRATION_DIR = Path(__file__).parent
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    # Every integration test wipes the whole Memgraph database, and under
-    # xdist a session-scoped container fixture is per-worker, so -n auto
-    # races one container startup per worker. Pinning the directory to a
-    # single xdist_group serializes these tests on one worker with one
-    # container (scheduled by the --dist=loadgroup in pyproject addopts).
+    # Every integration test wipes the whole Memgraph database, and under xdist
+    # a session-scoped container fixture is per-worker, so -n auto races one
+    # container startup per worker. Pinning the directory to one xdist_group
+    # serialises them onto one worker with one container (--dist=loadgroup).
     for item in items:
         # Third-party plugins can collect virtual items with no path.
         if item.path and _INTEGRATION_DIR in item.path.parents:

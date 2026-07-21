@@ -141,7 +141,7 @@ def test_commonjs_require_still_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # `const fs = require('fs')` binds fs via a declarator, but it is an import
-    # alias (tracked in import_map), not a shadowing local -- it must still emit.
+    # alias (tracked in import_map), not a shadowing local; it must still emit.
     _build(
         memgraph_ingestor,
         tmp_path,

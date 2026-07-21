@@ -66,9 +66,8 @@ def test_use_mutation_variable_not_registered_as_function(tmp_path: Path) -> Non
     # `const mutation = useMutation({...})` binds a call_expression, not a
     # function. The inner object-literal arrows (mutationFn/onSuccess) must NOT
     # climb past the pair/call up to the `mutation` declarator and register a
-    # bogus FUNCTION node named after the variable -- that phantom node has no
-    # incoming edge and reports as dead code (~27 of the template's remaining
-    # false positives).
+    # bogus FUNCTION node named after the variable: that phantom has no incoming
+    # edge and reports dead (~27 of the template's remaining false positives).
     files = {
         "AddUser.tsx": (
             "import { useMutation } from '@tanstack/react-query'\n\n\n"
@@ -324,9 +323,9 @@ def test_object_literal_string_key_inline_arrow_is_referenced(tmp_path: Path) ->
 def test_inline_arrow_call_argument_is_referenced(tmp_path: Path) -> None:
     # An arrow passed DIRECTLY as a call argument (useCallback(() => {}),
     # setTimeout(() => {}), arr.map(x => ...)) registers as an anonymous node in
-    # the enclosing scope but has no incoming edge -- the call consumes it, so
-    # the scope must REFERENCE it or every inline callback reports as dead (the
-    # dominant remaining false-positive class on the FastAPI template).
+    # the enclosing scope with no incoming edge, so the scope must REFERENCE it
+    # or every inline callback reports as dead (the dominant remaining
+    # false-positive class on the FastAPI template).
     files = {
         "hook.tsx": (
             "export function useCopyToClipboard() {\n"

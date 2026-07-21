@@ -1,6 +1,6 @@
 # Dart CALLS extraction (follow-up to #140): the tree-sitter-dart grammar
-# has no call-expression node -- an invocation is an identifier (or
-# selector chain) followed by a `selector` holding an `argument_part` --
+# has no call-expression node (an invocation is an identifier or selector
+# chain followed by a `selector` holding an `argument_part`),
 # and it splits every definition into a signature node plus a SIBLING
 # function_body, so both call capture and caller attribution need
 # Dart-specific handling. Also fixes named constructors: the grammar's

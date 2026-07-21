@@ -13,9 +13,9 @@ from codebase_rag.tests.conftest import (
 # An out-of-line C++ method definition (`int Calculator::add(...) {...}` at
 # namespace/file scope) calling a free function. cgr's definition pass binds
 # the METHOD node to the class (qn `...Calculator.add`), but the call pass
-# computed the caller qn as a module-rooted free function (`...calc.add`),
-# so the CALLS edge's source dangled (matched no node). The caller of a call
-# inside an out-of-line method body must be the method's own node qn.
+# computed the caller qn as a module-rooted free function (`...calc.add`), so
+# the CALLS edge's source dangled. The caller inside an out-of-line method
+# body must be the method's own node qn.
 CPP_SOURCE = """
 class Calculator {
 public:

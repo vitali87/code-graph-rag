@@ -1,8 +1,8 @@
 # L3 finding from the evals/ harness: CallProcessor._ingest_function_calls does
 # `registry = resolver.function_registry` (resolver = self._resolver) then
 # `qn in registry`, dispatching to FunctionRegistryTrie.__contains__. Resolving it
-# needs local-variable aliasing (local = self.attr) plus cross-class attribute-chain
-# typing (local2 = local.attr) so the operand's concrete type is known.
+# needs local-variable aliasing (local = self.attr) plus cross-class chain typing
+# (local2 = local.attr) so the operand's concrete type is known.
 from __future__ import annotations
 
 from pathlib import Path

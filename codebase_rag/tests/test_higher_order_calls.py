@@ -1,11 +1,10 @@
 # L3 finding from the evals/ harness: a function passed as an argument and
 # invoked via a parameter name (extract_decorators_func(node) inside
-# ingest_method) or handed to an eager higher-order builtin (sorted(...,
-# key=_span_key)). The traced CALLS edge points from the function that
-# actually invokes the callable: the callee for a parameter it calls, the
-# enclosing function for a synchronous builtin. Sibling-class methods of the
-# same name make the callback targets ambiguous so trie uniqueness cannot
-# accidentally mask a real miss.
+# ingest_method) or handed to an eager builtin (sorted(..., key=_span_key)).
+# The traced CALLS edge points from the invoker: the callee for a parameter
+# it calls, the enclosing function for a synchronous builtin. Sibling-class
+# methods of the same name keep callback targets ambiguous so trie uniqueness
+# cannot mask a real miss.
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,6 +1,6 @@
-# Java system properties are process-level configuration exactly like
-# environment variables (commons-io reads java.io.tmpdir/user.home
-# constantly): model them as ENV resources.
+# Java system properties are process-level config like environment
+# variables (commons-io reads java.io.tmpdir/user.home): model them as
+# ENV resources.
 from __future__ import annotations
 
 from pathlib import Path

@@ -72,7 +72,7 @@ def test_creation_of_implicit_ctor_class_counts_via_instantiates(
 ) -> None:
     # `new Builder()` where Builder declares NO explicit constructor: the
     # oracle records the creation site by type name, and cgr has no ctor
-    # node to CALL, only an INSTANTIATES edge to the class -- which must
+    # node to CALL, only an INSTANTIATES edge to the class, which must
     # count (Polly's ResiliencePipelineBuilder, 65 sites). A ctor
     # declared on an arity sibling (Builder<T>) puts the name in the
     # declared universe either way.
@@ -124,7 +124,7 @@ def test_creation_of_ctorless_type_is_in_the_graded_universe(tmp_path: Path) -> 
 def test_target_typed_new_is_graded_symmetrically(tmp_path: Path) -> None:
     # C# 9 target-typed `Plain p = new();` (issue #773): both sides infer
     # the constructed type from the enclosing declaration with the same
-    # syntactic walk, so the site is graded rather than dropped -- and stays
+    # syntactic walk, so the site is graded rather than dropped, and stays
     # symmetric (no phantom `extra`/`missing`).
     (tmp_path / "Plain.cs").write_text(
         "namespace N;\npublic sealed class Plain {\n    public int Value;\n}\n",

@@ -45,7 +45,7 @@ def test_oracle_captures_first_party_lua_calls(tmp_path: Path) -> None:
     assert ("mod.lua", "mul") in edges
     assert ("main.lua", "use") in edges
     assert ("main.lua", "compute") in edges
-    # orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called, so never a call edge.
     assert ("mod.lua", "orphan") not in edges
     assert {"local_add", "mul", "use", "orphan", "compute"} <= declared
 

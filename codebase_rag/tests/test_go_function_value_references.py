@@ -1,7 +1,7 @@
-# A Go function used as a first-class VALUE -- returned bare (`return usageFn`),
-# or placed in a composite literal (a func map `map[string]any{"rpad": rpad}` or a
-# func slice `[]Handler{a}`) -- is invoked later by whoever receives it, never by a
-# call the graph can see. Without a reference edge the function looks dead
+# A Go function used as a first-class VALUE, returned bare (`return usageFn`)
+# or placed in a composite literal (a func map `map[string]any{"rpad": rpad}` or
+# a func slice `[]Handler{a}`), is invoked later by whoever receives it, never by
+# a call the graph can see. Without a reference edge the function looks dead
 # (cobra's defaultUsageFunc / rpad / trimRightSpace). cgr must reference such a
 # function from the enclosing scope so it stays reachable.
 from __future__ import annotations

@@ -164,9 +164,9 @@ def test_python_public_symbols_are_exported(tmp_path: Path) -> None:
 
 
 def test_nested_python_function_is_not_a_root(tmp_path: Path) -> None:
-    # A function nested inside another function is a local closure, never public
-    # API, so it must not be seeded as a reachability root even if its name is
-    # public -- otherwise an unreachable outer function's helpers look live.
+    # A function nested in another function is a local closure, never public
+    # API, so it must not seed a reachability root even if its name is public;
+    # otherwise an unreachable outer function's helpers look live.
     src = "def outer():\n    def helper():\n        return 1\n    return helper()\n"
     exported = _run(tmp_path, {"m.py": src})
     assert _one(exported, ".outer") is True
@@ -219,7 +219,7 @@ def test_ts_private_method_of_exported_class_is_not_exported(tmp_path: Path) -> 
 def test_rust_only_unrestricted_pub_is_exported(tmp_path: Path) -> None:
     # Only bare `pub` is an external API root. `pub(crate)`/`pub(super)` are
     # visible only within the crate/parent module, so an uncalled one is
-    # genuinely dead and must not be seeded as a reachability root.
+    # genuinely dead and must not seed a reachability root.
     if "rust" not in load_parsers()[0]:
         pytest.skip("rust parser not available")
     exported = _run(tmp_path, {"m.rs": RUST_SRC})
@@ -341,9 +341,9 @@ function helper() {
 
 def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
     # django admin's core.js wraps its prototype extensions in bare
-    # top-level `{ ... }` blocks. A block is not a function scope: the
-    # prototype mutation still lands on the page-global builtin, so the
-    # method must stay a reachability root.
+    # top-level `{ ... }` blocks. A block is not a function scope, so the
+    # prototype mutation still lands on the page-global builtin and the
+    # method stays a reachability root.
     exported = _run(tmp_path, {"core.js": BLOCK_SCRIPT_JS_SRC})
     assert _one(exported, "core.String.strptime") is True
     assert _one(exported, "core.helper") is True
@@ -352,10 +352,10 @@ def test_bare_block_in_script_is_not_a_scope_boundary(tmp_path: Path) -> None:
 def test_script_module_scan_runs_once_per_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The module-construct scan walks every top-level statement; it must
-    # run once per FILE (memoized on the tree root), not once per symbol,
-    # or export detection on a bundle with thousands of top-level
-    # declarations goes quadratic.
+    # The module-construct scan walks every top-level statement; it must run
+    # once per FILE (memoised on the tree root), not once per symbol, or
+    # export detection on a bundle with thousands of declarations goes
+    # quadratic.
     from unittest.mock import patch
 
     from codebase_rag import constants as cs
@@ -399,10 +399,10 @@ extension PublicExt on String {
 
 def test_dart_visibility_seeds_exported_roots(tmp_path: Path) -> None:
     # Dart privacy is purely lexical: a leading underscore on the symbol OR
-    # any enclosing type means library-private (not externally reachable),
-    # everything else is public API and must seed a dead-code root. Without
-    # this every public Dart symbol read as private and a library's whole
-    # public surface flagged dead (dart-lang/args: 89 false positives).
+    # any enclosing type means library-private, everything else is public API
+    # and must seed a dead-code root. Without this every public Dart symbol
+    # read as private and a library's whole public surface flagged dead
+    # (dart-lang/args: 89 false positives).
     exported = _run(tmp_path, {"lib.dart": DART_SRC})
 
     assert _one(exported, ".lib.publicFn") is True

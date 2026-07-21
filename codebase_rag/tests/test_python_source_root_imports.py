@@ -61,8 +61,8 @@ def test_flat_layout_absolute_import(tmp_path: Path) -> None:
 
 def test_src_layout_absolute_import(tmp_path: Path) -> None:
     # src-layout: the package's import name (pkg) differs from its repo-relative
-    # path (packages/a/src/pkg). The absolute import must resolve to the
-    # path-based node, not be judged an external import and dropped.
+    # path (packages/a/src/pkg), so the absolute import must resolve to the
+    # path-based node, not be dropped as external.
     calls = _run_calls(
         tmp_path,
         {
@@ -230,8 +230,7 @@ def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
 def test_package_dir_dotted_key_remap(tmp_path: Path) -> None:
     # package-dir keys can name a dotted subpackage ("acme.widgets" =
     # "lib/widgets"); the import's top-level segment (acme) has no entry of its
-    # own, so resolution must match the longest dotted prefix, not just the
-    # top-level name.
+    # own, so resolution must match the longest dotted prefix, not the top name.
     calls = _run_calls(
         tmp_path,
         {

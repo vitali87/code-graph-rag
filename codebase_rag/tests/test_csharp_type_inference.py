@@ -1,4 +1,4 @@
-# C# Phase 3: typed member-call resolution -- a call on a receiver whose
+# C# Phase 3: typed member-call resolution: a call on a receiver whose
 # type is known (local from `new`, parameter, field, `this`) binds to that
 # type's method, including inherited methods and overload arity.
 from pathlib import Path

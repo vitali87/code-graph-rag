@@ -64,10 +64,10 @@ def test_cgr_matches_oracle_on_clean_php_project(tmp_path: Path) -> None:
 
 @needs_node
 def test_php_dynamic_member_call_not_emitted(tmp_path: Path) -> None:
-    # A dynamic member call (`$this->$method()`) has a `variable` offset whose
-    # name is the variable identifier ("method"), not a static method name. The
-    # oracle must not emit it as a call edge even when it collides with a
-    # declared first-party method name, or it becomes a false ground-truth edge.
+    # A dynamic member call (`$this->$method()`) exposes a `variable` offset
+    # named for the variable ("method"), not a static method name. The oracle
+    # must not emit it as a call edge even when it collides with a declared
+    # method name, or it becomes a false ground-truth edge.
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "c.php").write_text(
         "<?php\nclass C {\n"
