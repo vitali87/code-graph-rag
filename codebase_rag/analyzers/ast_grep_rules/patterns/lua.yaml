@@ -33,6 +33,11 @@ rules:
           - all:
               - kind: dot_index_expression
               - has: { field: field, regex: '^(new|create|make)' }
+          # Colon syntax `function Class:new()` is the idiomatic Lua constructor;
+          # its name is a method_index_expression, not a dot_index_expression.
+          - all:
+              - kind: method_index_expression
+              - has: { field: method, regex: '^(new|create|make)' }
   - id: module_return
     # The idiomatic module export is the TOP-LEVEL trailing `return M`, not
     # every `return x` inside a function; exclude returns nested in a function.

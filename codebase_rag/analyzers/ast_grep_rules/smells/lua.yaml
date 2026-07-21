@@ -9,10 +9,13 @@ rules:
       kind: function_call
       has: { kind: identifier, regex: '^print$' }
   - id: global_assignment
-    # A field/index write (`M.const = ...`, `t[k] = ...`) targets an existing
-    # table and never leaks a global, so require a bare-identifier target.
-    # Distinguishing a local reassignment from a true global still needs scope
-    # analysis ast-grep cannot do; that residual is a known recall-first ceiling.
+    # Require at least one bare-identifier target. A field/index write
+    # (`M.const = ...`, `t[k] = ...`) targets an existing table and never leaks
+    # a global, but a MIXED target (`leaked, M.field = 1, 2`) still leaks the
+    # bare `leaked`, so match on the presence of a bare identifier rather than
+    # the absence of an index write. Distinguishing a local reassignment from a
+    # true global still needs scope analysis ast-grep cannot do; that residual
+    # is a known recall-first ceiling.
     message: "Assignment without local leaks a global"
     rule:
       kind: assignment_statement
@@ -20,11 +23,7 @@ rules:
         - not: { inside: { kind: variable_declaration } }
         - has:
             kind: variable_list
-            not:
-              has:
-                any:
-                  - kind: dot_index_expression
-                  - kind: bracket_index_expression
+            has: { kind: identifier }
   - id: long_param_list
     message: "Very long parameter list is hard to call correctly"
     rule:

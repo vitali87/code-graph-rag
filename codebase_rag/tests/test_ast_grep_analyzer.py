@@ -130,8 +130,8 @@ def test_rules_load_and_meet_acceptance_counts() -> None:
 
 
 def test_every_language_has_all_three_categories() -> None:
-    # (H) Each supported grammar must ship patterns + smells + security with at
-    # (H) least 3 rules apiece, so a language never regresses to partial coverage.
+    # Each supported grammar must ship patterns + smells + security with at
+    # least 3 rules apiece, so a language never regresses to partial coverage.
     from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
 
     by_grammar: dict[str, dict] = {}
@@ -174,8 +174,8 @@ def test_analyzer_noops_when_findings_disabled(tmp_path: Path) -> None:
 
 
 def test_loose_equality_flags_inequality_not_strict(tmp_path: Path) -> None:
-    # (H) `!=` coerces types exactly like `==`, so the loose_equality smell must
-    # (H) catch it too; the strict `===`/`!==` forms must stay clean.
+    # `!=` coerces types exactly like `==`, so the loose_equality smell must
+    # catch it too; the strict `===`/`!==` forms must stay clean.
     from codebase_rag.analyzers import FindingAnalyzer
 
     src = tmp_path / "eq.js"
@@ -435,25 +435,25 @@ _POSITIVE_FIXTURES["tsx"] = _POSITIVE_FIXTURES["javascript"]
 
 
 def test_every_rule_fires_on_positive_fixture(tmp_path: Path) -> None:
-    # (H) Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
-    # (H) ast-grep's bundled grammar silently matches nothing (the f_string class of
-    # (H) bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
-    # (H) future typo that zeroes a rule fails here instead of shipping dead.
+    # Exhaustive functionality lock: a rule whose `kind`/`pattern` is wrong for
+    # ast-grep's bundled grammar silently matches nothing (the f_string class of
+    # bug). Every shipped rule must fire on a hand-crafted positive fixture, so a
+    # future typo that zeroes a rule fails here instead of shipping dead.
     from codebase_rag.analyzers import FindingAnalyzer
     from codebase_rag.analyzers.ast_grep_analyzer import load_finding_rules
 
-    # (H) Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
-    # (H) share the javascript grammar and rule set, so one fixture covers them.
+    # Keyed by ast-grep grammar id, not extension: .js/.jsx/.mjs/.cjs all
+    # share the javascript grammar and rule set, so one fixture covers them.
     by_grammar = _POSITIVE_FIXTURES
     for ext, lang in load_finding_rules().items():
-        # (H) A new language with rules but no fixture would silently skip firing
-        # (H) coverage; force a fixture mapping to exist for every loaded grammar.
+        # A new language with rules but no fixture would silently skip firing
+        # coverage; force a fixture mapping to exist for every loaded grammar.
         assert lang.ast_grep_id in by_grammar, (
             f"{ext}: no fixture for {lang.ast_grep_id}"
         )
         ids = [r.rule_id for r in lang.rules]
-        # (H) The set comparison below is only sound if ids are unique per ext; a
-        # (H) duplicate id could let one rule fire while its twin stays dead.
+        # The set comparison below is only sound if ids are unique per ext; a
+        # duplicate id could let one rule fire while its twin stays dead.
         assert len(ids) == len(set(ids)), f"{ext} duplicate rule ids: {ids}"
         stem = ext.replace(".", "")
         f = tmp_path / f"probe{stem}{ext}"
@@ -479,7 +479,7 @@ def _fire(tmp_path: Path, name: str, src: str) -> list:
 
 
 def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
-    # (H) `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
+    # `+=` and outerHTML are the same DOM-injection sink as `innerHTML =`.
     src = (
         "a.innerHTML = x;\n"
         "b.innerHTML += y;\n"
@@ -496,9 +496,9 @@ def test_innerhtml_xss_catches_augmented_and_outerhtml(tmp_path: Path) -> None:
 
 
 def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
-    # (H) `execute("... %s" % params)` is the classic printf-style injection, as
-    # (H) dangerous as `+` concatenation; a parametrized query stays clean, and a
-    # (H) numeric modulo (line 4) must NOT be mistaken for string formatting.
+    # `execute("... %s" % params)` is the classic printf-style injection, as
+    # dangerous as `+` concatenation; a parametrized query stays clean, and a
+    # numeric modulo (line 4) must NOT be mistaken for string formatting.
     src = (
         'db.execute("SELECT " + u)\n'
         'db.execute("SELECT %s" % u)\n'
@@ -514,9 +514,9 @@ def test_sqli_concat_catches_percent_format(tmp_path: Path) -> None:
 
 
 def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
-    # (H) Modern factories are usually `const createX = () => {}` (arrow), a
-    # (H) function expression, or a generator function expression, not a `function`
-    # (H) declaration; catch all four. A non-factory name stays clean.
+    # Modern factories are usually `const createX = () => {}` (arrow), a
+    # function expression, or a generator function expression, not a `function`
+    # declaration; catch all four. A non-factory name stays clean.
     src = (
         "function createA() { return {}; }\n"
         "const createB = () => ({});\n"
@@ -533,9 +533,9 @@ def test_factory_function_catches_arrow_and_expression(tmp_path: Path) -> None:
 
 
 def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> None:
-    # (H) In Go, `_, err := f()` keeps the error and is idiomatic; only a trailing
-    # (H) `_` (discarding the conventionally-last error) is the smell. The rule
-    # (H) must flag line 4 (result, _) and leave line 3 (_, err) clean.
+    # In Go, `_, err := f()` keeps the error and is idiomatic; only a trailing
+    # `_` (discarding the conventionally-last error) is the smell. The rule
+    # must flag line 4 (result, _) and leave line 3 (_, err) clean.
     src = (
         "package main\n"
         "func f() {\n"
@@ -554,26 +554,32 @@ def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> Non
 
 
 def test_lua_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
-    # (H) Dogfood FP (luarocks): `password = creds:match("([^:]*):(.*)")` is a
-    # (H) destructuring match, not a secret; the string literal must be the
-    # (H) assigned value, not an argument buried in a call. Line 2 is real.
-    src = 'user, password = creds:match("([^:]*):(.*)")\nlocal secret = "abcdefghij"\n'
+    # Dogfood FP (luarocks): `password = creds:match("([^:]*):(.*)")` is a
+    # destructuring match, not a secret; the string literal must be the assigned
+    # value, not an argument buried in a call (line 1). Lines 2 and 3 are real
+    # literals, including a parenthesized one (recall preserved through parens).
+    src = (
+        'user, password = creds:match("([^:]*):(.*)")\n'
+        'local secret = "abcdefghij"\n'
+        'local token = ("anotherlongsecret")\n'
+    )
     lines = sorted(
         p[cs.KEY_START_LINE]
         for p in _fire(tmp_path, "s.lua", src)
         if p[cs.KEY_NAME] == "hardcoded_secret"
     )
-    assert lines == [2], lines
+    assert lines == [2, 3], lines
 
 
 def test_lua_factory_function_matches_name_not_body(tmp_path: Path) -> None:
-    # (H) Dogfood FP (luarocks): the old rule scanned the whole body for any
-    # (H) new/create/make identifier, so a function merely CALLING results.new()
-    # (H) was flagged. Only the function NAME should decide. Lines 1-2 are real
-    # (H) factories (bare + dotted); line 3 only calls one in its body.
+    # Dogfood FP (luarocks): the old rule scanned the whole body for any
+    # new/create/make identifier, so a function merely CALLING results.new() was
+    # flagged. Only the function NAME should decide. Lines 1-3 are real factories
+    # (bare, dotted, and colon-method forms); line 4 only calls one in its body.
     src = (
         "function create_thing(a) return {} end\n"
         "function results.new(a) return {} end\n"
+        "function Factory:new(a) return {} end\n"
         "function download.download_all(a) return results.new(a) end\n"
     )
     lines = sorted(
@@ -581,40 +587,50 @@ def test_lua_factory_function_matches_name_not_body(tmp_path: Path) -> None:
         for p in _fire(tmp_path, "f.lua", src)
         if p[cs.KEY_NAME] == "factory_function"
     )
-    assert lines == [1, 2], lines
+    assert lines == [1, 2, 3], lines
 
 
 def test_lua_module_return_only_top_level(tmp_path: Path) -> None:
-    # (H) Dogfood FP (luarocks): module_return is the idiomatic trailing
-    # (H) `return M` export, NOT every `return x` inside a function. Only the
-    # (H) top-level return (line 3) counts; the in-function return does not.
-    src = "local M = {}\nfunction M.f() return r end\nreturn M\n"
+    # Dogfood FP (luarocks): module_return is the idiomatic trailing `return M`
+    # export, NOT every `return x` inside a function. Only the top-level return
+    # (line 5) counts; returns inside a `function` and a `local function` (which
+    # ast-grep also parses as a function_declaration) must stay clean.
+    src = (
+        "local M = {}\n"
+        "function M.f() return r end\n"
+        "local function helper() return q end\n"
+        "M.helper = helper\n"
+        "return M\n"
+    )
     lines = sorted(
         p[cs.KEY_START_LINE]
         for p in _fire(tmp_path, "m.lua", src)
         if p[cs.KEY_NAME] == "module_return"
     )
-    assert lines == [3], lines
+    assert lines == [5], lines
 
 
 def test_lua_global_assignment_ignores_field_writes(tmp_path: Path) -> None:
-    # (H) Dogfood FP (luarocks): a field/index write (`M.const = {}`,
-    # (H) `mt.__index = f`, `t[k] = v`) is never a leaked global; only a bare
-    # (H) identifier target is. Line 4 is the only real global leak.
-    src = "M.const = {}\nmt.__index = funcs\nt[k] = v\nleaked = 5\n"
+    # Dogfood FP (luarocks): a pure field/index write (`M.const = {}`,
+    # `mt.__index = f`, `t[k] = v`) is never a leaked global; a bare-identifier
+    # target is. A MIXED target (`shadowed, G.x = 1, 2`) still leaks its bare
+    # part, so lines 4 and 5 fire, lines 1-3 do not.
+    src = (
+        "M.const = {}\nmt.__index = funcs\nt[k] = v\nleaked = 5\nshadowed, G.x = 1, 2\n"
+    )
     lines = sorted(
         p[cs.KEY_START_LINE]
         for p in _fire(tmp_path, "g.lua", src)
         if p[cs.KEY_NAME] == "global_assignment"
     )
-    assert lines == [4], lines
+    assert lines == [4, 5], lines
 
 
 def test_multilang_security_rules_avoid_common_false_positives(
     tmp_path: Path,
 ) -> None:
-    # (H) Precision guards for the widened multi-language rules: each benign
-    # (H) construct must NOT emit its neighbouring finding.
+    # Precision guards for the widened multi-language rules: each benign
+    # construct must NOT emit its neighbouring finding.
     cases = [
         (
             "q.php",
