@@ -708,7 +708,7 @@ def ingest_method(
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
     external_override_names: frozenset[str] = frozenset(),
-    root_annotated_overrides: bool = False,
+    annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None,
     skip_cpp_artifact_check: bool = False,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
@@ -818,10 +818,18 @@ def ingest_method(
     # Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
     # subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
     # it, so the dead-code surfaces root this property.
-    if method_name in external_override_names or (
-        root_annotated_overrides and cs.DART_OVERRIDE_ANNOTATION in decorators
-    ):
+    if method_name in external_override_names:
         method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
+    # A Dart @override is only an EXTERNAL override if the resolved ancestry
+    # says so, which is unknowable until every class is registered: record it
+    # for resolve_deferred_inherits to judge.
+    if (
+        annotated_override_sink is not None
+        and cs.DART_OVERRIDE_ANNOTATION in decorators
+    ):
+        annotated_override_sink.setdefault(container_qn, []).append(
+            (method_qn, method_name)
+        )
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)

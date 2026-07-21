@@ -65,6 +65,10 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
+        # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
+        # whether they override an EXTERNAL base is only decidable once every
+        # class is registered, so resolve_deferred_inherits consumes this.
+        self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).

@@ -148,6 +148,7 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -430,14 +431,22 @@ class ClassIngestMixin:
             return 0
         self._deferred_inherits = []
         emitted = 0
+        dart_external_children: set[str] = set()
         for entry in deferred:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
                 continue
             resolved = self._resolve_deferred_parent_qn(entry)
+            is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None:
+                # Resolves nowhere = not first-party: for Dart that is still
+                # external-ancestry evidence for override rooting.
+                if is_dart:
+                    dart_external_children.add(entry.child_qn)
                 continue
             parent_qn, is_external = resolved
+            if is_dart and is_external:
+                dart_external_children.add(entry.child_qn)
             external_label: str | None = None
             if is_external:
                 # The import pass mints the same node for IMPORTS edges, so
@@ -477,7 +486,47 @@ class ClassIngestMixin:
                     parent_label=external_label,
                 )
             emitted += 1
+        self._flag_dart_external_overrides(dart_external_children)
         return emitted
+
+    def _flag_dart_external_overrides(self, external_children: set[str]) -> None:
+        # A Dart @override on a class with external ancestry roots the
+        # dead-code walk (the framework invokes it), UNLESS a registered
+        # ancestor defines the name, in which case the override resolves via
+        # OVERRIDES edges and must stay an ordinary candidate. Runs here
+        # because externality is only known after every class is registered;
+        # the partial row MERGEs into the node ingested during Pass 2.
+        for child_qn in external_children:
+            for method_qn, method_name in self.dart_annotated_overrides.get(
+                child_qn, ()
+            ):
+                if self._registered_ancestor_defines(child_qn, method_name):
+                    continue
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.METHOD,
+                    {
+                        cs.KEY_QUALIFIED_NAME: method_qn,
+                        cs.KEY_OVERRIDES_EXTERNAL: True,
+                    },
+                )
+
+    def _registered_ancestor_defines(self, class_qn: str, name: str) -> bool:
+        seen: set[str] = set()
+        stack = list(self.class_inheritance.get(class_qn, []))
+        while stack:
+            ancestor = stack.pop()
+            if ancestor in seen:
+                continue
+            seen.add(ancestor)
+            if self.function_registry.get(ancestor) is None:
+                continue
+            if (
+                self.function_registry.get(f"{ancestor}{cs.SEPARATOR_DOT}{name}")
+                is not None
+            ):
+                return True
+            stack.extend(self.class_inheritance.get(ancestor, []))
+        return False
 
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
@@ -1107,7 +1156,7 @@ class ClassIngestMixin:
         # the dead-code root property. Only unregistered (external) parents
         # contribute; first-party bases resolve via OVERRIDES edges.
         external_override_names: frozenset[str] = frozenset()
-        root_annotated_overrides = False
+        annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None
         if language == cs.SupportedLanguage.PYTHON:
             external_parents = [
                 p
@@ -1121,12 +1170,11 @@ class ClassIngestMixin:
         elif language == cs.SupportedLanguage.DART:
             # An external base (a Flutter widget class) is not introspectable
             # the way Python stdlib bases are, but Dart marks every override
-            # explicitly with @override: trust the annotation whenever any
-            # parent is unregistered.
-            root_annotated_overrides = any(
-                self.function_registry.get(p) is None
-                for p in self.class_inheritance.get(class_qn, [])
-            )
+            # explicitly with @override. Whether a parent is truly external is
+            # unknowable here (it may live in a file parsed later), so only
+            # RECORD the annotated methods; resolve_deferred_inherits decides
+            # once every class is registered.
+            annotated_override_sink = self.dart_annotated_overrides
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
@@ -1166,7 +1214,7 @@ class ClassIngestMixin:
                 file_path=file_path,
                 repo_path=self.repo_path,
                 external_override_names=external_override_names,
-                root_annotated_overrides=root_annotated_overrides,
+                annotated_override_sink=annotated_override_sink,
             )
             if (
                 ingested_qn is not None
