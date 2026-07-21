@@ -103,26 +103,26 @@ class CppFrontend(StrEnum):
 
 
 class CSharpFrontend(StrEnum):
-    # AUTO resolves at run time: HYBRID wherever a dotnet toolchain is on
-    # PATH, TREESITTER otherwise (resolve_csharp_frontend). The parser
-    # fingerprint records the RESOLVED mode, so graphs built with and
-    # without dotnet never share an identity.
+    # AUTO resolves at run time: HYBRID where a dotnet toolchain is on PATH,
+    # TREESITTER otherwise (resolve_csharp_frontend). The parser fingerprint
+    # records the RESOLVED mode, so dotnet and non-dotnet graphs never share
+    # an identity.
     AUTO = "auto"
     TREESITTER = "treesitter"
     ROSLYN = "roslyn"
     HYBRID = "hybrid"
 
 
-# JS/TS import specifier schemes that name genuinely external code (node
-# builtins, package registries, URLs). A specifier with any OTHER scheme
-# (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# code under a non-file-path name, so its unresolved calls defer to the trie.
+# JS/TS import specifier schemes naming genuinely external code (node
+# builtins, registries, URLs). Any OTHER scheme (`ext:` deno aliases,
+# bundler virtual modules) points at first-party code under a non-file-path
+# name, so its unresolved calls defer to the trie.
 JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
     {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
 )
-# Module file extensions stripped when turning a tsconfig `paths` target into a
+# Module extensions stripped when turning a tsconfig `paths` target into a
 # module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
-# compound suffixes are handled before the bare `.ts`.
+# suffixes match before the bare `.ts`.
 JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".d.mts",
     ".d.cts",
@@ -143,7 +143,7 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
 )
 # When searching subdirectories for tsconfig files (monorepo `frontend/`,
 # `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# unrelated aliases and there can be thousands of them under node_modules.
+# unrelated aliases and node_modules holds thousands of them.
 TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
     {"node_modules", "dist", "build", "out", ".git"}
 )
@@ -305,7 +305,7 @@ class TreeSitterModule(StrEnum):
 DIR_BIN = "bin"
 DIR_SRC = "src"
 
-# Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
+# Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(
     {
         ".cache",

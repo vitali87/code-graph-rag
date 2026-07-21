@@ -38,7 +38,6 @@ class FileAction(StrEnum):
 
 HELP_ARG = "help"
 
-# CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
@@ -211,42 +210,32 @@ DIFF_CONTINUATION_PREFIXES = (
     "Binary files ",
 )
 
-# CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})
 
-# CLI commands
 MODEL_COMMAND_PREFIX = "/model"
 HELP_COMMAND = "/help"
 
-# UI separators and formatting
 HORIZONTAL_SEPARATOR = "─" * 60
 
-# Session log header
 SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
 
-# Logger format
 LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
 
-# Temporary directory
 TMP_DIR = ".tmp"
 SESSION_LOG_PREFIX = "session_"
 SESSION_LOG_EXT = ".log"
 
-# Session log prefixes
 SESSION_PREFIX_USER = "USER: "
 SESSION_PREFIX_ASSISTANT = "ASSISTANT: "
 
-# Session context format
 SESSION_CONTEXT_START = (
     "\n\n[SESSION CONTEXT - Previous conversation in this session]:\n"
 )
 SESSION_CONTEXT_END = "\n[END SESSION CONTEXT]\n\n"
 
-# Confirmation status display
 CONFIRM_ENABLED = "Enabled"
 CONFIRM_DISABLED = "Disabled (YOLO Mode)"
 
-# Diff labels
 DIFF_LABEL_BEFORE = "before"
 DIFF_LABEL_AFTER = "after"
 DIFF_FALLBACK_PATH = "file"
@@ -260,11 +249,9 @@ class DiffMarker:
     HEADER_DEL = "---"
 
 
-# Table column headers
 TABLE_COL_CONFIGURATION = "Configuration"
 TABLE_COL_VALUE = "Value"
 
-# Table row labels
 TABLE_ROW_TARGET_LANGUAGE = "Target Language"
 TABLE_ROW_ORCHESTRATOR_MODEL = "Orchestrator Model"
 TABLE_ROW_CYPHER_MODEL = "Cypher Model"
@@ -274,7 +261,6 @@ TABLE_ROW_OLLAMA_CYPHER = "Ollama Endpoint (Cypher)"
 TABLE_ROW_EDIT_CONFIRMATION = "Edit Confirmation"
 TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
 
-# UI status messages
 MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
 MSG_THINKING_CANCELLED = "Thinking cancelled."
 MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
@@ -283,7 +269,6 @@ MSG_CHAT_INSTRUCTIONS = (
     "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
 )
 
-# Default titles and prompts
 DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
 OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
@@ -326,7 +311,6 @@ TOKEN_COLOR_OK = "green"
 TOKEN_COLOR_WARNING = "yellow"
 TOKEN_COLOR_CRITICAL = "red"
 
-# Interactive setup prompt - grouped view
 INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"
 INTERACTIVE_TITLE_NESTED = "Nested paths in '{pattern}'"
 INTERACTIVE_COL_NUM = "#"
@@ -355,17 +339,14 @@ INTERACTIVE_EXPAND_SUFFIX = "e"
 INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
-# Tool success messages
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."
 )
 
-# Grep suggestion
 GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 
-# Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 TIKTOKEN_ENCODING = "cl100k_base"
@@ -384,7 +365,6 @@ QUERY_SUMMARY_TIMEOUT = (
 )
 QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
 
-# Semantic search constants
 MSG_SEMANTIC_NO_RESULTS = (
     "No semantic matches found for query: '{query}'. This could mean:\n"
     "1. No functions match this description\n"
@@ -401,7 +381,6 @@ MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools
 SEMANTIC_BATCH_SIZE = 100
 SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
-# Document analyzer constants
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
 MIME_TYPE_DEFAULT = "application/octet-stream"

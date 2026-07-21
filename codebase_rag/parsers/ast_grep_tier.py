@@ -119,8 +119,7 @@ class AstGrepTier:
 
         # Functions then classes; dedupe by start line PER label so a specific
         # pattern (def self.$NAME) wins over a general one (def $NAME) on the
-        # same line, while a class and a function sharing a line (one-liners)
-        # both still land.
+        # same line, while a class and function sharing a line both still land.
         for label, patterns in (
             (cs.NodeLabel.FUNCTION, config.functions),
             (cs.NodeLabel.CLASS, config.classes),
@@ -191,9 +190,9 @@ class AstGrepTier:
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
         relative_path = cached_relative_path(file_path, self._repo_path)
-        # flat module qn, no init/mod special-case or stem
-        # disambiguation; add if a config language collides with another
-        # file's stem in the same directory.
+        # flat module qn, no init/mod special-case or stem disambiguation;
+        # add if a config language collides with another file's stem in the
+        # same directory.
         module_qn = cs.SEPARATOR_DOT.join(
             [self._project_name, *relative_path.with_suffix("").parts]
         )
@@ -242,8 +241,8 @@ class AstGrepTier:
                 cs.KEY_START_LINE: node_range.start.line + 1,
                 cs.KEY_END_LINE: node_range.end.line + 1,
                 cs.KEY_DOCSTRING: None,
-                # no visibility analysis for these languages; mark
-                # exported so dead-code does not false-flag everything.
+                # no visibility analysis for these languages; mark exported
+                # so dead-code does not false-flag everything.
                 cs.KEY_IS_EXPORTED: True,
                 cs.KEY_PATH: relative_path,
                 cs.KEY_ABSOLUTE_PATH: absolute_path,

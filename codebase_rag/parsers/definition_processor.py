@@ -99,9 +99,9 @@ class DefinitionProcessor(
         # C# extension methods indexed for call binding: {method simple name:
         # [(method_qn, receiver_type_simple_name)]}. `s.WordCount()` resolves
         # to a `static WordCount(this string s)` whose receiver type matches
-        # the call's receiver -- a lookup the instance-hierarchy walk can't
-        # make (the method lives on an unrelated static class). Populated at
-        # method ingestion, read by the type-inference engine as a fallback.
+        # the call's receiver, a lookup the instance-hierarchy walk can't make
+        # (the method lives on an unrelated static class). Populated at method
+        # ingestion, read by the type-inference engine as a fallback.
         self.csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]] = {}
         # C# local functions: {local_fn_qn: (host span key, parameter count)}.
         # The host (method/ctor/enclosing local fn) is pinned by SPAN because

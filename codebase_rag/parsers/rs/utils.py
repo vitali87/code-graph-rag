@@ -161,9 +161,9 @@ def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
 
 def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | None:
     # Bare name of a Rust fn's return type, for chained-call and `let x =
-    # Type::assoc()` resolution: `Self` -> the impl target, `Result<T>`/
-    # `Option<T>` -> their inner `T` (the value a `?`/`.unwrap()` yields), a
-    # scoped type -> its last segment. Returns None when no return type.
+    # Type::assoc()` resolution: `Self` -> the impl target, `Result<T>`/`Option<T>`
+    # -> their inner `T` (what a `?`/`.unwrap()` yields), a scoped type -> its last
+    # segment. Returns None when no return type.
     return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
     if return_type is None:
         return None
@@ -172,9 +172,9 @@ def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | 
 
 def tuple_group_inner(node: Node) -> Node | None:
     # The single grouped type inside a tuple_type, or None for a real tuple.
-    # Grouping parens (`&(dyn Svc + Send)`) have one typed child and NO
-    # comma; a 1-ary tuple is written `(T,)` and also has one typed child,
-    # so the comma, not the child count, is what separates the two.
+    # Grouping parens (`&(dyn Svc + Send)`) have one typed child and NO comma; a
+    # 1-ary tuple `(T,)` also has one typed child, so the comma, not the child
+    # count, separates the two.
     if any(c.type == cs.SEPARATOR_COMMA for c in node.children):
         return None
     inners = [c for c in node.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES]

@@ -30,10 +30,9 @@ def run_php_oracle(target: Path) -> GraphData:
 
 
 def run_php_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level PHP call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function/Method), with the declared name
-    # universe so the cgr side can be held to the same set. Mirrors the Go,
-    # Rust, Java, and TypeScript call oracles.
+    # File-level PHP call sites restricted to first-party callees (simple name is
+    # a declared Function/Method), with the declared name universe so the cgr side
+    # is held to the same set. Mirrors the Go, Rust, Java, and TypeScript oracles.
     payload = _run_php_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

@@ -1,10 +1,9 @@
 # Multi-language retrieval (Rust). Extends the file-level call-localization
 # benchmark to Rust: for each first-party Rust symbol, which files call it.
 # cgr's Rust CALLS edges (reduced to caller file + callee simple name) are
-# graded against syn call sites over the same first-party name universe.
-# The oracle uses Rust's own parser (syn), independent of cgr's tree-sitter
-# frontend, so this measures cgr's cross-file Rust call resolution against
-# ground truth (mirrors evals/go_retrieval.py).
+# graded against syn call sites over the same first-party name universe. syn is
+# Rust's own parser, independent of cgr's tree-sitter frontend, so this measures
+# cgr's cross-file Rust call resolution (mirrors evals/go_retrieval.py).
 from pathlib import Path
 from typing import Annotated
 

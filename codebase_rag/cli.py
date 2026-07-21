@@ -1085,9 +1085,8 @@ def _dead_code_config(
     entry_points: list[str],
     decorator_roots: list[str],
 ) -> DeadCodeConfig:
-    # test_patterns is always set: with tests included it makes test
-    # functions roots; with tests excluded it filters test modules out of the
-    # module-load roots so test-only code is not kept alive.
+    # test_patterns is always set: included tests become roots; excluded, it
+    # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -1102,9 +1101,8 @@ def _dead_code_config(
 
 def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
     # Drop candidates whose file path matches an exclude glob (generated dirs
-    # like client/core or *.gen.* have no in-repo caller, so every symbol
-    # reports as dead). fnmatch treats '*' as spanning '/', so '*client/core*'
-    # matches at any depth.
+    # like client/core or *.gen.* have no in-repo caller, so every symbol reports
+    # as dead). fnmatch's '*' spans '/', so '*client/core*' matches at any depth.
     if not exclude:
         return rows
     return [

@@ -12,8 +12,8 @@ SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.METHOD,
 )
 SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(k.value for k in SCORED_NODE_KINDS)
-# Span (end_line) grading excludes Module: a module's end_line is the whole
-# file, which the ast oracle records as 0, so it is not a meaningful def span.
+# Span (end_line) grading excludes Module: its end_line is the whole file,
+# which the ast oracle records as 0, so it is not a meaningful def span.
 SPANNED_NODE_KINDS_TUPLE: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.CLASS,
     cs.NodeLabel.FUNCTION,
@@ -30,8 +30,8 @@ SCORED_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
 SCORED_EDGE_TYPE_VALUES: frozenset[str] = frozenset(e.value for e in SCORED_EDGE_TYPES)
 
 # L2 dependency edges scored by name/path rather than node location:
-# INHERITS by base simple name; IMPORTS by in-repo target file path (internal
-# module dependency graph only; external targets are DEPENDS_ON_EXTERNAL).
+# INHERITS by base simple name; IMPORTS by in-repo target file path
+# (internal dependency graph only; external targets are DEPENDS_ON_EXTERNAL).
 SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
     cs.RelationshipType.INHERITS,
     cs.RelationshipType.IMPORTS,
@@ -39,7 +39,7 @@ SCORED_NAME_EDGE_TYPES: tuple[cs.RelationshipType, ...] = (
 INIT_STEM = "__init__"
 # A bare access of an @property/@cached_property getter invokes it, which cgr
 # models as a CALLS edge; the retrieval oracle counts these attribute reads as
-# calls so cgr's property-as-call edges are not scored as false positives.
+# calls so property-as-call edges are not scored as false positives.
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 SEP = cs.SEPARATOR_DOT
 TRACE_CALL_EVENT = "call"
@@ -80,8 +80,8 @@ class Category(StrEnum):
 AGGREGATE_LABEL = "ALL"
 
 # Span grading: among nodes matched by (kind, file, start), how often cgr's
-# end_line agrees with the oracle's. Surfaced as its own category so a wrong
-# node span is visible even when node identity is already 1.0.
+# end_line agrees with the oracle's. Its own category so a wrong span shows
+# even when node identity is already 1.0.
 DIFF_SPAN_PREFIX = "span:"
 SPAN_REPR = "{kind} {file}:{start}-{end}"
 
@@ -133,8 +133,8 @@ GO_SCORES_FILENAME = "go_scores.csv"
 GO_DIFF_FILENAME = "go_diff.json"
 
 # Multi-language retrieval (Go): file-level call localization for a second
-# language, cgr's Go CALLS vs go/ast call sites over the same first-party name
-# universe. The go/ast oracle is independent of cgr's tree-sitter parser.
+# language, cgr's Go CALLS vs go/ast call sites over the same name universe.
+# The go/ast oracle is independent of cgr's tree-sitter parser.
 ORACLE_KEY_CALLS = "calls"
 ORACLE_KEY_COVERED = "covered"
 GO_RETRIEVAL_SCORES_FILENAME = "go_retrieval_scores.csv"
@@ -235,9 +235,9 @@ CLANG_CPP_STD = "-std=c++17"
 CLANG_CPP_LANG_FLAG = "-x"
 CLANG_CPP_LANG = "c++"
 CLANG_DEFINE_FLAG = "-D"
-# Apple ships a libclang whose version matches the active macOS SDK's libc++,
-# which the pip `libclang` wheel does not; C++ standard headers need that match
-# to parse. Probed in order; first existing path wins, else the bundled default.
+# Apple ships a libclang matching the active macOS SDK's libc++, which the pip
+# `libclang` wheel does not; C++ standard headers need that match to parse.
+# Probed in order; first existing path wins, else the bundled default.
 LIBCLANG_CANDIDATES: tuple[str, ...] = (
     "/Library/Developer/CommandLineTools/usr/lib/libclang.dylib",
 )
@@ -253,8 +253,8 @@ CPP_CALL_EDGE_REPR = "{file} -> {name}"
 
 # Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # right function for a natural-language query? Uses cgr's own embedder over
-# function source extracted from the captured graph; graded as recall@k on
-# controlled fixtures whose query->function relevance is unambiguous.
+# function source from the captured graph; graded as recall@k on fixtures
+# whose query->function relevance is unambiguous.
 SEMANTIC_TOP_K = 3
 SEMANTIC_SCORES_FILENAME = "semantic_scores.csv"
 SEMANTIC_DIFF_FILENAME = "semantic_diff.json"
@@ -263,12 +263,12 @@ SEMANTIC_LABEL = "recall-at-k"
 SEMANTIC_CASE_REPR = "{query} => {expected}"
 SEMANTIC_TITLE = "cgr semantic-search eval: query->function recall@k"
 
-# Static CALLS eval: function-level call recall. The oracle resolves only the
+# Static CALLS eval: function-level call recall. The oracle resolves only
 # unambiguous direct calls (a bare-name call to a function reachable via a
 # first-party import or a same-module top-level def) to (caller_qn, callee_qn),
-# using ast import resolution rather than cgr's trie. Method / attribute /
-# dynamic calls need type inference and are out of the oracle's scope, so only
-# recall is graded: every statically-certain call must be in cgr's graph.
+# using ast import resolution not cgr's trie. Method / attribute / dynamic
+# calls need type inference and are out of scope, so only recall is graded:
+# every statically-certain call must be in cgr's graph.
 STATIC_CALLS_DEFAULT_TARGET = "codebase_rag"
 STATIC_CALLS_SCORES_FILENAME = "static_calls_scores.csv"
 STATIC_CALLS_DIFF_FILENAME = "static_calls_diff.json"
@@ -283,7 +283,7 @@ ORACLE_KEY_END_LINE = "end_line"
 ORACLE_KEY_NAME = "name"
 # Edge-payload keys: an oracle that grades containment edges emits a
 # {nodes: [...], edges: [...]} object, each edge carrying rel + parent/child
-# node references joined against cgr on (kind, file, line).
+# node refs joined against cgr on (kind, file, line).
 ORACLE_KEY_NODES = "nodes"
 ORACLE_KEY_EDGES = "edges"
 ORACLE_KEY_REL = "rel"
@@ -364,9 +364,9 @@ NPM_BIN = "npm"
 NPM_INSTALL = "install"
 NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")
 NODE_MODULES_DIRNAME = "node_modules"
-# npm creates node_modules before populating it, so its existence is not
-# proof of a completed install; the marker is written only after npm exits 0,
-# and the lock directory serializes concurrent pytest-xdist installers.
+# npm creates node_modules before populating it, so its existence is not proof
+# of a completed install; the marker is written only after npm exits 0, and
+# the lock directory serialises concurrent pytest-xdist installers.
 NODE_DEPS_MARKER = ".node-deps-installed"
 NODE_DEPS_LOCK = ".node-deps-lock"
 NODE_DEPS_LOCK_TRIES = 600
@@ -418,9 +418,9 @@ JAVA_SCORES_FILENAME = "java_scores.csv"
 JAVA_DIFF_FILENAME = "java_diff.json"
 
 # C# structure eval: cgr nodes graded against a Roslyn syntax-tree oracle
-# (Microsoft.CodeAnalysis.CSharp, the C# analog of Go's go/ast). class/struct/
-# record map to Class, interface to Interface, enum to Enum (cgr's
-# determine_node_type), and members/local functions to Method/Function.
+# (Microsoft.CodeAnalysis.CSharp, the C# analogue of go/ast). class/struct/
+# record map to Class, interface to Interface, enum to Enum, and members/
+# local functions to Method/Function.
 CS_SUFFIX = ".cs"
 CSHARP_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
@@ -437,10 +437,10 @@ CSHARP_ORACLE_PROJECT = "Oracle.csproj"
 DOTNET_BIN = "dotnet"
 DOTNET_TELEMETRY_ENV = "DOTNET_CLI_TELEMETRY_OPTOUT"
 DOTNET_NOLOGO_ENV = "DOTNET_NOLOGO"
-# The oracle reads this comma-separated dir set so its file walk (and thus its
-# declared-type universe used to split INHERITS/IMPLEMENTS) skips exactly the
-# directories cgr's is_ignored/IGNORE_PATTERNS skips, not a smaller hardcoded
-# subset that would let an ignored folder's types pollute the classification.
+# The oracle reads this comma-separated dir set so its file walk (and its
+# declared-type universe for splitting INHERITS/IMPLEMENTS) skips exactly the
+# directories cgr's is_ignored/IGNORE_PATTERNS skips, not a smaller subset
+# that would let an ignored folder's types pollute the classification.
 CGR_IGNORE_DIRS_ENV = "CGR_IGNORE_DIRS"
 DOTNET_BUILD = "build"
 DOTNET_CONFIG_FLAG = "-c"
@@ -489,8 +489,8 @@ PHP_SCORES_FILENAME = "php_scores.csv"
 PHP_DIFF_FILENAME = "php_diff.json"
 
 # C/C++ structure eval: cgr nodes graded against a libclang oracle driven by a
-# compile_commands.json, so includes and macros resolve to the true AST (which
-# tree-sitter cannot do). Joined on (kind, file, start_line).
+# compile_commands.json, so includes and macros resolve to the true AST that
+# tree-sitter cannot. Joined on (kind, file, start_line).
 CPP_SUFFIXES: tuple[str, ...] = (
     ".cpp",
     ".cc",
@@ -514,12 +514,11 @@ CPP_SCORES_FILENAME = "cpp_scores.csv"
 CPP_DIFF_FILENAME = "cpp_diff.json"
 CPP_DEFAULT_TARGET = "."
 
-# Retrieval benchmark: does graph-augmented retrieval find the code that
-# calls a symbol better than grep? The unit is a file-level call edge
-# (caller_file, callee_simple_name): "file F contains a call to symbol S".
-# This mirrors the GitLab GKG "did it open the right file" localization
-# signal, and all conditions are scored against the same Python ast oracle
-# over the same file and first-party symbol universe.
+# Retrieval benchmark: does graph-augmented retrieval find the code that calls
+# a symbol better than grep? The unit is a file-level call edge (caller_file,
+# callee_simple_name): "file F contains a call to symbol S". Mirrors the GitLab
+# GKG "did it open the right file" signal; all conditions score against the
+# same Python ast oracle over the same file and first-party symbol universe.
 
 
 class GrepMode(StrEnum):
@@ -542,10 +541,10 @@ RG_WITH_FILENAME = "-H"
 RG_NO_LINE_NUMBER = "--no-line-number"
 RG_NO_HEADING = "--no-heading"
 # --null separates the path from the match with a NUL byte instead of `:`, so
-# a path containing a colon is parsed intact. -f - reads the patterns from
-# stdin (one per line), so the full symbol universe never lands in argv and
-# cannot trip the OS per-argument length limit (128KB on Linux, 32KB on
-# Windows). The pattern lines are ORed, equivalent to a single alternation.
+# a path containing a colon is parsed intact. -f - reads patterns from stdin
+# (one per line), so the full symbol universe never lands in argv and cannot
+# trip the OS per-argument length limit (128KB Linux, 32KB Windows). The
+# pattern lines are ORed, equivalent to a single alternation.
 RG_NULL = "--null"
 RG_PATTERN_FILE_FLAG = "-f"
 RG_STDIN = "-"
@@ -566,11 +565,10 @@ RETRIEVAL_DIFF_FILENAME = "retrieval_diff.json"
 RETRIEVAL_DIFF_PREFIX = "retrieval:"
 RETRIEVAL_TITLE = "cgr retrieval eval: graph vs grep (file-level call localization)"
 
-# Incremental-update eval: index, apply a semantically neutral edit (a
-# trailing comment that changes the file hash but not its AST), run an
-# incremental update, then compare against a clean forced re-index of the
-# same on-disk state. The clean re-index is the oracle; any divergence is an
-# incremental-update correctness bug.
+# Incremental-update eval: index, apply a semantically neutral edit (a trailing
+# comment that changes the file hash but not its AST), run an incremental
+# update, then compare against a clean forced re-index of the same on-disk
+# state. The clean re-index is the oracle; any divergence is a correctness bug.
 INCREMENTAL_DEFAULT_TARGET = "codebase_rag"
 INCREMENTAL_SCORES_FILENAME = "incremental_scores.csv"
 INCREMENTAL_DIFF_FILENAME = "incremental_diff.json"
@@ -607,7 +605,7 @@ IMPORTS_IGNORED_TOPS: frozenset[str] = frozenset({"__future__"})
 # Inheritance eval: grade resolved INHERITS (subclass_qn -> base_qn) and
 # OVERRIDES (subclass_qn, base_qn, method) against an ast oracle that resolves
 # bases via same-module and from-import only, skipping ambiguous/attribute/
-# external bases. Goes beyond L1, which checks INHERITS by base simple name.
+# external bases. Beyond L1, which checks INHERITS by base simple name.
 INHERITANCE_DEFAULT_TARGET = "codebase_rag"
 INHERITANCE_SCORES_FILENAME = "inheritance_scores.csv"
 INHERITANCE_DIFF_FILENAME = "inheritance_diff.json"
@@ -621,11 +619,10 @@ STAR_IMPORT = "*"
 SEP_NUL = "\x00"
 
 # Dead-code eval: run cgr's reachability engine (codebase_rag.dead_code) over
-# the captured graph and grade the reported unreachable set against controlled
-# fixtures whose dead functions are known by construction. Surfaces missing
-# CALLS edges (a live function wrongly flagged dead). The engine is
-# unit-tested on hand-built graphs, so a fixture mismatch points at cgr's
-# graph, not the scorer.
+# the captured graph and grade the reported unreachable set against fixtures
+# whose dead functions are known by construction. Surfaces missing CALLS edges
+# (a live function wrongly flagged dead). The engine is unit-tested on
+# hand-built graphs, so a fixture mismatch points at cgr's graph, not the scorer.
 DEAD_CODE_DEFAULT_TARGET = "codebase_rag"
 DEAD_CODE_SCORES_FILENAME = "dead_code_scores.csv"
 DEAD_CODE_DIFF_FILENAME = "dead_code_diff.json"
@@ -635,7 +632,7 @@ DEAD_CODE_TITLE = "cgr dead-code eval: reachability over the captured graph"
 
 # Cross-project (monorepo) eval: does cgr resolve CALLS and IMPORTS across
 # top-level package boundaries? The single-package corpora the other evals use
-# never exercise this; cgr's headline is monorepo RAG. Graded on synthetic
+# never exercise this, yet monorepo RAG is cgr's headline. Graded on synthetic
 # multi-package fixtures with known cross-package edges.
 CROSS_PROJECT_DIFF_PREFIX = "cross-project:"
 CROSS_CALLS_LABEL = "cross-package-calls"
@@ -644,7 +641,7 @@ CROSS_EDGE_REPR = "{src} -> {dst}"
 
 # Instantiation eval: file-level constructor localization. For each first-party
 # class, which files instantiate it. cgr INSTANTIATES edges vs an ast oracle of
-# calls whose callee simple name is a first-party class. Isolates the
+# calls whose callee simple name is a first-party class, isolating the
 # INSTANTIATES signal the retrieval eval folds into CALLS.
 INSTANTIATION_DEFAULT_TARGET = "codebase_rag"
 INSTANTIATION_SCORES_FILENAME = "instantiation_scores.csv"

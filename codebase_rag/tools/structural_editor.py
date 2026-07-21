@@ -32,9 +32,8 @@ def create_structural_editor_tool(service: AstGrepService) -> Tool:
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:
-            # offload to a thread: replace does blocking os.walk, file reads
-            # and writes, and CPU-bound AST parsing, which would stall the
-            # event loop.
+            # offload to a thread: replace does blocking os.walk, file I/O, and
+            # CPU-bound AST parsing, which would stall the event loop.
             changes = await asyncio.to_thread(
                 service.replace,
                 pattern,

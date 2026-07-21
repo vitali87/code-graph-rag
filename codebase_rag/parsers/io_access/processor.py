@@ -63,7 +63,7 @@ _DIRECTION_REL = {
 }
 
 # Binding assignment nodes shared across the lean grammars: `x = expr` is an
-# assignment_expression in JS/Java/Rust/C++ and an assignment_statement in Go.
+# assignment_expression in JS/Java/Rust/C++ and assignment_statement in Go.
 _LEAN_ASSIGNMENT_TYPES = frozenset(
     {cs.TS_ASSIGNMENT_EXPRESSION, cs.TS_GO_ASSIGNMENT_STATEMENT}
 )
@@ -116,8 +116,8 @@ class IOAccessProcessor:
         selection: CaptureSelection,
     ) -> None:
         self.ingestor = ingestor
-        # import_processor owns import_mapping[module_qn][local] = full_name,
-        # used to expand a callee head token to its imported module path.
+        # import_processor owns import_mapping[module_qn][local] = full_name, used to
+        # expand a callee head token to its imported module path.
         self._import_processor = import_processor
         # When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
@@ -139,7 +139,7 @@ class IOAccessProcessor:
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         sink_by_name = {s.callee: s for s in sinks}
         # Per-language macro sink table (Rust print macros), threaded through the
-        # walk to _emit_macro as a parameter (not instance state) so the processor
+        # walk to _emit_macro as a parameter, not instance state, so the processor
         # stays stateless, mirroring sink_by_name.
         macro_sinks = IO_MACRO_SINKS.get(language, {})
         # Per-language stream-insertion sink table (C++ std::cout/cerr `<<`), threaded
@@ -213,8 +213,8 @@ class IOAccessProcessor:
         ctor_by_name: dict[str, HandleConstructor],
         handles: dict[str, HandleBinding],
     ) -> tuple[str, HandleBinding] | None:
-        # Both `f = open(...)` (assignment) and `with open(...) as f:`
-        # (as_pattern) bind a handle var to a constructor call.
+        # Both `f = open(...)` (assignment) and `with open(...) as f:` (as_pattern)
+        # bind a handle var to a constructor call.
         if node.type == cs.TS_PY_ASSIGNMENT:
             target = node.child_by_field_name(cs.TS_FIELD_LEFT)
             call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -228,8 +228,8 @@ class IOAccessProcessor:
         else:
             return None
         # `f = open(...)` binds a plain name; `self.f = open(...)` binds an
-        # attribute -- keep the full dotted text ("self.f") as the handle key so
-        # a later `self.f.write(...)` resolves against it.
+        # attribute: keep the full dotted text ("self.f") as the handle key so a
+        # later `self.f.write(...)` resolves against it.
         if (
             target is None
             or call is None
@@ -272,11 +272,11 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         ctor_by_name: dict[str, HandleConstructor],
     ) -> dict[str, HandleBinding]:
-        # Handle bindings visible from ENCLOSING scopes, walked innermost-first
-        # so a nearer scope shadows a farther one (setdefault keeps the first
-        # seen). An enclosing class contributes its `self.<attr>` handles (set in
-        # any method); an enclosing function/module contributes its top-level
-        # local handles. Nested scopes are pruned -- their locals are not visible.
+        # Handle bindings visible from ENCLOSING scopes, walked innermost-first so a
+        # nearer scope shadows a farther one (setdefault keeps the first seen). An
+        # enclosing class contributes its `self.<attr>` handles (set in any method);
+        # an enclosing function/module contributes its top-level local handles.
+        # Nested scopes are pruned; their locals are not visible.
         handles: dict[str, HandleBinding] = {}
         class_scanned = False
         node = caller_node.parent
@@ -294,9 +294,9 @@ class IOAccessProcessor:
 
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
         # Plain identifiers assigned anywhere in this scope's OWN body (nested
-        # defs/classes pruned): assignment / with-as / for targets. Any such name
-        # is local for the whole function, so an inherited handle of that name is
-        # shadowed. Dotted attribute targets (self.x) are not locals -- skipped.
+        # defs/classes pruned): assignment / with-as / for targets. Any such name is
+        # local for the whole function, so an inherited handle of that name is
+        # shadowed. Dotted attribute targets (self.x) are not locals, so skipped.
         names: set[str] = set()
         stack = list(scope_seed_nodes(caller_node))
         while stack:
@@ -328,8 +328,8 @@ class IOAccessProcessor:
         ctor_by_name: dict[str, HandleConstructor],
         handles: dict[str, HandleBinding],
     ) -> None:
-        # Top-level handle bindings of one scope's OWN body; nested defs/classes
-        # are pruned (their locals belong to their own scope, not this one).
+        # Top-level handle bindings of one scope's OWN body; nested defs/classes are
+        # pruned (their locals belong to their own scope, not this one).
         stack = list(scope_seed_nodes(scope_node))
         while stack:
             node = stack.pop()
@@ -419,8 +419,8 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
     ) -> None:
-        # Go wraps a block's statements in a single `statement_list`; unwrap it so
-        # the source-order walk iterates the real statements, not one container.
+        # Go wraps a block's statements in a single `statement_list`; unwrap it so the
+        # source-order walk iterates the real statements, not one container.
         if descriptor.statement_container_type is not None:
             statements = [
                 child
@@ -431,12 +431,12 @@ class IOAccessProcessor:
                     else (stmt,)
                 )
             ]
-        # Names in scope for calls in these statements: the enclosing scopes'
-        # names plus this block's own declarations. A `const fs = require('fs')`
-        # declarator is an import alias (the genuine module, resolved by
-        # _resolve_sink), so _block_declarations skips it; but a local
-        # `const fs = {}` IS a shadow, even if `fs` is imported module-wide, so
-        # import names are NOT blanket-removed here.
+        # Names in scope for calls in these statements: the enclosing scopes' names
+        # plus this block's own declarations. A `const fs = require('fs')` declarator
+        # is an import alias (the genuine module, resolved by _resolve_sink), so
+        # _block_declarations skips it; but a local `const fs = {}` IS a shadow, even
+        # if `fs` is imported module-wide, so import names are NOT blanket-removed
+        # here.
         if descriptor.hoisted_declarations:
             # JS/TS: declarations hoist / are lexically in scope block-wide (a use
             # before a const/let is a TDZ error, not the outer name), so every
@@ -461,14 +461,14 @@ class IOAccessProcessor:
         # own declaration onward, so grow the shadow set in SOURCE ORDER. A call
         # BEFORE a later same-named local is the real global and still emits; the
         # local shadows only the statements from its own on. Whether the declaring
-        # statement's OWN initializer sees the name is language-specific
+        # statement's OWN initialiser sees the name is language-specific
         # (decl_in_own_initializer): Java adds it BEFORE walking (JLS 6.3:
         # `T System = System.getenv()` and later comma-declarators resolve the
         # local); Go adds it AFTER (scope starts after the ShortVarDecl, so
-        # `os := os.Getenv()` still reads the package). Loop-clause vars are always
-        # the exception: in scope in the BODY only (not the iterable header,
-        # evaluated before the var binds, nor sibling statements), so they are
-        # seeded via body_extra and never added to `live` here.
+        # `os := os.Getenv()` still reads the package). Loop-clause vars are the
+        # exception: in scope in the BODY only (not the iterable header, evaluated
+        # before the var binds, nor sibling statements), so they are seeded via
+        # body_extra and never added to `live` here.
         live = set(inherited)
         for stmt in statements:
             loop_vars = self._loop_declarations(stmt, descriptor)
@@ -477,7 +477,7 @@ class IOAccessProcessor:
                 descriptor.declaration_statement_type is not None
                 and stmt.type == descriptor.declaration_statement_type
             ):
-                # Java multi-declarator: each declarator's initializer sees only the
+                # Java multi-declarator: each declarator's initialiser sees only the
                 # declarators up to and including itself, so walk them in source order.
                 self._walk_declaration_ordered(
                     stmt,
@@ -493,7 +493,7 @@ class IOAccessProcessor:
                 )
             else:
                 # decl_in_own_initializer (Java): the name is in scope in its own
-                # initializer, so seed BEFORE walking; Go (=False): the initializer
+                # initialiser, so seed BEFORE walking; Go (=False): the initialiser
                 # still reads the global, so the name is added only AFTER (below).
                 pre = live | plain if descriptor.decl_in_own_initializer else live
                 self._walk_stmt_sinks(
@@ -526,8 +526,8 @@ class IOAccessProcessor:
     ) -> None:
         # Walk a declaration statement's declarators in SOURCE ORDER (Java
         # `local_variable_declaration`): a declarator's name enters scope for its own
-        # initializer (JLS 6.3) and the following declarators, so an EARLIER
-        # initializer's sink is not shadowed by a LATER declarator's name.
+        # initialiser (JLS 6.3) and the following declarators, so an EARLIER
+        # initialiser's sink is not shadowed by a LATER declarator's name.
         cur = set(base_scope)
         for child in stmt.named_children:
             if child.type != descriptor.declarator_type:
@@ -586,9 +586,9 @@ class IOAccessProcessor:
         # recurse via _walk_scope so its declarations shadow only inside it (and,
         # for declare-at-point langs, in its own source order). body_extra seeds a
         # loop var into the body scope (the loop's own block) without exposing it to
-        # the header expressions walked in this flat pass. The LIFO stack pushes
-        # children reversed so siblings pop in SOURCE order: a try-with-resources
-        # binds its resource handles before its body block reads them.
+        # the header expressions walked here. The LIFO stack pushes children reversed
+        # so siblings pop in SOURCE order: a try-with-resources binds its resource
+        # handles before its body block reads them.
         stack = [stmt]
         while stack:
             node = stack.pop()
@@ -640,10 +640,9 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
     ) -> None:
-        # A nested block is a child lexical scope for handles too: a
-        # handle declared inside it is out of scope after the block,
-        # so its binding must not leak to later statements (mirrors
-        # the in_scope shadow set, which is passed by value).
+        # A nested block is a child lexical scope for handles too: a handle declared
+        # inside it is out of scope after the block, so its binding must not leak to
+        # later statements (mirrors the in_scope shadow set, passed by value).
         snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
         self._walk_scope(
             list(node.named_children),
@@ -675,8 +674,8 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles | None,
     ) -> bool:
         # Emit whatever sink `node` itself is; returns whether the walk should
-        # descend into its children (False only for macros, whose token-stream
-        # body _emit_macro consumes whole).
+        # descend into its children (False only for macros, whose token-stream body
+        # _emit_macro consumes whole).
         if node.type == descriptor.call_type:
             self._emit_direct_call(
                 node,
@@ -823,9 +822,9 @@ class IOAccessProcessor:
         in_scope: frozenset[str],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # Rebuild each inlined scoped call from the flat token stream (shared with
-        # the flow walk), resolve it against the sink table (respecting shadowing),
-        # and take arg0's string literal as the resource identity.
+        # Rebuild each inlined scoped call from the flat token stream (shared with the
+        # flow walk), resolve it against the sink table (respecting shadowing), and
+        # take arg0's string literal as the resource identity.
         for raw, args in iter_token_tree_calls(
             token_tree, cs.TS_RS_TOKEN_SCOPE, cs.TS_IDENTIFIER, cs.TS_RS_TOKEN_TREE
         ):
@@ -843,8 +842,8 @@ class IOAccessProcessor:
         in_scope: frozenset[str],
         descriptor: LanguageDescriptor,
     ) -> None:
-        # A reconstructed scoped call (name `raw`, `args` = its token_tree),
-        # resolved with the same import-expansion / shadow rules as a real call.
+        # A reconstructed scoped call (name `raw`, `args` = its token_tree), resolved
+        # with the same import-expansion / shadow rules as a real call.
         sink = self._resolve_sink(
             raw,
             import_map,
@@ -875,9 +874,9 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
     ) -> None:
         # Env-style member reads: `process.env.X` (member) / `process.env['X']`
-        # (subscript) read env var X. Match on the object prefix; skip when the
-        # prefix head (`process`) is shadowed by a local binding or a non-global
-        # import, mirroring the call-sink shadow rules.
+        # (subscript) read env var X. Match on the object prefix; skip when the prefix
+        # head (`process`) is shadowed by a local binding or a non-global import,
+        # mirroring the call-sink shadow rules.
         obj = node.child_by_field_name(descriptor.object_field)
         if obj is None or obj.text is None:
             return
@@ -900,12 +899,11 @@ class IOAccessProcessor:
         node: Node, descriptor: LanguageDescriptor
     ) -> list[IODirection]:
         # A member access on an assignment's LHS mutates the resource:
-        # `process.env.KEY = v` is a WRITE (mislabeling it a read hid
-        # dotenv's core behavior); `+=` reads the old value AND writes.
-        # Any other position (including the assignment RHS) stays a read.
-        # Parent type gates first: most member accesses are plain reads,
-        # so the field lookup runs only for assignment parents. Node
-        # equality is by .id (the bindings hand out fresh Node objects).
+        # `process.env.KEY = v` is a WRITE (mislabelling it a read hid dotenv's core
+        # behaviour); `+=` reads the old value AND writes. Any other position (the
+        # assignment RHS included) stays a read. Parent type gates first: most member
+        # accesses are plain reads, so the field lookup runs only for assignment
+        # parents. Node equality is by .id (the bindings hand out fresh Node objects).
         parent = node.parent
         if parent is None or parent.type not in (
             descriptor.assignment_type,
@@ -927,8 +925,8 @@ class IOAccessProcessor:
         return [IODirection.READ, IODirection.WRITE]
 
     def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
-        # The accessed key: a member's `property` (`process.env.SECRET` -> SECRET),
-        # or a subscript's string index (`process.env['T']` -> T); else <dynamic>.
+        # The accessed key: a member's `property` (`process.env.SECRET` -> SECRET), or
+        # a subscript's string index (`process.env['T']` -> T); else <dynamic>.
         if node.type == descriptor.member_expression_type:
             prop = node.child_by_field_name(descriptor.property_field)
             if prop is not None and prop.text is not None:
@@ -973,8 +971,8 @@ class IOAccessProcessor:
         # The local names a declaration binds: JS `const fs = ...` / destructuring
         # uses the `name` field; Go `var/const os = ...` also has `name` field(s),
         # while `os := ...` / `range` use the `left` field (an expression_list of
-        # identifiers); Rust `let s = ...` uses the `pattern` field. All are
-        # collected so they shadow a same-named builtin.
+        # identifiers); Rust `let s = ...` uses the `pattern` field. All collected so
+        # they shadow a same-named builtin.
         names: set[str] = set()
         for name in declarator.children_by_field_name(cs.TS_FIELD_NAME):
             self._pattern_names(name, descriptor, names)
@@ -1025,7 +1023,7 @@ class IOAccessProcessor:
         # Parameter names bound in the whole function body. A param is a bare
         # identifier, a destructuring pattern (`function f({ http }) {}`), a TS
         # `required_parameter` wrapper whose `pattern` field holds either, or a Go
-        # `parameter_declaration` (`os Config`) -- all handled by _pattern_names,
+        # `parameter_declaration` (`os Config`), all handled by _pattern_names,
         # unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
@@ -1092,16 +1090,15 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
     ) -> bool:
         # libc FILE* access: the handle is an ARGUMENT (`fprintf(f, ..)`,
-        # `fgets(buf, n, f)`). A bound handle resolves to its resource; the
-        # pre-bound stdin/stdout/stderr globals resolve to their streams;
-        # any other handle expression is a FILE by signature (<dynamic>).
+        # `fgets(buf, n, f)`). A bound handle resolves to its resource; the pre-bound
+        # stdin/stdout/stderr globals resolve to their streams; any other handle
+        # expression is a FILE by signature (<dynamic>).
         sink = lean_handles.arg_sinks.get(raw_name)
         if sink is None:
             return False
         arguments = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        # Comments are named nodes inside the argument list and must not
-        # shift the handle-argument index; safe_decode_text keeps malformed
-        # bytes from raising.
+        # Comments are named nodes inside the argument list and must not shift the
+        # handle-argument index; safe_decode_text keeps malformed bytes from raising.
         args = (
             [child for child in arguments.named_children if child.type != cs.TS_COMMENT]
             if arguments is not None
@@ -1129,11 +1126,10 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles,
     ) -> bool:
-        # `f.WriteString(s)` / `br.readLine()` / `out.write(..)`: a method call
-        # whose receiver is a bound handle variable is I/O on that handle's
-        # resource. Every lean grammar spells the receiver `recv.method` in the
-        # callee text (Rust field_expression methods included), so one dotted
-        # split covers them all.
+        # `f.WriteString(s)` / `br.readLine()` / `out.write(..)`: a method call whose
+        # receiver is a bound handle variable is I/O on that handle's resource. Every
+        # lean grammar spells the receiver `recv.method` in the callee text (Rust
+        # field_expression methods included), so one dotted split covers them all.
         receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
         if not sep:
             return False
@@ -1160,9 +1156,9 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles,
     ) -> None:
-        # Track handle bindings as the source-ordered walk passes each binding
-        # node. Flat like Python's handle walk: last binding wins, no
-        # path-sensitivity (branch-precise handles are an upgrade path).
+        # Track handle bindings as the source-ordered walk passes each binding node.
+        # Flat like Python's handle walk: last binding wins, no path-sensitivity
+        # (branch-precise handles are an upgrade path).
         if lean_handles.type_ctors and node.type == cs.TS_CPP_DECLARATION:
             self._bind_type_decl_handle(node, descriptor, lean_handles)
             return
@@ -1182,9 +1178,9 @@ class IOAccessProcessor:
     def _paired_binding_values(
         targets: list[str | None], values: list[Node]
     ) -> Iterator[tuple[str, Node | None]]:
-        # Pair each named LHS target with its RHS value. One multi-value call
-        # feeding several LHS (Go `f, err := os.Open(..)`): the handle is the
-        # FIRST return value; the later targets (err) are not handles.
+        # Pair each named LHS target with its RHS value. One multi-value call feeding
+        # several LHS (Go `f, err := os.Open(..)`): the handle is the FIRST return
+        # value; the later targets (err) are not handles.
         spread = len(values) == 1 and len(targets) > 1
         for index, name in enumerate(targets):
             if name is None:
@@ -1206,7 +1202,7 @@ class IOAccessProcessor:
     ) -> None:
         # A C++ init_declarator whose value is an argument_list is the
         # declaration-constructor form (`std::ifstream in("x")`), owned by
-        # _bind_type_decl_handle -- neither bind nor kill here.
+        # _bind_type_decl_handle: neither bind nor kill here.
         if value is not None and value.type == cs.TS_ARGUMENT_LIST:
             return
         binding = self._resolve_handle_value(
@@ -1226,9 +1222,9 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles,
     ) -> HandleBinding | None:
-        # The HandleBinding an RHS expression yields: a constructor call, a
-        # wrapper around a nested constructor or bound variable, a derive call
-        # on a bound handle, a `new` handle expression, or a handle alias.
+        # The HandleBinding an RHS expression yields: a constructor call, a wrapper
+        # around a nested constructor or bound variable, a derive call on a bound
+        # handle, a `new` handle expression, or a handle alias.
         if value is None:
             return None
         node = self._unwrap_result(value)
@@ -1251,9 +1247,8 @@ class IOAccessProcessor:
     @staticmethod
     def _unwrap_result(node: Node) -> Node:
         # Rust Result unwrapping: `File::open(p)?` (try_expression) and
-        # `File::create(p).unwrap()` / `.expect(..)` all yield the inner
-        # handle. The node shapes are Rust-specific, so this is inert
-        # elsewhere.
+        # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
+        # node shapes are Rust-specific, so this is inert elsewhere.
         while True:
             if node.type == cs.TS_RS_TRY_EXPRESSION:
                 inner = next(
@@ -1290,8 +1285,8 @@ class IOAccessProcessor:
         raw = call_name(node)
         if raw is None:
             return None
-        # Wrapper first (`BufReader::new(f)`, `bufio.NewReader(f)`): the
-        # resource is arg0's.
+        # Wrapper first (`BufReader::new(f)`, `bufio.NewReader(f)`): the resource is
+        # arg0's.
         if (
             lean_handles.call_wrappers
             and self._resolve_sink(
@@ -1343,8 +1338,8 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
     ) -> HandleBinding | None:
         # Java `new`-shaped handles. A wrapper type delegates to arg0 (a nested
-        # constructor or a bound variable); PrintWriter falls through to its
-        # filename overload when arg0 is not a handle.
+        # constructor or a bound variable); PrintWriter falls through to its filename
+        # overload when arg0 is not a handle.
         type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
         if type_node is None or type_node.text is None:
             return None
@@ -1362,8 +1357,8 @@ class IOAccessProcessor:
         ctor = lean_handles.new_ctors.get(type_name)
         if ctor is None:
             # An identity-carrier reached through a wrapper
-            # (`new Scanner(new File("x"))`): `new File` is not a handle, but
-            # it designates the resource, so it resolves to one here.
+            # (`new Scanner(new File("x"))`): `new File` is not a handle, but it
+            # designates the resource, so it resolves to one here.
             kind = lean_handles.identity_new_types.get(type_name)
             if kind is None:
                 return None
@@ -1372,8 +1367,8 @@ class IOAccessProcessor:
             )
         if ctor.handle_arg is not None:
             # `new SqlCommand(sql, conn)`: the resource is the connection's, so
-            # inherit the bound handle at handle_arg; fall back to <dynamic> when
-            # that argument is not a handle we track.
+            # inherit the bound handle at handle_arg; fall back to <dynamic> when that
+            # argument is not a handle we track.
             inner = positional_arg_node(
                 node, ctor.handle_arg, descriptor.argument_wrapper_type
             )
@@ -1394,11 +1389,10 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
     ) -> None:
         # C++ declaration-constructor handles: `std::ifstream in("x.txt")`
-        # (init_declarator with an argument_list value) and the most vexing
-        # parse `std::ifstream dyn(path)` (a function_declarator), which still
-        # binds a FILE handle with a <dynamic> identity. A bare default-
-        # constructed stream (`std::ifstream f;` + later `f.open(..)`) is an
-        # upgrade path.
+        # (init_declarator with an argument_list value) and the most vexing parse
+        # `std::ifstream dyn(path)` (a function_declarator), which still binds a FILE
+        # handle with a <dynamic> identity. A bare default-constructed stream
+        # (`std::ifstream f;` + later `f.open(..)`) is an upgrade path.
         type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
         if type_node is None or type_node.text is None:
             return
@@ -1463,9 +1457,9 @@ class IOAccessProcessor:
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
-        # Identity one level down: `Files.newBufferedReader(Path.of("cfg"))`
-        # and `new Scanner(new File("x"))` carry the literal in the factory
-        # call / File constructor at the target position.
+        # Identity one level down: `Files.newBufferedReader(Path.of("cfg"))` and
+        # `new Scanner(new File("x"))` carry the literal in the factory call / File
+        # constructor at the target position.
         arg = self._first_positional_arg(call_node)
         if arg is None:
             return identity
@@ -1513,7 +1507,7 @@ class IOAccessProcessor:
         # form. Expand the head segment through the import map on `::` (`use std::fs;
         # fs::write` -> `std::fs::write`; a fully-qualified `std::fs::write` has an
         # unimported `std` head and stays as-is). A bare `fs::write` with no import
-        # does not expand and misses -> no false match on a local `mod fs`. A head
+        # does not expand and misses, so no false match on a local `mod fs`. A head
         # bound to a local name is shadowed.
         if scope_separator is not None:
             head, _, rest = raw.partition(scope_separator)
@@ -1525,7 +1519,7 @@ class IOAccessProcessor:
             return sink_by_name.get(raw)
         # Match a JS/TS/Go call against the sink table, respecting shadowing:
         #  - a name bound locally (a local `const fs`, `function fetch`, or a
-        #    parameter) is never the builtin -> no match.
+        #    parameter) is never the builtin, so no match.
         #  - the import-normalised name is tried first, so an ALIASED builtin
         #    (`const myfs = require('fs')` -> myfs.x resolves to fs.x) matches.
         #  - the raw dotted name is a last resort, allowed only when the head
@@ -1535,14 +1529,14 @@ class IOAccessProcessor:
         head, sep, _ = raw.partition(cs.SEPARATOR_DOT)
         if (head if sep else raw) in local_names:
             return None
-        # Go stdlib is always imported, so a dotted sink whose package head is
-        # NOT imported (e.g. a package-scope `var os`) is not the stdlib package.
+        # Go stdlib is always imported, so a dotted sink whose package head is NOT
+        # imported (e.g. a package-scope `var os`) is not the stdlib package.
         if sinks_require_import and sep and head not in import_map:
             return None
-        # The import-normalised name matches first: a JS named import may resolve
-        # to `node:fs.writeFileSync` (node:-stripped too), and a Go call resolves
-        # through its package path (`http.Get` -> `net/http.Get`, aliases included),
-        # which the registry keys on -- so a third-party pkg named `http` misses.
+        # The import-normalised name matches first: a JS named import may resolve to
+        # `node:fs.writeFileSync` (node:-stripped too), and a Go call resolves through
+        # its package path (`http.Get` -> `net/http.Get`, aliases included), which the
+        # registry keys on, so a third-party pkg named `http` misses.
         if (sink := match_normalised(raw, import_map, sink_by_name)) is not None:
             return sink
         if not sep:
@@ -1633,8 +1627,8 @@ class IOAccessProcessor:
         kind: ResourceKind,
         identity: str,
     ) -> None:
-        # Only enabled edges survive the filter; if none do, skip the Resource
-        # node too so selective capture never leaves an orphaned I/O node.
+        # Only enabled edges survive the filter; if none do, skip the Resource node
+        # too so selective capture never leaves an orphaned I/O node.
         rels = [r for r in self._rels(direction) if self._selection.rel_enabled(r)]
         if not rels:
             return

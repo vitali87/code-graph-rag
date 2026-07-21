@@ -79,12 +79,12 @@ class JavaTypeInferenceEngine(
 
         for module_qn in self.module_qn_to_file_path.keys():
             parts = module_qn.split(cs.SEPARATOR_DOT)
-            # Without a recognized src/main/java layout find_package_start_index
-            # returns None, leaving the whole map empty so cross-file Java
-            # resolution (static calls, instance dispatch in sibling files)
-            # silently fails. Fall back to the segment after the project root
-            # (index 1) so flat / non-standard layouts still register their
-            # simple class names. find_package_start_index never returns 0.
+            # Without a recognised src/main/java layout find_package_start_index
+            # returns None, leaving the whole map empty so cross-file Java resolution
+            # (static calls, instance dispatch in sibling files) silently fails. Fall
+            # back to the segment after the project root (index 1) so flat /
+            # non-standard layouts still register their simple class names.
+            # find_package_start_index never returns 0.
             package_start_idx = find_package_start_index(parts) or 1
             if simple_class_name := cs.SEPARATOR_DOT.join(parts[package_start_idx:]):
                 _add_mapping(simple_class_name, module_qn)

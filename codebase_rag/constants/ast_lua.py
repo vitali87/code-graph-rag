@@ -4,7 +4,6 @@ from .ast_nodes import TS_STRING, TS_STRING_LITERAL
 
 LUA_STRING_TYPES = (TS_STRING, TS_STRING_LITERAL)
 
-# Tree-sitter Lua node types
 TS_DOT_INDEX_EXPRESSION = "dot_index_expression"
 TS_LUA_VARIABLE_DECLARATION = "variable_declaration"
 TS_LUA_ASSIGNMENT_STATEMENT = "assignment_statement"
@@ -17,7 +16,6 @@ TS_LUA_LOCAL_STATEMENT = "local_statement"
 LUA_STATEMENT_SUFFIX = "statement"
 LUA_DEFAULT_VAR_TYPES = (TS_LUA_IDENTIFIER,)
 
-# Lua method separator
 LUA_METHOD_SEPARATOR = ":"
 
 # Tree-sitter Lua node types for language_spec

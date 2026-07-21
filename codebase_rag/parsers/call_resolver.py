@@ -22,7 +22,7 @@ _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
 # Node labels a Rust receiver type name may resolve to: a struct (Class), an
 # enum, a type alias, or a trait (Interface, when the receiver is typed to a
-# `dyn`/`impl` trait or a trait-returning factory) -- all can carry methods.
+# `dyn`/`impl` trait or a trait-returning factory); all can carry methods.
 _RS_TYPE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
@@ -30,7 +30,7 @@ _RS_TYPE_NODE_TYPES = frozenset(
 
 def _split_receiver_chain(expr: str) -> list[str]:
     # Split a receiver chain (`c.Find(1.5).Root`) on the `.` separators between
-    # hops only -- never on a `.` inside call arguments, an index, or a generic
+    # hops only, never on a `.` inside call arguments, an index, or a generic
     # (`1.5`, `x.y` args, `List<A.B>`), which a naive str.split would mangle.
     parts: list[str] = []
     depth = 0
@@ -106,10 +106,10 @@ class CallResolver:
         self._struct_impl_cache: dict[str, set[str]] = {}
         # Ordered constructor parameter names per class (explicit __init__
         # params, or annotated class-body fields for NamedTuple/dataclass),
-        # plus the param -> stored-attribute renames found in __init__
-        # bodies (self.ctx_factory = create_context). Construction-site
-        # bindings are held PENDING until every file's ctor metadata is
-        # collected, since a site may be scanned before its class's file.
+        # plus the param -> stored-attribute renames found in __init__ bodies
+        # (self.ctx_factory = create_context). Construction-site bindings are
+        # held PENDING until every file's ctor metadata is collected, since a
+        # site may be scanned before its class's file.
         self._ctor_params: dict[str, tuple[str, ...]] = {}
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
@@ -129,10 +129,10 @@ class CallResolver:
     def finalize_field_bindings(self) -> None:
         # Resolve pendings now that every class's ctor metadata is known. A
         # subclass without its own __init__ inherits the base's params and
-        # field, so both a positional index and a keyword name resolve
-        # against the nearest self-or-ancestor that owns the ctor param, and
-        # the binding is recorded under THAT owner (where the field lives) so
-        # an inherited self.handler() -- typed to the base -- still matches.
+        # field, so both a positional index and a keyword name resolve against
+        # the nearest self-or-ancestor that owns the ctor param, and the
+        # binding is recorded under THAT owner (where the field lives) so an
+        # inherited self.handler(), typed to the base, still matches.
         for class_qn, key, func_qn in self._pending_field_bindings:
             if isinstance(key, int):
                 owner_qn, params = self._ctor_params_owner(class_qn)
@@ -282,9 +282,9 @@ class CallResolver:
         # parent scope (module.Date for Date.prototype.strftime) is where the
         # prototype siblings were registered. A module-level caller degrades to
         # the same module-method lookup the CommonJS fallback performs.
-        # A dotless caller_qn has no parent scope to consult: rsplit would
-        # return the caller itself and the lookup would land on the caller's
-        # own NESTED function, which `this.m` never names.
+        # A dotless caller_qn has no parent scope: rsplit would return the
+        # caller itself and the lookup would land on the caller's own NESTED
+        # function, which `this.m` never names.
         if language not in cs.JS_TS_LANGUAGES or not caller_qn:
             return None
         if cs.SEPARATOR_DOT not in caller_qn:
@@ -408,9 +408,9 @@ class CallResolver:
             return set()
         targets: set[tuple[str, str]] = set()
         # Skip abstract targets: an @abstractmethod stub never runs (the concrete
-        # override does), so it must not be a call target -- a concrete sibling/impl
-        # wins. Abstract methods that are only "reached" polymorphically are handled
-        # as dead-code roots, not by a spurious CALLS edge.
+        # override does), so it must not be a call target; a concrete sibling/impl
+        # wins. Abstract methods only "reached" polymorphically are handled as
+        # dead-code roots, not by a spurious CALLS edge.
         if (base := self._try_resolve_method(class_context, method_name)) and (
             not self.function_registry.is_abstract(base[1])
         ):
@@ -428,8 +428,8 @@ class CallResolver:
         # one method: the prototype path's `View.lookup` and the fn-expr's
         # own-name module-flat `view.lookup`. A call binds one twin and the
         # other reports dead. Return the same-name twin(s) whose parent chain
-        # extends (or is extended by) the callee's parent -- i.e. the same
-        # module's flat/member pair -- so the caller can edge both (the
+        # extends (or is extended by) the callee's parent, i.e. the same
+        # module's flat/member pair, so the caller can edge both (the
         # duplicate-QN keep-both design). Never crosses modules.
         parent_qn, sep, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep:
@@ -455,7 +455,7 @@ class CallResolver:
         # Go package-level functions are package-scoped, but cgr keys each file as
         # its own module (`pkgdir.file.name`). Two same-package functions with the
         # same name can ONLY be mutually-exclusive build-tag variants (gin's
-        # `validate` under `//go:build !nomsgpack` vs `nomsgpack`) -- the compiler
+        # `validate` under `//go:build !nomsgpack` vs `nomsgpack`); the compiler
         # rejects duplicate top-level identifiers in a package otherwise. A bare call
         # resolves to just one file's copy, orphaning the other build's copy; return
         # every same-package same-name package-level sibling so no build variant is
@@ -480,7 +480,7 @@ class CallResolver:
             # Same directory is necessary but not sufficient for same-package: Go
             # permits an external test package (`package p_test`) in a `_test.go` file
             # sharing the directory. Production code can never call a function defined
-            # in a `_test.go` file, so exclude such siblings -- else a genuinely
+            # in a `_test.go` file, so exclude such siblings; else a genuinely
             # test-only dead function would be masked as live.
             if (
                 d2
@@ -494,8 +494,8 @@ class CallResolver:
         # A Java constructor is registered as a method directly under its class whose
         # simple name equals the class's simple name (`Foo.Foo(int)`). `new Foo(...)`
         # resolves to the CLASS, so redirect a CALLS edge to each declared constructor
-        # (all overloads) -- argument-type overload selection is not attempted, which
-        # is unnecessary for reachability and never fabricates a call to a
+        # (all overloads); argument-type overload selection is not attempted, which is
+        # unnecessary for reachability and never fabricates a call to a
         # non-constructor. Only constructors DIRECTLY on the class match (a nested
         # class's constructor has an extra qn segment and is excluded).
         simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -548,19 +548,19 @@ class CallResolver:
         # to the method on EVERY class that defines it. A receiver typed to a concrete
         # first-party class dispatches precisely and is skipped, so this only adds
         # edges the precise path could not place. Full-fallback by design: a
-        # template-parameter or otherwise-unresolved receiver is indistinguishable
-        # from an external one by name, so std::-typed receivers also fan out.
+        # template-parameter or unresolved receiver is indistinguishable from an
+        # external one by name, so std::-typed receivers also fan out.
         parts = call_name.split(cs.SEPARATOR_DOT)
         if len(parts) != 2:
             return set()
         object_name, method_name = parts
         # Fan out only when the receiver is typed to a template PARAMETER (`SAX* sax`
         # in a `template<typename SAX>` fn), whose concrete type is the argument at
-        # each instantiation -- unknowable statically, so every implementer is a
+        # each instantiation, unknowable statically, so every implementer is a
         # possible target. A concrete type is left to the precise path (a first-party
         # class dispatches exactly; an external `std::string` receiver must NOT be
         # rebound to an unrelated first-party method). An untyped receiver is left to
-        # the single-best trie fallback -- fanning every untyped call out to all
+        # the single-best trie fallback; fanning every untyped call out to all
         # same-named methods would flood the graph with false edges.
         if (local_var_types or {}).get(object_name) not in template_params:
             return set()
@@ -735,14 +735,13 @@ class CallResolver:
             return None
 
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
-        # where `view` is a param constructed in the caller) targets a
-        # MEMBER: the bare-name trie would rebind it to an arbitrary
-        # same-named candidate (express's application.render; a Dart
-        # `h.greet()` picking whichever class's greet is closest), a false
-        # edge that also hides the real method from dead-code. Bind the
-        # UNIQUE member-like candidate (parent qn itself registered) or
-        # drop. Typed Dart receivers never reach this: the local-type path
-        # above already bound them.
+        # where `view` is a param constructed in the caller) targets a MEMBER:
+        # the bare-name trie would rebind it to an arbitrary same-named
+        # candidate (express's application.render; a Dart `h.greet()` picking
+        # the closest class's greet), a false edge that also hides the real
+        # method from dead-code. Bind the UNIQUE member-like candidate (parent
+        # qn itself registered) or drop. Typed Dart receivers never reach this:
+        # the local-type path above already bound them.
         if (
             language in cs.JS_TS_LANGUAGES or language == cs.SupportedLanguage.DART
         ) and cs.SEPARATOR_DOT in call_name:
@@ -766,11 +765,11 @@ class CallResolver:
             if not sep or leaf != method_name:
                 continue
             # Member-like: the parent is itself a registered node (a class, a
-            # prototype constructor Function, an object scope) -- a free
+            # prototype constructor Function, an object scope); a free
             # function's parent is a module, which is never in the registry.
             if parent_qn in self.function_registry:
                 candidates.append(qn)
-        # Only candidates VISIBLE to the calling module count -- parent module
+        # Only candidates VISIBLE to the calling module count: parent module
         # imported here or defined here (express's tryRender imports ./view, so
         # View.render qualifies; an unrelated example's GithubView.render does
         # not). Required even for a SINGLETON: an untyped `client.render()` in
@@ -798,7 +797,7 @@ class CallResolver:
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # True when the dotted call's object segment is imported from a target
-        # that is still a slash-separated module path -- for Go, every local
+        # that is still a slash-separated module path; for Go, every local
         # path was rewritten to a project qn at import time, so a surviving
         # slash means external. JS/TS non-standard-scheme imports
         # (ext:deno_node/y) alias first-party code and keep their trie
@@ -820,9 +819,9 @@ class CallResolver:
         # project. First-party imports are written either project-prefixed
         # (`from proj.w import X`) or bare (`from utils.helpers import X`, where
         # the registered node is `proj.utils.helpers.X`); both are first-party
-        # and left to the trie fallback. Only a target that is neither rooted at
-        # the project nor registered under the project prefix is external, so
-        # this suppresses cross-project fuzzy rebinds without dropping real
+        # and left to the trie fallback. Only a target neither rooted at the
+        # project nor registered under the project prefix is external, so this
+        # suppresses cross-project fuzzy rebinds without dropping real
         # first-party calls.
         import_map = self.import_processor.import_mapping.get(module_qn)
         if not import_map:
@@ -836,11 +835,11 @@ class CallResolver:
         # it as external would suppress the simple-name trie fallback that a bare
         # PHP call already relies on, dropping the call; leave it to the trie.
         # LIMITATION: cgr qualifies PHP functions by file path and does not track
-        # the `namespace` declaration anywhere, so a genuinely external
+        # the `namespace` declaration, so a genuinely external
         # `use function Vendor\pkg\helper` cannot be told apart from a
-        # path-mismatched first-party one; both defer to the trie, exactly as a
-        # bare `helper()` call already does. Precise first-party-vs-external
-        # disambiguation would require systemic PHP namespace tracking.
+        # path-mismatched first-party one; both defer to the trie, as a bare
+        # `helper()` call already does. Precise disambiguation would need
+        # systemic PHP namespace tracking.
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
@@ -872,10 +871,10 @@ class CallResolver:
     ) -> bool:
         # True only for a two-part dotted member call `obj.method` whose `obj` has an
         # inferred local type that is known to be external. The receiver type is
-        # external when it resolves to nothing, or to a qn that is neither registered
-        # nor rooted at the project (a `std::string` -> `std.string`). In that case
-        # the method lives on the external type, so the simple-name trie fallback must
-        # not rebind it to a same-named first-party method. An untyped receiver (obj
+        # external when it resolves to nothing, or to a qn neither registered nor
+        # rooted at the project (a `std::string` -> `std.string`). Then the method
+        # lives on the external type, so the simple-name trie fallback must not
+        # rebind it to a same-named first-party method. An untyped receiver (obj
         # absent from the map) or a project-rooted type is left alone: its method may
         # still be resolved by the fallback (e.g. a cross-file imported-class call the
         # precise path missed), so only a provably external type is suppressed.
@@ -894,7 +893,7 @@ class CallResolver:
         # First-party class qns may be written without the project prefix (a bare
         # `from models.user import User` resolves to `models.user.User` while the
         # registry stores `proj.models.user.User`), so check both the qn as-is and
-        # the project-prefixed form before judging a type external -- mirrors
+        # the project-prefixed form before judging a type external, mirroring
         # _is_external_import. A project-rooted qn is always treated as first-party.
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
@@ -1264,13 +1263,12 @@ class CallResolver:
         self, package_qn: str, member_name: str
     ) -> tuple[str, str] | None:
         # A Go package spans multiple files and cgr qualifies its members by
-        # FILE (pkg.file.Func), so an import-mapped package qn plus member
-        # name misses the registry by exactly one segment. Search the
-        # package's file modules for the member; Go names are unique per
-        # package, so at most one function matches (min() keeps a same-named
-        # type-method collision deterministic).
-        # The module ROOT package maps to the bare project name (no dot), so
-        # accept it alongside project-dot-prefixed package qns.
+        # FILE (pkg.file.Func), so an import-mapped package qn plus member name
+        # misses the registry by one segment. Search the package's file modules
+        # for the member; Go names are unique per package, so at most one
+        # function matches (min() keeps a same-named type-method collision
+        # deterministic). The module ROOT package maps to the bare project name
+        # (no dot), so accept it alongside project-dot-prefixed package qns.
         project_name = self.import_processor.project_name
         if package_qn != project_name and not package_qn.startswith(
             f"{project_name}{cs.SEPARATOR_DOT}"
@@ -1310,7 +1308,7 @@ class CallResolver:
         class_name = rust_parts[-1]
 
         # A Rust receiver type may be a struct (Class), an enum (`Frame`), or a
-        # type alias, all of which carry impl methods -- match any of them, else an
+        # type alias, all of which carry impl methods; match any of them, else an
         # enum-typed receiver fails to resolve and its type reads as external,
         # wrongly suppressing the trie fallback.
         matching_qns = self.function_registry.find_ending_with(class_name)
@@ -1441,8 +1439,8 @@ class CallResolver:
         # `c` is a typed local (Context), each middle segment is a struct FIELD whose
         # recorded type advances the receiver (writermem -> responseWriter), and the
         # final segment is a method on the last field's type. Resolves ONLY when every
-        # middle segment is a known field and the method exists -- never a name-only
-        # fallback -- so it can revive a dropped edge but never mis-bind. Distinct
+        # middle segment is a known field and the method exists (never a name-only
+        # fallback), so it can revive a dropped edge but never mis-bind. Distinct
         # from the stored-local field-hop (`root := e.field.get(); root.m()`) which is
         # already typed via _enrich_go_call_locals; this is the no-local direct form.
         if len(parts) < 3 or not local_var_types:
@@ -1561,7 +1559,7 @@ class CallResolver:
         # member of the operand's own class or a free overload in that
         # class's module (the beside-the-class convention). A typed operand
         # with NEITHER is a builtin operation (enum/int comparison) with no
-        # first-party callee -- nlohmann's `token == token_type::x` must
+        # first-party callee; nlohmann's `token == token_type::x` must
         # not rebind to an unrelated class's operator== and fan out to all
         # its overload variants.
         # _try_resolve_method covers both the direct member and one
@@ -1586,7 +1584,7 @@ class CallResolver:
     ) -> str | None:
         # A bare-identifier operand with a locally inferred type resolves
         # to a REGISTERED first-party type qn, or nothing: only a known
-        # type may direct (or suppress) the operator binding; anything
+        # type may direct or suppress the operator binding; anything
         # uninferable keeps the caller on the legacy best-candidate path.
         if not operand_name or not local_var_types:
             return None
@@ -1637,9 +1635,9 @@ class CallResolver:
         # each `.method()` hop advances the type by that method's return type
         # (Root() -> Command). Language-agnostic; returns the bare type name of the
         # final hop, or None if any hop is untyped/unknown (then the chain stays
-        # unresolved, never mis-resolved). No early-out on an empty
-        # method_return_types map: a constructor-temporary base
-        # (`Reader<T>(...).m()`) types itself from the class registry alone.
+        # unresolved). No early-out on an empty method_return_types map: a
+        # constructor-temporary base (`Reader<T>(...).m()`) types itself from the
+        # class registry alone.
         parts = _split_receiver_chain(object_expr)
         base = parts[0]
         if not base:
@@ -1690,7 +1688,7 @@ class CallResolver:
     ) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
-        # return type. When no return type resolves, a C++ callee may instead be a
+        # return type. When none resolves, a C++ callee may instead be a
         # CONSTRUCTOR TEMPORARY (`Reader<decltype(ia)>(...)`, nlohmann's
         # from_cbor): the callee names the receiver's class itself. The callee is
         # cut at `<` or `(`, whichever comes first, since template args can carry
@@ -1846,7 +1844,7 @@ class CallResolver:
         # get_container(out).append). Before chained typing existed the bare method
         # name resolved via the trie, so fall back to it here rather than dropping an
         # edge that used to land. When the type WAS inferred but lacks the method, we
-        # must NOT rebind to an unrelated same-named method -- drop instead. C shares
+        # must NOT rebind to an unrelated same-named method; drop instead. C shares
         # the field_expression call shape but has no method dispatch, so it always
         # lands here = its exact prior behaviour. Go/Rust deliberately drop.
         if not object_type and language in (

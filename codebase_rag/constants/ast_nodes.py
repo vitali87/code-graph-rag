@@ -2,7 +2,6 @@
 
 from .languages import SupportedLanguage
 
-# Tree-sitter AST node type constants
 FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
 FUNCTION_NODES_LAMBDA = (
     "lambda_expression",
@@ -41,7 +40,7 @@ CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
 IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
 IMPORT_NODES_FROM = ("import_from_statement",)
 # variable_declaration: CommonJS `var X = require(...)` (express) binds
-# imports exactly like const/let lexical_declarations.
+# imports like const/let lexical_declarations.
 IMPORT_NODES_MODULE = (
     "lexical_declaration",
     "variable_declaration",
@@ -49,7 +48,6 @@ IMPORT_NODES_MODULE = (
 )
 IMPORT_NODES_INCLUDE = ("preproc_include",)
 
-# JS/TS specific node types
 JS_TS_FUNCTION_NODES = (
     "function_declaration",
     "generator_function_declaration",
@@ -68,7 +66,6 @@ JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
 
-# C++ import node types
 CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
 
 # AST field names for name extraction
@@ -107,7 +104,6 @@ FIELD_SUPERCLASS = "superclass"
 FIELD_SUPERCLASSES = "superclasses"
 FIELD_INTERFACES = "interfaces"
 
-# Query dict keys
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
 QUERY_CALLS = "calls"
@@ -117,7 +113,6 @@ QUERY_CONFIG = "config"
 QUERY_LANGUAGE = "language"
 QUERY_HIGHLIGHTS = "highlights"
 
-# Query capture names
 CAPTURE_FUNCTION = "function"
 CAPTURE_CLASS = "class"
 CAPTURE_CALL = "call"
@@ -128,7 +123,6 @@ CAPTURE_KEYWORD = "keyword"
 CAPTURE_ATTRIBUTE = "attribute"
 CAPTURE_FUNCTION_DECORATOR = "function.decorator"
 
-# Modifier extraction
 EXCLUDED_KEYWORDS = frozenset(
     {
         "def",
@@ -156,7 +150,6 @@ EXCLUDED_KEYWORDS = frozenset(
     }
 )
 
-# Tree-sitter Python import node types
 TS_IMPORT_STATEMENT = "import_statement"
 TS_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_DOTTED_NAME = "dotted_name"
@@ -165,13 +158,12 @@ TS_RELATIVE_IMPORT = "relative_import"
 TS_IMPORT_PREFIX = "import_prefix"
 TS_WILDCARD_IMPORT = "wildcard_import"
 
-# Tree-sitter JS/TS import node types
 TS_STRING = "string"
-# JS/TS string literals hold their text in a string_fragment child (the
-# counterpart of Python's string_content), used for I/O target extraction.
+# JS/TS string literals hold their text in a string_fragment child (like
+# Python's string_content), used for I/O target extraction.
 TS_STRING_FRAGMENT = "string_fragment"
 # Modern Node builtin imports carry a node: scheme (`import fs from 'node:fs'`);
-# stripped when checking whether an imported name is the genuine builtin module.
+# stripped when checking whether an imported name is the builtin module.
 NODE_BUILTIN_PREFIX = "node:"
 # `return_statement` node type (shared by Python and JS/TS grammars); used by
 # the language-agnostic flow walk.
@@ -202,22 +194,18 @@ TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
 TS_PRIVATE = "private"
 TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
-# Tree-sitter Java import node types
 TS_IMPORT_DECLARATION = "import_declaration"
 TS_STATIC = "static"
 TS_SCOPED_IDENTIFIER = "scoped_identifier"
 TS_ASTERISK = "asterisk"
 
-# Tree-sitter Rust import node types
 TS_USE_DECLARATION = "use_declaration"
 
-# Tree-sitter Go import node types
 TS_IMPORT_SPEC = "import_spec"
 TS_IMPORT_SPEC_LIST = "import_spec_list"
 TS_PACKAGE_IDENTIFIER = "package_identifier"
 TS_INTERPRETED_STRING_LITERAL = "interpreted_string_literal"
 
-# Tree-sitter C++ import node types
 TS_PREPROC_INCLUDE = "preproc_include"
 TS_TEMPLATE_FUNCTION = "template_function"
 TS_DECLARATION = "declaration"
@@ -227,14 +215,13 @@ TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
 # Plain call/constructor argument list (C++ `in("x.txt")` init_declarator
 # value, Java `new FileWriter("x")` arguments).
 TS_ARGUMENT_LIST = "argument_list"
-# `do { .. } while (cond)` -- same node type in the Java and C++ grammars.
+# `do { .. } while (cond)`: same node type in the Java and C++ grammars.
 TS_DO_STATEMENT = "do_statement"
 # Shared verbatim by the JS/TS, Java, and C++ grammars.
 TS_BREAK_STATEMENT = "break_statement"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
 
-# Tree-sitter JS/TS utility node types
 TS_RETURN_STATEMENT = "return_statement"
 TS_RETURN = "return"
 TS_NEW_EXPRESSION = "new_expression"
@@ -279,5 +266,4 @@ TS_BINARY_EXPRESSION = "binary_expression"
 
 TS_ATTRIBUTE = "attribute"
 
-# TS-specific node types
 TS_FUNCTION_SIGNATURE = "function_signature"

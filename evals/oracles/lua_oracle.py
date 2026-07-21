@@ -30,10 +30,9 @@ def run_lua_oracle(target: Path) -> GraphData:
 
 
 def run_lua_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level Lua call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function), with the declared name
-    # universe so the cgr side can be held to the same set. Mirrors the Go,
-    # Rust, Java, TypeScript, and PHP call oracles.
+    # File-level Lua call sites restricted to first-party callees (simple name is
+    # a declared Function), with the declared name universe so the cgr side is
+    # held to the same set. Mirrors the Go, Rust, Java, TypeScript, and PHP oracles.
     payload = _run_lua_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

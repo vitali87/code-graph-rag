@@ -1,17 +1,15 @@
 # Dart tree-sitter node types.
-# The tree-sitter-dart grammar splits a function/method into a
-# `*_signature` node and a sibling `function_body` (no single node spans
-# both), and has no dedicated call-expression node (calls are an identifier
-# plus a following `argument_part`/`selector`). cgr therefore captures the
-# signature nodes for structural support and derives full spans from the
-# sibling body; a precise CALLS graph is out of scope for this grammar.
+# The tree-sitter-dart grammar splits a function/method into a `*_signature`
+# node and a sibling `function_body` (no single node spans both), and has no
+# call-expression node (calls are an identifier plus a following
+# `argument_part`/`selector`). cgr captures the signature nodes and derives
+# spans from the sibling body.
 
-# Call-site nodes: the grammar has no call-expression node; an invocation
-# is whatever selector chain precedes a `selector` that holds an
-# `argument_part` (`f(x)` = identifier + selector(argument_part);
-# `a.b()` = identifier + selector(.b) + selector(argument_part)), and a
-# cascade invocation (`obj..m()`) holds its argument_part directly inside
-# the `cascade_section`.
+# Call-site nodes: the grammar has no call-expression node; an invocation is
+# whatever selector chain precedes a `selector` holding an `argument_part`
+# (`f(x)` = identifier + selector(argument_part); `a.b()` = identifier +
+# selector(.b) + selector(argument_part)). A cascade (`obj..m()`) holds its
+# argument_part directly inside the `cascade_section`.
 TS_DART_SELECTOR = "selector"
 TS_DART_ARGUMENT_PART = "argument_part"
 TS_DART_CASCADE_SECTION = "cascade_section"
@@ -28,17 +26,16 @@ DART_CALL_QUERY = """
 """
 
 # Declaration shapes for receiver typing: a class field is
-# declaration(type_identifier, initialized_identifier_list); a body local
-# is initialized_variable_definition with either a leading type_identifier
-# (declared) or an inferred_type plus a construction initializer; a
-# parameter is formal_parameter(type_identifier, identifier).
+# declaration(type_identifier, initialized_identifier_list); a body local is
+# initialized_variable_definition (leading type_identifier declared, or
+# inferred_type plus construction initializer); a parameter is
+# formal_parameter(type_identifier, identifier).
 TS_DART_CLASS_BODY = "class_body"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 
-# Nodes opening their OWN variable scope: the local-type walk must not
-# descend into them, or a nested function's same-named local would
-# conflict-drop the outer binding from the outer caller's map.
+# Nodes opening their OWN variable scope: the local-type walk must not descend,
+# or a nested function's same-named local conflict-drops the outer binding.
 DART_NESTED_SCOPE_NODE_TYPES = frozenset(
     {
         TS_DART_FUNCTION_EXPRESSION,
@@ -79,10 +76,9 @@ TS_DART_FACTORY_CONSTRUCTOR_SIGNATURE = "factory_constructor_signature"
 TS_DART_CONSTRUCTOR_SIGNATURE = "constructor_signature"
 TS_DART_CONSTANT_CONSTRUCTOR_SIGNATURE = "constant_constructor_signature"
 
-# Wrappers whose sibling `function_body` completes a captured signature's
-# span: `method_signature` wraps class members, `declaration` wraps
-# constructors; a signature under either takes the wrapper's following
-# `function_body` sibling as its body.
+# Wrappers whose sibling `function_body` completes a captured signature's span:
+# `method_signature` wraps class members, `declaration` wraps constructors; a
+# signature under either takes the wrapper's following `function_body` sibling.
 TS_DART_METHOD_SIGNATURE = "method_signature"
 TS_DART_DECLARATION = "declaration"
 TS_DART_FUNCTION_BODY = "function_body"
@@ -129,10 +125,9 @@ DART_SIGNATURE_TYPES = frozenset(
 )
 DART_SIGNATURE_WRAPPERS = frozenset({TS_DART_METHOD_SIGNATURE, TS_DART_DECLARATION})
 
-# Constructor signatures whose grammar `name` field is the CLASS
-# identifier, not the declared name: `C.named` must take its LAST bare
-# identifier or every named constructor collapses into a duplicate of the
-# default one.
+# Constructor signatures whose grammar `name` field is the CLASS identifier,
+# not the declared name: `C.named` must take its LAST bare identifier or every
+# named constructor collapses into a duplicate of the default one.
 DART_CONSTRUCTOR_SIGNATURE_TYPES = frozenset(
     {
         TS_DART_CONSTRUCTOR_SIGNATURE,

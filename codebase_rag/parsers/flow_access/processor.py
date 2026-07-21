@@ -120,7 +120,7 @@ class _FlowCtx(NamedTuple):
 
 # Languages whose local declarations hoist to the whole function scope (JS/TS
 # const/let are in the temporal dead zone before their line, so using the name
-# earlier is a ReferenceError -- treating it as shadowed function-wide is safe).
+# earlier is a ReferenceError; treating it as shadowed function-wide is safe).
 # Go has no hoisting: a `:=`/`var` shadow only applies from its point forward, so
 # its names are added to the live shadow set during the source-order walk instead.
 _HOISTED_DECL_LANGS = frozenset(
@@ -554,8 +554,8 @@ class FlowProcessor:
     ) -> tuple[_TaintMap, Node | None]:
         # Walk the pre-body header children and return the update clause
         # unwalked: a C-style for's update runs only AFTER a completed body
-        # iteration -- never on the zero-iteration path and never before the
-        # first body pass -- so the caller walks it after each body pass.
+        # iteration, never on the zero-iteration path and never before the
+        # first body pass, so the caller walks it after each body pass.
         # Java/C++ hold it in an `update` field on the loop node; Go nests
         # it inside the for_clause.
         update = node.child_by_field_name(cs.FIELD_UPDATE)
@@ -778,7 +778,7 @@ class FlowProcessor:
         # unioned (MAY join). Two shadow scopes are restored: a branch grows the
         # live shadow set with its own block-scoped declarations (restored between
         # branches), and a Go `if` initializer (`if x := f(); cond {}`) is scoped
-        # to the whole if statement (restored on exit) -- so neither shadows a
+        # to the whole if statement (restored on exit), so neither shadows a
         # source/sink past its scope.
         pre_if_shadows = set(jc.local_names)
         consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
@@ -821,7 +821,7 @@ class FlowProcessor:
     @staticmethod
     def _restore_shadows(pre_shadows: set[str], jc: _JsCtx) -> None:
         # Reset the mutable live shadow set to a pre-branch snapshot in place (jc is
-        # a NamedTuple, so the set object is shared -- mutate, do not rebind).
+        # a NamedTuple, so the set object is shared; mutate, do not rebind).
         jc.local_names.clear()
         jc.local_names.update(pre_shadows)
 
@@ -974,7 +974,7 @@ class FlowProcessor:
         # Shared (LHS names, RHS values) extraction with the I/O handle walk.
         targets, values = binding_targets_values(node, jc.descriptor)
         # `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
-        # all (a tuple return can't be split statically -- over-approximates err).
+        # all (a tuple return can't be split statically, over-approximating err).
         spread = len(values) == 1 and len(targets) > 1
         # Go assigns in parallel: every RHS is evaluated against the PRE-assignment
         # map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
@@ -1100,7 +1100,7 @@ class FlowProcessor:
                 )
                 return Taint(frozenset(), frozenset({callee[1]}))
             # A method chain (`std::env::var("X").unwrap()`): the callee itself is
-            # not a source, but its receiver call may be -- recurse the left spine.
+            # not a source, but its receiver call may be, so recurse the left spine.
             # Gated on the receiver being a call (not a bare identifier) so plain
             # variable taint is never propagated through an arbitrary method.
             func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -1370,7 +1370,7 @@ class FlowProcessor:
     ) -> Taint | None:
         # A return carries the taint of any returned value: JS `return expr` is a
         # direct child, Go `return expr` wraps it in an expression_list (and
-        # `return a, b` several) -- union the taint over every returned value.
+        # `return a, b` several); union the taint over every returned value.
         result: Taint | None = None
         for expr in self._lean_return_values(node):
             taint = self._js_expr_taint(expr, tainted, jc)
@@ -1690,7 +1690,7 @@ class FlowProcessor:
                 )
                 if block is not None:
                     # An except handler can run after the try body partially
-                    # executed, so seed it with union(pre, body_exit) -- taint
+                    # executed, so seed it with union(pre, body_exit); taint
                     # introduced before the raise must still reach the handler.
                     branch_exits.append(
                         self._walk_stmt(block, self._merge([state, body_exit]), ctx)

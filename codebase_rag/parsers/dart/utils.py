@@ -100,14 +100,14 @@ def _selector_has_argument_part(node: Node) -> bool:
 
 
 def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
-    # Backward walk over a selector chain, shared by plain and cascade
-    # calls: None means the chain is broken (index selector, arbitrary
-    # expression) and has no static name; an empty list means the chain
-    # bottomed out at `this`/`super`. With allow_calls, a call hop in the
-    # receiver (`Base(args).m()`, `factory().m()`) contributes a `()`
-    # marker so the resolver's chained path can type the receiver from the
-    # callee's return type or constructor class; without it (cascade path)
-    # a call-result receiver stays unresolvable.
+    # Backward walk over a selector chain, shared by plain and cascade calls:
+    # None means the chain is broken (index selector, arbitrary expression)
+    # and has no static name; an empty list means it bottomed out at
+    # `this`/`super`. With allow_calls, a call hop in the receiver
+    # (`Base(args).m()`, `factory().m()`) contributes a `()` marker so the
+    # resolver's chained path can type the receiver from the callee's return
+    # type or constructor class; without it (cascade path) a call-result
+    # receiver stays unresolvable.
     parts_rev: list[str] = []
     while node is not None:
         if allow_calls and _selector_has_argument_part(node):
@@ -142,10 +142,10 @@ def _assemble_chain(tokens: list[str]) -> str:
 
 def _cascade_call_name(call_node: Node) -> str | None:
     # `obj..m()` holds the argument_part inside the cascade_section; every
-    # section shares the ONE base receiver, so skip earlier sibling
-    # sections, then walk the receiver chain exactly like a plain call --
-    # an `obj.field..m()` cascade must keep its full receiver, or the bare
-    # member name could bind an unrelated same-name function.
+    # section shares the ONE base receiver, so skip earlier sibling sections,
+    # then walk the receiver chain exactly like a plain call; an
+    # `obj.field..m()` cascade must keep its full receiver, or the bare member
+    # name could bind an unrelated same-name function.
     parts = [
         name
         for child in call_node.named_children

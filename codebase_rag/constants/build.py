@@ -30,7 +30,6 @@ PYPROJECT_KEY_PACKAGE_DIR = "package-dir"
 TREESITTER_EXTRA_KEY = "treesitter-full"
 TREESITTER_PKG_PREFIX = "tree-sitter-"
 
-# PyInstaller CLI constants
 PYINSTALLER_CMD = "pyinstaller"
 PYINSTALLER_ARG_NAME = "--name"
 PYINSTALLER_ARG_ONEFILE = "--onefile"
@@ -45,11 +44,9 @@ PYINSTALLER_ENTRY_POINT = "main.py"
 
 PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
 
-# TOML parsing constants
 TOML_KEY_PROJECT = "project"
 TOML_KEY_OPTIONAL_DEPS = "optional-dependencies"
 
-# Version string parsing
 VERSION_SPLIT_GTE = ">="
 VERSION_SPLIT_EQ = "=="
 VERSION_SPLIT_LT = "<"

@@ -344,7 +344,7 @@ class BoundedASTCache:
         # Cache read that survives eviction: a miss re-parses from disk via the
         # loader and re-inserts (bounded). Type inference reads OTHER modules'
         # ASTs long after Pass 2 parsed them; on a repo larger than max_entries
-        # a plain __getitem__ would silently drop the inferred type (django:
+        # a plain __getitem__ would drop the inferred type (django:
         # urls/resolvers.py evicted before admindocs resolves get_resolver()).
         if key in self.cache:
             return self[key]
@@ -378,7 +378,7 @@ class BoundedASTCache:
 
     def _enforce_limits(self) -> None:
         while len(self.cache) > self.max_entries:
-            self.cache.popitem(last=False)  # Remove least recently used
+            self.cache.popitem(last=False)
 
         if self._should_evict_for_memory():
             entries_to_remove = max(
@@ -502,8 +502,8 @@ class GraphUpdater:
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
         # flushes, and test introspection. `_sink` is a filtering wrapper that
         # drops disabled relationships/nodes at one choke point, so the ~20
-        # parser emission sites stay untouched. All node/rel emission goes
-        # through `_sink`; everything else uses `ingestor`.
+        # parser emission sites stay untouched. All emission goes through
+        # `_sink`; everything else uses `ingestor`.
         self.ingestor = ingestor
         self._sink: IngestorProtocol = FilteringIngestor(ingestor, self.capture)
         self._single_file: Path | None = None
@@ -582,12 +582,12 @@ class GraphUpdater:
     def _run_cpp_frontend(self) -> None:
         # Optional libclang C++ pre-pass when a compile_commands.json is
         # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
-        # directly (tree-sitter cannot expand macros) and skip covered
-        # files in the tree-sitter definition pass. HYBRID: tree-sitter
-        # stays the backbone (nothing is skipped); libclang layers on only
-        # macro Function nodes and #include IMPORTS, whose qns are
-        # scheme-identical, and hands back macro uses for span attribution
-        # after Pass 2. Missing either condition falls back to tree-sitter.
+        # directly (tree-sitter cannot expand macros) and skip covered files
+        # in the definition pass. HYBRID: tree-sitter stays the backbone
+        # (nothing skipped); libclang layers on only macro Function nodes and
+        # #include IMPORTS, whose qns are scheme-identical, and hands back
+        # macro uses for span attribution after Pass 2. Missing either
+        # condition falls back to tree-sitter.
         self._cpp_frontend_covered = frozenset()
         self._pending_cpp_macro_calls = []
         if settings.CPP_FRONTEND not in (
@@ -645,17 +645,16 @@ class GraphUpdater:
 
     def _run_csharp_frontend(self) -> None:
         # Optional Roslyn semantic pre-pass. ROSLYN/HYBRID: load the repo's
-        # real .csproj/.sln via MSBuildWorkspace and collect the semantic
-        # facts syntax alone cannot derive: exact INHERITS-vs-IMPLEMENTS
-        # base kinds (consumed during Pass 2), exact per-invocation call
-        # targets (consumed during Pass 3), partial-type identity groups
-        # (joined after Pass 2), and LINQ query-operator calls (emitted
-        # after Pass 3). Missing dotnet, project, or a build/restore
-        # failure all fall back to pure tree-sitter (empty facts).
-        # Reset first so a reused updater (watch mode) that previously ran
-        # hybrid does not keep applying stale facts on a later run that has
-        # the frontend off or cannot run it. csharp_call_sites is mutated in
-        # place because the type-inference engine holds a reference.
+        # real .csproj/.sln via MSBuildWorkspace and collect facts syntax
+        # alone cannot derive: exact INHERITS-vs-IMPLEMENTS base kinds (Pass
+        # 2), exact per-invocation call targets (Pass 3), partial-type
+        # identity groups (joined after Pass 2), and LINQ query-operator
+        # calls (after Pass 3). Missing dotnet, project, or a build/restore
+        # failure all fall back to pure tree-sitter (empty facts). Reset first
+        # so a reused updater (watch mode) that previously ran hybrid does not
+        # keep applying stale facts on a later run with the frontend off.
+        # csharp_call_sites is mutated in place because the type-inference
+        # engine holds a reference.
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = {}
         dp.csharp_call_sites.clear()
@@ -728,9 +727,8 @@ class GraphUpdater:
     def _emit_csharp_query_calls(self) -> None:
         # LINQ query syntax has no invocation nodes for tree-sitter to see;
         # each Roslyn query-operator fact becomes a direct CALLS edge, both
-        # ends resolved through the Pass-2 function-location registry (a
-        # miss on either end drops the fact rather than risk a dangling
-        # edge).
+        # ends resolved through the Pass-2 function-location registry (a miss
+        # on either end drops the fact rather than risk a dangling edge).
         if not self._csharp_query_calls:
             return
         dp = self.factory.definition_processor
@@ -777,20 +775,19 @@ class GraphUpdater:
 
     def _resolve_hybrid_macro_calls(self) -> None:
         # Attribute each hybrid macro use to the tightest enclosing
-        # TREE-SITTER definition span (recorded during Pass 2), falling
-        # back to the use site's Module -- the mirror of the libclang
-        # frontend's own span resolution, but against the qn scheme the
-        # rest of the graph actually uses.
+        # TREE-SITTER definition span (recorded during Pass 2), falling back
+        # to the use site's Module: the mirror of the libclang frontend's own
+        # span resolution, but against the qn scheme the rest of the graph
+        # actually uses.
         if not self._pending_cpp_macro_calls:
             return
         spans = self.factory.definition_processor.cpp_definition_spans
         emitted = 0
         for call in self._pending_cpp_macro_calls:
-            # The frontend parses every TU each run, but an incremental
-            # run records spans only for re-parsed files. An unchanged
-            # file has no spans here AND already carries its caller->macro
-            # edges in the graph, so resolving it would re-attribute
-            # in-function uses to the Module.
+            # The frontend parses every TU each run, but an incremental run
+            # records spans only for re-parsed files. An unchanged file has no
+            # spans here AND already carries its caller->macro edges, so
+            # resolving it would re-attribute in-function uses to the Module.
             if call.rel_path not in self._reparsed_file_keys:
                 continue
             containing = [
@@ -816,9 +813,9 @@ class GraphUpdater:
     def _resolve_hybrid_expansion_calls(self) -> None:
         # A call whose text lives inside a macro body exists only after
         # expansion, so tree-sitter never emits it. Join BOTH ends to
-        # tree-sitter definition spans: the caller by expansion site
-        # (Module fallback, like macro uses), the callee by its referenced
-        # definition's location (dropped when no span contains it -- an
+        # tree-sitter definition spans: the caller by expansion site (Module
+        # fallback, like macro uses), the callee by its referenced
+        # definition's location (dropped when no span contains it, since an
         # unindexed or template-only definition has no tree-sitter node to
         # target).
         if not self._pending_cpp_expansion_calls:
@@ -941,8 +938,8 @@ class GraphUpdater:
 
         # After rehydration so the "does a real definition exist?" check sees
         # definitions in files an incremental run did not re-parse; otherwise a
-        # forward declaration whose definition lives in an unchanged file would be
-        # kept as a phantom and re-fragment the class.
+        # forward declaration whose definition lives in an unchanged file is
+        # kept as a phantom and re-fragments the class.
         kept_forwards = (
             self.factory.definition_processor.resolve_deferred_forward_declarations()
         )
@@ -1060,12 +1057,12 @@ class GraphUpdater:
             self.function_registry[qn] = node_type
             # Restore the property-name set for unchanged files: property-dispatch
             # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
-            # @property defined elsewhere would otherwise drop vs a clean index.
+            # @property defined elsewhere would otherwise drop.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
             # Restore the macro-namespace set for unchanged files: the Rust
-            # macro/fn gate consults it, so a re-parsed file's invocation of
-            # a macro defined elsewhere would otherwise drop vs a clean index.
+            # macro/fn gate consults it, so a re-parsed file's invocation of a
+            # macro defined elsewhere would otherwise drop.
             if row.get(cs.KEY_IS_MACRO):
                 self.factory.definition_processor.macro_qns.add(qn)
             # Record the defining file so _is_cpp_defined can language-check
@@ -1105,14 +1102,13 @@ class GraphUpdater:
 
     def _seed_module_qns_from_graph(self, eligible_paths: set[str]) -> None:
         # Cross-language module-qn disambiguation (definition_processor.
-        # _disambiguate_module_qn) only sees files processed in the current
-        # run. On an incremental ADD of a file whose basename collides with an
-        # already-indexed sibling of another language (shapes.rs already owns
-        # proj.shapes, then shapes.cpp is added), the added file would re-claim
-        # the bare qn and silently overwrite the existing module under the
-        # qualified_name constraint. Seed the qn->file map from the graph
-        # BEFORE processing so the disambiguator sees taken qns; a re-parsed
-        # (changed) file still matches its own path and keeps its bare qn.
+        # _disambiguate_module_qn) only sees files processed this run. On an
+        # incremental ADD of a file whose basename collides with an already-
+        # indexed sibling of another language (shapes.rs owns proj.shapes,
+        # then shapes.cpp is added), the added file would re-claim the bare qn
+        # and overwrite the existing module under the qualified_name
+        # constraint. Seed the qn->file map from the graph BEFORE processing so
+        # the disambiguator sees taken qns; a re-parsed file keeps its bare qn.
         if not isinstance(self.ingestor, QueryProtocol):
             return
         module_map = self.factory.definition_processor.module_qn_to_file_path
@@ -1126,8 +1122,7 @@ class GraphUpdater:
             # Only seed modules whose file survives this run (still eligible).
             # A file deleted OR newly excluded this cycle is gone from
             # eligible_paths, so a same-basename ADD (delete shapes.rs + add
-            # shapes.cpp) takes the bare qn a clean index would give it,
-            # instead of the suffixed form.
+            # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
@@ -1159,15 +1154,14 @@ class GraphUpdater:
         rows: list[ResultRow], existing: dict[str, list[str]]
     ) -> dict[str, list[str]]:
         # Group persisted INHERITS rows into child -> ordered bases, restoring
-        # the original source order from base_index. Skip children already
-        # present locally (freshly re-parsed). A class with more than one base
-        # needs a reliable order (method resolution / override attribution are
-        # first-match-wins over the base list); if any of its edges lacks a
-        # base_index -- e.g. an INHERITS relationship written by an older index
-        # before base_index existed -- the order cannot be trusted, so that
-        # class is NOT rehydrated and falls back to name-based resolution rather
-        # than risk binding to the wrong base. Single-base classes are
-        # order-independent and always safe.
+        # source order from base_index. Skip children already present locally
+        # (freshly re-parsed). A class with more than one base needs a reliable
+        # order (method resolution / override attribution are first-match-wins
+        # over the base list); if any of its edges lacks a base_index (e.g. an
+        # INHERITS written by an older index before base_index existed) the
+        # order cannot be trusted, so that class is NOT rehydrated and falls
+        # back to name-based resolution rather than risk the wrong base.
+        # Single-base classes are order-independent and always safe.
         collected: dict[str, list[tuple[int | None, str]]] = {}
         for row in rows:
             child = row.get(cs.KEY_CHILD_QN)
@@ -1188,11 +1182,11 @@ class GraphUpdater:
         return result
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
-        # Record the reference edges that unchanged files point at the
-        # re-indexed files, BEFORE those files' subtrees (and thus the inbound
-        # edges) are deleted. Capturing and restoring the exact edges avoids
-        # re-resolving the callers, whose resolution would diverge from a clean
-        # index (cgr resolution is context-sensitive).
+        # Record the reference edges unchanged files point at the re-indexed
+        # files, BEFORE those files' subtrees (and thus the inbound edges) are
+        # deleted. Restoring the exact edges avoids re-resolving the callers,
+        # whose resolution would diverge from a clean index (cgr resolution is
+        # context-sensitive).
         if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
             return []
         return self.ingestor.fetch_all(

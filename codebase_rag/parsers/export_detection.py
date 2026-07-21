@@ -97,14 +97,13 @@ _DART_PRIVATE_BYTE = cs.DART_PRIVATE_PREFIX.encode(cs.ENCODING_UTF8)
 
 def _dart_exported(node: Node, name: str) -> bool:
     # Dart visibility is purely lexical: a leading underscore means
-    # library-private, everything else is public. A public member is only
-    # externally reachable when EVERY enclosing type is also public, since
-    # a private class/mixin/extension cannot be named outside its library
-    # (`_Internal.doThing` is unreachable from other libraries even though
-    # `doThing` has no underscore). An UNNAMED extension (`extension on
-    # String {...}`, no name field) is likewise usable only in its
-    # declaring library, so its members are private too. Walk the ancestor
-    # type chain and treat any private link as private.
+    # library-private, everything else public. A public member is externally
+    # reachable only when EVERY enclosing type is also public, since a private
+    # class/mixin/extension cannot be named outside its library
+    # (`_Internal.doThing` is unreachable even though `doThing` has no
+    # underscore). An UNNAMED extension (`extension on String {...}`) is
+    # likewise usable only in its declaring library, so its members are private
+    # too. Walk the ancestor type chain and treat any private link as private.
     if name.startswith(cs.DART_PRIVATE_PREFIX):
         return False
     ancestor = node.parent
@@ -159,11 +158,10 @@ def _is_script_global(node: Node) -> bool:
 
 # 1-slot memo of the last root's module-construct scan: files are ingested
 # sequentially, so consecutive symbols of one file hit the slot and the
-# O(top-level statements) scan runs once per FILE instead of once per
-# symbol. The slot holds the root Node itself, which keeps its tree alive,
-# so the entry can never alias a recycled node address; retaining one
-# parse tree is the bounded cost (an unbounded Node-keyed lru_cache would
-# pin every cached tree in memory).
+# O(top-level statements) scan runs once per FILE, not per symbol. The slot
+# holds the root Node itself, which keeps its tree alive, so the entry can
+# never alias a recycled node address; retaining one parse tree is the bounded
+# cost (an unbounded Node-keyed lru_cache would pin every cached tree).
 _last_script_scan: tuple[Node, bool] | None = None
 
 
@@ -267,13 +265,13 @@ def _csharp_exported(node: Node) -> bool:
             if child.text.decode(cs.ENCODING_UTF8) in _CSHARP_PUBLIC_MODIFIERS:
                 return True
     # An explicit interface implementation (`IThing IThing.WithKey(...)`)
-    # carries no modifier but is invocable from outside via the interface --
+    # carries no modifier but is invocable from outside via the interface;
     # API surface (Polly's `IAsyncPolicy.WithPolicyKey`, `IDictionary.Keys`).
     for child in node.children:
         if child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER:
             return True
     # An interface member carries no visibility modifier and is implicitly
-    # PUBLIC -- it IS the interface's API surface (Polly's
+    # PUBLIC; it IS the interface's API surface (Polly's
     # IAsyncPolicy.ExecuteAsync overloads, flagged dead without this).
     parent = node.parent
     if (

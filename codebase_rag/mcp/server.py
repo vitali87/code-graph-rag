@@ -24,8 +24,8 @@ from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.vector_store import close_qdrant_client
 
 if TYPE_CHECKING:
-    # starlette is a lazy dependency of the HTTP path only; its canonical
-    # ASGI types are needed solely for annotations
+    # starlette is a lazy dependency of the HTTP path only; its ASGI
+    # types are needed solely for annotations
     from starlette.types import ASGIApp, Receive, Scope, Send
 
 
@@ -214,9 +214,9 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
             if key.lower() == b"authorization":
                 provided = value
                 break
-        # RFC 7235: the SCHEME compares case-insensitively (it is not a
-        # secret, so an ordinary compare is fine); only the token value
-        # needs the constant-time compare_digest
+        # RFC 7235: the SCHEME compares case-insensitively (not secret, so
+        # an ordinary compare is fine); only the token value needs
+        # constant-time compare_digest
         authorized = False
         if provided is not None:
             scheme, _, credential = provided.partition(b" ")
@@ -267,9 +267,9 @@ async def serve_http(
                 logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
                 yield
 
-    # With a token configured, bearer auth fronts the mount even on
-    # loopback (defense in depth for shared hosts); without one, the
-    # exposure guard above already confined the bind to loopback.
+    # With a token, bearer auth fronts the mount even on loopback
+    # (defense in depth for shared hosts); without one the exposure
+    # guard above already confined the bind.
     endpoint = session_manager.handle_request
     if auth_token:
         endpoint = _require_bearer_auth(endpoint, auth_token)

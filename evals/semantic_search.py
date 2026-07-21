@@ -1,10 +1,10 @@
 # Semantic-search relevance eval. cgr's semantic search embeds each function's
 # source and retrieves by cosine similarity to a query embedding. This grades
-# that relevance directly: for controlled fixtures whose natural-language query
-# maps unambiguously to one function, does cgr's embedder rank that function in
-# the top k? It uses cgr's own embedder over function source extracted from the
-# captured graph, so it tests cgr's embedding + ranking pipeline (the part that
-# decides relevance); the Qdrant ANN layer only approximates this same ranking.
+# relevance directly: for fixtures whose natural-language query maps
+# unambiguously to one function, does cgr's embedder rank that function in the
+# top k? It uses cgr's own embedder over function source from the captured
+# graph, so it tests cgr's embedding + ranking pipeline; the Qdrant ANN layer
+# only approximates this same ranking.
 from pathlib import Path
 from typing import NamedTuple
 
@@ -34,7 +34,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 def function_snippets(target: Path, project: str) -> dict[str, str]:
     # The source of every first-party function/method, keyed by qualified name,
-    # read from the captured node's file and span -- the same text cgr embeds.
+    # read from the captured node's file and span, the same text cgr embeds.
     ingestor = _capture(target, project)
     snippets: dict[str, str] = {}
     for (label, uid), props in ingestor.nodes.items():

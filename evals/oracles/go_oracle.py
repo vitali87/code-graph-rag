@@ -37,9 +37,9 @@ def run_go_oracle(target: Path) -> GraphData:
 
 
 def run_go_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level Go call sites restricted to first-party callees (a callee
-    # whose simple name is a declared Function/Method), with the declared name
-    # universe so the cgr side can be held to the same set.
+    # File-level Go call sites restricted to first-party callees (simple name is
+    # a declared Function/Method), with the declared name universe so the cgr
+    # side is held to the same set.
     payload = _run_go_oracle_payload(target)
     declared = frozenset(
         rec[ec.ORACLE_KEY_NAME]

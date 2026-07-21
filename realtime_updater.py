@@ -58,7 +58,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
 
-        # Debounce configuration
         self.debounce_seconds = debounce_seconds
         self.max_wait_seconds = max_wait_seconds
         self.debounce_enabled = debounce_seconds > 0
@@ -95,7 +94,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # │ Step 3: Re-parse the file if it was modified or created            │
         # │         Rebuilds in-memory state (AST, function registry)          │
         # │ Step 4: Re-process all function calls across the entire codebase   │
-        # │         Fixes "island" problem - changes reflect in all relations  │
+        # │         Fixes "island" problem; changes reflect in all relations   │
         # │ Step 5: Flush all collected changes to the database                │
         # └─────────────────────────────────────────────────────────────────────┘
         src_path = event.src_path
@@ -106,17 +105,16 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return
 
         if not self.debounce_enabled:
-            # No debouncing - process immediately (legacy behavior)
+            # No debouncing: process immediately (legacy behaviour)
             self._process_change(event)
             return
 
-        # Debounced processing with hybrid approach
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
         current_time = time.time()
 
         with self.lock:
-            # Track the first event time for max-wait calculation
+            # Track the first event time for the max-wait calculation
             if relative_path_str not in self.first_event_time:
                 self.first_event_time[relative_path_str] = current_time
                 logger.info(
@@ -127,19 +125,16 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     )
                 )
 
-            # Always store the latest event for this file
             self.pending_events[relative_path_str] = event
 
-            # Cancel any existing timer for this file
             if relative_path_str in self.timers:
                 self.timers[relative_path_str].cancel()
                 logger.debug(logs.DEBOUNCE_RESET.format(path=relative_path_str))
 
-            # Check if max wait time has been exceeded
             time_since_first = current_time - self.first_event_time[relative_path_str]
 
             if time_since_first >= self.max_wait_seconds:
-                # Max wait exceeded - process immediately
+                # Max wait exceeded: process immediately
                 logger.info(
                     logs.DEBOUNCE_MAX_WAIT.format(
                         max_wait=self.max_wait_seconds, path=relative_path_str
@@ -147,7 +142,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 )
                 self._schedule_immediate_processing(relative_path_str)
             else:
-                # Schedule debounced processing
                 remaining_wait = self.max_wait_seconds - time_since_first
                 effective_delay = min(self.debounce_seconds, remaining_wait)
                 timer = threading.Timer(
@@ -206,8 +200,8 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
-        # Only process events that actually change file content
-        # Skip read-only events like "opened", "closed_no_write" that don't modify the file
+        # Only process events that change file content; skip read-only events
+        # like "opened" or "closed_no_write" that don't modify the file
         relevant_events = {
             EventType.MODIFIED,
             EventType.CREATED,
@@ -302,7 +296,7 @@ def _run_watcher_loop(
 ):
     updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
-    # Initial full scan builds the complete context for real-time updates
+    # Initial full scan builds the context for real-time updates
     logger.info(logs.INITIAL_SCAN)
     updater.run()
     logger.success(logs.INITIAL_SCAN_DONE)

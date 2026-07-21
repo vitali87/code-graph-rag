@@ -87,9 +87,8 @@ def _base_rels(groups: Iterable[cs.CaptureGroup]) -> set[cs.RelationshipType]:
 
 def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
     # Tokens apply left-to-right so later ones win: a `none`/`all` base
-    # clears everything before it, and group/rel add-drops after a base
-    # survive. This makes `--capture none` override an inherited
-    # `CGR_CAPTURE=io`, not just re-add whichever groups the set held.
+    # clears everything before it, and add-drops after a base survive. So
+    # `--capture none` overrides an inherited `CGR_CAPTURE=io`.
     enabled = _base_rels(cs.DEFAULT_CAPTURE_GROUPS)
     for token in tokens:
         token = token.strip()

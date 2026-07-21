@@ -40,10 +40,9 @@ def run_javascript_oracle(target: Path) -> GraphData:
 def run_typescript_call_oracle(
     target: Path,
 ) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level TypeScript call sites restricted to first-party callees (a
-    # callee whose simple name is a declared Function/Method), with the declared
-    # name universe so the cgr side can be held to the same set. Mirrors the Go,
-    # Rust, and Java call oracles.
+    # File-level TypeScript call sites restricted to first-party callees (simple
+    # name is a declared Function/Method), with the declared name universe so the
+    # cgr side is held to the same set. Mirrors the Go, Rust, and Java oracles.
     return _call_edges(target, ec.TS_SUFFIXES)
 
 
@@ -52,8 +51,8 @@ def run_javascript_call_oracle(
 ) -> tuple[set[tuple[str, str]], frozenset[str]]:
     # File-level JavaScript call sites, same tsc oracle over .js/.jsx. tsc's
     # syntactic parse handles JS, so this is independent of cgr's tree-sitter JS
-    # frontend and measures cgr's cross-file JS call resolution against ground
-    # truth (mirrors run_typescript_call_oracle).
+    # frontend and measures cgr's cross-file JS call resolution (mirrors
+    # run_typescript_call_oracle).
     return _call_edges(target, ec.JS_SUFFIXES)
 
 

@@ -125,8 +125,8 @@ class _DeferredForwardDecl(NamedTuple):
     class_node: Node
     class_name: str
     # The namespace-qualified name (module-file prefix stripped, so `A::Foo` is
-    # `A.Foo` regardless of which header declares it). Comparing on this — not the
-    # bare simple name — keeps a forward-declared `B::Foo` when only `A::Foo` is
+    # `A.Foo` regardless of which header declares it). Comparing on this, not the
+    # bare simple name, keeps a forward-declared `B::Foo` when only `A::Foo` is
     # defined, while still matching a cross-file forward/definition of one type.
     ns_qn: str
     module_qn: str
@@ -500,12 +500,12 @@ class ClassIngestMixin:
             # self-edge is never real. In C# the written base can be an
             # ARITY sibling (`class Foo : Foo<object>`, a different type
             # sharing the simple name); recover it before falling back.
-            # Otherwise the written base must refer to a SHADOWED outer
-            # name (thrift's `pub enum Error` implementing the std `Error`
-            # trait): when the module-anchored remainder is a bare single
-            # segment it IS the written name and externalizes. A dotted
-            # remainder (a nested child like SimpleHashMap.Entry) was
-            # never written as such; derivation would be a lie, so no edge.
+            # Otherwise the written base must refer to a SHADOWED outer name
+            # (thrift's `pub enum Error` implementing the std `Error` trait):
+            # when the module-anchored remainder is a bare single segment it
+            # IS the written name and externalizes. A dotted remainder (a
+            # nested child like SimpleHashMap.Entry) was never written as
+            # such; derivation would be a lie, so no edge.
             if (sibling := self._csharp_arity_sibling(entry)) is not None:
                 return sibling, False
             self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
@@ -552,8 +552,8 @@ class ClassIngestMixin:
             # name; only a TYPE declaration is a valid inheritance target, so
             # filter before the uniqueness check (a same-named factory function
             # under the package must not corrupt the class hierarchy). The
-            # package must also actually EXPOSE the name (its __init__ imports
-            # it explicitly or star-imports the defining module); a same-named
+            # package must also EXPOSE the name (its __init__ imports it
+            # explicitly or star-imports the defining module); a same-named
             # internal class the package never re-exports is not the referent.
             type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
             package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
@@ -703,16 +703,16 @@ class ClassIngestMixin:
         # Widget;`) is a bodyless type specifier. Registering it collides with the
         # real definition's qn (suffixing it `@line`) and fragments one class into
         # several same-named nodes, which makes member-call resolution pick among
-        # duplicates nondeterministically. But a type that is ONLY ever
-        # forward-declared (an opaque handle, or a metaprogramming primary defined
-        # solely via specializations) has no other node, so it must be kept. We
-        # cannot tell which until every file's definitions are in, so defer the
-        # forward declaration and decide in resolve_deferred_forward_declarations.
+        # duplicates nondeterministically. But a type ONLY ever forward-declared
+        # (an opaque handle, or a metaprogramming primary defined solely via
+        # specializations) has no other node, so it must be kept. We cannot tell
+        # which until every file's definitions are in, so defer the forward
+        # declaration and decide in resolve_deferred_forward_declarations.
         # The class query captures a templated class twice: the inner
         # class_specifier AND its template_declaration wrapper. The wrapper is the
         # canonical node (it carries the template params and always registers with
         # its natural qn); the inner specifier is redundant. Drop the inner one
-        # outright -- for bodied definitions too, not just bodyless forward decls --
+        # outright (for bodied definitions too, not just bodyless forward decls)
         # so the class registers exactly once. Registering both suffixes the second
         # `@line`, splitting members (which attach to the bodied specifier) away
         # from the natural qn that callers reference, orphaning the whole class.
@@ -826,8 +826,8 @@ class ClassIngestMixin:
             parent_span=parent_span,
         )
         # For a templated class the canonical node is the template_declaration
-        # wrapper, which has no `body` field. Its members -- base clause, fields,
-        # methods -- live on the inner class_specifier (type_spec). Extract them
+        # wrapper, which has no `body` field. Its members (base clause, fields,
+        # methods) live on the inner class_specifier (type_spec). Extract them
         # from there so they bind to the class's natural qn. For a plain class
         # type_spec is class_node, so this is a no-op for non-templates and for
         # Go/Rust (which never take the template_declaration branch).
@@ -1356,7 +1356,7 @@ class ClassIngestMixin:
         # (`new Base(){ @Override m(){} }`). The base type is resolved by UNIQUE
         # global simple-name match among type declarations (the base is usually in
         # another file; a full import resolve is unnecessary and this stays
-        # revive-only -- an ambiguous or unfound base is skipped). Each base method
+        # revive-only; an ambiguous or unfound base is skipped). Each base method
         # directly on the base whose simple name matches gets an OVERRIDES edge from
         # the anon override, so override-reachability keeps the dispatch-only method
         # live when the base is reachable.
@@ -1365,7 +1365,7 @@ class ClassIngestMixin:
             # A method-body anonymous override is registered as a FUNCTION (via the
             # function-ingest path), a field-initializer one as a METHOD. The graph
             # matches an edge endpoint by LABEL + qn, so emit the source with the qn's
-            # ACTUAL registered label -- a hard-coded Method label drops the edge for
+            # ACTUAL registered label; a hard-coded Method label drops the edge for
             # the Function-labelled overrides (the eval matches by qn and would hide
             # this, but the production Cypher would not).
             anon_type = self.function_registry.get(anon_qn)

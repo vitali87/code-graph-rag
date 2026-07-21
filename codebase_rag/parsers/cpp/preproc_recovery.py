@@ -1,18 +1,16 @@
 # Recovery for the conditional-brace preprocessor pattern that collapses a
 # whole C/C++ file into one tree-sitter ERROR node. A branch can open a
 # brace that a LATER branch closes (nlohmann binary_reader.hpp:
-# `#ifdef __cpp_lib_byteswap ... else { #endif` followed by
-# `#ifdef __cpp_lib_byteswap } #endif`); the preprocessor keeps the braces
+# `#ifdef __cpp_lib_byteswap ... else { #endif` then
+# `#ifdef __cpp_lib_byteswap } #endif`); the preprocessor keeps braces
 # balanced under every configuration, but tree-sitter keeps EVERY branch's
-# tokens and sees an imbalance, which at file scale makes error recovery
-# reinterpret the entire translation unit (3,125 lines -> one ERROR;
-# methods degrade to free functions or vanish, orphaning whole dead-code
-# clusters). When a parse comes back with a catastrophic ERROR, blank the
-# net-unbalanced LEAF conditional branches (space-filled, so every byte
-# offset and line number of the surviving code is preserved) and re-parse,
-# preferring the SMALLEST blanked subset: each candidate alone first, the
-# full set as a last resort, keeping the retry only when it strictly
-# shrinks the worst ERROR span.
+# tokens, sees an imbalance, and reinterprets the whole translation unit
+# (methods degrade to free functions or vanish, orphaning dead-code
+# clusters). On a catastrophic ERROR, blank the net-unbalanced LEAF
+# conditional branches (space-filled, so byte offsets and line numbers
+# survive) and re-parse, preferring the SMALLEST blanked subset: each
+# candidate alone first, the full set as a last resort, keeping a retry only
+# when it strictly shrinks the worst ERROR span.
 import re
 
 from tree_sitter import Node, Parser, Tree
@@ -46,9 +44,9 @@ _LINE_COMMENT = b"//"
 
 # A branch list plus whether the conditional contains nested conditionals:
 # only LEAF conditionals are candidates. An outer region (an include guard
-# spans the whole file) legitimately holds unbalanced fragments between its
-# nested directives (a class body split by an inner #if), so blanking is
-# restricted to branches whose entire content is directive-free.
+# spanning the whole file) legitimately holds unbalanced fragments between
+# its nested directives, so blanking is restricted to branches whose entire
+# content is directive-free.
 _Frame = tuple[list[bool], list[tuple[int, int]], list[int]]
 
 
@@ -127,24 +125,21 @@ def _retry_without_macro_markers(
     parser: Parser, tree: Tree, source_bytes: bytes
 ) -> tuple[Tree, bytes]:
     # A bare scope-marker macro line (`NLOHMANN_JSON_NAMESPACE_BEGIN`, no
-    # semicolon) glues onto the NEXT top-level construct: tree-sitter
-    # parses macro + `template <...> struct ordered_map : base` as ONE
-    # declaration whose struct head sinks into an init_declarator, and
-    # macro + `namespace detail {` as a function_definition named
-    # `namespace`. The damage is silent-ish -- a couple of SMALL error
-    # nodes -- so the catastrophic whole-file pass never fires, yet the
-    # class/namespace and every member are lost or leak to module scope.
-    # Blanking just the marker lines (space-filled, offsets preserved) and
-    # re-parsing recovers the real structure; the strict error-count
-    # improvement guard keeps benign marker uses untouched. A `//` comment
-    # after the marker is prose, not part of the invocation. All gated
-    # markers blank TOGETHER: per-marker subsets cannot work here, because
-    # a marker glued into an otherwise well-formed neighbor (an attribute
-    # macro between `template<...>` and the declarator) damages the tree
-    # SILENTLY -- no error node -- so no per-subset metric can see which
-    # single marker repairs it. Collateral is prevented structurally
-    # instead: a marker-shaped line whose covering node is string or
-    # comment payload is never a candidate.
+    # semicolon) glues onto the NEXT top-level construct: macro +
+    # `template <...> struct ordered_map : base` parses as ONE declaration
+    # whose struct head sinks into an init_declarator, and macro +
+    # `namespace detail {` as a function_definition named `namespace`. The
+    # damage yields only a couple of SMALL error nodes, so the whole-file
+    # pass never fires, yet the class/namespace and its members are lost or
+    # leak to module scope. Blanking the marker lines (offsets preserved) and
+    # re-parsing recovers the structure; the strict error-count guard keeps
+    # benign marker uses untouched. A `//` comment after the marker is prose.
+    # All gated markers blank TOGETHER: a marker glued into a well-formed
+    # neighbour (an attribute macro between `template<...>` and the
+    # declarator) damages the tree SILENTLY with no error node, so no
+    # per-subset metric can see which single marker repairs it. Collateral is
+    # prevented structurally: a marker-shaped line whose covering node is
+    # string or comment payload is never a candidate.
     if not tree.root_node.has_error:
         return tree, source_bytes
     lines = source_bytes.split(_CHAR_NEWLINE)
@@ -216,13 +211,12 @@ def parse_with_preproc_recovery(
         # members register as module-level Functions and the directive
         # CONDITION becomes a phantom node. On any parse error, retry with
         # the conditional-directive LINES blanked (line-count preserving,
-        # only the FIRST branch kept -- an orphaned alternative body would
+        # only the FIRST branch kept, since an orphaned alternative body would
         # misparse into a phantom bare-name declaration) and keep the tree
-        # with the smaller error.
-        # has_error, not the line-span metric: the shatter often yields
-        # SINGLE-LINE inner ERROR nodes inside a plausibly-shaped wrong
-        # declaration (a property named after the directive condition),
-        # which a span measure scores as zero.
+        # with the smaller error. Gate on has_error, not the line-span metric:
+        # the shatter often yields SINGLE-LINE inner ERROR nodes inside a
+        # plausibly-shaped wrong declaration (a property named after the
+        # directive condition), which a span measure scores as zero.
         if not tree.root_node.has_error or b"#if" not in source_bytes:
             return tree
         retry = parser.parse(_blank_csharp_directives(source_bytes))
