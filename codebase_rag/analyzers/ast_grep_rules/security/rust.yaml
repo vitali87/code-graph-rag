@@ -5,13 +5,18 @@ ast_grep_id: rust
 extensions: [.rs]
 rules:
   - id: command_new
+    # Anchor to the call's own `function` field so only the call whose callee IS
+    # Command::new fires. The old `stopBy: end` searched every descendant, so a
+    # call that merely wraps a Command::new argument (`foo(Command::new(x))`) or
+    # any ancestor in a builder chain matched too, emitting a phantom finding on
+    # the outer call. std::process::Command::new still matches (substring regex).
     message: "Spawning an external process (Command::new) can enable command injection"
     rule:
       kind: call_expression
       has:
+        field: function
         kind: scoped_identifier
         regex: 'Command\s*::\s*new'
-        stopBy: end
   - id: unsafe_block
     message: "unsafe block bypasses Rust memory-safety guarantees"
     rule:

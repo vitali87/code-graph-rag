@@ -19,12 +19,14 @@ rules:
         - not:
             has:
               kind: then
-        # rescue whose body is just nil
+        # rescue whose body IS bare nil. The nil must be the direct child of the
+        # body: `stopBy: end` searched every descendant, so a real recovery
+        # (`app, data = nil`) or a nil buried in a call (`log(nil)`) was
+        # mis-flagged. An empty body is covered by the branch above.
         - has:
             kind: then
             has:
               kind: nil
-              stopBy: end
   - id: global_variable
     message: "Global variable ($var) couples code to shared mutable state"
     rule:
