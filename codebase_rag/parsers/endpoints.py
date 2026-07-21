@@ -17,10 +17,20 @@ from .. import constants as cs
 if TYPE_CHECKING:
     from ..services import IngestorProtocol, QueryProtocol
 
-CYPHER_ALL_RESOURCES = (
-    "MATCH (r:Resource) RETURN r.qualified_name AS qualified_name, "
+# Anchoring on live sink/EXPOSES edges keeps resources whose caller or
+# handler was deleted from relinking; delete-then-relink makes the pass
+# idempotent so changed URLs or routes drop their stale RESOLVES_TO edges.
+CYPHER_LIVE_NETWORK_RESOURCES = (
+    "MATCH ()-[:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
+    "RETURN DISTINCT r.qualified_name AS qualified_name, "
     "r.name AS name, r.kind AS kind"
 )
+CYPHER_LIVE_ENDPOINT_RESOURCES = (
+    "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
+    "RETURN DISTINCT r.qualified_name AS qualified_name, "
+    "r.name AS name, r.kind AS kind"
+)
+CYPHER_DELETE_RESOLVES_TO = "MATCH ()-[r:RESOLVES_TO]->() DELETE r"
 
 _HTTP_METHOD_NAMES = frozenset(
     {"get", "post", "put", "patch", "delete", "head", "options", "websocket"}
@@ -34,7 +44,7 @@ _DEFAULT_ROUTE_METHOD = "GET"
 _DECORATOR_CALL_RE = re.compile(
     r"^@[\w.]*?(?P<name>\w+)\(\s*(?P<quote>['\"])(?P<path>/[^'\"]*)(?P=quote)",
 )
-_METHODS_KWARG_RE = re.compile(r"methods\s*=\s*\[(?P<items>[^\]]*)\]")
+_METHODS_KWARG_RE = re.compile(r"methods\s*=\s*[\[({](?P<items>[^\])}]*)[\])}]")
 _METHOD_ITEM_RE = re.compile(r"['\"](\w+)['\"]")
 
 
@@ -59,7 +69,8 @@ def parse_route_decorator(decorator_text: str) -> list[tuple[str, str]]:
     return [(m.upper(), path) for m in methods]
 
 
-_TEMPLATE_PARAM_RE = re.compile(r"^\{[^/]+\}$")
+# FastAPI-style {id} and Flask-style <user_id> / <int:user_id> variables.
+_TEMPLATE_PARAM_RE = re.compile(r"^(\{[^/]+\}|<[^/]+>)$")
 
 
 def url_matches_template(url: str, template: str) -> bool:
@@ -132,26 +143,27 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     """
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
-    rows = ingestor.fetch_all(CYPHER_ALL_RESOURCES)
-    networks: list[tuple[str, str]] = []
-    endpoints: list[tuple[str, str]] = []
-    for row in rows:
-        qn = row.get(cs.KEY_QUALIFIED_NAME)
-        name = row.get(cs.KEY_NAME)
-        if not isinstance(qn, str) or not isinstance(name, str):
-            continue
-        kind = row.get(KEY_KIND)
-        if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
-            networks.append((qn, name))
-        elif kind == ResourceKind.ENDPOINT.value:
-            endpoints.append((qn, name))
+    ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
+    networks: dict[str, str] = {}
+    endpoints: dict[str, str] = {}
+    for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
+        for row in ingestor.fetch_all(query):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            name = row.get(cs.KEY_NAME)
+            if not isinstance(qn, str) or not isinstance(name, str):
+                continue
+            kind = row.get(KEY_KIND)
+            if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
+                networks[qn] = name
+            elif kind == ResourceKind.ENDPOINT.value:
+                endpoints[qn] = name
 
     # The live ingestor both queries and writes; QueryProtocol alone types
     # the read side, so the single write goes through an ingestor view.
     writer = cast("IngestorProtocol", ingestor)
     created = 0
-    for network_qn, url in networks:
-        for endpoint_qn, identity in endpoints:
+    for network_qn, url in networks.items():
+        for endpoint_qn, identity in endpoints.items():
             _, _, template = identity.partition(" ")
             if template and url_matches_template(url, template):
                 writer.ensure_relationship_batch(
