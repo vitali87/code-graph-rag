@@ -206,6 +206,134 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     return [scope_qn, natural]
 
 
+def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
+    # The wrapped value nodes a container/branch node hands onward, or None
+    # for a leaf that IS the first-class value.
+    if node.type in _PY_VALUE_WRAPPER_TYPES:
+        return list(node.named_children)
+    if is_dart and node.type in _DART_VALUE_WRAPPER_TYPES:
+        return _dart_collection_values(node)
+    if node.type == cs.TS_PY_DICTIONARY:
+        return _py_dict_values(node)
+    if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+        return _conditional_result_operands(node, is_dart)
+    if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+        return [
+            operand
+            for operand in (
+                node.child_by_field_name(cs.TS_FIELD_LEFT),
+                node.child_by_field_name(cs.TS_FIELD_RIGHT),
+            )
+            if operand is not None
+        ]
+    return None
+
+
+def _dart_collection_values(node: Node) -> list[Node]:
+    # A Dart MAP stores each value inside a `pair` node's value field
+    # (`{"tap": onTap}`); a set exposes its elements directly; a typed
+    # literal's `type_arguments` child carries types, never values.
+    children: list[Node] = []
+    for child in node.named_children:
+        if child.type == cs.TS_DART_TYPE_ARGUMENTS:
+            continue
+        if child.type == cs.TS_DART_PAIR:
+            if (pair_value := child.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                children.append(pair_value)
+            continue
+        children.append(child)
+    return children
+
+
+def _py_dict_values(node: Node) -> list[Node]:
+    return [
+        pair_value
+        for pair in node.named_children
+        if pair.type == cs.TS_PY_PAIR
+        and (pair_value := pair.child_by_field_name(cs.FIELD_VALUE)) is not None
+    ]
+
+
+def _conditional_result_operands(node: Node, is_dart: bool) -> list[Node]:
+    # tree-sitter-python exposes NO field names on conditional_expression
+    # (child_by_field_name returns None for every operand), so the result
+    # operands are positional: [body, condition, alternative]. A shape that
+    # is not exactly three named operands falls back to all of them,
+    # over-referencing rather than dropping a branch.
+    operands = list(node.named_children)
+    if len(operands) != 3:
+        return operands
+    # Dart orders [condition, consequence, alternative]; Python orders
+    # [body, condition, alternative]. Pick the two result operands, never
+    # the truthiness-tested one.
+    return [operands[1], operands[2]] if is_dart else [operands[0], operands[2]]
+
+
+def _find_call_arguments_node(call_node: Node) -> Node | None:
+    args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if args_node is not None:
+        return args_node
+    # C# target-typed `new(...)` exposes NO fields at all; its argument_list
+    # is an unfielded named child (Serilog hands its CreateLogger local
+    # functions to `return new(...)`, which the fielded lookup silently
+    # dropped).
+    args_node = next(
+        (
+            child
+            for child in call_node.named_children
+            if child.type == cs.TS_CSHARP_ARGUMENT_LIST
+        ),
+        None,
+    )
+    if args_node is not None:
+        return args_node
+    # Dart has no call-expression node: a selector/cascade_section wraps its
+    # arguments in an argument_part holding the real `arguments` node one
+    # level down.
+    for part in call_node.named_children:
+        if part.type == cs.TS_DART_ARGUMENT_PART:
+            return next(
+                (
+                    grand
+                    for grand in part.named_children
+                    if grand.type == cs.TS_DART_ARGUMENTS
+                ),
+                None,
+            )
+    return None
+
+
+def _add_dart_named_argument(child: Node, keyword: dict[str, Node]) -> None:
+    # A named value is a `named_argument` whose label child names it and
+    # whose last named child is the expression.
+    label = next(
+        (grand for grand in child.named_children if grand.type == cs.TS_DART_LABEL),
+        None,
+    )
+    value_node = child.named_children[-1] if child.named_children else None
+    name_node = (
+        label.named_children[0] if label is not None and label.named_children else None
+    )
+    if (
+        name_node is not None
+        and value_node is not None
+        and value_node is not label
+        and (name := safe_decode_text(name_node)) is not None
+    ):
+        keyword[name] = value_node
+
+
+def _add_py_keyword_argument(child: Node, keyword: dict[str, Node]) -> None:
+    name_node = child.child_by_field_name(cs.FIELD_NAME)
+    value_node = child.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        name_node is not None
+        and value_node is not None
+        and (name := safe_decode_text(name_node)) is not None
+    ):
+        keyword[name] = value_node
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -3033,45 +3161,11 @@ class CallProcessor:
         stack = [value]
         while stack:
             node = stack.pop()
-            if node.type in _PY_VALUE_WRAPPER_TYPES or (
-                is_dart and node.type in _DART_VALUE_WRAPPER_TYPES
-            ):
-                stack.extend(reversed(node.named_children))
-            elif node.type == cs.TS_PY_DICTIONARY:
-                for pair in reversed(node.named_children):
-                    if (
-                        pair.type == cs.TS_PY_PAIR
-                        and (pair_value := pair.child_by_field_name(cs.FIELD_VALUE))
-                        is not None
-                    ):
-                        stack.append(pair_value)
-            elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
-                # tree-sitter-python exposes NO field names on
-                # conditional_expression (child_by_field_name returns None for
-                # every operand), so the result operands are positional:
-                # [body, condition, alternative]. A shape that is not exactly
-                # three named operands falls back to all of them,
-                # over-referencing rather than dropping a branch.
-                operands = list(node.named_children)
-                if len(operands) == 3:
-                    # Dart orders [condition, consequence, alternative];
-                    # Python orders [body, condition, alternative]. Pick the
-                    # two result operands, never the truthiness-tested one.
-                    operands = (
-                        [operands[1], operands[2]]
-                        if is_dart
-                        else [operands[0], operands[2]]
-                    )
-                stack.extend(reversed(operands))
-            elif node.type == cs.TS_PY_BOOLEAN_OPERATOR:
-                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-                if right is not None:
-                    stack.append(right)
-                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-                if left is not None:
-                    stack.append(left)
-            else:
+            children = _first_class_value_children(node, is_dart)
+            if children is None:
                 out.append(node)
+            else:
+                stack.extend(reversed(children))
         return out
 
     def _emit_expression_body_return(
@@ -3842,81 +3936,24 @@ class CallProcessor:
     ) -> tuple[list[Node], dict[str, Node]]:
         positional: list[Node] = []
         keyword: dict[str, Node] = {}
-        args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
-        if args_node is None:
-            # C# target-typed `new(...)` exposes NO fields at all; its
-            # argument_list is an unfielded named child (Serilog hands its
-            # CreateLogger local functions to `return new(...)`, which the
-            # fielded lookup silently dropped).
-            args_node = next(
-                (
-                    child
-                    for child in call_node.named_children
-                    if child.type == cs.TS_CSHARP_ARGUMENT_LIST
-                ),
-                None,
-            )
-        if args_node is None:
-            # Dart has no call-expression node: a selector/cascade_section
-            # wraps its arguments in an argument_part holding the real
-            # `arguments` node one level down.
-            for part in call_node.named_children:
-                if part.type == cs.TS_DART_ARGUMENT_PART:
-                    args_node = next(
-                        (
-                            grand
-                            for grand in part.named_children
-                            if grand.type == cs.TS_DART_ARGUMENTS
-                        ),
-                        None,
-                    )
-                    break
+        args_node = _find_call_arguments_node(call_node)
         if args_node is None:
             return positional, keyword
         for child in args_node.named_children:
             # C# wraps every argument expression in an `argument` node (which
-            # may carry a ref/out modifier or a name: colon); unwrap to the
-            # expression itself, its LAST named child, so downstream
-            # reference-type checks see the identifier, not the wrapper.
-            if child.type == cs.TS_CSHARP_ARGUMENT and child.named_children:
-                child = child.named_children[-1]
-            # Dart wraps positional values in `argument`; a named value is a
-            # `named_argument` whose label child names it and whose last named
-            # child is the expression.
-            if child.type == cs.TS_DART_ARGUMENT and child.named_children:
+            # may carry a ref/out modifier or a name: colon); Dart wraps
+            # positional values the same way. Unwrap to the expression itself,
+            # its LAST named child, so downstream reference-type checks see
+            # the identifier, not the wrapper.
+            if (
+                child.type in (cs.TS_CSHARP_ARGUMENT, cs.TS_DART_ARGUMENT)
+                and child.named_children
+            ):
                 child = child.named_children[-1]
             if child.type == cs.TS_DART_NAMED_ARGUMENT:
-                label = next(
-                    (
-                        grand
-                        for grand in child.named_children
-                        if grand.type == cs.TS_DART_LABEL
-                    ),
-                    None,
-                )
-                value_node = child.named_children[-1] if child.named_children else None
-                name_node = (
-                    label.named_children[0]
-                    if label is not None and label.named_children
-                    else None
-                )
-                if (
-                    name_node is not None
-                    and value_node is not None
-                    and value_node is not label
-                    and (name := safe_decode_text(name_node)) is not None
-                ):
-                    keyword[name] = value_node
-                continue
-            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                name_node = child.child_by_field_name(cs.FIELD_NAME)
-                value_node = child.child_by_field_name(cs.FIELD_VALUE)
-                if (
-                    name_node is not None
-                    and value_node is not None
-                    and (name := safe_decode_text(name_node)) is not None
-                ):
-                    keyword[name] = value_node
+                _add_dart_named_argument(child, keyword)
+            elif child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                _add_py_keyword_argument(child, keyword)
             else:
                 positional.append(child)
         return positional, keyword
