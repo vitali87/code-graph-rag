@@ -165,7 +165,11 @@ def absolute_path_within_project_root(
     matches = [name for name in roots if qualified_name.startswith(name + ".")]
     if not matches:
         return True
-    root = roots[sorted(matches, key=len)[-1]]
+    owner = matches[0]
+    for name in matches[1:]:
+        if len(name) > len(owner):
+            owner = name
+    root = roots[owner]
     if root is None:
         return True
     return Path(absolute_path).resolve().is_relative_to(Path(root).resolve())
