@@ -101,37 +101,20 @@ def test_cpp_cerr_and_clog_write_stderr(tmp_path: Path) -> None:
 
 def test_cpp_cout_still_writes_stdout(tmp_path: Path) -> None:
     files = {
-        "main.cpp": (
-            "#include <iostream>\n"
-            "void say(int x) {\n"
-            "    std::cout << x;\n"
-            "}\n"
-        )
+        "main.cpp": ("#include <iostream>\nvoid say(int x) {\n    std::cout << x;\n}\n")
     }
     writes = _writes(tmp_path, files)
     assert _has(writes, "main.say", STDOUT_DYNAMIC), writes
 
 
 def test_rust_eprintln_writes_stderr(tmp_path: Path) -> None:
-    files = {
-        "main.rs": (
-            "fn report(x: i32) {\n"
-            '    eprintln!("{}", x);\n'
-            "}\n"
-        )
-    }
+    files = {"main.rs": ('fn report(x: i32) {\n    eprintln!("{}", x);\n}\n')}
     writes = _writes(tmp_path, files)
     assert _has(writes, "main.report", STDERR_DYNAMIC), writes
     assert not _has(writes, "main.report", STDOUT_DYNAMIC), writes
 
 
 def test_rust_println_still_writes_stdout(tmp_path: Path) -> None:
-    files = {
-        "main.rs": (
-            "fn say(x: i32) {\n"
-            '    println!("{}", x);\n'
-            "}\n"
-        )
-    }
+    files = {"main.rs": ('fn say(x: i32) {\n    println!("{}", x);\n}\n')}
     writes = _writes(tmp_path, files)
     assert _has(writes, "main.say", STDOUT_DYNAMIC), writes
