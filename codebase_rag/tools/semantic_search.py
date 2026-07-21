@@ -91,7 +91,11 @@ def semantic_code_search(
         return []
 
 
-def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | None:
+def get_function_source_code(
+    ingestor: QueryProtocol,
+    node_id: int,
+    roots_cache: dict[str, dict[str, str | None]] | None = None,
+) -> str | None:
     try:
         from ..utils.source_extraction import (
             extract_source_lines,
@@ -123,12 +127,19 @@ def get_function_source_code(ingestor: QueryProtocol, node_id: int) -> str | Non
         # path covers repos moved since indexing and old graphs without the
         # property (issue #425).
         absolute_path = result.get("absolute_path")
-        if absolute_path and not absolute_path_within_project_root(
-            str(result.get("qualified_name", "")),
-            absolute_path,
-            project_roots_from_rows(ingestor.fetch_all(CYPHER_LIST_PROJECTS)),
-        ):
-            absolute_path = None
+        if absolute_path:
+            if roots_cache is not None and "roots" in roots_cache:
+                roots = roots_cache["roots"]
+            else:
+                roots = project_roots_from_rows(
+                    ingestor.fetch_all(CYPHER_LIST_PROJECTS)
+                )
+                if roots_cache is not None:
+                    roots_cache["roots"] = roots
+            if not absolute_path_within_project_root(
+                str(result.get("qualified_name", "")), absolute_path, roots
+            ):
+                absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
 
@@ -172,11 +183,15 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
 
 
 def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
+    # ponytail: tool-lifetime roots cache; a project indexed after the first
+    # lookup is treated as unknown (permissive) until a new tool instance.
+    roots_cache: dict[str, dict[str, str | None]] = {}
+
     async def get_function_source_by_id(node_id: int) -> str:
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = await asyncio.to_thread(
-            get_function_source_code, ingestor, node_id
+            get_function_source_code, ingestor, node_id, roots_cache
         )
 
         if source_code is None:

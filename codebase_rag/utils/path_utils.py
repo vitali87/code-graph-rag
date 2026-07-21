@@ -158,8 +158,14 @@ def absolute_path_within_project_root(
 ) -> bool:
     """A stored absolute path may only be read from inside its own project's
     indexed root; projects with no recorded root (legacy graphs) stay
-    readable (issue #425)."""
-    root = roots.get(qualified_name.split(".", 1)[0])
+    readable (issue #425). Project names may contain dots, so the owning
+    project is the longest known name prefixing the qualified name. The
+    resolve() calls are load-bearing: containment is checked lexically, so
+    an unresolved ``..`` segment or symlink would escape the root."""
+    matches = [name for name in roots if qualified_name.startswith(name + ".")]
+    if not matches:
+        return True
+    root = roots[max(matches, key=len)]
     if root is None:
         return True
     return Path(absolute_path).resolve().is_relative_to(Path(root).resolve())

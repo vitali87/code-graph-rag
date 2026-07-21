@@ -20,12 +20,22 @@ from . import tool_descriptions as td
 
 
 class CodeRetriever:
-    __slots__ = ("project_root", "ingestor")
+    __slots__ = ("project_root", "ingestor", "_project_roots")
 
     def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
+        # ponytail: session-lifetime cache; a project indexed after the first
+        # lookup is treated as unknown (permissive) until a new retriever.
+        self._project_roots: dict[str, str | None] | None = None
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
+
+    async def _get_project_roots(self) -> dict[str, str | None]:
+        if self._project_roots is None:
+            self._project_roots = project_roots_from_rows(
+                await asyncio.to_thread(self.ingestor.fetch_all, CYPHER_LIST_PROJECTS)
+            )
+        return self._project_roots
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
@@ -68,16 +78,10 @@ class CodeRetriever:
             # relative join covers repos moved since indexing and old graphs
             # without the property (issue #425).
             absolute_path_str = res.get("absolute_path")
-            if absolute_path_str:
-                roots = project_roots_from_rows(
-                    await asyncio.to_thread(
-                        self.ingestor.fetch_all, CYPHER_LIST_PROJECTS
-                    )
-                )
-                if not absolute_path_within_project_root(
-                    qualified_name, absolute_path_str, roots
-                ):
-                    absolute_path_str = None
+            if absolute_path_str and not absolute_path_within_project_root(
+                qualified_name, absolute_path_str, await self._get_project_roots()
+            ):
+                absolute_path_str = None
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:
