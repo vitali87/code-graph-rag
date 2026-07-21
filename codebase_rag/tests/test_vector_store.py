@@ -503,7 +503,9 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
     if not has_qdrant_client():
         pytest.skip("qdrant-client not installed")
 
-    script = "from codebase_rag.vector_store import get_qdrant_client; get_qdrant_client()"
+    script = (
+        "from codebase_rag.vector_store import get_qdrant_client; get_qdrant_client()"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
