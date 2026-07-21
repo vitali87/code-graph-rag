@@ -295,6 +295,26 @@ class CallProcessor:
         call_starts = [n.start_byte for n in call_nodes]
         return call_nodes, call_starts
 
+    def _filtered_calls_for(
+        self,
+        func_node: Node,
+        language: cs.SupportedLanguage,
+        all_call_nodes: list[Node] | None,
+        call_starts: list[int] | None,
+        owned_func_nodes: list[Node],
+    ) -> list[Node] | None:
+        # The caller's own calls, sliced from the module-wide call list. A Rust
+        # named nested fn owns its body's calls, so its slice must exclude them
+        # rather than take the whole byte range; every other language filters by
+        # the plain byte span.
+        if all_call_nodes is None or call_starts is None:
+            return None
+        if language == cs.SupportedLanguage.RUST:
+            return self._calls_owned_by(
+                func_node, owned_func_nodes, all_call_nodes, call_starts
+            )
+        return self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+
     def _filter_calls_in_node(
         self,
         all_call_nodes: list[Node],
@@ -932,19 +952,9 @@ class CallProcessor:
             # class bodies, TS declaration merging, and duplicate-suffixed
             # qns, and every divergence is a phantom caller (issue #652).
             if loc := self._recorded_caller(func_node, module_qn):
-                # Same ownership rule as the unrecorded path: a Rust named
-                # nested fn owns its body's calls, so the enclosing function's
-                # slice must exclude it rather than take the whole byte range.
-                if all_call_nodes is None or call_starts is None:
-                    filtered = None
-                elif language == cs.SupportedLanguage.RUST:
-                    filtered = self._calls_owned_by(
-                        func_node, owned_func_nodes, all_call_nodes, call_starts
-                    )
-                else:
-                    filtered = self._filter_calls_in_node(
-                        all_call_nodes, call_starts, func_node
-                    )
+                filtered = self._filtered_calls_for(
+                    func_node, language, all_call_nodes, call_starts, owned_func_nodes
+                )
                 self._ingest_function_calls(
                     func_node,
                     loc.qualified_name,
@@ -968,10 +978,8 @@ class CallProcessor:
                 )
             ):
                 caller_qn, class_qn = bound
-                filtered = (
-                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
-                    if all_call_nodes is not None and call_starts is not None
-                    else None
+                filtered = self._filtered_calls_for(
+                    func_node, language, all_call_nodes, call_starts, owned_func_nodes
                 )
                 self._ingest_function_calls(
                     func_node,
@@ -996,10 +1004,8 @@ class CallProcessor:
                 )
             ):
                 caller_qn, container_qn = bound
-                filtered = (
-                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
-                    if all_call_nodes is not None and call_starts is not None
-                    else None
+                filtered = self._filtered_calls_for(
+                    func_node, language, all_call_nodes, call_starts, owned_func_nodes
                 )
                 self._ingest_function_calls(
                     func_node,
@@ -1026,16 +1032,9 @@ class CallProcessor:
                 )
             )
             if func_qn:
-                if all_call_nodes is None or call_starts is None:
-                    filtered = None
-                elif language == cs.SupportedLanguage.RUST:
-                    filtered = self._calls_owned_by(
-                        func_node, owned_func_nodes, all_call_nodes, call_starts
-                    )
-                else:
-                    filtered = self._filter_calls_in_node(
-                        all_call_nodes, call_starts, func_node
-                    )
+                filtered = self._filtered_calls_for(
+                    func_node, language, all_call_nodes, call_starts, owned_func_nodes
+                )
                 self._ingest_function_calls(
                     func_node,
                     func_qn,
