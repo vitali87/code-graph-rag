@@ -553,6 +553,50 @@ def test_go_ignored_error_only_flags_discarded_last_value(tmp_path: Path) -> Non
     assert lines == [4], lines
 
 
+def test_go_sqli_concat_requires_concat_inside_the_query_call(
+    tmp_path: Path,
+) -> None:
+    # (H) Dogfood FP: the concatenation must be an ARGUMENT of the Query/Exec
+    # (H) call, not merely present somewhere in the same expression. Line 4's
+    # (H) `url.QueryEscape` is a net/url false friend (matches `^Query`) and the
+    # (H) `+` belongs to a Header().Set call, not a database sink.
+    src = (
+        "package main\n"
+        "func f(db D, c C, a, b, id string) {\n"
+        '    db.Query("select * from t where x=" + id)\n'
+        '    c.Header().Set("d", a + url.QueryEscape(b))\n'
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "dao.go", src)
+        if p[cs.KEY_NAME] == "sqli_concat"
+    )
+    assert lines == [3], lines
+
+
+def test_go_hardcoded_secret_requires_literal_value(tmp_path: Path) -> None:
+    # (H) Dogfood FP class: a credential-named var whose value is a function
+    # (H) call (e.g. `token := getEnv("SOME_LONG_DEFAULT")`) is NOT a hardcoded
+    # (H) secret; the string literal must be the assigned value itself, not
+    # (H) buried inside a call argument. Line 3 is a real literal secret.
+    src = (
+        "package main\n"
+        "func f() {\n"
+        '    token := "literalsecretvalue"\n'
+        '    apikey := getEnv("SOME_LONG_DEFAULT")\n'
+        "    _ = token\n"
+        "    _ = apikey\n"
+        "}\n"
+    )
+    lines = sorted(
+        p[cs.KEY_START_LINE]
+        for p in _fire(tmp_path, "cfg.go", src)
+        if p[cs.KEY_NAME] == "hardcoded_secret"
+    )
+    assert lines == [3], lines
+
+
 def test_multilang_security_rules_avoid_common_false_positives(
     tmp_path: Path,
 ) -> None:

@@ -16,18 +16,31 @@ rules:
           - has: { field: operand, regex: '^exec$' }
           - has: { field: field, regex: '^Command' }
   - id: sqli_concat
+    # Sink-anchored: the Query/Exec selector must be THIS call's function (a
+    # direct child, not a nested one) and the `+` concatenation must live in
+    # THIS call's argument_list. Without that anchoring a benign
+    # `c.Header().Set("d", a + url.QueryEscape(b))` matched (QueryEscape is a
+    # net/url false friend for `^Query`, and its `+` belonged to Set). The
+    # explicit exclusion of Query(Escape|Unescape) covers the direct
+    # `url.QueryEscape("a" + b)` case since the Rust regex engine has no
+    # lookaround.
     message: "Possible SQL injection: Query/Exec argument built with string concatenation"
     rule:
       kind: call_expression
       all:
         - has:
             kind: selector_expression
-            has: { field: field, regex: '^(Query|Exec)' }
-            stopBy: end
+            has:
+              field: field
+              all:
+                - regex: '^(Query|Exec)'
+                - not: { regex: '^Query(Escape|Unescape)' }
         - has:
-            kind: binary_expression
-            has: { field: operator, regex: '\+' }
-            stopBy: end
+            kind: argument_list
+            has:
+              kind: binary_expression
+              has: { field: operator, regex: '\+', stopBy: end }
+              stopBy: end
   - id: hardcoded_secret
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # content chars) that is not a format/message template (a Sprintf {..}
@@ -37,6 +50,11 @@ rules:
     # var/const declarations. Ceiling: without entropy scoring, plain word/URL
     # literals still surface as review prompts; that residual is the known limit
     # of regex-only secret detection, not a defect.
+    # The string literal must be the ASSIGNED VALUE itself (a direct child of
+    # the right-hand expression_list), not merely present somewhere in the RHS.
+    # Dropping the old `stopBy: end` kills the false-positive class where the
+    # value is a function call carrying a long string argument, e.g.
+    # `token := getEnv("SOME_LONG_DEFAULT")`.
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
       any:
@@ -45,6 +63,7 @@ rules:
             - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
                 field: right
+                kind: expression_list
                 has:
                   all:
                     - any:
@@ -55,12 +74,12 @@ rules:
                         any:
                           - regex: '\{[^{}]*\}'
                           - regex: '%[sdrifeEgGxXoqvtbc]'
-                  stopBy: end
         - kind: assignment_statement
           all:
             - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
                 field: right
+                kind: expression_list
                 has:
                   all:
                     - any:
@@ -71,32 +90,33 @@ rules:
                         any:
                           - regex: '\{[^{}]*\}'
                           - regex: '%[sdrifeEgGxXoqvtbc]'
-                  stopBy: end
         - kind: var_spec
           all:
             - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
-                all:
-                  - any:
-                      - kind: interpreted_string_literal
-                      - kind: raw_string_literal
-                  - regex: '^.{10,}$'
-                  - not:
-                      any:
-                        - regex: '\{[^{}]*\}'
-                        - regex: '%[sdrifeEgGxXoqvtbc]'
-                stopBy: end
+                kind: expression_list
+                has:
+                  all:
+                    - any:
+                        - kind: interpreted_string_literal
+                        - kind: raw_string_literal
+                    - regex: '^.{10,}$'
+                    - not:
+                        any:
+                          - regex: '\{[^{}]*\}'
+                          - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: const_spec
           all:
             - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
             - has:
-                all:
-                  - any:
-                      - kind: interpreted_string_literal
-                      - kind: raw_string_literal
-                  - regex: '^.{10,}$'
-                  - not:
-                      any:
-                        - regex: '\{[^{}]*\}'
-                        - regex: '%[sdrifeEgGxXoqvtbc]'
-                stopBy: end
+                kind: expression_list
+                has:
+                  all:
+                    - any:
+                        - kind: interpreted_string_literal
+                        - kind: raw_string_literal
+                    - regex: '^.{10,}$'
+                    - not:
+                        any:
+                          - regex: '\{[^{}]*\}'
+                          - regex: '%[sdrifeEgGxXoqvtbc]'
