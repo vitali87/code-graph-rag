@@ -26,7 +26,6 @@ class SessionState:
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cost_usd: Decimal = field(default_factory=lambda: Decimal(0))
-    cost_known: bool = False
 
     def reset_cancelled(self) -> None:
         self.cancelled = False

@@ -586,11 +586,14 @@ def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
     )
 
 
-def _price_current_run(usage: RunUsage) -> Decimal | None:
-    try:
-        model_config = settings.active_orchestrator_config
-    except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
-        return None
+def _price_current_run(
+    usage: RunUsage, model_config: ModelConfig | None
+) -> Decimal | None:
+    if model_config is None:
+        try:
+            model_config = settings.active_orchestrator_config
+        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+            return None
     from .services.usage_cost import price_run
 
     return price_run(usage, model_config.provider, model_config.model_id)
@@ -603,15 +606,13 @@ def _record_and_print_turn_usage(
     session.total_input_tokens += turn_input
     session.total_output_tokens += turn_output
     session.total_cost_usd += turn_cost
-    if turn_priced:
-        session.cost_known = True
     line = cs.UI_TURN_USAGE_TOKENS.format(
         ti=turn_input,
         to=turn_output,
         si=session.total_input_tokens,
         so=session.total_output_tokens,
     )
-    if session.cost_known:
+    if turn_priced:
         line += cs.UI_TURN_USAGE_COST.format(tc=turn_cost, sc=session.total_cost_usd)
     app_context.console.print(dim(line))
 
@@ -623,6 +624,7 @@ async def _run_agent_response_loop(
     config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
     model_override: Model | None = None,
+    model_override_config: ModelConfig | None = None,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
     pending_prompt: str | list[UserContent] | None = question_with_context
@@ -653,7 +655,7 @@ async def _run_agent_response_loop(
         run_usage = response.usage()
         turn_input += run_usage.input_tokens
         turn_output += run_usage.output_tokens
-        run_cost = _price_current_run(run_usage)
+        run_cost = _price_current_run(run_usage, model_override_config)
         if run_cost is not None:
             turn_cost += run_cost
             turn_priced = True
@@ -1313,6 +1315,7 @@ async def _run_interactive_loop(
                 config,
                 tool_names,
                 model_override,
+                model_override_config,
             )
 
             initial_question = None
