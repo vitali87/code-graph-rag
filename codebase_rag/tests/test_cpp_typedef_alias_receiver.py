@@ -24,11 +24,10 @@ def _calls_from(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
 # A field's declared type can be a `typedef`/`using` alias of a first-party class
 # rather than the class name itself. Resolving `m_.Lock()` requires mapping the
 # alias to its underlying class; without it the receiver has a type the resolver
-# cannot turn into a class, so the call is dropped (the name-only trie fallback is
-# skipped once a receiver type is known). The typedef field (`Mutex`) and the
-# using field (`Gizmo`) target distinct methods so BOTH alias forms are asserted
-# independently. `Alpha.Lock` sorts before `Mutex.Lock`, so a name-only guess
-# would pick the wrong one -- only alias-resolved field typing binds Mutex.Lock.
+# cannot turn into a class, so the call is dropped. The typedef field (`Mutex`) and
+# the using field (`Gizmo`) target distinct methods, so BOTH alias forms are asserted
+# independently. `Alpha.Lock` sorts before `Mutex.Lock`, so a name-only guess would
+# pick the wrong one; only alias-resolved field typing binds Mutex.Lock.
 _SOURCE = """
 namespace ns {
 

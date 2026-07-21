@@ -100,8 +100,8 @@ def test_rust_tainted_path_name_no_over_taint(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # A local named `env` shadows nothing in the fully-qualified `std::env::var`
-    # path, and it is never printed -- only CLEAN is. The bare-identifier scan must
-    # not treat the `env` path segment as the tainted local (over-taint P1).
+    # path, and only CLEAN is ever printed. The bare-identifier scan must not
+    # treat the `env` path segment as the tainted local (over-taint P1).
     _build(
         memgraph_ingestor,
         tmp_path,

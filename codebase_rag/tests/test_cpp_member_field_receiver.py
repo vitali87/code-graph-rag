@@ -33,10 +33,10 @@ def _calls_from(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
     }
 
 
-# Member data declarations use `field_identifier`, not `identifier`, and a member
-# FUNCTION declaration (`void Lock();`) is also a field_declaration but with a
-# function_declarator -- only data members are fields. Pointer/qualified/template
-# types reduce to a bare type name the resolver can map to a class.
+# Member data uses `field_identifier`, not `identifier`; a member FUNCTION
+# declaration (`void Lock();`) is a field_declaration with a function_declarator,
+# so only data members are fields. Pointer/qualified/template types reduce to a
+# bare type name the resolver maps to a class.
 def test_cpp_build_field_type_map_captures_data_members_only() -> None:
     src = """
 class DBImpl {
@@ -62,10 +62,10 @@ class DBImpl {
 
 
 # A first-party member field receiver: `mutex_.Lock()` must resolve to the field's
-# class method, not fall to a name-only guess. `Alpha` also defines `Lock` and sorts
-# before `Mutex`, so the name-only trie fallback deterministically picks the WRONG
-# `Alpha.Lock` -- only the field's type disambiguates. The method is defined INLINE
-# here, so field decls and the call are in the same AST.
+# class method, not a name-only guess. `Alpha` also defines `Lock` and sorts before
+# `Mutex`, so the name-only trie deterministically picks the WRONG `Alpha.Lock`;
+# only the field's type disambiguates. The method is defined INLINE here, so field
+# decls and the call share one AST.
 _INLINE_SOURCE = """
 namespace ns {
 
@@ -183,10 +183,10 @@ def test_cpp_out_of_line_member_field_call_resolves_cross_file(
     )
 
 
-# Member fields are frequently declared inside preprocessor conditionals
-# (`#ifdef`), which wrap the field_declaration in a preproc_ifdef node. Iterating
-# only the class body's direct children misses them; the collector must recurse
-# through preprocessor blocks while still skipping nested type/function scopes.
+# Member fields are often declared inside preprocessor conditionals (`#ifdef`),
+# which wrap the field_declaration in a preproc_ifdef node. Iterating only the
+# class body's direct children misses them; the collector must recurse through
+# preprocessor blocks while skipping nested type/function scopes.
 def test_cpp_build_field_type_map_captures_fields_in_preproc_blocks() -> None:
     src = """
 class C {
@@ -201,10 +201,10 @@ class C {
     assert fields == {"mutex_": "Mutex", "cond_": "Slice"}, fields
 
 
-# A derived class accesses fields inherited from its base. The receiver map must
-# collect fields along the inheritance chain (derived shadows base). `Alpha.Lock`
-# is a same-named competitor that sorts first, so name-only resolution picks it;
-# only the inherited field type resolves `mutex_.Lock()` to Mutex.Lock.
+# A derived class accesses fields inherited from its base, so the receiver map must
+# collect fields along the inheritance chain (derived shadows base). Same-named
+# `Alpha.Lock` sorts first, so name-only resolution picks it; only the inherited
+# field type resolves `mutex_.Lock()` to Mutex.Lock.
 _INHERITED_SOURCE = """
 namespace ns {
 

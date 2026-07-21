@@ -2,9 +2,9 @@
 # oracle driven by a compile_commands.json resolves #includes and expands
 # macros to the true translation-unit AST, which tree-sitter cannot do. cgr's
 # C++ nodes, containment edges, and spans are graded against it on
-# (kind, file, start_line). The sample exercises a header-declared class
-# (resolved via an -I include path), a macro-typed method, out-of-class method
-# definitions, a constructor, an inline method, a struct, and a free function.
+# (kind, file, start_line). The sample exercises a header-declared class, a
+# macro-typed method, out-of-class definitions, a constructor, an inline
+# method, a struct, and a free function.
 from __future__ import annotations
 
 import json

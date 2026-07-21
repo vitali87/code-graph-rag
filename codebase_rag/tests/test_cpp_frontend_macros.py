@@ -14,13 +14,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Preprocessor macros were invisible to the frontend (no
-# PARSE_DETAILED_PROCESSING_RECORD): SQUARE(v) had no node and no CALLS
-# edge. Macros register as Function nodes (the cross-language decision);
-# MACRO_INSTANTIATION.referenced gives the exact definition, and the caller
-# is the tightest enclosing function/method span (macro cursors are TU-level
-# preprocessing entities, so lexical enclosure must be recovered by span).
-# Empty-bodied object-like macros (include guards, feature flags) are NOT
-# nodes; neither are compiler builtins or system-header macros.
+# PARSE_DETAILED_PROCESSING_RECORD): SQUARE(v) had no node and no CALLS edge.
+# Macros register as Function nodes (the cross-language decision);
+# MACRO_INSTANTIATION.referenced gives the definition, and the caller is the
+# tightest enclosing function/method span (macro cursors are TU-level, so
+# enclosure is recovered by span). Empty-bodied object-like macros (include
+# guards, feature flags) are NOT nodes, nor are compiler or system macros.
 _CALC_H = """\
 #ifndef CALC_H
 #define CALC_H
@@ -89,9 +88,8 @@ def test_macro_definitions_register_as_functions(temp_repo: Path) -> None:
     assert "macproj.calc.h.MAX_SIZE" in functions, sorted(functions)
     # the include guard is an empty flag, not a callable
     assert not any(qn.endswith(".CALC_H") for qn in functions), sorted(functions)
-    # builtins/system macros live outside the repo; a command-line -D
-    # macro has no file at all -- none of them are nodes, and their use
-    # sites carry no edges
+    # builtins/system macros live outside the repo; a command-line -D macro
+    # has no file at all, so none are nodes and their use sites carry no edges
     assert not any("__GNUC__" in qn for qn in functions), sorted(functions)
     assert not any("CMDLINE_LIMIT" in qn for qn in functions), sorted(functions)
     assert not any("INT_MAX" in qn for qn in functions), sorted(functions)

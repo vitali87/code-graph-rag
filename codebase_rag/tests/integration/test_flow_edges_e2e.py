@@ -212,10 +212,10 @@ def test_transitive_two_hop_return_carries_source(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # A source returned through two nested call boundaries keeps its origin
-    # resource, so the outermost sink emits the full resource flow AND every
-    # hop of the callee->caller return chain is present (direct-return
-    # `return inner()` emits its edge just like an assigned `v = outer()`).
-    # Callees are defined before callers (single-pass, source-ordered).
+    # resource, so the outermost sink emits the full resource flow AND every hop
+    # of the callee->caller return chain is present (direct-return `return
+    # inner()` emits its edge like an assigned `v = outer()`). Callees precede
+    # callers (single-pass, source-ordered).
     _build(
         memgraph_ingestor,
         tmp_path,

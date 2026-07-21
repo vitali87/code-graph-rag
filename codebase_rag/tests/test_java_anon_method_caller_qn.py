@@ -1,8 +1,8 @@
 # A method-body anonymous-class method (`make(){ return new Reader(){ read(){
 # helper(); } }; }`) was registered by the definition pass as `Class.read` (the
 # unified-FQN scope walk dropped the enclosing method `make`), but the call pass
-# attributes its outgoing calls to `Class.make.read` -- a phantom qn with no node.
-# So every edge FROM such a method dangled and its callees looked dead. The two
+# attributes its outgoing calls to `Class.make.read`, a phantom qn with no node.
+# Every edge FROM such a method dangled and its callees looked dead. The two
 # passes must agree on the qn (both `Class.make.read`).
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def test_anon_method_call_edge_joins_a_real_node(
     registry = updater.factory.function_registry
     calls = get_relationships(mock_ingestor, "CALLS")
     # the CALLS edge into helper must originate from a qn that is a registered
-    # node -- not a phantom `Class.make.read` that no node carries.
+    # node, not a phantom `Class.make.read` that no node carries.
     helper_callers = [
         c.args[0][2] for c in calls if c.args[2][2].endswith(".helper(int)")
     ]
@@ -51,9 +51,9 @@ def test_anon_override_unqualified_call_binds_to_base(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # An unqualified call inside a method-body anonymous override targets the anon's
-    # own/inherited method, not the enclosing named class. `helper()` inside
-    # `new Base(){ read(){ return helper(); } }` must resolve to Base.helper (the
-    # anon's inherited method), not drop or bind to an outer class.
+    # own/inherited method, not the enclosing named class: `helper()` inside
+    # `new Base(){ read(){ return helper(); } }` must resolve to Base.helper, not
+    # drop or bind to an outer class.
     root = temp_repo / "janonbase"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)
@@ -91,7 +91,7 @@ def test_anon_override_explicit_this_call_binds_to_base(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # `this.helper()` inside a method-body anonymous override dispatches on the anon
-    # (its base), not the enclosing named class -- same as the bare-call case but via
+    # (its base), not the enclosing named class; same as the bare-call case but via
     # the explicit-`this` receiver path.
     root = temp_repo / "janonthis"
     pkg = root / "com" / "example"
@@ -159,9 +159,9 @@ def test_outside_call_does_not_bind_to_anon_local_method(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # An anon class's OWN method registers as a module-scoped Function; the
-    # unqualified module-wide fallback must NOT let a call OUTSIDE that anon bind to
-    # it. `M.use()` calling `helper()` is not lexically inside the anon that declares
-    # `helper()`, so no CALLS edge to the anon-local helper may be emitted.
+    # unqualified module-wide fallback must NOT let a call OUTSIDE that anon bind
+    # to it. `M.use()` calling `helper()` is not lexically inside the anon that
+    # declares `helper()`, so no CALLS edge to the anon-local helper is emitted.
     root = temp_repo / "janonscope"
     pkg = root / "com" / "example"
     pkg.mkdir(parents=True)

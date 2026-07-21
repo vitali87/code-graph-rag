@@ -90,7 +90,7 @@ def test_go_kill_on_all_branches_no_flow(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # secret is reassigned to a clean value on BOTH the then and else paths, so no
-    # tainted path reaches the sink -- MAY still yields no flow.
+    # tainted path reaches the sink; MAY still yields no flow.
     _build(
         memgraph_ingestor,
         tmp_path,

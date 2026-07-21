@@ -76,10 +76,10 @@ def test_static_factory_method_return_chain_resolves(tmp_path: Path) -> None:
 
 
 def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> None:
-    # `make()` returns Widget (recorded), but Widget has NO `run`. The bare-method
-    # C/C++ fallback must NOT fire once the receiver type is known -- binding
-    # `make().run()` to an unrelated alphabetical `Aaa.run` is a false edge. When the
-    # type is inferred and lacks the method, the chain drops (returns nothing).
+    # `make()` returns Widget (recorded), but Widget has NO `run`. Once the receiver
+    # type is known the bare-method C/C++ fallback must NOT fire; binding
+    # `make().run()` to an alphabetical `Aaa.run` is a false edge, so the chain
+    # drops when the inferred type lacks the method.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -100,11 +100,10 @@ def test_inferred_receiver_missing_method_does_not_bind_bare(tmp_path: Path) -> 
 
 
 def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
-    # The header/impl split shape: the factory method is DECLARED in the class body
-    # but DEFINED out-of-class (`Parser Owner::parser(...) { ... }`). Its return type
-    # must still be recorded (the out-of-class path returns before the free-function
-    # recording runs) so `parser(1).parse(true)` types the receiver as Parser rather
-    # than drop or mis-bind to the alphabetical decoy Aaa.parse.
+    # Header/impl split: the factory method is DECLARED in the class body but DEFINED
+    # out-of-class (`Parser Owner::parser(...) { ... }`). Its return type must still
+    # be recorded (the out-of-class path returns before free-function recording) so
+    # `parser(1).parse(true)` types the receiver as Parser, not the decoy Aaa.parse.
     _make(
         tmp_path,
         "struct Aaa {\n"
@@ -131,7 +130,7 @@ def test_out_of_class_factory_return_chain_resolves(tmp_path: Path) -> None:
 
 def test_return_type_path_normalizes_template_qualified_scope() -> None:
     # A return type qualified by a TEMPLATE_TYPE scope (`Outer<T>::Inner`) must
-    # reduce to the dotted registry path "Outer.Inner" -- the scope's raw text
+    # reduce to the dotted registry path "Outer.Inner"; the scope's raw text
     # leaks the `<T>` template arguments, which no class QN carries.
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp.utils import extract_return_type_name

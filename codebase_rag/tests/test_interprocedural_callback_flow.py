@@ -1,8 +1,8 @@
 # L3 finding from the evals/ harness: extract_java_interface_names invokes a
-# resolve_to_qn callback that is threaded through extract_implemented_interfaces from
-# a caller that passes self._resolve_to_qn. The concrete callable is bound at the
-# outer call site and flows through pass-through parameters to where it is finally
-# invoked, so resolving the edge needs inter-procedural callback propagation.
+# resolve_to_qn callback threaded through extract_implemented_interfaces from a
+# caller that passes self._resolve_to_qn. The callable is bound at the outer
+# call site and flows through pass-through parameters to where it is invoked, so
+# resolving the edge needs inter-procedural callback propagation.
 from __future__ import annotations
 
 from pathlib import Path

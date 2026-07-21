@@ -1,6 +1,6 @@
 # Java networking I/O: the java.net / java.net.http surface (URL.openStream,
-# URLConnection, HttpClient.send) is NETWORK, previously invisible to the
-# catalog which only modelled java.net.Socket as a SOCKET.
+# URLConnection, HttpClient.send) is NETWORK; the catalogue previously
+# modelled only java.net.Socket as a SOCKET.
 from __future__ import annotations
 
 from pathlib import Path

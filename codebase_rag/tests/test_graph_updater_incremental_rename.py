@@ -69,7 +69,6 @@ class InMemoryGraph:
             case _:
                 return None
 
-    # delete helpers
     def _find_nodes(self, label: str, key: str, val: PropertyValue) -> list[NodeId]:
         return [
             nid
@@ -118,7 +117,6 @@ class InMemoryGraph:
             if not touches(fl, fk, fv) and not touches(tl, tk, tv)
         }
 
-    # comparison
     def snapshot(self) -> tuple[frozenset[NodeId], frozenset[RelTuple]]:
         return frozenset(self.nodes.keys()), frozenset(self.rels)
 

@@ -156,7 +156,7 @@ def test_go_self_referential_init_emits(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # Go scope starts AFTER the declaration (unlike Java), so in `os := os.Getenv(..)`
-    # the RHS os is still the imported package -- the ENV read must emit; the new
+    # the RHS os is still the imported package: the ENV read must emit; the new
     # local os shadows only the statements that follow.
     _build(
         memgraph_ingestor,

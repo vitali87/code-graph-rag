@@ -601,8 +601,7 @@ class TestCollectDeadCodeIntegration:
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
         # with no roots at all (nothing exported / entry-point / decorated /
-        # called at module load), every function is unreachable and must be
-        # reported.
+        # called at module load), every function is unreachable and reported.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(a:Function {qualified_name: 'proj.mod.a', name: 'a', start_line: 1, "
@@ -624,12 +623,11 @@ class TestCollectDeadCodeIntegration:
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
         # a decorated closure DEFINED by a LIVE function (prompt_toolkit
-        # @bindings.add, MCP @server.list_tools) is registered when the enclosing
-        # function runs, and it keeps its own callees live; a method of a
-        # typing.Protocol subclass is an interface stub whose callers resolve to
-        # the implementations. Neither is dead, while an undecorated closure, a
-        # plain private method, and the whole cluster under a DEAD enclosing
-        # function (owner, decorated closure, closure-only callee) are.
+        # @bindings.add, MCP @server.list_tools) is registered when its enclosing
+        # function runs and keeps its own callees live; a typing.Protocol subclass
+        # method is an interface stub whose callers resolve to the implementations.
+        # Neither is dead, while an undecorated closure, a plain private method, and
+        # the whole cluster under a DEAD enclosing function are.
         memgraph_ingestor._execute_query(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "

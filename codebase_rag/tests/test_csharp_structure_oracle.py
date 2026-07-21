@@ -95,7 +95,7 @@ def test_oracle_agrees_with_cgr_nodes_exactly(
 ) -> None:
     # A record/struct is a Class, an interface an Interface, an enum an Enum,
     # a local function a Function, and the [Obsolete]-tagged member's start
-    # line is the attribute line -- assert the raw (kind, line) sets agree so a
+    # line is the attribute line; assert the raw (kind, line) sets agree so a
     # label or line-convention drift on either side is caught directly.
     _require_csharp()
     project = tmp_path / "csharp_nodes"

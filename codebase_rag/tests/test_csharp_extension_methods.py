@@ -173,8 +173,8 @@ namespace N3 {
 
     # `w` is an `N1.Widget`, but the only indexed `Poke` extension is on
     # `N2.Widget`. Matching on the simple name `Widget` would bind it across
-    # namespaces -- wrong. With `Widget` registered in two namespaces the match
-    # is ambiguous and must be refused. (Decoy.Poke blocks the generic fallback
+    # namespaces, which is wrong. With `Widget` registered in two namespaces the
+    # match is ambiguous and must be refused. (Decoy.Poke blocks the generic fallback
     # so only the extension path could produce the edge.)
     targets = _call_targets(mock_ingestor)
     assert not any("WidgetExt.Poke" in t for t in targets), targets
@@ -184,8 +184,8 @@ def test_qualified_receiver_in_other_namespace_does_not_bind(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     # The receiver is a qualified `N1.Widget` whose own type is NOT declared
-    # here (external), while the only registered `Widget` -- and the only
-    # indexed extension -- is `N2.Widget`. Simple-name matching would bind the
+    # here (external), while the only registered `Widget`, and the only
+    # indexed extension, is `N2.Widget`. Simple-name matching would bind the
     # N2 extension to the N1 receiver; the namespace check must reject it.
     (csharp_project / "H.cs").write_text(
         """
@@ -241,7 +241,7 @@ def test_this_receiver_binds_exact_extension_despite_same_name_type(
 ) -> None:
     # A `this.Poke()` call inside N1.Widget names the exact containing class,
     # so it must bind the `this N1.Widget` extension even though N2.Widget is
-    # also registered -- the qualification of `this` must be preserved, not
+    # also registered; the qualification of `this` must be preserved, not
     # reduced to a bare `Widget`. (Decoy blocks the generic fallback.)
     (csharp_project / "K.cs").write_text(
         """

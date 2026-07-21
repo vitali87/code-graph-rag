@@ -1,7 +1,7 @@
-# Covers Go node SPAN (end_line) validation: cgr's end_line for each node is
-# graded against the go/ast oracle (which emits each declaration's last-token
-# line), joined on (kind, file, start). Exercises a multi-line struct, a
-# grouped `type (...)` block, an interface, and a multi-line method body.
+# Covers Go node SPAN (end_line) validation: cgr's end_line is graded against
+# the go/ast oracle (which emits each declaration's last-token line), joined on
+# (kind, file, start). Exercises a struct, a grouped `type (...)` block, an
+# interface, and a method body.
 from __future__ import annotations
 
 from pathlib import Path
