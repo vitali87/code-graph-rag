@@ -568,6 +568,14 @@ class TestWipeDatabase:
         assert "wiped" in result.lower()
         mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
 
+    async def test_wipe_database_purges_vector_store(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.clear_all_embeddings") as clear:
+            await mcp_registry.wipe_database(confirm=True)
+
+        clear.assert_called_once()
+
     async def test_wipe_database_not_confirmed(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
