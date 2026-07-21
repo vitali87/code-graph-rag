@@ -157,6 +157,13 @@ UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
 UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
 UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
 UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-3.1-pro-preview)[/bold yellow]"
+# Per-turn token consumption and USD cost line (issue #80). The cost segment is
+# appended only for proprietary models with a known price.
+UI_TURN_USAGE_TOKENS = "tokens · turn {ti:,}→{to:,} · session {si:,}→{so:,}"
+UI_TURN_USAGE_COST = " · ${tc:.4f} turn · ${sc:.4f} session"
+# When an earlier turn had no known price (e.g. a local model), the running
+# session total understates the true spend, so it is shown as a partial floor.
+UI_TURN_USAGE_COST_PARTIAL = " · ${tc:.4f} turn · ${sc:.4f}+ session (partial)"
 UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
   /model <provider:model> - Switch to a different model
   /model                  - Show current model

@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.usage import RunUsage
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.config import ModelConfig
 from codebase_rag.main import _create_model_from_string, _handle_model_command
+from codebase_rag.models import SessionState
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -171,6 +173,7 @@ class TestModelOverrideInAgentLoop:
         mock_response = MagicMock()
         mock_response.output = "Test response"
         mock_response.new_messages.return_value = []
+        mock_response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
         mock_agent.run = AsyncMock(return_value=mock_response)
 
         mock_model = MagicMock()
@@ -188,6 +191,7 @@ class TestModelOverrideInAgentLoop:
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
             mock_ctx.console.print = MagicMock()
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent,
@@ -211,6 +215,7 @@ class TestModelOverrideInAgentLoop:
         mock_response = MagicMock()
         mock_response.output = "Test response"
         mock_response.new_messages.return_value = []
+        mock_response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
         mock_agent.run = AsyncMock(return_value=mock_response)
 
         tool_names = ConfirmationToolNames(
@@ -227,6 +232,7 @@ class TestModelOverrideInAgentLoop:
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
             mock_ctx.console.print = MagicMock()
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent,
@@ -247,6 +253,7 @@ class TestAgentLoopUserPromptOnResume:
         response = MagicMock()
         response.output = output
         response.new_messages.return_value = []
+        response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
         return response
 
     @staticmethod
@@ -288,7 +295,7 @@ class TestAgentLoopUserPromptOnResume:
 
         with ctx as mock_ctx, log_evt, approvals, refresh, status:
             mock_ctx.console.print = MagicMock()
-            mock_ctx.session.cancelled = False
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent,
@@ -330,7 +337,7 @@ class TestAgentLoopUserPromptOnResume:
 
         with ctx as mock_ctx, log_evt, approvals, refresh, status:
             mock_ctx.console.print = MagicMock()
-            mock_ctx.session.cancelled = False
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent, [], "multi-step task", CHAT_LOOP_UI, tool_names
@@ -358,7 +365,7 @@ class TestAgentLoopUserPromptOnResume:
 
         with ctx as mock_ctx, log_evt, approvals, refresh, status:
             mock_ctx.console.print = MagicMock()
-            mock_ctx.session.cancelled = False
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent, [], "just a question", CHAT_LOOP_UI, tool_names
@@ -396,7 +403,7 @@ class TestAgentLoopUserPromptOnResume:
 
         with ctx as mock_ctx, log_evt, approvals, refresh, status:
             mock_ctx.console.print = MagicMock()
-            mock_ctx.session.cancelled = False
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent, [], multimodal_prompt, CHAT_LOOP_UI, tool_names
@@ -439,7 +446,7 @@ class TestAgentLoopUserPromptOnResume:
             patch("codebase_rag.main._thinking_with_status_bar"),
         ):
             mock_ctx.console.print = MagicMock()
-            mock_ctx.session.cancelled = False
+            mock_ctx.session = SessionState()
 
             await _run_agent_response_loop(
                 mock_agent, [], "edit file", CHAT_LOOP_UI, tool_names
