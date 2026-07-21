@@ -110,6 +110,20 @@ def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_vector_store(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Tests must never touch the developer's real local vector store: a
+    # clean-path test would purge it for real, and parallel xdist workers
+    # would collide on its file lock.
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(
+        settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cgr_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[Path, None, None]:
