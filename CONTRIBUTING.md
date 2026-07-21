@@ -688,10 +688,6 @@ def save_item(item):
     _save(SQL_ITEM, item.dict())
 ```
 
-#### No Comments or Docstrings
-
-Code should be self-documenting. Exception: comments prefixed with `(H)` are allowed.
-
 #### No Type Ignores, Casts, Any, or object
 
 Never use `# type: ignore` comments, `cast()`, `Any` type, or `object` as a type hint. These provide no useful type information. Fix the underlying type issue using proper typing, type narrowing, specific union types (e.g., `str | int | bool | None`), or TypedDict for dict values.
@@ -809,21 +805,7 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 
 ### Comment Policy
 
-**No inline comments are allowed** unless they meet one of these criteria:
-
-1. **Top-of-file comments**: Comments that appear before any code (including imports) are allowed
-2. **`(H)` marker**: Comments containing `(H)` are allowed - this stands for "Human" and indicates an intentional, human-written comment
-3. **Type annotations**: Comments containing `type:`, `noqa`, `pyright`, or `ty:` are allowed
-
-**Why this rule exists**: AI tools (like code assistants and LLMs) tend to generate redundant, obvious comments that clutter the codebase. Comments like `# Loop through items` or `# Return the result` add no value. This policy prevents AI-generated comment slop from polluting the code.
-
-If you need to add a comment, prefix it with `(H)`:
-
-```python
-# (H) This algorithm uses memoization because the recursive solution times out on large inputs
-```
-
-The pre-commit hook `no-inline-comments` enforces this rule automatically.
+Write comments that explain **why** and **how**, not **what**. A comment that only restates the adjacent code adds no value; one that captures a non-obvious reason, a tricky invariant, or a concrete edge case earns its place.
 
 ## Questions?
 
