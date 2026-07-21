@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -489,3 +492,32 @@ def test_clear_all_embeddings_milvus_propagates_failure(
         store = vs.MilvusVectorStore()
         with pytest.raises(RuntimeError, match="milvus down"):
             store.clear_all_embeddings()
+
+
+def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> None:
+    # Nothing closes the module-global client on process exit, so teardown
+    # falls to QdrantClient.__del__ during interpreter shutdown, where
+    # qdrant's close() imports portalocker and dies with ImportError. Every
+    # CLI run that touches the store then ends with an "Exception ignored"
+    # traceback on stderr.
+    if not has_qdrant_client():
+        pytest.skip("qdrant-client not installed")
+
+    script = (
+        "from codebase_rag.vector_store import get_qdrant_client; get_qdrant_client()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            # An inherited QDRANT_URL would open a remote client and skip
+            # the local-path shutdown this test exists to exercise.
+            **{k: v for k, v in os.environ.items() if k != "QDRANT_URL"},
+            "QDRANT_DB_PATH": str(temp_qdrant_path),
+        },
+        timeout=120,
+    )
+    assert result.returncode == 0
+    assert "Exception ignored" not in result.stderr
