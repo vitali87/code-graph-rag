@@ -967,6 +967,28 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _existing_module_paths(self) -> frozenset[str]:
+        """Paths of this project's Module nodes already in the graph.
+
+        Empty when the sink cannot answer (offline writers, unit fakes): a
+        graph that cannot be read cannot hold state worth deleting first.
+        """
+        fetch_all = getattr(self.ingestor, "fetch_all", None)
+        if fetch_all is None:
+            return frozenset()
+        try:
+            rows = fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+            return frozenset(
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str)
+            )
+        except Exception:
+            return frozenset()
+
     def _delete_module_entities(self, file_key: str) -> None:
         """Remove a changed/deleted file's Module subtree from the graph.
 
@@ -1206,6 +1228,16 @@ class GraphUpdater:
 
         if not is_full_build:
             self._seed_module_qns_from_graph({key for _fp, key in eligible_files})
+        # A full build can still land on a graph that already holds this
+        # project: the cache lives in the repo working tree, the graph does
+        # not, so a fresh clone of an indexed repo (or a force run) parses
+        # every file as "new" while the previous parse's state is still
+        # there. A file whose Module already exists must take the
+        # delete-before-reingest path or renamed-away symbols and their
+        # CALLS/REFERENCES edges accumulate alongside the fresh parse.
+        preexisting_paths = (
+            self._existing_module_paths() if is_full_build else frozenset()
+        )
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
@@ -1247,7 +1279,7 @@ class GraphUpdater:
                 skipped_count += 1
                 continue
 
-            is_new = file_key not in old_hashes
+            is_new = file_key not in old_hashes and file_key not in preexisting_paths
             if not is_new:
                 logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
             else:
