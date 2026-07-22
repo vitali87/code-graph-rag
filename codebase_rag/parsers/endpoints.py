@@ -183,7 +183,7 @@ def emit_endpoints(
         pairs = parse_route_decorator(decorator)
         if not pairs:
             continue
-        prefixes = ["" ]
+        prefixes = [""]
         if prefix_resolver is not None and module_qn is not None:
             receiver = decorator_receiver(decorator)
             if receiver is not None:

@@ -173,6 +173,7 @@ class ClassIngestMixin:
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
+    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in

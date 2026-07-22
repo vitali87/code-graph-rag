@@ -81,9 +81,9 @@ class TestFastApiRouterPrefixes:
             ),
         }
         edges = _run(tmp_path, files)
-        assert _endpoint(edges, "main.get_account", "GET /api/v2/accounts/{account_id}"), (
-            edges
-        )
+        assert _endpoint(
+            edges, "main.get_account", "GET /api/v2/accounts/{account_id}"
+        ), edges
 
     def test_cross_module_include_with_prefix(self, tmp_path: Path) -> None:
         files = {
@@ -129,7 +129,9 @@ class TestFastApiRouterPrefixes:
             ),
         }
         edges = _run(tmp_path, files)
-        assert _endpoint(edges, "routes.read_user", "GET /api/v1/users/{user_id}"), edges
+        assert _endpoint(edges, "routes.read_user", "GET /api/v1/users/{user_id}"), (
+            edges
+        )
 
     def test_dynamic_include_prefix_marks_unknown_lead(self, tmp_path: Path) -> None:
         # settings.API_V1_STR cannot resolve statically; the known tail keeps

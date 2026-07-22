@@ -172,15 +172,15 @@ def _import_targets(module_qn: str, node: Node) -> dict[str, str]:
 def _resolve_module(modules: set[str], importer_qn: str, dotted: str) -> str | None:
     if dotted in modules:
         return dotted
-    project = importer_qn.split(cs.SEPARATOR_DOT)[0]
+    project = importer_qn.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
     segments = dotted.split(cs.SEPARATOR_DOT)
-    candidates = [
+    candidates: list[str] = [
         qn
         for qn in modules
         if qn.split(cs.SEPARATOR_DOT)[0] == project
         and qn.split(cs.SEPARATOR_DOT)[-len(segments) :] == segments
     ]
-    return min(candidates, key=len) if candidates else None
+    return sorted(candidates, key=len)[0] if candidates else None
 
 
 class RouterRegistry:
@@ -308,7 +308,9 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
                     and right.type == cs.TS_PY_CALL
                 ):
                     callee = _decode(right.child_by_field_name(cs.TS_FIELD_FUNCTION))
-                    kind = _FACTORY_KINDS.get((callee or "").split(cs.SEPARATOR_DOT)[-1])
+                    kind = _FACTORY_KINDS.get(
+                        (callee or "").split(cs.SEPARATOR_DOT)[-1]
+                    )
                     if kind is not None:
                         value, given = _keyword_argument(right)
                         routers[(module_qn, _decode(left) or "")] = _Router(

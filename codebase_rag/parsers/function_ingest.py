@@ -204,6 +204,7 @@ class FunctionIngestMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     java_anon_overrides: list[tuple[str, str, str, str]]
+    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
