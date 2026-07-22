@@ -562,3 +562,61 @@ class TestHostAwareLinkingHardening:
         assert created == 1
         target = ingestor.ensure_relationship_batch.call_args.args[2][2]
         assert "order__worker__2adc9027" in target
+
+
+class TestRootfulRelativeUrlMatch:
+    """Issue #908: same-origin clients fetch rootful relative paths.
+
+    A browser frontend's ``fetch("/api/users/42")`` carries no scheme or
+    host; the path alone must qualify as a match candidate. A schemeless
+    fragment without a leading slash stays rejected: it could be anything.
+    """
+
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("/users/42", "/users/{id}", True),
+            ("/users/42?verbose=1", "/users/{id}", True),
+            ("/users/42/", "/users/{id}", True),
+            ("/api/users", "/users", False),
+            ("users/42", "/users/{id}", False),
+            ("not a url", "/users/{id}", False),
+        ],
+    )
+    def test_rootful_relative_urls(
+        self, url: str, template: str, matches: bool
+    ) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+    def test_rootful_relative_url_links_to_endpoint(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        network_qn = "resource::NETWORK::/users/42"
+        endpoint_qn = "resource::ENDPOINT::web::GET /users/{id}"
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": network_qn,
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+            },
+            {
+                "qualified_name": endpoint_qn,
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "web",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.RESOURCE, "qualified_name", network_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
+        )
