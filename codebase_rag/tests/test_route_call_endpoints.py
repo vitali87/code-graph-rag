@@ -424,3 +424,20 @@ class TestGoGeneratedRoutes:
         }
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
+
+    def test_plain_literal_with_selector_arg_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # An outbound client call can pass a selector too
+        # (`client.Get("/users", opts.Header)`); selector-handler evidence
+        # only counts on a const-derived path, the generated shape.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                "func fetchUsers(client HTTPClient, opts Options) {\n"
+                '\tclient.Get("/users", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
