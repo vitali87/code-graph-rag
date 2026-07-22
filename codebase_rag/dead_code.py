@@ -10,6 +10,7 @@ from fnmatch import fnmatch
 
 from . import constants as cs
 from . import cypher_queries as cq
+from .path_filters import matches_test_path
 from .types_defs import (
     DeadCodeConfig,
     GraphQueryClient,
@@ -162,17 +163,6 @@ def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
     )
 
 
-def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
-    # Match test-path patterns against a leading-slash-normalized path so a dir
-    # pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
-    # tests, a top-level tests/ folder), not just a nested `src/tests/`. The
-    # leading slash keeps `contests/` from matching `/tests/`.
-    normalized = (
-        path if path.startswith(cs.SEPARATOR_SLASH) else cs.SEPARATOR_SLASH + path
-    )
-    return any(pattern in normalized for pattern in patterns)
-
-
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
@@ -222,7 +212,7 @@ def dead_code_from_graph(
             # With tests excluded, a test-file symbol's only callers are
             # excluded as roots, so reporting it is noise (test helpers and
             # mocks are infrastructure, not dead production code).
-            if not config.include_tests and _matches_test_path(
+            if not config.include_tests and matches_test_path(
                 str(props.get(cs.KEY_PATH) or ""), config.test_patterns
             ):
                 continue
@@ -254,7 +244,7 @@ def dead_code_from_graph(
         if target_qn not in candidates:
             continue
         path = module_path.get(str(from_val), "")
-        is_test = _matches_test_path(path, config.test_patterns)
+        is_test = matches_test_path(path, config.test_patterns)
         if config.include_tests or not is_test:
             roots.add(target_qn)
     protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
@@ -317,7 +307,7 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and _matches_test_path(path, config.test_patterns):
+        elif config.include_tests and matches_test_path(path, config.test_patterns):
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)

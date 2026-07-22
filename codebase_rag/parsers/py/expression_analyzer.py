@@ -363,7 +363,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
             return self._resolve_class_method(class_name, method_name, module_qn)
 
-        if parts[0] == cs.PY_KEYWORD_SELF and len(parts) >= 3:
+        if parts[0] == cs.PY_KEYWORD_SELF:
             attribute_name = parts[1]
             method_name = parts[-1]
 
@@ -372,12 +372,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     attribute_type, method_name, module_qn
                 )
 
-        if len(parts) >= 3:
-            potential_class = parts[-2]
-            method_name = parts[-1]
-            return self._resolve_class_method(potential_class, method_name, module_qn)
-
-        return None
+        potential_class = parts[-2]
+        method_name = parts[-1]
+        return self._resolve_class_method(potential_class, method_name, module_qn)
 
     def _resolve_class_method(
         self, class_name: str, method_name: str, module_qn: str
