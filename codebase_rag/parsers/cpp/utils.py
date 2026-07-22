@@ -621,13 +621,7 @@ def cpp_enclosing_function_value_names(node: Node) -> set[str]:
     names: set[str] = set()
     current = node.parent
     while current is not None:
-        for sibling in current.children:
-            if sibling.start_byte >= node.start_byte:
-                break
-            if sibling.type == cs.CppNodeType.DECLARATION:
-                for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
-                    if name := _declarator_bound_name(declarator):
-                        names.add(name)
+        _collect_preceding_declaration_names(current, node, names)
         if current.type == cs.CppNodeType.FUNCTION_DEFINITION:
             _collect_cpp_parameter_names(current, names)
             return names
@@ -637,6 +631,21 @@ def cpp_enclosing_function_value_names(node: Node) -> set[str]:
             return names
         current = current.parent
     return set()
+
+
+def _collect_preceding_declaration_names(
+    scope: Node, node: Node, names: set[str]
+) -> None:
+    # Declared names among `scope`'s direct children that lexically
+    # precede `node`.
+    for sibling in scope.children:
+        if sibling.start_byte >= node.start_byte:
+            return
+        if sibling.type != cs.CppNodeType.DECLARATION:
+            continue
+        for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(declarator):
+                names.add(name)
 
 
 def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:

@@ -3579,8 +3579,6 @@ class CallProcessor:
         # Revive-only: nothing is emitted unless the declared type resolves
         # to a registered first-party class. Nested lambda / local-class
         # scopes are skipped; their declarations belong to their own caller.
-        registry = self._resolver.function_registry
-        ensure_rel = self.ingestor.ensure_relationship_batch
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
@@ -3589,14 +3587,7 @@ class CallProcessor:
             if node.type != cs.CppNodeType.DECLARATION:
                 stack.extend(node.children)
                 continue
-            is_construction = any(
-                declarator.type == cs.CppNodeType.INIT_DECLARATOR
-                and any(
-                    child.type == cs.TS_ARGUMENT_LIST for child in declarator.children
-                )
-                for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR)
-            ) or cpp_utils.is_cpp_vexing_parse_construction(node)
-            if not is_construction:
+            if not self._cpp_declaration_is_construction(node):
                 continue
             type_name = self._cpp_declaration_type_name(node)
             class_qn = (
@@ -3604,18 +3595,34 @@ class CallProcessor:
                 if type_name
                 else None
             )
-            if class_qn is None:
+            if class_qn is not None:
+                self._emit_cpp_construction_edges(caller_spec, class_qn)
+
+    @staticmethod
+    def _cpp_declaration_is_construction(node: Node) -> bool:
+        # `Point origin(10, 10)`: an init_declarator carrying a direct
+        # argument list; otherwise the most-vexing-parse evidence test.
+        for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+            if declarator.type == cs.CppNodeType.INIT_DECLARATOR and any(
+                child.type == cs.TS_ARGUMENT_LIST for child in declarator.children
+            ):
+                return True
+        return cpp_utils.is_cpp_vexing_parse_construction(node)
+
+    def _emit_cpp_construction_edges(
+        self, caller_spec: tuple[str, str, str], class_qn: str
+    ) -> None:
+        registry = self._resolver.function_registry
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
                 continue
-            for class_variant in registry.variants(class_qn):
-                variant_type = registry.get(class_variant)
-                if variant_type is not None and variant_type != NodeType.CLASS:
-                    continue
-                ensure_rel(
-                    caller_spec,
-                    cs.RelationshipType.INSTANTIATES,
-                    (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
-                )
-            self._emit_cpp_ctor_calls(caller_spec, class_qn)
+            self.ingestor.ensure_relationship_batch(
+                caller_spec,
+                cs.RelationshipType.INSTANTIATES,
+                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
+            )
+        self._emit_cpp_ctor_calls(caller_spec, class_qn)
 
     @staticmethod
     def _cpp_declaration_type_name(node: Node) -> str | None:
