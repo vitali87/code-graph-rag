@@ -70,6 +70,13 @@ int nestedShadow() {
   }
   return 0;
 }
+
+int conditionInit() {
+  if (int cproject = 1) {
+    FlutterWindow cwindow(cproject);
+  }
+  return 0;
+}
 """
 
 
@@ -153,6 +160,22 @@ def test_genuine_local_prototypes_are_not_constructions(
         calls
     )
     assert not _has(calls, ".main.prototypes", ".SomeType.SomeType"), sorted(calls)
+
+
+def test_condition_init_name_counts_as_evidence(
+    cpp_vexing_project: Path, mock_ingestor: MagicMock
+):
+    # An if/switch condition declaration (`if (int cproject = 1)`) nests
+    # inside condition_clause, not as a direct ancestor child, yet its name
+    # is in scope for the branch body: the construction must be recognised
+    # (Greptile round 3).
+    run_updater(cpp_vexing_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert not any(qn.endswith(".main.cwindow") for qn in functions), sorted(functions)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert _has(calls, ".main.conditionInit", ".FlutterWindow.FlutterWindow"), sorted(
+        calls
+    )
 
 
 def test_out_of_scope_names_keep_prototypes(
