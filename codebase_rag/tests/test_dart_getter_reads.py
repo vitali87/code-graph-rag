@@ -287,9 +287,9 @@ def test_field_initializer_getter_read_is_referenced(tmp_path: Path) -> None:
         ),
     }
     rels = _rels(_run(tmp_path, files))
-    assert any(
-        r == REFERENCES and b.endswith(".Palette.base") for _a, r, b in rels
-    ), rels
+    assert any(r == REFERENCES and b.endswith(".Palette.base") for _a, r, b in rels), (
+        rels
+    )
     assert any(
         r == REFERENCES and b.endswith(".Palette.factor") for _a, r, b in rels
     ), rels
