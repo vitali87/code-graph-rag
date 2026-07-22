@@ -173,6 +173,17 @@ class TestLegacyPathKeyMigration:
         # An earlier partial upgrade already dropped the legacy constraints
         # but left the merged nodes behind: repair must still trigger.
         ing = memgraph_ingestor
+        # The shared container only wipes nodes between tests, so make the
+        # precondition explicit: the legacy constraints are gone before
+        # seeding (Memgraph DROP CONSTRAINT is idempotent).
+        ing._execute_query("DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;")
+        ing._execute_query("DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;")
+        pairs = {
+            (r["label"], tuple(r["properties"]))
+            for r in ing._execute_query("SHOW CONSTRAINT INFO;")
+        }
+        assert ("Folder", ("path",)) not in pairs
+        assert ("File", ("path",)) not in pairs
         ing._execute_query(
             "CREATE (svc:Project {name: 'svc-legacy'}), "
             "(cli:Project {name: 'cli-legacy'}), "
