@@ -52,9 +52,7 @@ def _run(
 def _endpoint(
     edges: set[tuple[str, str, str]], source_suffix: str, identity: str
 ) -> bool:
-    return any(
-        qn.endswith(source_suffix) and e == identity for _label, qn, e in edges
-    )
+    return any(qn.endswith(source_suffix) and e == identity for _label, qn, e in edges)
 
 
 class TestExpressRoutes:
@@ -97,9 +95,7 @@ class TestExpressRoutes:
             ),
         }
         edges = _run(tmp_path, files, "javascript")
-        anchors = {
-            (label, qn) for label, qn, e in edges if e == "GET /health"
-        }
+        anchors = {(label, qn) for label, qn, e in edges if e == "GET /health"}
         assert anchors, edges
         # The endpoint stays anchored even without a resolvable handler.
         assert any(qn.endswith("server") for _label, qn in anchors), edges
@@ -162,7 +158,7 @@ class TestGoRoutes:
                 "\te := echo.New()\n"
                 '\te.GET("/version", func(c echo.Context) error { return nil })\n'
                 '\te.POST("/login", getLoginHandler())\n'
-                "\te.Start(\":8000\")\n"
+                '\te.Start(":8000")\n'
                 "}\n\n"
                 "func getLoginHandler() echo.HandlerFunc { return nil }\n"
             ),

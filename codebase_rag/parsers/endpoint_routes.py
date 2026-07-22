@@ -179,9 +179,7 @@ def _go_registration(call: Node, scope: str) -> RouteRegistration | None:
     return None
 
 
-_JS_SCOPE_TYPES = frozenset(
-    {cs.TS_FUNCTION_DECLARATION, cs.TS_METHOD_DEFINITION}
-)
+_JS_SCOPE_TYPES = frozenset({cs.TS_FUNCTION_DECLARATION, cs.TS_METHOD_DEFINITION})
 _GO_SCOPE_TYPES = frozenset({"function_declaration", "method_declaration"})
 
 
@@ -203,8 +201,10 @@ def collect_route_registrations(
         node, scope = stack.pop()
         if node.type in scope_types:
             name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
-            inner = f"{scope}{cs.SEPARATOR_DOT}{name}" if scope and name else (
-                name or scope
+            inner = (
+                f"{scope}{cs.SEPARATOR_DOT}{name}"
+                if scope and name
+                else (name or scope)
             )
             stack.extend((child, inner) for child in node.named_children)
             continue
