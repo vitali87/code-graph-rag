@@ -48,7 +48,7 @@ from . import method_override as mo
 from . import node_type as nt
 from . import parent_extraction as pe
 from . import relationships as rel
-from .utils import csharp_has_override_modifier
+from .utils import csharp_has_override_modifier, find_child_by_type
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -1150,6 +1150,11 @@ class ClassIngestMixin:
         module_qn: str | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
+        if body_node is None and class_node.type == cs.TS_DART_MIXIN_DECLARATION:
+            # mixin_declaration is the one Dart type declaration whose
+            # class_body is a positional child, not a `body` field; without
+            # this fallback a mixin's members silently vanish.
+            body_node = find_child_by_type(class_node, cs.TS_DART_CLASS_BODY)
         if not body_node:
             return
 
