@@ -121,6 +121,13 @@ _DART_LOCAL_DECLARATION_TYPES = frozenset(
         cs.TS_DART_INITIALIZED_IDENTIFIER,
     }
 )
+# Statement scopes whose binder is live only AFTER its declaration: the
+# for-in iterable and the try body precede theirs and read the getter. A
+# block-scoped local needs no such split: Dart scopes it to the whole block
+# and rejects reads before the declaration at compile time.
+_DART_STATEMENT_SCOPE_TYPES = frozenset(
+    {cs.TS_DART_FOR_STATEMENT, cs.TS_DART_TRY_STATEMENT}
+)
 
 
 def _dart_declared_names(node: Node) -> list[str]:
@@ -194,12 +201,29 @@ def _dart_is_bare_read(node: Node) -> bool:
     ):
         return False
     parent = node.parent
-    return parent is not None and parent.type not in (
+    if parent is None or parent.type in (
         cs.TS_DART_LABEL,
         cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
         cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
         cs.TS_DART_CASCADE_SELECTOR,
-    )
+        # Catch parameters only BIND names; they never read.
+        cs.TS_DART_CATCH_PARAMETERS,
+    ):
+        return False
+    if parent.type == cs.TS_DART_FOR_LOOP_PARTS:
+        # The FIRST identifier of a for-in is the loop BINDER, not a read;
+        # the iterable position after it reads normally.
+        first = next(
+            (
+                child
+                for child in parent.named_children
+                if child.type == cs.TS_DART_IDENTIFIER
+            ),
+            None,
+        )
+        if first is not None and first.start_byte == node.start_byte:
+            return False
+    return True
 
 
 # Python nested-scope boundaries and sequence-literal node types used when
@@ -4788,6 +4812,8 @@ class CallProcessor:
             anc = decl.parent
             while anc is not None and anc is not walk_root:
                 if anc.type in _DART_SHADOW_SCOPE_TYPES:
+                    if anc.type in _DART_STATEMENT_SCOPE_TYPES:
+                        return (decl.end_byte, anc.end_byte)
                     return (anc.start_byte, anc.end_byte)
                 anc = anc.parent
             return whole_body
