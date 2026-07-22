@@ -609,30 +609,56 @@ def cpp_vexing_parse_argument_names(decl_node: Node) -> list[str]:
 
 
 def cpp_enclosing_function_value_names(node: Node) -> set[str]:
-    # Parameter and local-variable names of the enclosing function, the
-    # in-scope evidence that disambiguates a most-vexing-parse construction
-    # from a genuine local prototype. Nested scopes (lambdas, local classes)
-    # are skipped, mirroring the local-type walk.
-    current = node.parent
-    while current is not None and current.type != cs.CppNodeType.FUNCTION_DEFINITION:
-        current = current.parent
-    if current is None:
-        return set()
+    # Parameter and local-variable names VISIBLE at `node`, the in-scope
+    # evidence that disambiguates a most-vexing-parse construction from a
+    # genuine local prototype. Lexical semantics matter (review round 1): a
+    # later declaration or a sibling nested block's local is not visible at
+    # the candidate site and must not reclassify it, so only declarations
+    # that PRECEDE the node among the direct children of its ancestor chain
+    # count (which also covers a for-init declaration when the node sits in
+    # the loop body). Parameters come from the enclosing function's own
+    # declarator.
     names: set[str] = set()
-    stack = list(current.children)
-    while stack:
-        child = stack.pop()
-        if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
-            continue
-        if child.type == cs.CppNodeType.PARAMETER_DECLARATION or (
-            child.type == cs.CppNodeType.DECLARATION and child is not node
+    current = node.parent
+    while current is not None:
+        for sibling in current.children:
+            if sibling.start_byte >= node.start_byte:
+                break
+            if sibling.type == cs.CppNodeType.DECLARATION:
+                for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
+                    if name := _declarator_bound_name(declarator):
+                        names.add(name)
+        if current.type == cs.CppNodeType.FUNCTION_DEFINITION:
+            _collect_cpp_parameter_names(current, names)
+            return names
+        if current.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            # A lambda or local-class member body opens its own scope; a
+            # candidate inside one takes evidence only from that scope.
+            return names
+        current = current.parent
+    return set()
+
+
+def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        if declarator.type == cs.CppNodeType.FUNCTION_DECLARATOR:
+            break
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    if declarator is None:
+        return
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return
+    for param in params.named_children:
+        if param.type not in (
+            cs.CppNodeType.PARAMETER_DECLARATION,
+            cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
         ):
-            for declarator in child.children_by_field_name(cs.FIELD_DECLARATOR):
-                if name := _declarator_bound_name(declarator):
-                    names.add(name)
             continue
-        stack.extend(child.children)
-    return names
+        for decl in param.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(decl):
+                names.add(name)
 
 
 def is_cpp_vexing_parse_construction(decl_node: Node) -> bool:
