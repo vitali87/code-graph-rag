@@ -440,3 +440,20 @@ def test_escape_sequence_does_not_truncate_path(tmp_path: Path) -> None:
     files = {"m.py": 'def load():\n    open("logs\\nightly.txt")\n'}
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.load", READS_FROM, "resource::FILE::logs\\nightly.txt")
+
+
+def test_interpolation_with_slash_collapses_to_opaque_placeholder(
+    tmp_path: Path,
+) -> None:
+    # An expression containing a path or parse delimiter would fabricate
+    # extra URL segments ({offset/limit} reads as two segments) or change
+    # how urlparse splits the URL, so it collapses to an opaque placeholder.
+    files = {
+        "m.py": (
+            "import requests\n\n"
+            "def page(offset, limit):\n"
+            "    requests.get(f'http://svc:8000/users/{offset/limit}')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.page", READS_FROM, "resource::NETWORK::http://svc:8000/users/{*}")
