@@ -67,10 +67,29 @@ def test_windows_entry_points_root_their_call_tree() -> None:
 
 
 def test_c_main_is_rooted() -> None:
-    nodes = [_node("proj.tool.main", "main", "tool/entry.c")]
+    nodes = [_node("proj.tool.entry.main", "main", "tool/entry.c")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
     reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
     assert reported == [], reported
+
+
+def test_header_defined_entry_name_is_not_rooted() -> None:
+    # A header is not an OS entry translation unit: a function named WinMain
+    # defined in a .h/.hpp is ordinary code and must stay a candidate.
+    nodes = [_node("proj.lib.api.WinMain", "WinMain", "lib/api.h")]
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    assert len(reported) == 1, reported
+
+
+def test_namespace_scoped_main_is_not_rooted() -> None:
+    # `namespace detail { int main(); }` is an ordinary function the OS
+    # cannot invoke; only a file-scope entry (qn directly under the module,
+    # whose segment matches the file stem) earns the root.
+    nodes = [_node("proj.app.util.detail.main", "main", "app/util.cpp")]
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    assert len(reported) == 1, reported
 
 
 def test_entry_name_on_other_language_is_not_rooted() -> None:
