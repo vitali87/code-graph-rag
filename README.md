@@ -39,6 +39,9 @@
   <a href="https://pepy.tech/projects/code-graph-rag">
     <img src="https://static.pepy.tech/personalized-badge/code-graph-rag?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads" />
   </a>
+  <a href="https://skillsllm.com/security-check/DHsMGRb1Ysys">
+    <img src="https://skillsllm.com/security-check/badge.svg?owner=vitali87&repo=code-graph-rag" alt="SkillsLLM Security Check" />
+  </a>
   <!-- OpenSSF Scorecard only tracks GitHub-hosted repos. Uncomment once the Scorecard workflow is confirmed running on the authoritative GitHub repo.
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
