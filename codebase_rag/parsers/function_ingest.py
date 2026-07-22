@@ -316,6 +316,14 @@ class FunctionIngestMixin:
                         )
                     )
                     continue
+                # A most-vexing-parse misparse (`FlutterWindow window(project);`
+                # inside a function body, issue #871) is a stack-object
+                # construction, not a function declaration: minting it would
+                # create a phantom Function the call pass can bind to. The
+                # construction edges are emitted by the per-caller declaration
+                # pass instead.
+                if cpp_utils.is_cpp_vexing_parse_construction(func_node):
+                    continue
 
             if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
                 func_node, module_qn, lang_queries

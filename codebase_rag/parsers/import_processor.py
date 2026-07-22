@@ -1270,10 +1270,13 @@ class ImportProcessor:
     def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
         alias_name = None
         import_path = None
+        is_dot_import = False
 
         for child in spec_node.children:
             if child.type == cs.TS_PACKAGE_IDENTIFIER:
                 alias_name = safe_decode_with_fallback(child)
+            elif child.type == cs.TS_GO_DOT:
+                is_dot_import = True
             elif child.type == cs.TS_INTERPRETED_STRING_LITERAL:
                 import_path = safe_decode_with_fallback(child).strip('"')
 
@@ -1289,7 +1292,15 @@ class ImportProcessor:
                     if mapped
                     else self.project_name
                 )
-            self.import_mapping[module_qn][package_name] = import_path
+            if is_dot_import:
+                # `import . "fmt"` binds the package's exported names, not the
+                # package identifier; a `.`-prefixed sentinel key (no identifier
+                # can contain a dot) lets bare-callee lookups re-qualify.
+                self.import_mapping[module_qn][f"{cs.SEPARATOR_DOT}{package_name}"] = (
+                    import_path
+                )
+            else:
+                self.import_mapping[module_qn][package_name] = import_path
             logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
