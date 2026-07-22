@@ -231,6 +231,34 @@ def dart_member_read_name(selector_node: Node) -> str | None:
     return _assemble_chain([*receiver, member])
 
 
+def dart_cascade_read_name(section: Node) -> str | None:
+    """The dotted name a cascade member READ targets (`m..startYr`), or None.
+
+    A pure read section holds ONLY cascade_selector children: an
+    argument_part marks an invocation the call pass owns, and any other
+    child (an assignment's RHS) marks a WRITE targeting the setter. The
+    shared base receiver is reassembled exactly like a cascade call's.
+    """
+    if any(
+        child.type != cs.TS_DART_CASCADE_SELECTOR for child in section.named_children
+    ):
+        return None
+    parts = [
+        name
+        for child in section.named_children
+        if (name := _first_identifier_text(child)) is not None
+    ]
+    if not parts:
+        return None
+    base = section.prev_named_sibling
+    while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
+        base = base.prev_named_sibling
+    receiver = _walk_chain(base)
+    if receiver is None:
+        return None
+    return cs.SEPARATOR_DOT.join(receiver + parts)
+
+
 def dart_return_type_name(node: Node) -> str | None:
     """The declared return type of a Dart signature, or None.
 

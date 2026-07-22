@@ -103,6 +103,42 @@ _ARG_REF_ONLY_LANGUAGES = frozenset(
 _DART_VALUE_WRAPPER_TYPES = frozenset(
     {cs.TS_DART_LIST_LITERAL, cs.TS_DART_SET_OR_MAP_LITERAL, cs.TS_DART_ARGUMENT}
 )
+# Scopes that bound a Dart local/parameter declaration for getter-read
+# shadowing; a declaration hides a same-name getter only inside them.
+_DART_SHADOW_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_DART_BLOCK,
+        cs.TS_DART_FUNCTION_EXPRESSION,
+        cs.TS_DART_LOCAL_FUNCTION_DECLARATION,
+    }
+)
+_DART_LOCAL_DECLARATION_TYPES = frozenset(
+    {
+        cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+        cs.TS_DART_INITIALIZED_IDENTIFIER,
+    }
+)
+
+
+def _dart_is_bare_read(node: Node) -> bool:
+    # A bare-identifier getter read only: a chain head (following selector or
+    # cascade) belongs to the member/cascade passes, an argument_part head is
+    # a call target, a label's identifier names a parameter, and a selector's
+    # own identifier is the member the chain pass already handled.
+    following = node.next_named_sibling
+    if following is not None and following.type in (
+        cs.TS_DART_SELECTOR,
+        cs.TS_DART_ARGUMENT_PART,
+        cs.TS_DART_CASCADE_SECTION,
+    ):
+        return False
+    parent = node.parent
+    return parent is not None and parent.type not in (
+        cs.TS_DART_LABEL,
+        cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+        cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+        cs.TS_DART_CASCADE_SELECTOR,
+    )
 
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
@@ -4578,32 +4614,9 @@ class CallProcessor:
         # functions never fabricate an edge. Nested closures are walked (a
         # Dart lambda's reads attribute to the enclosing method, matching the
         # flat-attribute call pass), so their parameters join the shadow set.
-        resolver = self._resolver
-        resolve_func = resolver.resolve_function_call
-        registry = resolver.function_registry
-        ensure_rel = self.ingestor.ensure_relationship_batch
-        refs_rel = cs.RelationshipType.REFERENCES
         class_types = lang_config.class_node_types
-        shadowed: set[str] | None = None
+        shadow_spans: dict[str, list[tuple[int, int]]] | None = None
         seen: set[str] = set()
-
-        def emit(read_name: str) -> None:
-            if read_name in seen:
-                return
-            resolved = resolve_func(
-                read_name, module_qn, local_var_types, class_context, caller_qn
-            )
-            if not resolved:
-                return
-            _res_type, res_qn = resolved
-            if not registry.is_property(res_qn) or res_qn == caller_qn:
-                return
-            seen.add(read_name)
-            ensure_rel(
-                caller_spec,
-                refs_rel,
-                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, res_qn),
-            )
 
         # The grammar splits a definition into a signature node and a SIBLING
         # function_body: the signature holds no reads, so walk the body.
@@ -4615,53 +4628,81 @@ class CallProcessor:
             node_type = node.type
             if node_type in class_types:
                 continue
+            read_name: str | None = None
             if node_type == cs.TS_DART_SELECTOR:
                 read_name = dart_utils.dart_member_read_name(node)
-                if (
-                    read_name
-                    and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names
-                ):
-                    emit(read_name)
-            elif node_type == cs.TS_DART_IDENTIFIER:
+            elif node_type == cs.TS_DART_CASCADE_SECTION:
+                read_name = dart_utils.dart_cascade_read_name(node)
+            elif node_type == cs.TS_DART_IDENTIFIER and _dart_is_bare_read(node):
                 name = safe_decode_text(node)
-                following = node.next_named_sibling
-                parent = node.parent
-                # A bare read only: a chain head (following selector) is the
-                # member pass's job, an argument_part head is a call target,
-                # a label's identifier names a parameter, and a selector's
-                # own identifier is the member already handled above.
-                if (
-                    name
-                    and name in prop_names
-                    and (
-                        following is None
-                        or following.type
-                        not in (cs.TS_DART_SELECTOR, cs.TS_DART_ARGUMENT_PART)
-                    )
-                    and parent is not None
-                    and parent.type
-                    not in (
-                        cs.TS_DART_LABEL,
-                        cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
-                        cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
-                        cs.TS_DART_CASCADE_SELECTOR,
-                    )
-                ):
-                    if shadowed is None:
-                        shadowed = self._dart_shadow_names(caller_node, walk_root)
-                    if name not in shadowed:
-                        emit(name)
+                if name and name in prop_names:
+                    if shadow_spans is None:
+                        shadow_spans = self._dart_shadow_spans(caller_node, walk_root)
+                    pos = node.start_byte
+                    if not any(
+                        lo <= pos < hi for lo, hi in shadow_spans.get(name, ())
+                    ):
+                        read_name = name
+            if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
+                self._emit_dart_property_read(
+                    read_name,
+                    caller_spec,
+                    caller_qn,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    seen,
+                )
             stack.extend(node.children)
 
-    def _dart_shadow_names(self, caller_node: Node, walk_root: Node) -> set[str]:
-        # Names declared as parameters or locals anywhere in the walked
-        # scopes: a same-name declaration hides the getter for bare reads.
-        # Parameters live in the SIGNATURE node, locals in the sibling body,
-        # so both roots are walked. Whole-body, not span-scoped (cf.
-        # _csharp_shadow_spans): a read BEFORE a later same-name local is
-        # suppressed too, which under-references (safe direction) and only
-        # for a shadow pattern Dart analyzers already discourage.
-        names: set[str] = set()
+    def _emit_dart_property_read(
+        self,
+        read_name: str,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        seen: set[str],
+    ) -> None:
+        if read_name in seen:
+            return
+        resolved = self._resolver.resolve_function_call(
+            read_name, module_qn, local_var_types, class_context, caller_qn
+        )
+        if not resolved:
+            return
+        _res_type, res_qn = resolved
+        registry = self._resolver.function_registry
+        if not registry.is_property(res_qn) or res_qn == caller_qn:
+            return
+        seen.add(read_name)
+        self.ingestor.ensure_relationship_batch(
+            caller_spec,
+            cs.RelationshipType.REFERENCES,
+            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, res_qn),
+        )
+
+    def _dart_shadow_spans(
+        self, caller_node: Node, walk_root: Node
+    ) -> dict[str, list[tuple[int, int]]]:
+        # {declared name: [byte span of each declaring SCOPE]} for parameters
+        # and locals. A declaration shadows a same-name getter only for bare
+        # reads INSIDE its declaring scope: a closure's parameter must not
+        # suppress the enclosing method's read (cf. _csharp_shadow_spans).
+        # Method parameters live in the SIGNATURE, outside the walked body,
+        # so their scope walk falls through to the whole body.
+        whole_body = (walk_root.start_byte, walk_root.end_byte)
+
+        def scope_span(decl: Node) -> tuple[int, int]:
+            anc = decl.parent
+            while anc is not None and anc is not walk_root:
+                if anc.type in _DART_SHADOW_SCOPE_TYPES:
+                    return (anc.start_byte, anc.end_byte)
+                anc = anc.parent
+            return whole_body
+
+        spans: dict[str, list[tuple[int, int]]] = {}
         stack = list(caller_node.children)
         if walk_root is not caller_node:
             stack.extend(walk_root.children)
@@ -4673,12 +4714,9 @@ class CallProcessor:
                     if child.type == cs.TS_DART_IDENTIFIER and (
                         name := safe_decode_text(child)
                     ):
-                        names.add(name)
+                        spans.setdefault(name, []).append(scope_span(node))
                 continue
-            if node_type in (
-                cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
-                cs.TS_DART_INITIALIZED_IDENTIFIER,
-            ):
+            if node_type in _DART_LOCAL_DECLARATION_TYPES:
                 declared = next(
                     (
                         child
@@ -4688,9 +4726,9 @@ class CallProcessor:
                     None,
                 )
                 if declared is not None and (name := safe_decode_text(declared)):
-                    names.add(name)
+                    spans.setdefault(name, []).append(scope_span(node))
             stack.extend(node.children)
-        return names
+        return spans
 
     def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
         # The identifier actually being READ in receiver position: unwrap

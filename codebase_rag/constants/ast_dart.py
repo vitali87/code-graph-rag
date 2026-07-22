@@ -48,6 +48,7 @@ DART_CALL_QUERY = """
 # inferred_type plus construction initializer); a parameter is
 # formal_parameter(type_identifier, identifier).
 TS_DART_CLASS_BODY = "class_body"
+TS_DART_BLOCK = "block"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 
