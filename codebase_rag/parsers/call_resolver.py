@@ -652,7 +652,14 @@ class CallResolver:
         if result := self._resolve_js_prototype_sibling(call_name, caller_qn, language):
             return result
 
-        use_cache = not local_var_types
+        # The cache is keyed by (call_name, module_qn) only, so a caller whose
+        # class carries extends-clause type arguments must bypass it: its
+        # member resolution is class-context-dependent (#875) and a sibling
+        # class's cached answer for the same name would be wrong.
+        use_cache = not local_var_types and not (
+            language == cs.SupportedLanguage.DART
+            and class_context in self.type_inference.dart_extends_type_args
+        )
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
@@ -745,6 +752,12 @@ class CallResolver:
         if (
             language in cs.JS_TS_LANGUAGES or language == cs.SupportedLanguage.DART
         ) and cs.SEPARATOR_DOT in call_name:
+            if language == cs.SupportedLanguage.DART and (
+                result := self._resolve_dart_external_base_arg_member(
+                    call_name, class_context, local_var_types
+                )
+            ):
+                return result
             result = self._resolve_js_member_call_unique(call_name, module_qn)
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
@@ -754,6 +767,45 @@ class CallResolver:
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _resolve_dart_external_base_arg_member(
+        self,
+        call_name: str,
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # `recv.member(...)` on a receiver undeclared in first-party scope,
+        # inside a class extending an EXTERNAL generic base: the only
+        # first-party types the base can hand back are its type arguments
+        # (`State<GridBtn>.widget` is a GridBtn), so bind when exactly one
+        # argument's class defines the member (issue #875). A first-party
+        # base, a declared receiver, or an own member named like the
+        # receiver all fall through to the unique-member gate instead.
+        if not class_context:
+            return None
+        type_args = self.type_inference.dart_extends_type_args.get(class_context)
+        if not type_args:
+            return None
+        receiver, sep, member = call_name.partition(cs.SEPARATOR_DOT)
+        if not sep or cs.SEPARATOR_DOT in member:
+            return None
+        if local_var_types and receiver in local_var_types:
+            return None
+        if f"{class_context}{cs.SEPARATOR_DOT}{receiver}" in self.function_registry:
+            return None
+        bases = self.class_inheritance.get(class_context)
+        # resolve_deferred_inherits rewrote bases in place, so a registered
+        # bases[0] means a first-party extends base owns its members.
+        if not bases or self.function_registry.get(bases[0]) is not None:
+            return None
+        matches = [
+            qn
+            for arg_qn in dict.fromkeys(type_args)
+            if (qn := f"{arg_qn}{cs.SEPARATOR_DOT}{member}") in self.function_registry
+        ]
+        if len(matches) == 1:
+            return self.function_registry[matches[0]], matches[0]
+        return None
 
     def _resolve_js_member_call_unique(
         self, call_name: str, module_qn: str

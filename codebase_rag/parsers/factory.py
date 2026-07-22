@@ -136,6 +136,7 @@ class ProcessorFactory:
                 csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
                 csharp_method_return_types=self.definition_processor.csharp_method_return_types,
                 function_locations=self.definition_processor.function_locations,
+                dart_extends_type_args=self.definition_processor.dart_extends_type_args,
             )
         return self._type_inference
 

@@ -224,6 +224,31 @@ def extract_dart_parent_classes(
     return parents
 
 
+def extract_dart_extends_type_args(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    # `extends Base<T, U>`: the clause's type arguments resolved to qns, so
+    # a member call on an undeclared receiver inside the subclass can bind
+    # against the first-party types an EXTERNAL generic base hands back
+    # (`State<GridBtn>.widget` is a GridBtn, issue #875). The type_arguments
+    # child of `superclass` belongs to the extends base; a mixin's own
+    # arguments nest under `mixins` and are not collected.
+    superclass = find_child_by_type(class_node, cs.TS_DART_SUPERCLASS)
+    if superclass is None:
+        return []
+    type_args = find_child_by_type(superclass, cs.TS_DART_TYPE_ARGUMENTS)
+    if type_args is None:
+        return []
+    return [
+        resolve_to_qn(name, module_qn)
+        for child in type_args.named_children
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER
+        and (name := safe_decode_text(child))
+    ]
+
+
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
     return [guess for _, guess in extract_cpp_parent_bases(class_node, module_qn)]
 
