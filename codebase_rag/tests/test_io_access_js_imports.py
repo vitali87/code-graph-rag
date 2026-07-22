@@ -145,3 +145,113 @@ def test_local_default_import_does_not_hit_builtin_sink(tmp_path: Path) -> None:
         },
     )
     assert not _reads_file(rels, "m.load"), rels
+
+
+WRITES_TO = cs.RelationshipType.WRITES_TO.value
+
+
+def _run_io_directed(
+    tmp_path: Path, files: dict[str, str]
+) -> set[tuple[str, str, str]]:
+    parsers, queries = load_parsers()
+    if "javascript" not in parsers:
+        pytest.skip("javascript parser not available")
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+    return {
+        (c.args[0][2], str(c.args[1]), c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) in (READS_FROM, WRITES_TO)
+    }
+
+
+def _edge(rels: set[tuple[str, str, str]], caller: str, rel: str, res: str) -> bool:
+    return any(a.endswith(caller) and r == rel and b == res for a, r, b in rels)
+
+
+class TestFetchMethodOption:
+    """A fetch with a write verb in its options object is a write, not a read
+    (issue #878 review): the direction gate would otherwise strip its
+    endpoint link.
+    """
+
+    RESOURCE = "resource::NETWORK::http://svc:8000/users/1"
+
+    def test_fetch_post_option_is_write(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function save() {\n"
+                    "  return fetch('http://svc:8000/users/1', {method: 'POST'})\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.save", WRITES_TO, self.RESOURCE), rels
+        assert not _edge(rels, "m.save", READS_FROM, self.RESOURCE), rels
+
+    def test_fetch_delete_option_is_write(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function drop() {\n"
+                    "  return fetch('http://svc:8000/users/1', {method: 'delete'})\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.drop", WRITES_TO, self.RESOURCE), rels
+
+    def test_fetch_without_options_stays_read(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function load() {\n"
+                    "  return fetch('http://svc:8000/users/1')\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.load", READS_FROM, self.RESOURCE), rels
+        assert not _edge(rels, "m.load", WRITES_TO, self.RESOURCE), rels
+
+    def test_fetch_dynamic_method_is_read_write(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function send(verb) {\n"
+                    "  return fetch('http://svc:8000/users/1', {method: verb})\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.send", READS_FROM, self.RESOURCE), rels
+        assert _edge(rels, "m.send", WRITES_TO, self.RESOURCE), rels
+
+    def test_fetch_opaque_options_variable_is_read_write(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function send(opts) {\n"
+                    "  return fetch('http://svc:8000/users/1', opts)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.send", READS_FROM, self.RESOURCE), rels
+        assert _edge(rels, "m.send", WRITES_TO, self.RESOURCE), rels

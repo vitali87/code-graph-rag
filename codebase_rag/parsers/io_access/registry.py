@@ -143,7 +143,13 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     # Node writes warn/error to stderr (console.warn is an alias of console.error).
     IOSink("console.warn", ResourceKind.STDERR, IODirection.WRITE),
     IOSink("console.error", ResourceKind.STDERR, IODirection.WRITE),
-    IOSink("fetch", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink(
+        "fetch",
+        ResourceKind.NETWORK,
+        IODirection.READ,
+        target_arg=0,
+        method_options_arg=1,
+    ),
     IOSink("axios.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("axios.head", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("axios.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
