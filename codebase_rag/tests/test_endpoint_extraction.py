@@ -324,3 +324,101 @@ class TestReviewHardening:
 
         assert "READS_FROM|WRITES_TO" in CYPHER_LIVE_NETWORK_RESOURCES
         assert "EXPOSES" in CYPHER_LIVE_ENDPOINT_RESOURCES
+
+
+class TestDirectionAwareLinking:
+    """Dogfood finding (issue #878): a ``requests.get`` URL resolved to a
+    write-only route (``DELETE /orders/{order_id}``). The only method
+    evidence on the client side is the sink edge type, so a read-only URL
+    must not link to a write-only endpoint and vice versa.
+    """
+
+    @staticmethod
+    def _network_row(url: str, directions: list[str]) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": directions,
+        }
+
+    @staticmethod
+    def _endpoint_row(identity: str) -> dict[str, str]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+        }
+
+    def _link(self, rows: list[dict[str, object]]) -> tuple[int, object]:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return link_endpoints(ingestor), ingestor
+
+    def test_read_url_does_not_link_to_write_only_endpoint(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network_row("http://svc/orders/9", ["READS_FROM"]),
+                self._endpoint_row("DELETE /orders/{order_id}"),
+            ]
+        )
+        assert created == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_write_url_does_not_link_to_read_only_endpoint(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network_row("http://svc/users/1", ["WRITES_TO"]),
+                self._endpoint_row("GET /users/{id}"),
+            ]
+        )
+        assert created == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_matching_direction_links(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/orders/9", ["READS_FROM"]),
+                self._endpoint_row("GET /orders/{order_id}"),
+            ]
+        )
+        assert created == 1
+
+    def test_write_url_links_to_write_endpoint(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/payments/5/refund", ["WRITES_TO"]),
+                self._endpoint_row("POST /payments/{id}/refund"),
+            ]
+        )
+        assert created == 1
+
+    def test_mixed_direction_url_links_to_both(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/items/7", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint_row("GET /items/{id}"),
+                self._endpoint_row("PUT /items/{id}"),
+            ]
+        )
+        assert created == 2
+
+    def test_missing_directions_stay_permissive(self) -> None:
+        # Legacy graphs and fakes without the aggregated edge types must keep
+        # the old behaviour rather than dropping every link.
+        row: dict[str, object] = {
+            "qualified_name": "resource::NETWORK::http://svc/orders/9",
+            "name": "http://svc/orders/9",
+            "kind": "NETWORK",
+        }
+        created, _ = self._link([row, self._endpoint_row("DELETE /orders/{order_id}")])
+        assert created == 1
+
+    def test_network_query_aggregates_directions(self) -> None:
+        from codebase_rag.parsers.endpoints import CYPHER_LIVE_NETWORK_RESOURCES
+
+        assert "directions" in CYPHER_LIVE_NETWORK_RESOURCES
