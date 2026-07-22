@@ -2288,6 +2288,9 @@ class CallProcessor:
                 caller_node, caller_spec, caller_qn, module_qn
             )
             self._ingest_cpp_member_init_ctor_calls(caller_node, caller_spec, module_qn)
+            self._ingest_cpp_implicit_base_lifecycle_calls(
+                caller_node, caller_spec, caller_qn, module_qn
+            )
             self._ingest_cpp_declaration_ctor_calls(caller_node, caller_spec, module_qn)
 
         if call_nodes is None:
@@ -3563,6 +3566,117 @@ class CallProcessor:
                 )
                 if class_qn is not None:
                     self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _ingest_cpp_implicit_base_lifecycle_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+    ) -> None:
+        # A ctor whose member initializer list does not name a base still
+        # runs that base's default ctor, and a dtor runs base dtors after
+        # its own body; neither has an AST node (issue #892), so base-chain
+        # lifecycles reached only implicitly reported dead (wonderous
+        # Win32Window). The caller's identity comes from its qn (leaf ==
+        # class simple name for a ctor, `~name` for a dtor, parent a
+        # registered class), which covers out-of-class definitions whose
+        # per-caller pass runs at module level. Registry guarded: only
+        # bases resolved to registered classes emit, and a delegating ctor
+        # (`: Derived(0)`) emits nothing because the delegated-to ctor owns
+        # the base call.
+        # Only a DEFINITION knows its member initializer list; the in-class
+        # prototype registers under the same qn and also runs a per-caller
+        # pass, and emitting from it would double every edge (and invent
+        # base calls a bodied definition's initializer list excludes). A
+        # `= default` member parses as function_definition, so the guard
+        # keeps it: its implicit base call is guaranteed by the standard.
+        if caller_node.type not in (
+            cs.CppNodeType.FUNCTION_DEFINITION,
+            cs.CppNodeType.INLINE_METHOD_DEFINITION,
+        ):
+            return
+        registry = self._resolver.function_registry
+        class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or registry.get(class_qn) != NodeType.CLASS:
+            return
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        is_ctor = leaf == simple
+        is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
+        if not is_ctor and not is_dtor:
+            return
+        # The full INHERITS closure, not just direct bases: construction and
+        # destruction run EVERY ancestor's ctor/dtor unconditionally, and an
+        # intermediate whose definition lives outside the parsed source has
+        # no bodied caller pass to carry the chain onward (PR #894 review).
+        ancestors = self._cpp_registered_ancestors(class_qn)
+        if not ancestors:
+            return
+        if is_dtor:
+            for base_qn in ancestors:
+                self._emit_cpp_lifecycle_targets(
+                    caller_spec, self._resolver.cpp_destructor_targets(base_qn)
+                )
+            return
+        named = self._cpp_member_init_class_qns(caller_node, module_qn)
+        if class_qn in named:
+            return
+        for base_qn in ancestors:
+            if base_qn in named:
+                # The member-init pass owns this base's edge; its own deeper
+                # ancestors stay in the walk via the closure.
+                continue
+            self._emit_cpp_lifecycle_targets(
+                caller_spec, self._resolver.java_constructor_targets(base_qn)
+            )
+
+    def _cpp_registered_ancestors(self, class_qn: str) -> list[str]:
+        # Registered classes in the INHERITS closure, nearest first.
+        ancestors: list[str] = []
+        seen = {class_qn}
+        queue = list(self._resolver.class_inheritance.get(class_qn, []))
+        while queue:
+            current = queue.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            if self._resolver.function_registry.get(current) == NodeType.CLASS:
+                ancestors.append(current)
+            queue.extend(self._resolver.class_inheritance.get(current, []))
+        return ancestors
+
+    def _emit_cpp_lifecycle_targets(
+        self,
+        caller_spec: tuple[str, str, str],
+        targets: set[tuple[str, str]],
+    ) -> None:
+        registry = self._resolver.function_registry
+        for target_type, target_qn in sorted(targets):
+            for variant in registry.variants(target_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                )
+
+    def _cpp_member_init_class_qns(self, caller_node: Node, module_qn: str) -> set[str]:
+        # Class qns the ctor's member initializer list names explicitly;
+        # those base ctors are already emitted by the member-init pass.
+        named: set[str] = set()
+        for init_list in caller_node.children:
+            if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
+                continue
+            for initializer in init_list.named_children:
+                if initializer.type != cs.CppNodeType.FIELD_INITIALIZER:
+                    continue
+                name = self._cpp_member_init_head_name(initializer)
+                if name and (
+                    resolved := self._resolver._resolve_type_to_class_qn(
+                        name, module_qn
+                    )
+                ):
+                    named.add(resolved)
+        return named
 
     def _ingest_cpp_declaration_ctor_calls(
         self,

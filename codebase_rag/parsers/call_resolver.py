@@ -514,15 +514,28 @@ class CallResolver:
         # do to its constructors (same direct-member gate as
         # java_constructor_targets: a nested class's dtor has an extra qn
         # segment and is excluded).
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        # A destructor cannot be overloaded, so its qualified name is fully
-        # determined by the class: one direct registry lookup replaces a
-        # prefix scan over every member (Gemini review, PR #799).
-        dtor_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
-        dtor_type = self.function_registry.get(dtor_qn)
-        if dtor_type is None:
-            return set()
-        return {(dtor_type, dtor_qn)}
+        # Destroying an object runs its own dtor AND every ancestor dtor
+        # unconditionally (issue #892), so the whole INHERITS closure's
+        # declared dtors are targets. The full chain matters even when an
+        # intermediate dtor is declared: its definition may live outside
+        # the parsed source, in which case no caller pass ever emits its
+        # own base-dtor edge (Greptile, PR #894). A destructor cannot be
+        # overloaded, so each qn is one direct registry lookup (PR #799).
+        targets: set[tuple[str, str]] = set()
+        seen: set[str] = set()
+        stack = [class_qn]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            simple = current.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            dtor_qn = f"{current}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
+            dtor_type = self.function_registry.get(dtor_qn)
+            if dtor_type is not None:
+                targets.add((dtor_type, dtor_qn))
+            stack.extend(self.class_inheritance.get(current, ()))
+        return targets
 
     def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
         # The class constructed by a `return {...};` inside caller_qn: the
