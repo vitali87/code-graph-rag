@@ -443,6 +443,15 @@ def _return_type_path(type_node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
+def new_expression_class_path(type_node: Node) -> str | None:
+    # The dotted class path a `new_expression`'s `type` field constructs.
+    # Shares the return-type reducer so template arguments reduce
+    # structurally: `Outer<int>::Inner` -> "Outer.Inner" (a textual cut at
+    # the first `<` would drop the `::Inner` suffix, issue #896 review), a
+    # primitive type yields None and the allocation stays silent.
+    return _return_type_path(type_node)
+
+
 def extract_return_type_name(func_node: Node) -> str | None:
     # The qualified class path a C++ function/method returns, for chained-call
     # typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
