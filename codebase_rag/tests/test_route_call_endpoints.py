@@ -354,3 +354,88 @@ class TestStaleRouteCleanup:
         assert any(
             module_qn in (c.args[1].get("module_qns") or []) for c in cleanups
         ), cleanups
+
+
+class TestOptionsObjectRoutes:
+    # Issue #907: one call, one object literal carrying method/path/handler.
+
+    def test_endpoint_options_object_with_inline_handler(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "gateway.ts": (
+                "const app = createApp()\n\n"
+                "app.endpoint({\n"
+                '  method: "GET",\n'
+                '  route: "/stems/:stemId/artifacts",\n'
+                "  handler: async (ctx) => { return ctx.json([]) },\n"
+                "})\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "typescript")
+        assert _endpoint(edges, "gateway", "GET /stems/:stemId/artifacts"), edges
+
+    def test_fastify_route_with_shorthand_handler(self, tmp_path: Path) -> None:
+        files = {
+            "server.js": (
+                "const fastify = require('fastify')()\n\n"
+                "function handler(req, reply) { reply.send({}) }\n\n"
+                "fastify.route({ method: 'GET', url: '/users/:id', handler })\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert _endpoint(edges, "server.handler", "GET /users/:id"), edges
+
+    def test_hapi_route_with_declared_handler(self, tmp_path: Path) -> None:
+        files = {
+            "server.js": (
+                "function createOrder(request, h) { return h.response({}) }\n\n"
+                "server.route({ method: 'POST', path: '/orders', handler: createOrder })\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert _endpoint(edges, "server.createOrder", "POST /orders"), edges
+
+    def test_method_array_registers_each_verb(self, tmp_path: Path) -> None:
+        files = {
+            "server.js": (
+                "fastify.route({\n"
+                "  method: ['GET', 'HEAD'],\n"
+                "  url: '/ping',\n"
+                "  handler: async () => 'pong',\n"
+                "})\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert _endpoint(edges, "server", "GET /ping"), edges
+        assert _endpoint(edges, "server", "HEAD /ping"), edges
+
+    def test_client_options_object_without_handler_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # An HTTP client's request({url, method}) has no handler function:
+        # it is an outbound call, not a route registration.
+        files = {
+            "client.js": (
+                "const client = require('./api')\n\n"
+                "client.request({ url: '/users', method: 'GET' })\n"
+                "client.request({ url: '/users', method: 'POST', body: payload })\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert not edges, edges
+
+    def test_imported_handler_identifier_is_not_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        # A handler referenced through an import is a documented ceiling: the
+        # object shape alone must not register when nothing in the module
+        # backs the handler up.
+        files = {
+            "routes.js": (
+                "const { listUsers } = require('./handlers')\n\n"
+                "sdk.describe({ method: 'GET', path: '/users', handler: listUsers })\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert not edges, edges
