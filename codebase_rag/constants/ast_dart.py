@@ -49,6 +49,17 @@ DART_CALL_QUERY = """
 # formal_parameter(type_identifier, identifier).
 TS_DART_CLASS_BODY = "class_body"
 TS_DART_BLOCK = "block"
+# Local binders beyond plain declarations: a for-in loop variable is the
+# FIRST identifier of for_loop_parts (the second is the iterable), catch
+# parameters bind every identifier, and a pattern declaration binds the
+# identifiers inside its *_pattern subtree. Their enclosing statements bound
+# the shadow scope.
+TS_DART_FOR_STATEMENT = "for_statement"
+TS_DART_FOR_LOOP_PARTS = "for_loop_parts"
+TS_DART_TRY_STATEMENT = "try_statement"
+TS_DART_CATCH_PARAMETERS = "catch_parameters"
+TS_DART_PATTERN_VARIABLE_DECLARATION = "pattern_variable_declaration"
+DART_PATTERN_NODE_SUFFIX = "_pattern"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 

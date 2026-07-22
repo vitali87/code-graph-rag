@@ -253,10 +253,13 @@ def dart_cascade_read_name(section: Node) -> str | None:
     base = section.prev_named_sibling
     while base is not None and base.type == cs.TS_DART_CASCADE_SECTION:
         base = base.prev_named_sibling
-    receiver = _walk_chain(base)
+    # allow_calls: a call-result cascade (`getMarker()..startYr`) keeps its
+    # `()` hop so the resolver types the receiver from the callee's declared
+    # return type, exactly like a plain chained read.
+    receiver = _walk_chain(base, allow_calls=True)
     if receiver is None:
         return None
-    return cs.SEPARATOR_DOT.join(receiver + parts)
+    return _assemble_chain([*receiver, *parts])
 
 
 def dart_return_type_name(node: Node) -> str | None:

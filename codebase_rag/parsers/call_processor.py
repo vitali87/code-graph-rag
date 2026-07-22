@@ -104,12 +104,15 @@ _DART_VALUE_WRAPPER_TYPES = frozenset(
     {cs.TS_DART_LIST_LITERAL, cs.TS_DART_SET_OR_MAP_LITERAL, cs.TS_DART_ARGUMENT}
 )
 # Scopes that bound a Dart local/parameter declaration for getter-read
-# shadowing; a declaration hides a same-name getter only inside them.
+# shadowing; a declaration hides a same-name getter only inside them. A loop
+# variable scopes its for_statement, a catch parameter its try_statement.
 _DART_SHADOW_SCOPE_TYPES = frozenset(
     {
         cs.TS_DART_BLOCK,
         cs.TS_DART_FUNCTION_EXPRESSION,
         cs.TS_DART_LOCAL_FUNCTION_DECLARATION,
+        cs.TS_DART_FOR_STATEMENT,
+        cs.TS_DART_TRY_STATEMENT,
     }
 )
 _DART_LOCAL_DECLARATION_TYPES = frozenset(
@@ -121,15 +124,16 @@ _DART_LOCAL_DECLARATION_TYPES = frozenset(
 
 
 def _dart_declared_names(node: Node) -> list[str]:
-    # The name(s) a parameter or local declaration binds; anything else
-    # declares nothing.
-    if node.type == cs.TS_DART_FORMAL_PARAMETER:
+    # The name(s) a parameter, local declaration, loop variable, catch
+    # parameter, or pattern binding binds; anything else declares nothing.
+    node_type = node.type
+    if node_type in (cs.TS_DART_FORMAL_PARAMETER, cs.TS_DART_CATCH_PARAMETERS):
         return [
             name
             for child in node.named_children
             if child.type == cs.TS_DART_IDENTIFIER and (name := safe_decode_text(child))
         ]
-    if node.type in _DART_LOCAL_DECLARATION_TYPES:
+    if node_type in _DART_LOCAL_DECLARATION_TYPES:
         declared = next(
             (
                 child
@@ -140,7 +144,41 @@ def _dart_declared_names(node: Node) -> list[str]:
         )
         if declared is not None and (name := safe_decode_text(declared)):
             return [name]
+    if node_type == cs.TS_DART_FOR_LOOP_PARTS:
+        # `for (final total in xs)`: the FIRST identifier is the loop
+        # variable, the second the iterable expression.
+        first = next(
+            (
+                child
+                for child in node.named_children
+                if child.type == cs.TS_DART_IDENTIFIER
+            ),
+            None,
+        )
+        if first is not None and (name := safe_decode_text(first)):
+            return [name]
+    if node_type == cs.TS_DART_PATTERN_VARIABLE_DECLARATION:
+        return _dart_pattern_bound_names(node)
     return []
+
+
+def _dart_pattern_bound_names(node: Node) -> list[str]:
+    # `var (alpha, beta) = rhs` binds every identifier inside the *_pattern
+    # subtree; the RHS expression binds nothing.
+    names: list[str] = []
+    stack = [
+        child
+        for child in node.named_children
+        if child.type.endswith(cs.DART_PATTERN_NODE_SUFFIX)
+    ]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_DART_IDENTIFIER and (
+            name := safe_decode_text(current)
+        ):
+            names.append(name)
+        stack.extend(current.named_children)
+    return names
 
 
 def _dart_is_bare_read(node: Node) -> bool:
