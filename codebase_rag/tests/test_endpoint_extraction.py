@@ -564,6 +564,127 @@ class TestHostAwareLinkingHardening:
         assert "order__worker__2adc9027" in target
 
 
+class TestPrefixTolerantLinking:
+    """Issue #911: infrastructure prefixes (ingress mounts, proxy rewrites)
+    put extra lead segments on the client path, so the exposed template
+    matches a tail of the URL. The suffix mode is bounded and only fires
+    when it is unambiguous.
+    """
+
+    @staticmethod
+    def _ingestor(rows: list[dict[str, object]]) -> object:
+        from unittest.mock import MagicMock
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return ingestor
+
+    @staticmethod
+    def _network(url: str, direction: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": [direction],
+        }
+
+    @staticmethod
+    def _endpoint(identity: str, project: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{project}::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+            "project": project,
+        }
+
+    def test_ingress_prefix_links_with_lead_recorded(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/y/some-service/review", "WRITES_TO"),
+                self._endpoint("POST /review", "some-service"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert kwargs.get("properties") == {"lead_prefix": "/y/some-service"}
+
+    def test_proxy_strip_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "backend"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_absolute_url_with_gateway_prefix_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://gateway/y/svc/review", "WRITES_TO"),
+                self._endpoint("POST /review", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_ambiguous_suffix_ties_are_dropped(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "service-a"),
+                self._endpoint("GET /cases", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_exact_match_suppresses_suffix_candidates(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://svc/api/cases", "READS_FROM"),
+                self._endpoint("GET /api/cases", "svc"),
+                self._endpoint("GET /cases", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /api/cases" in _args[2]
+        assert not kwargs
+
+    def test_lead_naming_a_service_breaks_ties(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/y/service-b/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "service-a"),
+                self._endpoint("GET /cases", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "resource::ENDPOINT::service-b::GET /cases" in args[2]
+
+    def test_lead_is_bounded_at_two_segments(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/a/b/c/users", "READS_FROM"),
+                self._endpoint("GET /users", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+
 class TestRootfulRelativeUrlMatch:
     """Issue #908: same-origin clients fetch rootful relative paths.
 

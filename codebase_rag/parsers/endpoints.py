@@ -155,6 +155,41 @@ def url_matches_template(url: str, template: str) -> bool:
     )
 
 
+# Bounded suffix mode (issue #911): ingress mounts (`/y/<service>/review` to
+# `POST /review`) and proxy rewrites (`/api/cases` to `GET /cases`) put
+# infrastructure lead segments on the client path. At most this many are
+# stripped, and only when exactly one candidate endpoint matches.
+_MAX_SUFFIX_LEAD_SEGMENTS = 2
+KEY_LEAD_PREFIX = "lead_prefix"
+
+
+def url_suffix_match_lead(url: str, template: str) -> str | None:
+    """The stripped lead when ``template`` matches a proper tail of ``url``.
+
+    ``/y/some-service/review`` against ``/review`` yields
+    ``/y/some-service``. Gated: one or two stripped lead segments only, and
+    a template carrying the unknown-lead marker already tail-matches in
+    :func:`url_matches_template`, so it stays out of this mode.
+    """
+    parsed = urlparse(url)
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
+        return None
+    url_segments = [s for s in parsed.path.split("/") if s]
+    template_segments = [s for s in template.split("/") if s]
+    if not template_segments or template_segments[0] == UNKNOWN_LEAD_SEGMENT:
+        return None
+    lead = len(url_segments) - len(template_segments)
+    if not 1 <= lead <= _MAX_SUFFIX_LEAD_SEGMENTS:
+        return None
+    matches = all(
+        _TEMPLATE_PARAM_RE.match(expected) or expected == actual
+        for actual, expected in zip(url_segments[lead:], template_segments, strict=True)
+    )
+    return "/" + "/".join(url_segments[:lead]) if matches else None
+
+
 def _has_literal_segment(template: str) -> bool:
     """True when at least one path segment is not a template parameter.
 
@@ -353,8 +388,10 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     URL's hostname names an indexed project, only that project's endpoints
     are candidates; an unmatched host keeps the full fan-out. A rootful
     relative URL is same-origin, so its candidates are the caller
-    projects' endpoints, never a global fan-out (issue #908). Returns the
-    number of edges emitted.
+    projects' endpoints, never a global fan-out (issue #908). A URL with no
+    exact match may still resolve through the bounded suffix mode (#911),
+    recording the stripped lead on the edge. Returns the number of edges
+    emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
@@ -364,42 +401,111 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     writer = cast("IngestorProtocol", ingestor)
     created = 0
     for network_qn, (url, directions, caller_projects) in networks.items():
-        host = _host_stem(url)
         rootful = not urlparse(url).netloc and url.startswith("/")
-        if rootful:
-            owned = {
-                qn
-                for qn, (_identity, project) in endpoints.items()
-                if project is not None and project in caller_projects
-            }
-        else:
-            owned = {
-                qn
-                for qn, (_identity, project) in endpoints.items()
-                if project is not None and _project_stem(project) == host
-            }
-        # Legacy rows carry no project and stay linkable even when the
-        # host pins a scoped project (partially migrated graphs).
-        legacy = {
-            qn for qn, (_identity, project) in endpoints.items() if project is None
-        }
-        if owned or rootful:
-            candidates = owned | legacy
-        else:
-            candidates = set(endpoints)
-        for endpoint_qn in candidates:
-            identity, _project = endpoints[endpoint_qn]
-            method, _, template = identity.partition(" ")
-            if (
-                template
-                and _direction_compatible(directions, method)
-                and _has_literal_segment(template)
-                and url_matches_template(url, template)
-            ):
-                writer.ensure_relationship_batch(
-                    (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
-                    cs.RelationshipType.RESOLVES_TO,
-                    (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                )
-                created += 1
+        candidates = _candidate_endpoints(url, rootful, caller_projects, endpoints)
+        exact, suffix = _match_candidates(url, directions, candidates, endpoints)
+        for endpoint_qn in exact:
+            writer.ensure_relationship_batch(
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
+                cs.RelationshipType.RESOLVES_TO,
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+            )
+            created += 1
+        if exact:
+            continue
+        if rootful and not suffix:
+            # An ingress-prefixed rootful call (`/y/<service>/review`)
+            # crosses projects by design, so the suffix search widens
+            # beyond the same-origin scope; the tie gate still applies.
+            _exact, suffix = _match_candidates(
+                url, directions, set(endpoints), endpoints
+            )
+        match = _resolve_suffix_match(suffix, endpoints)
+        if match is not None:
+            endpoint_qn, lead = match
+            writer.ensure_relationship_batch(
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
+                cs.RelationshipType.RESOLVES_TO,
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                properties={KEY_LEAD_PREFIX: lead},
+            )
+            created += 1
     return created
+
+
+def _candidate_endpoints(
+    url: str,
+    rootful: bool,
+    caller_projects: frozenset[str],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> set[str]:
+    # Host-scoped for absolute URLs (#879); caller-project-scoped for
+    # rootful same-origin requests (#908); full fan-out only for an
+    # absolute URL whose host names no indexed project.
+    host = _host_stem(url)
+    if rootful:
+        owned = {
+            qn
+            for qn, (_identity, project) in endpoints.items()
+            if project is not None and project in caller_projects
+        }
+    else:
+        owned = {
+            qn
+            for qn, (_identity, project) in endpoints.items()
+            if project is not None and _project_stem(project) == host
+        }
+    # Legacy rows carry no project and stay linkable even when the
+    # host pins a scoped project (partially migrated graphs).
+    legacy = {qn for qn, (_identity, project) in endpoints.items() if project is None}
+    if owned or rootful:
+        return owned | legacy
+    return set(endpoints)
+
+
+def _match_candidates(
+    url: str,
+    directions: frozenset[str],
+    candidates: set[str],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> tuple[list[str], dict[str, str]]:
+    # Exact template matches, plus suffix matches keyed by stripped lead.
+    exact: list[str] = []
+    suffix: dict[str, str] = {}
+    for endpoint_qn in candidates:
+        identity, _project = endpoints[endpoint_qn]
+        method, _, template = identity.partition(" ")
+        if not (
+            template
+            and _direction_compatible(directions, method)
+            and _has_literal_segment(template)
+        ):
+            continue
+        if url_matches_template(url, template):
+            exact.append(endpoint_qn)
+            continue
+        lead = url_suffix_match_lead(url, template)
+        if lead is not None:
+            suffix[endpoint_qn] = lead
+    return exact, suffix
+
+
+def _resolve_suffix_match(
+    suffix: dict[str, str], endpoints: dict[str, tuple[str, str | None]]
+) -> tuple[str, str] | None:
+    # Suffix matches are an inference: a unique match links, and a tie is
+    # dropped instead of guessed unless the stripped lead itself names
+    # exactly one candidate's project (`/y/some-service/review`).
+    if len(suffix) == 1:
+        return next(iter(suffix.items()))
+    named = [
+        (qn, lead)
+        for qn, lead in suffix.items()
+        if (project := endpoints[qn][1]) is not None
+        and _project_stem(project) in _lead_stems(lead)
+    ]
+    return named[0] if len(named) == 1 else None
+
+
+def _lead_stems(lead: str) -> set[str]:
+    return {segment.lower().replace("_", "-") for segment in lead.split("/") if segment}
