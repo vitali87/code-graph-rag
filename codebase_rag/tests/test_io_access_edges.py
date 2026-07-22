@@ -456,4 +456,6 @@ def test_interpolation_with_slash_collapses_to_opaque_placeholder(
         ),
     }
     rels = _run_io(tmp_path, files)
-    assert _has(rels, "m.page", READS_FROM, "resource::NETWORK::http://svc:8000/users/{*}")
+    assert _has(
+        rels, "m.page", READS_FROM, "resource::NETWORK::http://svc:8000/users/{*}"
+    )
