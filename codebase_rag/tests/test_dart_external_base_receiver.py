@@ -76,6 +76,49 @@ class ParamState extends State<GridBtn> {
     menu._btnSize(context);
   }
 }
+
+mixin Helpers {
+  OtherMenu get helper {
+    return OtherMenu();
+  }
+}
+
+class MixinState extends State<GridBtn> with Helpers {
+  void poke(BuildContext context) {
+    helper._btnSize(context);
+  }
+}
+"""
+
+MODELS_DART = """
+import 'package:flutter/material.dart';
+
+class PrefGridBtn {
+  PrefGridBtn();
+
+  double _prefSize(BuildContext context) {
+    return 1.0;
+  }
+}
+
+class PrefOtherMenu {
+  PrefOtherMenu();
+
+  double _prefSize(BuildContext context) {
+    return 2.0;
+  }
+}
+"""
+
+PREFIXED_DART = """
+import 'package:flutter/material.dart';
+import 'models.dart' as models;
+
+class PrefixedState extends State<models.PrefGridBtn> {
+  Widget build(BuildContext context) {
+    return SizedBox(width: widget._prefSize(context));
+  }
+}
 """
 
 
@@ -84,6 +127,8 @@ def dart_state_project(temp_repo: Path) -> Path:
     root = temp_repo / "dstate"
     root.mkdir()
     (root / "app.dart").write_text(APP_DART, encoding="utf-8")
+    (root / "models.dart").write_text(MODELS_DART, encoding="utf-8")
+    (root / "prefixed.dart").write_text(PREFIXED_DART, encoding="utf-8")
     return root
 
 
@@ -151,3 +196,30 @@ def test_declared_receiver_keeps_typed_resolution(
     calls = _calls(mock_ingestor)
     assert _has(calls, ".ParamState.poke", ".OtherMenu._btnSize"), sorted(calls)
     assert not _has(calls, ".ParamState.poke", ".GridBtn._btnSize"), sorted(calls)
+
+
+def test_first_party_ancestor_member_receiver_is_guarded(
+    dart_state_project: Path, mock_ingestor: MagicMock
+):
+    # `helper` is inherited from the FIRST-PARTY mixin Helpers (an
+    # OtherMenu getter), not handed back by the external base; the
+    # own-member guard must walk registered ancestry, or the fallback
+    # wrongly binds GridBtn._btnSize (Greptile round 1, T-Rex verified).
+    run_updater(dart_state_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    assert not _has(calls, ".MixinState.poke", ".GridBtn._btnSize"), sorted(calls)
+
+
+def test_import_prefixed_type_argument_binds(
+    dart_state_project: Path, mock_ingestor: MagicMock
+):
+    # `State<models.PrefGridBtn>` holds the prefix and the class as two
+    # FLAT sibling type_identifiers, told apart from a two-argument list
+    # only by the joining `.` token; the pair must resolve through the
+    # import alias as ONE argument, not two.
+    run_updater(dart_state_project, mock_ingestor, skip_if_missing=SKIP)
+    calls = _calls(mock_ingestor)
+    assert _has(calls, ".PrefixedState.build", ".PrefGridBtn._prefSize"), sorted(calls)
+    assert not _has(calls, ".PrefixedState.build", ".PrefOtherMenu._prefSize"), sorted(
+        calls
+    )
