@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 from ... import constants as cs
 from ...services import IngestorProtocol
-from ...utils.path_utils import cached_resolve_posix
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
@@ -14,6 +13,7 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ...utils.path_utils import cached_resolve_posix
 from . import constants as fc
 from .qn import CppQnResolver
 
