@@ -68,6 +68,98 @@ def test_fully_unreadable_graph_still_completes_the_rebuild(
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 
 
+def test_incremental_rehydration_failure_aborts(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Registry rehydration is what lets an incremental run resolve calls
+    # into files it did not re-parse; a sink that cannot answer must abort
+    # the sync, not silently drop those edges.
+    source = temp_repo / "m.py"
+    source.write_text("def f():\n    return 1\n", encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    source.write_text("def f():\n    return 2\n", encoding="utf-8")
+
+    def unavailable(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_ALL_DEFINITION_QNS:
+            raise RuntimeError("graph down")
+        return []
+
+    mock_ingestor.fetch_all.side_effect = unavailable
+
+    with pytest.raises(RuntimeError, match="graph down"):
+        create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+
+def test_full_build_module_qn_rehydration_failure_degrades(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def unavailable(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_ALL_MODULE_QNS:
+            raise RuntimeError("graph down")
+        return []
+
+    mock_ingestor.fetch_all.side_effect = unavailable
+
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    module_qns = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.MODULE
+    }
+    assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
+
+
+def test_full_build_inherits_rehydration_failure_degrades(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def unavailable(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_ALL_INHERITS:
+            raise RuntimeError("graph down")
+        return []
+
+    mock_ingestor.fetch_all.side_effect = unavailable
+
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    module_qns = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.MODULE
+    }
+    assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
+
+
+def test_non_row_module_path_answer_reads_as_empty(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fake sink whose fetch_all answers with something that is not rows is
+    # NOT a readable graph: the probe reads it as empty (files stay "new",
+    # nothing is deleted first) rather than as a failure.
+    (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def non_rows(query: str, params: dict | None = None) -> object:
+        if query == cs.CYPHER_PROJECT_MODULE_PATHS:
+            return object()
+        return []
+
+    mock_ingestor.fetch_all.side_effect = non_rows
+
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    deleted_paths = {
+        c.args[1][cs.KEY_PATH]
+        for c in mock_ingestor.execute_write.call_args_list
+        if c.args[0] == cs.CYPHER_DELETE_MODULE
+    }
+    assert "m.py" not in deleted_paths, deleted_paths
+
+
 def test_incremental_run_aborts_when_inbound_capture_fails(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

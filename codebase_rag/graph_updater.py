@@ -1453,9 +1453,7 @@ class GraphUpdater:
             preexisting_paths if preexisting_paths is not None else frozenset()
         )
         deleted_keys = (
-            (set(old_hashes.keys()) | graph_paths)
-            - current_file_keys
-            - unreadable_keys
+            (set(old_hashes.keys()) | graph_paths) - current_file_keys - unreadable_keys
         )
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
