@@ -349,9 +349,7 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             # Legacy rows carry no project and stay linkable even when the
             # host pins a scoped project (partially migrated graphs).
             legacy = {
-                qn
-                for qn, (_identity, project) in endpoints.items()
-                if project is None
+                qn for qn, (_identity, project) in endpoints.items() if project is None
             }
             candidates = owned | legacy
         else:
