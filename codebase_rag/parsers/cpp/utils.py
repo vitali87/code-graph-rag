@@ -671,6 +671,16 @@ def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
             if cap.type == cs.CppNodeType.IDENTIFIER:
                 if name := safe_decode_text(cap):
                     names.add(name)
+            elif cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
+                # `[project = expr]` binds its LEADING identifier.
+                for part in cap.children:
+                    if cap_name := (
+                        safe_decode_text(part)
+                        if part.type == cs.CppNodeType.IDENTIFIER
+                        else None
+                    ):
+                        names.add(cap_name)
+                        break
             elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
                 has_default = True
     return has_default
