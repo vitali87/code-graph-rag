@@ -371,3 +371,29 @@ class TestIncrementalMountChanges:
         )
         deletes = [c.args[0] for c in mock.execute_write.call_args_list if c.args]
         assert any("EXPOSES" in q for q in deletes), deletes
+
+
+class TestScopeAwareRouterKeys:
+    def test_identical_factory_local_router_does_not_leak_its_mount(
+        self, tmp_path: Path
+    ) -> None:
+        # Same name AND identical constructor in another scope: the factory's
+        # prefixed mount must not attach to the module-level handler.
+        files = {
+            "main.py": (
+                "from fastapi import APIRouter, FastAPI\n\n"
+                "app = FastAPI()\n"
+                "router = APIRouter()\n\n\n"
+                "@router.get('/users/{user_id}')\n"
+                "def get_user(user_id: int):\n"
+                "    return {}\n\n\n"
+                "def make_v2(v2app):\n"
+                "    router = APIRouter()\n"
+                "    v2app.include_router(router, prefix='/v2')\n\n\n"
+                "app.include_router(router)\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "main.get_user", "GET /users/{user_id}"), edges
+        leaked = {e for h, e in edges if h.endswith("main.get_user") and "/v2/" in e}
+        assert not leaked, leaked
