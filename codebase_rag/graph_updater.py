@@ -843,24 +843,31 @@ class GraphUpdater:
             for qn, path in dp.module_qn_to_file_path.items()
             if path.suffix == ".py"
         }
-        if isinstance(self.ingestor, QueryProtocol):
-            params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
-            try:
-                rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
-            except Exception:
-                rows = []
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-                if isinstance(qn, str) and isinstance(rel_path, str):
-                    files.setdefault(qn, self.repo_path / rel_path)
+        for qn, path in self._graph_python_modules():
+            files.setdefault(qn, path)
         asts: dict[str, Node] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
             if entry is not None and entry[1] == cs.SupportedLanguage.PYTHON:
                 asts[qn] = entry[0]
         return asts
+
+    def _graph_python_modules(self) -> list[tuple[str, Path]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
+        except Exception:
+            return []
+        out: list[tuple[str, Path]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(rel_path, str):
+                out.append((qn, self.repo_path / rel_path))
+        return out
 
     def _link_endpoint_resources(self) -> None:
         # After flush_all so this run's Resource nodes are queryable; NETWORK

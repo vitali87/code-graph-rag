@@ -91,13 +91,13 @@ def _scope_chain(scope: str) -> list[str]:
 @dataclass(frozen=True)
 class _Router:
     kind: _Kind
-    prefix: str | None  # own literal prefix; None = non-literal (unknown)
+    prefix: str | None  # own literal prefix, or unknown when absent
 
 
 @dataclass(frozen=True)
 class _Mount:
-    parent: _RouterKey | None  # None = unresolvable
-    prefix: str | None  # literal mount prefix; None = non-literal
+    parent: _RouterKey | None  # unresolvable when absent
+    prefix: str | None  # literal mount prefix, or unknown when absent
     given: bool  # whether the mount call passed a prefix at all
 
 
@@ -263,15 +263,7 @@ class RouterRegistry:
 
     def _resolve_var(self, module_qn: str, text: str, scope: str) -> _RouterKey | None:
         if cs.SEPARATOR_DOT not in text:
-            for enclosing in _scope_chain(scope):
-                if (module_qn, enclosing, text) in self._routers:
-                    return (module_qn, enclosing, text)
-            imported = self._imports.get(module_qn, {}).get(text)
-            if imported is not None:
-                imported_module, attr = imported
-                if attr and (imported_module, "", attr) in self._routers:
-                    return (imported_module, "", attr)
-            return None
+            return self._resolve_bare(module_qn, text, scope)
         head, _, rest = text.partition(cs.SEPARATOR_DOT)
         if cs.SEPARATOR_DOT in rest:
             return None
@@ -280,6 +272,17 @@ class RouterRegistry:
             return None
         key = (imported[0], "", rest)
         return key if key in self._routers else None
+
+    def _resolve_bare(self, module_qn: str, text: str, scope: str) -> _RouterKey | None:
+        for enclosing in _scope_chain(scope):
+            if (module_qn, enclosing, text) in self._routers:
+                return (module_qn, enclosing, text)
+        imported = self._imports.get(module_qn, {}).get(text)
+        if imported is not None:
+            imported_module, attr = imported
+            if attr and (imported_module, "", attr) in self._routers:
+                return (imported_module, "", attr)
+        return None
 
     def mount_prefixes(
         self, module_qn: str, receiver: str, scope: str = ""
@@ -373,7 +376,13 @@ class _Collector:
         stack: list[tuple[Node, str]] = [(root, "")]
         while stack:
             node, scope = stack.pop()
-            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            if node.type in (
+                cs.TS_PY_FUNCTION_DEFINITION,
+                cs.TS_PY_CLASS_DEFINITION,
+            ):
+                # Both open a lexical scope for router names; class scopes
+                # also line up with method qualified names, whose segments
+                # include the enclosing class.
                 inner = _inner_scope(scope, node)
                 stack.extend((child, inner) for child in node.named_children)
                 continue

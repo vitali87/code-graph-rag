@@ -399,3 +399,28 @@ class TestScopeAwareRouterKeys:
         assert _endpoint(edges, "main.get_user", "GET /users/{user_id}"), edges
         leaked = {e for h, e in edges if h.endswith("main.get_user") and "/v2/" in e}
         assert not leaked, leaked
+
+
+class TestClassScopedRouters:
+    def test_same_named_class_level_routers_stay_distinct(self, tmp_path: Path) -> None:
+        # Class bodies are scopes too: two classes defining a class-level
+        # `router` must not collide into one module-level key.
+        files = {
+            "main.py": (
+                "from fastapi import APIRouter, FastAPI\n\n"
+                "app = FastAPI()\n\n\n"
+                "class UsersApi:\n"
+                "    router = APIRouter(prefix='/users')\n\n"
+                "    @router.get('/{user_id}')\n"
+                "    def get_user(self, user_id: int):\n"
+                "        return {}\n\n\n"
+                "class OrdersApi:\n"
+                "    router = APIRouter(prefix='/orders')\n\n"
+                "    @router.get('/{order_id}')\n"
+                "    def get_order(self, order_id: int):\n"
+                "        return {}\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "UsersApi.get_user", "GET /users/{user_id}"), edges
+        assert _endpoint(edges, "OrdersApi.get_order", "GET /orders/{order_id}"), edges
