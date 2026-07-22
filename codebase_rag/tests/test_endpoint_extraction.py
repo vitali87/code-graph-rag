@@ -8,9 +8,9 @@ can resolve to.
 
 from __future__ import annotations
 
-import pytest
-
 from unittest.mock import MagicMock
+
+import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.endpoints import parse_route_decorator
