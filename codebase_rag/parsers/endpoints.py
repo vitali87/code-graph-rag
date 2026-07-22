@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 # handler was deleted from relinking; delete-then-relink makes the pass
 # idempotent so changed URLs or routes drop their stale RESOLVES_TO edges.
 CYPHER_LIVE_NETWORK_RESOURCES = (
-    "MATCH ()-[:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
-    "RETURN DISTINCT r.qualified_name AS qualified_name, "
-    "r.name AS name, r.kind AS kind"
+    "MATCH ()-[e:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
+    "RETURN r.qualified_name AS qualified_name, "
+    "r.name AS name, r.kind AS kind, "
+    "collect(DISTINCT type(e)) AS directions"
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
@@ -67,6 +68,29 @@ def parse_route_decorator(decorator_text: str) -> list[tuple[str, str]]:
         return [(_DEFAULT_ROUTE_METHOD, path)]
     methods = _METHOD_ITEM_RE.findall(methods_match.group("items"))
     return [(m.upper(), path) for m in methods]
+
+
+# The client side has no parsed method, so the sink edge type is the only
+# direction evidence: READS_FROM for get-style calls, WRITES_TO for
+# post/put/patch/delete-style calls (issue #878).
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_KEY_DIRECTIONS = "directions"
+
+
+def _direction_compatible(directions: frozenset[str], method: str) -> bool:
+    """True when the URL's sink directions can reach a METHOD endpoint.
+
+    An empty set means the graph predates the aggregated query (or a fake
+    omitted it) and stays permissive.
+    """
+    if not directions:
+        return True
+    required = (
+        cs.RelationshipType.WRITES_TO.value
+        if method in _WRITE_METHODS
+        else cs.RelationshipType.READS_FROM.value
+    )
+    return required in directions
 
 
 # FastAPI-style {id} and Flask-style <user_id> / <int:user_id> variables.
@@ -149,10 +173,10 @@ def emit_endpoints(
 
 def _collect_live_resources(
     ingestor: QueryProtocol,
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, tuple[str, frozenset[str]]], dict[str, str]]:
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
-    networks: dict[str, str] = {}
+    networks: dict[str, tuple[str, frozenset[str]]] = {}
     endpoints: dict[str, str] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
         for row in ingestor.fetch_all(query):
@@ -162,7 +186,13 @@ def _collect_live_resources(
                 continue
             kind = row.get(KEY_KIND)
             if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
-                networks[qn] = name
+                raw_directions = row.get(_KEY_DIRECTIONS)
+                directions = (
+                    frozenset(d for d in raw_directions if isinstance(d, str))
+                    if isinstance(raw_directions, list)
+                    else frozenset()
+                )
+                networks[qn] = (name, directions)
             elif kind == ResourceKind.ENDPOINT.value:
                 endpoints[qn] = name
     return networks, endpoints
@@ -172,11 +202,11 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     """Resolve literal client request URLs to matching ENDPOINT resources.
 
     Endpoint identities are ``METHOD /path/template``; a NETWORK resource
-    links to every endpoint whose template matches its URL path. Matching
-    is method-agnostic: the request method lives on the sink edge, not in
-    the Resource identity. Templates without a literal segment are skipped
-    entirely; they would match any same-length URL path. Returns the number
-    of edges emitted.
+    links to every endpoint whose template matches its URL path and whose
+    method is reachable from the URL's sink directions (a read-only URL
+    cannot hit a write-only route). Templates without a literal segment are
+    skipped entirely; they would match any same-length URL path. Returns
+    the number of edges emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
@@ -185,11 +215,12 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     # the read side, so the single write goes through an ingestor view.
     writer = cast("IngestorProtocol", ingestor)
     created = 0
-    for network_qn, url in networks.items():
+    for network_qn, (url, directions) in networks.items():
         for endpoint_qn, identity in endpoints.items():
-            _, _, template = identity.partition(" ")
+            method, _, template = identity.partition(" ")
             if (
                 template
+                and _direction_compatible(directions, method)
                 and _has_literal_segment(template)
                 and url_matches_template(url, template)
             ):

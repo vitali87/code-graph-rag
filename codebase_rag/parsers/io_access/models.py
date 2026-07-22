@@ -22,6 +22,9 @@ class IOSink:
     mode_arg: int | None = None
     target_kw: str | None = None
     mode_kw: str | None = None
+    # fetch-style calls carry the HTTP verb in an options object at this
+    # positional index ({method: 'POST'}); the verb overrides `direction`.
+    method_options_arg: int | None = None
 
     def effective_direction(self, mode_literal: str | None) -> IODirection:
         if self.mode_arg is None or mode_literal is None:
