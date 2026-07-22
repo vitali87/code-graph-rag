@@ -128,6 +128,50 @@ _DART_LOCAL_DECLARATION_TYPES = frozenset(
 _DART_STATEMENT_SCOPE_TYPES = frozenset(
     {cs.TS_DART_FOR_STATEMENT, cs.TS_DART_TRY_STATEMENT}
 )
+# Parents whose direct identifier is never a value read: member/cascade
+# selectors carry the chain passes' members, a label names a parameter,
+# catch parameters only BIND names, and a signature's identifier is the
+# DECLARED name (the module pass walks class bodies for field initializers,
+# so signatures are in view there).
+_DART_NON_READ_PARENT_TYPES = (
+    frozenset(
+        {
+            cs.TS_DART_LABEL,
+            cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CASCADE_SELECTOR,
+            cs.TS_DART_CATCH_PARAMETERS,
+        }
+    )
+    | cs.DART_SIGNATURE_TYPES
+)
+
+
+def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
+    # The byte span a declaration shadows: its nearest enclosing scope, with
+    # statement scopes (for/try) starting at the declaration END because the
+    # for-in iterable and the try body precede their binder. No scope
+    # ancestor (a signature parameter) falls through to the whole body.
+    anc = decl.parent
+    while anc is not None and anc is not walk_root:
+        if anc.type in _DART_SHADOW_SCOPE_TYPES:
+            if anc.type in _DART_STATEMENT_SCOPE_TYPES:
+                return (decl.end_byte, anc.end_byte)
+            return (anc.start_byte, anc.end_byte)
+        anc = anc.parent
+    return (walk_root.start_byte, walk_root.end_byte)
+
+
+def _dart_is_owned_function_body(node: Node) -> bool:
+    # A function_body belonging to a top-level function or class member has
+    # its OWN caller pass; a closure's or local function's body does not (a
+    # Dart lambda's reads attribute to the enclosing scope), so only bodies
+    # NOT under a nested-scope node are skipped by the module walks.
+    return (
+        node.type == cs.TS_DART_FUNCTION_BODY
+        and (parent := node.parent) is not None
+        and parent.type not in cs.DART_NESTED_SCOPE_NODE_TYPES
+    )
 
 
 def _dart_declared_names(node: Node) -> list[str]:
@@ -201,14 +245,7 @@ def _dart_is_bare_read(node: Node) -> bool:
     ):
         return False
     parent = node.parent
-    if parent is None or parent.type in (
-        cs.TS_DART_LABEL,
-        cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
-        cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
-        cs.TS_DART_CASCADE_SELECTOR,
-        # Catch parameters only BIND names; they never read.
-        cs.TS_DART_CATCH_PARAMETERS,
-    ):
+    if parent is None or parent.type in _DART_NON_READ_PARENT_TYPES:
         return False
     if parent.type == cs.TS_DART_FOR_LOOP_PARTS:
         # The FIRST identifier of a for-in is the loop BINDER, not a read;
@@ -992,6 +1029,26 @@ class CallProcessor:
             # entries reachable; scan before the no-calls early return so a file
             # that only defines functions and a table is still covered. Runs for
             # every flow language with an object/array/dict literal form.
+            if language == cs.SupportedLanguage.DART and (
+                dart_prop_names := self._resolver.function_registry.property_names()
+            ):
+                # Field initializers execute at construction time even in a
+                # file holding nothing but classes (no module caller pass
+                # runs there), so each class subtree is scanned at FILE
+                # level, before the no-calls early return.
+                dart_config = queries[language][cs.QUERY_CONFIG]
+                module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+                for child in root_node.named_children:
+                    if child.type in dart_config.class_node_types:
+                        self._ingest_dart_class_initializer_reads(
+                            child,
+                            module_spec,
+                            module_qn,
+                            module_qn,
+                            None,
+                            dart_config,
+                            dart_prop_names,
+                        )
             if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
                 collection_boundaries = self._flow_scope_boundaries(
                     queries[language][cs.QUERY_CONFIG]
@@ -4707,6 +4764,12 @@ class CallProcessor:
         # function_body: the signature holds no reads, so walk the body.
         body = dart_utils.dart_body_node(caller_node)
         walk_root = body if body is not None else caller_node
+        # The bodiless caller is the MODULE pass: FIELD INITIALIZERS read
+        # getters outside any method body (`late final body =
+        # _createFont(contentFont, ..)`), so each class subtree is walked by
+        # a per-class sub-pass carrying the OWNING class as resolution
+        # context. Method callers keep skipping nested classes instead.
+        is_module_scope = body is None
         shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
 
         def shadow_spans() -> dict[str, list[tuple[int, int]]]:
@@ -4719,6 +4782,10 @@ class CallProcessor:
         while stack:
             node = stack.pop()
             if node.type in class_types:
+                # Class subtrees (field initializers) are scanned once at
+                # FILE level by _ingest_dart_class_initializer_reads.
+                continue
+            if is_module_scope and _dart_is_owned_function_body(node):
                 continue
             read_name = self._dart_read_name(node, prop_names, shadow_spans)
             if read_name:
@@ -4729,6 +4796,82 @@ class CallProcessor:
                     module_qn,
                     local_var_types,
                     class_context,
+                    seen,
+                )
+            stack.extend(node.children)
+
+    def _ingest_dart_class_initializer_reads(
+        self,
+        class_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+        parent_qn: str | None = None,
+    ) -> None:
+        # Field initializers run in the class's OWN scope: bare reads resolve
+        # against the owning class (two classes may share a getter name), and
+        # each class gets its own dedup set. A closure inside an initializer
+        # belongs to no method pass, so its body is walked here; only
+        # method/constructor bodies (owned by a class-body signature) have
+        # their own pass. Dart forbids nested class declarations, but the
+        # defensive recursion still threads the enclosing context through.
+        class_types = lang_config.class_node_types
+        name_node = next(
+            (
+                child
+                for child in class_node.named_children
+                if child.type == cs.TS_DART_IDENTIFIER
+            ),
+            None,
+        )
+        class_name = safe_decode_text(name_node) if name_node is not None else None
+        owner_qn = parent_qn if parent_qn is not None else module_qn
+        class_ctx = f"{owner_qn}{cs.SEPARATOR_DOT}{class_name}" if class_name else None
+        seen: set[str] = set()
+        shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
+
+        def shadow_spans() -> dict[str, list[tuple[int, int]]]:
+            # Initializer closures declare parameters; their spans confine
+            # any shadowing to the closure itself. Member signatures and
+            # owned bodies stay out: a method parameter scopes its own body,
+            # which this walk never reads.
+            if not shadow_cell:
+                shadow_cell.append(
+                    self._dart_shadow_spans(
+                        class_node, class_node, skip_owned_members=True
+                    )
+                )
+            return shadow_cell[0]
+
+        stack = list(class_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in class_types:
+                self._ingest_dart_class_initializer_reads(
+                    node,
+                    caller_spec,
+                    caller_qn,
+                    module_qn,
+                    local_var_types,
+                    lang_config,
+                    prop_names,
+                    parent_qn=class_ctx,
+                )
+                continue
+            if _dart_is_owned_function_body(node):
+                continue
+            read_name = self._dart_read_name(node, prop_names, shadow_spans)
+            if read_name:
+                self._emit_dart_property_read(
+                    read_name,
+                    caller_spec,
+                    caller_qn,
+                    module_qn,
+                    local_var_types,
+                    class_ctx,
                     seen,
                 )
             stack.extend(node.children)
@@ -4781,13 +4924,23 @@ class CallProcessor:
     ) -> None:
         if read_name in seen:
             return
-        resolved = self._resolver.resolve_function_call(
-            read_name, module_qn, local_var_types, class_context, caller_qn
-        )
-        if not resolved:
-            return
-        _res_type, res_qn = resolved
         registry = self._resolver.function_registry
+        res_qn: str | None = None
+        # A bare read inside a class binds the OWNING class's member first:
+        # the trie fallback is name-global and would pick a same-named getter
+        # from whichever class sorts first (a module-caller's caller_qn
+        # carries no class to guide it).
+        if class_context is not None and cs.SEPARATOR_DOT not in read_name:
+            candidate = f"{class_context}{cs.SEPARATOR_DOT}{read_name}"
+            if registry.get(candidate) is not None:
+                res_qn = candidate
+        if res_qn is None:
+            resolved = self._resolver.resolve_function_call(
+                read_name, module_qn, local_var_types, class_context, caller_qn
+            )
+            if not resolved:
+                return
+            res_qn = resolved[1]
         if not registry.is_property(res_qn) or res_qn == caller_qn:
             return
         seen.add(read_name)
@@ -4798,7 +4951,10 @@ class CallProcessor:
         )
 
     def _dart_shadow_spans(
-        self, caller_node: Node, walk_root: Node
+        self,
+        caller_node: Node,
+        walk_root: Node,
+        skip_owned_members: bool = False,
     ) -> dict[str, list[tuple[int, int]]]:
         # {declared name: [byte span of each declaring SCOPE]} for parameters
         # and locals. A declaration shadows a same-name getter only for bare
@@ -4806,26 +4962,23 @@ class CallProcessor:
         # suppress the enclosing method's read (cf. _csharp_shadow_spans).
         # Method parameters live in the SIGNATURE, outside the walked body,
         # so their scope walk falls through to the whole body.
-        whole_body = (walk_root.start_byte, walk_root.end_byte)
-
-        def scope_span(decl: Node) -> tuple[int, int]:
-            anc = decl.parent
-            while anc is not None and anc is not walk_root:
-                if anc.type in _DART_SHADOW_SCOPE_TYPES:
-                    if anc.type in _DART_STATEMENT_SCOPE_TYPES:
-                        return (decl.end_byte, anc.end_byte)
-                    return (anc.start_byte, anc.end_byte)
-                anc = anc.parent
-            return whole_body
-
         spans: dict[str, list[tuple[int, int]]] = {}
         stack = list(caller_node.children)
         if walk_root is not caller_node:
             stack.extend(walk_root.children)
         while stack:
             node = stack.pop()
+            # For the class-initializer pass, member signatures and owned
+            # bodies are invisible to the READ walk, so their parameters and
+            # locals must not join the shadow map either: a method parameter
+            # scopes its own body, never a sibling field initializer.
+            if skip_owned_members and (
+                node.type in cs.DART_SIGNATURE_TYPES
+                or _dart_is_owned_function_body(node)
+            ):
+                continue
             for name in _dart_declared_names(node):
-                spans.setdefault(name, []).append(scope_span(node))
+                spans.setdefault(name, []).append(_dart_scope_span(node, walk_root))
             stack.extend(node.children)
         return spans
 
