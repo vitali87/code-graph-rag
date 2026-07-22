@@ -180,10 +180,25 @@ def string_literal(
 ) -> str:
     if arg is None or arg.type != string_type:
         return DYNAMIC_TARGET
+    # An f-string is a `string` node whose content is split around
+    # `interpolation` children; keep every fragment and render each
+    # interpolation as its literal `{expr}` source so the identity stays a
+    # placeholder-marked whole rather than a truncated prefix (issue #876).
+    # Placeholders alone carry no identity, so all-interpolation strings
+    # stay dynamic.
+    parts: list[str] = []
+    has_content = False
     for child in arg.named_children:
-        if child.type == content_type and child.text is not None:
-            return child.text.decode(cs.ENCODING_UTF8)
-    return DYNAMIC_TARGET
+        if child.text is None:
+            continue
+        if child.type == content_type:
+            has_content = True
+            parts.append(child.text.decode(cs.ENCODING_UTF8))
+        elif child.type == cs.TS_PY_INTERPOLATION:
+            parts.append(child.text.decode(cs.ENCODING_UTF8))
+    if not has_content:
+        return DYNAMIC_TARGET
+    return "".join(parts)
 
 
 def iter_token_tree_calls(
