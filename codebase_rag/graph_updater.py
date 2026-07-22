@@ -46,7 +46,18 @@ from .parsers.endpoint_prefixes import (
     CYPHER_PROJECT_ROUTE_HANDLERS,
     build_router_registry,
 )
-from .parsers.endpoints import emit_endpoints, link_endpoints, parse_route_decorator
+from .parsers.endpoint_routes import (
+    CYPHER_PROJECT_MODULES,
+    ROUTE_CALL_LANGUAGES,
+    RouteRegistration,
+    collect_route_registrations,
+)
+from .parsers.endpoints import (
+    _emit_endpoint,
+    emit_endpoints,
+    link_endpoints,
+    parse_route_decorator,
+)
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -753,6 +764,10 @@ class GraphUpdater:
         # mount prefixes (possibly cross-module) can resolve (issue #877).
         self._emit_pending_endpoints()
 
+        # Call-registered routes (Express, net/http, echo, gin) become
+        # endpoints too, so JS and Go servers are linkable (issue #886).
+        self._emit_route_call_endpoints()
+
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
         self.finding_analyzer.analyze(
@@ -813,6 +828,72 @@ class GraphUpdater:
             )
         except Exception:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _emit_route_call_endpoints(self) -> None:
+        if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
+            return
+        entries: list[tuple[cs.NodeLabel, str, str]] = []
+        for module_qn, (root, language) in self._route_module_asts().items():
+            for registration in collect_route_registrations(root, language):
+                label, source_qn = self._route_source(module_qn, registration)
+                identity = f"{registration.method} {registration.path}"
+                entries.append((label, source_qn, identity))
+        if not entries:
+            return
+        self._drop_stale_handler_exposes(
+            sorted({qn for _label, qn, _identity in entries})
+        )
+        for label, qn, identity in entries:
+            _emit_endpoint(self._sink, label, qn, identity)
+
+    def _route_source(
+        self, module_qn: str, registration: RouteRegistration
+    ) -> tuple[cs.NodeLabel, str]:
+        # Attribution ladder: identifier handler, else the registering call's
+        # enclosing function, else the module, so the endpoint stays anchored
+        # and the trace lands at the wiring site.
+        registry = self.factory.definition_processor.function_registry
+        candidates = []
+        if registration.handler_name:
+            candidates.append(
+                f"{module_qn}{cs.SEPARATOR_DOT}{registration.handler_name}"
+            )
+        if registration.scope:
+            candidates.append(f"{module_qn}{cs.SEPARATOR_DOT}{registration.scope}")
+        for qn in candidates:
+            node_type = registry.get(qn)
+            if node_type is not None:
+                label = (
+                    cs.NodeLabel.METHOD
+                    if node_type == NodeType.METHOD
+                    else cs.NodeLabel.FUNCTION
+                )
+                return label, qn
+        return cs.NodeLabel.MODULE, module_qn
+
+    def _route_module_asts(
+        self,
+    ) -> dict[str, tuple[Node, cs.SupportedLanguage]]:
+        dp = self.factory.definition_processor
+        files: dict[str, Path] = dict(dp.module_qn_to_file_path)
+        if isinstance(self.ingestor, QueryProtocol):
+            params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+            try:
+                rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
+            except Exception:
+                rows = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+                if isinstance(qn, str) and isinstance(rel_path, str):
+                    files.setdefault(qn, self.repo_path / rel_path)
+        out: dict[str, tuple[Node, cs.SupportedLanguage]] = {}
+        for qn, path in files.items():
+            entry = self.ast_cache.load(path)
+            if entry is not None and entry[1] in ROUTE_CALL_LANGUAGES:
+                out[qn] = entry
+        return out
 
     def _rehydrated_route_handlers(
         self, already_pending: set[str], module_qns: set[str]
