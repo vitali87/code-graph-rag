@@ -458,6 +458,29 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
     inner_node = _get_inner_function_node(func_node)
 
     declarator = inner_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    # A pointer/reference-returning definition (`const wchar_t*
+    # C::GetWindowClass()`) wraps the function_declarator in
+    # pointer/reference_declarator layers; reference_declarator exposes no
+    # `declarator` field, so fall back to scanning children (issue #896).
+    while declarator is not None and declarator.type in (
+        cs.CppNodeType.POINTER_DECLARATOR,
+        cs.CppNodeType.REFERENCE_DECLARATOR,
+        cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+    ):
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR) or next(
+            (
+                child
+                for child in declarator.children
+                if child.type
+                in (
+                    cs.CppNodeType.POINTER_DECLARATOR,
+                    cs.CppNodeType.REFERENCE_DECLARATOR,
+                    cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+                    cs.CppNodeType.FUNCTION_DECLARATOR,
+                )
+            ),
+            None,
+        )
     if not declarator:
         return None
 

@@ -102,6 +102,6 @@ def test_new_in_inline_method_emits_instantiates(
 ):
     run_updater(cpp_singleton_project, mock_ingestor)
     inst = _rels(mock_ingestor, cs.RelationshipType.INSTANTIATES.value)
-    assert _has(
-        inst, ".WindowClassRegistrar.GetInstance", ".WindowClassRegistrar"
-    ), sorted(inst)
+    assert _has(inst, ".WindowClassRegistrar.GetInstance", ".WindowClassRegistrar"), (
+        sorted(inst)
+    )

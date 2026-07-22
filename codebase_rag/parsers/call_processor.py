@@ -1951,6 +1951,22 @@ class CallProcessor:
                     return type_node.text.decode(cs.ENCODING_UTF8).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
+            case cs.TS_NEW_EXPRESSION if language == cs.SupportedLanguage.CPP:
+                # C++ `new Foo(...)` names the class via the `type` field (no
+                # `function` field), so it fell through nameless and heap
+                # construction emitted nothing (issue #896, the singleton
+                # `new WindowClassRegistrar()`). Returning the type name routes
+                # it through the normal resolve loop: the class gets
+                # INSTANTIATES and its constructor CALLS. Strip template args
+                # (`new Foo<int>()` -> Foo); a `ns::Foo` path is left for the
+                # resolver; a primitive type resolves to nothing and stays
+                # silent.
+                type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
+                if type_node is not None and type_node.text is not None:
+                    name = type_node.text.decode(cs.ENCODING_UTF8).split(
+                        cs.CHAR_ANGLE_OPEN, 1
+                    )[0]
+                    return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
             case cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION if (
                 language == cs.SupportedLanguage.CSHARP
             ):
@@ -2644,6 +2660,25 @@ class CallProcessor:
                 continue
 
             callee_type, callee_qn = callee_info
+
+            if (
+                language == cs.SupportedLanguage.CPP
+                and call_node.type == cs.TS_NEW_EXPRESSION
+                and callee_type != class_label
+            ):
+                # Inside X's own methods the bare name `X` prefers the class
+                # MEMBER (the ctor), so `new X()` resolves past the class
+                # branch and INSTANTIATES is lost (issue #896, the singleton's
+                # `new WindowClassRegistrar()` in GetInstance). Construction
+                # always targets the CLASS: rebind so the class branch below
+                # emits INSTANTIATES plus the full ctor/dtor redirect.
+                leaf = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                class_qn = resolver._resolve_class_name(leaf, module_qn)
+                if class_qn is not None and (
+                    class_qn == call_name
+                    or class_qn.endswith(f"{cs.SEPARATOR_DOT}{call_name}")
+                ):
+                    callee_type, callee_qn = class_label, class_qn
 
             # A callee that resolved to a builtin (e.g. JS setTimeout(target))
             # has no first-party body to follow into, so pass-through flow is
