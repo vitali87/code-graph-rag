@@ -29,6 +29,7 @@ from .extract import (
     call_name,
     definition_header_nodes,
     first_token_arg_string,
+    format_call_target,
     head_is_genuine_module,
     is_require_alias,
     iter_token_tree_calls,
@@ -1083,6 +1084,20 @@ class IOAccessProcessor:
             keyword_arg_type=descriptor.keyword_arg_type,
             wrapper_type=descriptor.argument_wrapper_type,
         )
+        if (
+            identity == DYNAMIC_TARGET
+            and descriptor.format_call_names
+            and sink.target_arg is not None
+        ):
+            formatted = format_call_target(
+                positional_arg_node(
+                    node, sink.target_arg, descriptor.argument_wrapper_type
+                ),
+                descriptor,
+                import_map,
+            )
+            if formatted is not None:
+                identity = formatted
         direction = sink.direction
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
