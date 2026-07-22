@@ -531,34 +531,32 @@ class TestHostAwareLinking:
 
 
 class TestHostAwareLinkingHardening:
-    _network = TestHostAwareLinking._network
-    _endpoint = TestHostAwareLinking._endpoint
-    _link = TestHostAwareLinking._link
-
     def test_legacy_rows_stay_linkable_when_host_matches_a_project(self) -> None:
         # A partially migrated graph: the host matches a scoped project, but
         # a matching legacy (project-less) endpoint must not be dropped.
-        created, _ = self._link(
-            self,
+        helper = TestHostAwareLinking()
+        created, _ = helper._link(
             [
-                self._network("http://user-service:8000/users/42"),
-                self._endpoint("user-service__2ad", "GET /users/{id}"),
+                TestHostAwareLinking._network("http://user-service:8000/users/42"),
+                TestHostAwareLinking._endpoint("user-service__2ad", "GET /users/{id}"),
                 {
                     "qualified_name": "resource::ENDPOINT::GET /users/{id}",
                     "name": "GET /users/{id}",
                     "kind": "ENDPOINT",
                 },
-            ],
+            ]
         )
         assert created == 2
 
     def test_project_stem_keeps_double_underscore_base_names(self) -> None:
-        created, _ = self._link(
-            self,
+        helper = TestHostAwareLinking()
+        created, _ = helper._link(
             [
-                self._network("http://order--worker:8000/jobs/5"),
-                self._endpoint("order__worker__2adc9027", "GET /jobs/{id}"),
-                self._endpoint("other__9f9f9f9f", "GET /jobs/{id}"),
-            ],
+                TestHostAwareLinking._network("http://order--worker:8000/jobs/5"),
+                TestHostAwareLinking._endpoint(
+                    "order__worker__2adc9027", "GET /jobs/{id}"
+                ),
+                TestHostAwareLinking._endpoint("other__9f9f9f9f", "GET /jobs/{id}"),
+            ]
         )
         assert created == 1
