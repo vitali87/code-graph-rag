@@ -354,3 +354,57 @@ class TestStaleRouteCleanup:
         assert any(
             module_qn in (c.args[1].get("module_qns") or []) for c in cleanups
         ), cleanups
+
+
+class TestTestModulesEmitNoEndpoints:
+    # Issue #910: routes registered inside test files must not become
+    # production ENDPOINT resources.
+
+    _GO_SOURCE = (
+        "package main\n\n"
+        'import "github.com/gofiber/fiber/v2"\n\n'
+        "func serveCases() {\n"
+        "\tapp := fiber.New()\n"
+        '\tapp.Get("/cases", func(c *fiber.Ctx) error { return nil })\n'
+        "}\n"
+    )
+
+    def test_go_test_module_registers_nothing(self, tmp_path: Path) -> None:
+        edges = _run(tmp_path, {"main_test.go": self._GO_SOURCE}, "go")
+        assert not edges, edges
+
+    def test_same_go_registration_outside_tests_registers(
+        self, tmp_path: Path
+    ) -> None:
+        edges = _run(tmp_path, {"routes.go": self._GO_SOURCE}, "go")
+        assert _endpoint(edges, "routes.serveCases", "GET /cases"), edges
+
+    _JS_SOURCE = (
+        "const express = require('express')\n"
+        "const app = express()\n\n"
+        "function getCases(req, res) { res.json([]) }\n\n"
+        "app.get('/cases', getCases)\n"
+    )
+
+    def test_js_test_module_registers_nothing(self, tmp_path: Path) -> None:
+        edges = _run(tmp_path, {"api.test.js": self._JS_SOURCE}, "javascript")
+        assert not edges, edges
+
+    _PY_SOURCE = (
+        "app = object()\n\n\n"
+        '@app.get("/cases")\n'
+        "def list_cases():\n"
+        "    return []\n"
+    )
+
+    def test_python_decorator_in_tests_dir_registers_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        edges = _run(tmp_path, {"tests/test_api.py": self._PY_SOURCE}, "python")
+        assert not edges, edges
+
+    def test_same_python_decorator_outside_tests_registers(
+        self, tmp_path: Path
+    ) -> None:
+        edges = _run(tmp_path, {"api.py": self._PY_SOURCE}, "python")
+        assert _endpoint(edges, "api.list_cases", "GET /cases"), edges
