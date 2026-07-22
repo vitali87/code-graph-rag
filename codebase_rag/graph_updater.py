@@ -837,7 +837,7 @@ class GraphUpdater:
         modules = self._route_module_asts()
         if not modules:
             return
-        # Cleanup keyed on every scanned module, prefix-wide, BEFORE emission:
+        # Cleanup keyed on every scanned module, BEFORE emission:
         # a module whose last route disappeared (or whose attribution moved)
         # still sheds its old EXPOSES edges even though it contributes no new
         # registrations.
@@ -849,8 +849,8 @@ class GraphUpdater:
                 _emit_endpoint(self._sink, label, source_qn, identity)
 
     def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
-        # Route-language modules get EXPOSES only from the route-call pass,
-        # so the module-prefix sweep cannot touch Python decorator endpoints.
+        # Ownership is the DEFINES containment closure from each Module
+        # node, so prefix-sharing sibling modules keep their endpoints.
         if not isinstance(self.ingestor, QueryProtocol):
             return
         try:

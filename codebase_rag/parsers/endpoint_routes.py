@@ -55,14 +55,15 @@ CYPHER_PROJECT_MODULES = (
     "RETURN m.qualified_name AS qualified_name, m.path AS path"
 )
 
-# Stale-route cleanup is keyed on the scanned MODULES, prefix-wide, so a
-# module whose last registration disappeared still sheds its old EXPOSES
-# edges. Route-language modules get EXPOSES only from this pass, so the
-# prefix sweep cannot touch Python decorator endpoints.
+# Stale-route cleanup is keyed on the scanned MODULES so a module whose
+# last registration disappeared still sheds its old EXPOSES edges.
+# Ownership is the containment closure from the Module node, never a
+# qualified-name prefix: foo.js (project.foo) can sit beside a foo/
+# package whose functions share the prefix but belong to other modules.
 CYPHER_DELETE_MODULE_EXPOSES = (
-    "MATCH (f)-[e:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) "
-    "WHERE any(m IN $module_qns WHERE f.qualified_name = m "
-    "OR f.qualified_name STARTS WITH m + '.') DELETE e"
+    "MATCH (mod:Module) WHERE mod.qualified_name IN $module_qns "
+    "MATCH (mod)-[:DEFINES|DEFINES_METHOD*0..]->(f)"
+    "-[e:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) DELETE e"
 )
 
 _JS_VERBS = {
