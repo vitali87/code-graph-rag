@@ -22,6 +22,8 @@ from codebase_rag.constants import (
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
     KEY_PATH,
+    KEY_PROJECT_NAME,
+    KEY_PROJECT_PREFIX,
     LOG_LEVEL_INFO,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
@@ -215,8 +217,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         )
 
         # Step 1: Delete existing nodes for this file path
-        # Delete Module node and its children (for code files)
-        ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
+        # Delete Module node and its children (for code files); the delete is
+        # project-scoped, so the sibling project sharing this relative path
+        # in the shared graph keeps its module.
+        ingestor.execute_write(
+            CYPHER_DELETE_MODULE,
+            {
+                KEY_PATH: relative_path_str,
+                KEY_PROJECT_NAME: self.updater.project_name,
+                KEY_PROJECT_PREFIX: f"{self.updater.project_name}.",
+            },
+        )
         # Delete File node (for all files including non-code like .md, .json)
         ingestor.execute_write(CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str})
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
