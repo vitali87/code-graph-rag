@@ -15,9 +15,10 @@ look like a SERVER registration, not an outbound client request: either its
 receiver is bound in-module to a known framework factory (``express()``,
 ``echo.New()``, ``chi.NewRouter()``, ...), or ``http.Handle*`` with
 ``net/http`` imported, or one of its handler arguments is an inline
-function, a function declared in the module, or (Go verb methods) an
-attribute expression like ``wrapper.GetMe``. A bare
-``apiClient.get('/users')`` has none of these and is ignored.
+function, a function declared in the module, or (Go verb methods on a
+const-derived path, the generated shape) an attribute expression like
+``wrapper.GetMe``. A bare ``apiClient.get('/users')`` has none of these
+and is ignored.
 
 EXPOSES attribution is a ladder: a bare-identifier handler defined in the
 module, else the registering call's enclosing function, else the module
@@ -303,7 +304,11 @@ def _js_chained_registration(
 
 
 def _go_server_evidence(
-    fn: Node, field: str, args: list[Node], evidence: _ModuleEvidence
+    fn: Node,
+    field: str,
+    args: list[Node],
+    evidence: _ModuleEvidence,
+    const_derived_path: bool,
 ) -> bool:
     if _receiver_is_framework(fn, evidence):
         return True
@@ -314,10 +319,13 @@ def _go_server_evidence(
     ):
         return True
     # A generated `router.Get(BaseURL+"/x", wrapper.GetMe)` hands an
-    # attribute-expression handler to a verb method; with a rooted path this
-    # is registration shape, not a client call (issue #909).
-    if field in _GO_VERB_METHODS and any(
-        arg.type == cs.TS_GO_SELECTOR_EXPRESSION for arg in args[1:]
+    # attribute-expression handler to a verb method (issue #909). The
+    # const-derived path narrows this to the generated shape: a client's
+    # `c.Get("/users", opts.Header)` passes a plain literal and stays out.
+    if (
+        const_derived_path
+        and field in _GO_VERB_METHODS
+        and any(arg.type == cs.TS_GO_SELECTOR_EXPRESSION for arg in args[1:])
     ):
         return True
     return _handler_evidence(
@@ -360,10 +368,14 @@ def _go_registration(
         return None
     field = _decode(fn.child_by_field_name(cs.FIELD_FIELD))
     args = _call_args(call)
-    path = _go_path_value(args[0] if args else None, evidence)
+    path_node = args[0] if args else None
+    path = _go_path_value(path_node, evidence)
     if path is None or field is None:
         return None
-    if not _go_server_evidence(fn, field, args, evidence):
+    const_derived = (
+        path_node is not None and _literal_path(path_node, _GO_PATH_LITERALS) is None
+    )
+    if not _go_server_evidence(fn, field, args, evidence, const_derived):
         return None
     handler = _handler_identifier(
         args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
