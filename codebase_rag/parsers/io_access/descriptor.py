@@ -114,12 +114,18 @@ class LanguageDescriptor:
     # with the expression unfielded). Lets the handle-binding walk read the RHS.
     # False for every language whose value is field-labelled.
     declarator_value_is_last_child: bool = False
+    # Interpolated-string node types (JS/TS template literals); substitutions
+    # render as placeholders in captured resource identities (issue #884).
+    template_string_type: str | None = None
+    template_substitution_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_CALL_EXPRESSION,
     string_type=cs.TS_STRING,
     string_content_type=cs.TS_STRING_FRAGMENT,
+    template_string_type=cs.TS_TEMPLATE_STRING,
+    template_substitution_type=cs.TS_TEMPLATE_SUBSTITUTION,
     keyword_arg_type=None,
     nested_scope_types=frozenset(
         {
