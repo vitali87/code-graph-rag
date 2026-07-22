@@ -540,6 +540,193 @@ def extract_class_name_from_out_of_class_method_qualified(
     return None
 
 
+def _declarator_bound_name(declarator: Node) -> str | None:
+    # Unwrap pointer/reference/init/array declarators to the bound identifier.
+    current: Node | None = declarator
+    while current is not None:
+        if current.type in (
+            cs.CppNodeType.IDENTIFIER,
+            cs.CppNodeType.FIELD_IDENTIFIER,
+        ):
+            return safe_decode_text(current)
+        if inner := current.child_by_field_name(cs.FIELD_DECLARATOR):
+            current = inner
+            continue
+        # reference_declarator holds its identifier positionally.
+        current = next(
+            (
+                child
+                for child in current.named_children
+                if child.type
+                in (
+                    cs.CppNodeType.IDENTIFIER,
+                    cs.CppNodeType.FIELD_IDENTIFIER,
+                )
+                or child.type.endswith(cs.CPP_DECLARATOR_SUFFIX)
+            ),
+            None,
+        )
+    return None
+
+
+def cpp_vexing_parse_argument_names(decl_node: Node) -> list[str]:
+    # The bare "parameter type" names of a most-vexing-parse candidate
+    # (`FlutterWindow window(project);` swallows each construction argument
+    # as a nameless parameter_declaration whose sole content is a
+    # type_identifier). Empty when the declaration is not candidate-shaped:
+    # an empty parameter list is a function declaration by the standard, and
+    # any typed/named parameter marks a genuine prototype.
+    if decl_node.type != cs.CppNodeType.DECLARATION:
+        return []
+    declarator = next(
+        (
+            child
+            for child in decl_node.children_by_field_name(cs.FIELD_DECLARATOR)
+            if child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+        ),
+        None,
+    )
+    if declarator is None:
+        return []
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return []
+    names: list[str] = []
+    for param in params.named_children:
+        if param.type != cs.CppNodeType.PARAMETER_DECLARATION:
+            return []
+        if param.child_by_field_name(cs.FIELD_DECLARATOR) is not None:
+            return []
+        type_node = param.child_by_field_name(cs.FIELD_TYPE)
+        if (
+            type_node is None
+            or type_node.type != cs.CppNodeType.TYPE_IDENTIFIER
+            or not (name := safe_decode_text(type_node))
+        ):
+            return []
+        names.append(name)
+    return names
+
+
+def cpp_enclosing_function_value_names(node: Node) -> set[str]:
+    # Parameter and local-variable names VISIBLE at `node`, the in-scope
+    # evidence that disambiguates a most-vexing-parse construction from a
+    # genuine local prototype. Lexical semantics matter (review round 1): a
+    # later declaration or a sibling nested block's local is not visible at
+    # the candidate site and must not reclassify it, so only declarations
+    # that PRECEDE the node among the direct children of its ancestor chain
+    # count (which also covers a for-init declaration when the node sits in
+    # the loop body). Parameters come from the enclosing function's own
+    # declarator.
+    names: set[str] = set()
+    current = node.parent
+    while current is not None:
+        _collect_preceding_declaration_names(current, node, names)
+        if current.type == cs.CppNodeType.FUNCTION_DEFINITION:
+            _collect_cpp_parameter_names(current, names)
+            return names
+        if current.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            # A lambda or local-class member body opens its own scope; a
+            # candidate inside one takes evidence only from that scope,
+            # which for a lambda includes its parameters and captured
+            # names. A default capture (`[=]`/`[&]`) pulls in every
+            # enclosing local, so the walk continues outward instead.
+            if current.type != cs.TS_CPP_LAMBDA_EXPRESSION:
+                return names
+            _collect_cpp_parameter_names(current, names)
+            if not _lambda_captures_by_default(current, names):
+                return names
+        current = current.parent
+    return set()
+
+
+def _collect_preceding_declaration_names(
+    scope: Node, node: Node, names: set[str]
+) -> None:
+    # Declared names among `scope`'s direct children that lexically precede
+    # `node`. An if/switch condition declaration (`if (int p = 1)`) nests
+    # one level down inside condition_clause yet scopes over the branch
+    # body, so that wrapper's declarations count too.
+    for sibling in scope.children:
+        if sibling.start_byte >= node.start_byte:
+            return
+        if sibling.type == cs.TS_CPP_CONDITION_CLAUSE:
+            _collect_preceding_declaration_names(sibling, node, names)
+            continue
+        if sibling.type != cs.CppNodeType.DECLARATION:
+            continue
+        for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(declarator):
+                names.add(name)
+
+
+def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
+    # Collect explicit capture names; True when a default capture
+    # (`[=]` / `[&]`) is present, meaning every enclosing local is visible.
+    has_default = False
+    for child in lambda_node.children:
+        if child.type != cs.TS_CPP_LAMBDA_CAPTURE_SPECIFIER:
+            continue
+        for cap in child.children:
+            if cap.type == cs.CppNodeType.IDENTIFIER:
+                if name := safe_decode_text(cap):
+                    names.add(name)
+            elif cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
+                # `[project = expr]` binds its LEADING identifier.
+                for part in cap.children:
+                    if cap_name := (
+                        safe_decode_text(part)
+                        if part.type == cs.CppNodeType.IDENTIFIER
+                        else None
+                    ):
+                        names.add(cap_name)
+                        break
+            elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
+                has_default = True
+    return has_default
+
+
+def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:
+    # A lambda's parameter list hangs off an abstract_function_declarator
+    # (no name to declare); a function's off its function_declarator.
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        if declarator.type in (
+            cs.CppNodeType.FUNCTION_DECLARATOR,
+            cs.TS_CPP_ABSTRACT_FUNCTION_DECLARATOR,
+        ):
+            break
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    if declarator is None:
+        return
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return
+    for param in params.named_children:
+        if param.type not in (
+            cs.CppNodeType.PARAMETER_DECLARATION,
+            cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        ):
+            continue
+        for decl in param.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(decl):
+                names.add(name)
+
+
+def is_cpp_vexing_parse_construction(decl_node: Node) -> bool:
+    # `FlutterWindow window(project);` inside a function body: tree-sitter
+    # parses this stack-object construction as a function DECLARATION named
+    # `window` returning FlutterWindow (issue #871). Conservative recovery:
+    # every declarator argument must be a bare type-less identifier and at
+    # least one must name an in-scope local or parameter, so genuine nested
+    # prototypes keep working.
+    names = cpp_vexing_parse_argument_names(decl_node)
+    if not names:
+        return False
+    in_scope = cpp_enclosing_function_value_names(decl_node)
+    return any(name in in_scope for name in names)
+
+
 def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
     # `static int helper();` or a declaration inside an anonymous
     # namespace: internal linkage marks a TU-local function, so no

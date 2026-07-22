@@ -335,6 +335,15 @@ class FunctionIngestMixin:
                         )
                     )
                     continue
+                # A most-vexing-parse misparse (`FlutterWindow window(project);`
+                # inside a function body, issue #871) is a stack-object
+                # construction, not a function declaration: minting it would
+                # create a phantom Function the call pass can bind to (and
+                # deferring it as a prototype would resurrect it at flush).
+                # The construction edges are emitted by the per-caller
+                # declaration pass instead.
+                if cpp_utils.is_cpp_vexing_parse_construction(func_node):
+                    continue
                 # A free-function PROTOTYPE (a declaration with a
                 # function_declarator) may duplicate a bodied definition in
                 # another file; hold it back so resolve_deferred_cpp_prototypes

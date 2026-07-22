@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 from tree_sitter import Node
@@ -177,6 +178,76 @@ def match_normalised[T](
 # `?` / `#` change where urlparse cuts query and fragment.
 _URL_STRUCTURE_DELIMITERS = "/?#"
 OPAQUE_PLACEHOLDER = "{*}"
+
+# Go fmt verbs (`%d`, `%-8.2f`, `%v`, `%[2]s`, `%[3]*.[2]*[1]f`, ...); `%%`
+# is a literal percent. One charset covers every spec character (flags,
+# width, precision, argument indexes) and excludes the verb letter, so the
+# scan is unambiguous and linear; malformed specs simply stay literal, as
+# fmt itself would render them as `%!` errors.
+_FORMAT_VERB_RE = re.compile(r"%(?:%|[0-9#+\-. *\[\]]*[a-zA-Z])")
+
+
+def _dot_import_format_call(
+    raw: str | None, import_map: dict[str, str], names: frozenset[str]
+) -> str | None:
+    # `import . "fmt"` puts Sprintf itself in scope with no package qualifier;
+    # the import processor records the dot import under a `.`-prefixed sentinel
+    # (identifiers cannot contain a dot), so a bare callee re-qualifies through
+    # each dot-imported package's path.
+    if raw is None or cs.SEPARATOR_DOT in raw:
+        return None
+    for local, base in import_map.items():
+        if local.startswith(cs.SEPARATOR_DOT):
+            candidate = f"{base}{cs.SEPARATOR_DOT}{raw}"
+            if candidate in names:
+                return candidate
+    return None
+
+
+def format_call_target(
+    arg: Node | None, descriptor: LanguageDescriptor, import_map: dict[str, str]
+) -> str | None:
+    """The placeholder-marked value of a format-call sink target.
+
+    ``http.Get(fmt.Sprintf("...products/%d", id))`` reads the literal format
+    string and renders each verb as an opaque placeholder. None when the
+    argument is not a recognised format call; dynamic when its format string
+    is not a literal.
+    """
+    if arg is None or arg.type != descriptor.call_type:
+        return None
+    normalised = normalise(call_name(arg), import_map)
+    if (
+        normalised not in descriptor.format_call_names
+        and (
+            normalised := _dot_import_format_call(
+                call_name(arg), import_map, descriptor.format_call_names
+            )
+        )
+        is None
+    ):
+        return None
+    format_string = literal_target(
+        arg,
+        0,
+        string_type=descriptor.string_type,
+        content_type=descriptor.string_content_type,
+        keyword_arg_type=descriptor.keyword_arg_type,
+    )
+    if format_string == DYNAMIC_TARGET and descriptor.raw_string_type is not None:
+        # Go backtick strings are format strings too, in a distinct node type.
+        format_string = literal_target(
+            arg,
+            0,
+            string_type=descriptor.raw_string_type,
+            content_type=descriptor.raw_string_content_type or "",
+            keyword_arg_type=descriptor.keyword_arg_type,
+        )
+    if format_string == DYNAMIC_TARGET:
+        return DYNAMIC_TARGET
+    return _FORMAT_VERB_RE.sub(
+        lambda m: "%" if m.group(0) == "%%" else OPAQUE_PLACEHOLDER, format_string
+    )
 
 
 def _template_literal(arg: Node, content_type: str, substitution_type: str) -> str:
