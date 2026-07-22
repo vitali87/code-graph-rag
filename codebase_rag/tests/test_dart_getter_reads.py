@@ -132,6 +132,57 @@ def test_local_shadow_suppresses_bare_read(tmp_path: Path) -> None:
     assert not _has(rels, ".Cart.tally", REFERENCES, ".Cart.total"), rels
 
 
+def test_cascade_getter_read_is_referenced(tmp_path: Path) -> None:
+    # `marker..startYr` reads through a cascade_section, not the ordinary
+    # selector chain; a cascade holding an argument_part is an invocation
+    # the call pass owns, and a cascade WRITE (`..endYr = 5`) targets the
+    # setter, so neither may fabricate a getter read.
+    files = {
+        "app.dart": (
+            "class Marker {\n"
+            "  int get startYr => 1900;\n"
+            "  int get endYr => 2000;\n"
+            "  void refresh() {}\n"
+            "}\n"
+            "\n"
+            "class Board {\n"
+            "  void ping(Marker marker) {\n"
+            "    marker..startYr;\n"
+            "    marker..refresh();\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Board.ping", REFERENCES, ".Marker.startYr"), rels
+    assert not _has(rels, ".Board.ping", REFERENCES, ".Marker.refresh"), rels
+
+
+def test_closure_shadow_does_not_suppress_outer_read(tmp_path: Path) -> None:
+    # A closure's parameter named like the getter shadows it only INSIDE the
+    # closure: the enclosing method's own bare read still resolves to the
+    # getter and must be referenced, while the closure-internal read of the
+    # parameter must not be.
+    files = {
+        "app.dart": (
+            "class Cart {\n"
+            "  int get total => 3;\n"
+            "  int get untouched => 4;\n"
+            "  void tally() {\n"
+            "    run((int total) {\n"
+            "      print(total);\n"
+            "      print(untouched);\n"
+            "    });\n"
+            "    print(total);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Cart.tally", REFERENCES, ".Cart.total"), rels
+    assert _has(rels, ".Cart.tally", REFERENCES, ".Cart.untouched"), rels
+
+
 def test_getter_call_chain_is_not_double_counted(tmp_path: Path) -> None:
     # `other.total()` is an invocation the call pass already resolves; the
     # read pass must not add a REFERENCES edge for the same chain, or every
