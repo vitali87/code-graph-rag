@@ -69,7 +69,10 @@ class TestPruneOrphanNodes:
             if c.args[0] == cs.CYPHER_DELETE_MODULE
         ]
         assert len(delete_calls) == 1
-        assert delete_calls[0].args[1] == {cs.KEY_PATH: "old_project/main.py"}
+        assert delete_calls[0].args[1] == {
+            cs.KEY_PATH: "old_project/main.py",
+            cs.KEY_PROJECT_PREFIX: f"{project_name}.",
+        }
 
     def test_prune_removes_orphan_external_module_nodes(
         self, py_project: Path, mock_ingestor: MagicMock

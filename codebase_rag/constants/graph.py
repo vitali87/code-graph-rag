@@ -336,7 +336,11 @@ PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
 CYPHER_DELETE_MODULE = (
+    # Scoped to the project: two projects in the shared graph can hold the
+    # same relative path, and a path-only match would take the sibling's
+    # module subtree with it.
     "MATCH (m:Module {path: $path}) "
+    "WHERE m.qualified_name STARTS WITH $project_prefix "
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
     "DETACH DELETE m, c"
 )

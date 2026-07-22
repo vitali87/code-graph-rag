@@ -967,11 +967,15 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
-    def _existing_module_paths(self) -> frozenset[str]:
+    def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
 
-        Empty when the sink cannot answer (offline writers, unit fakes): a
-        graph that cannot be read cannot hold state worth deleting first.
+        Empty when the sink has no query surface (offline writers, unit
+        fakes) or answers with something that is not rows: such a sink holds
+        no readable state worth deleting first. None when the sink CLAIMS
+        readability but the query itself failed: the graph state is unknown,
+        and treating it as empty would skip every delete and recreate the
+        stale accumulation this probe exists to prevent.
         """
         fetch_all = getattr(self.ingestor, "fetch_all", None)
         if fetch_all is None:
@@ -981,10 +985,16 @@ class GraphUpdater:
                 cs.CYPHER_PROJECT_MODULE_PATHS,
                 {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
             )
-            return frozenset(
-                path for row in rows if isinstance(path := row.get(cs.KEY_PATH), str)
-            )
         except Exception:
+            return None
+        try:
+            return frozenset(
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str)
+                and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+            )
+        except (TypeError, AttributeError):
             return frozenset()
 
     def _delete_module_entities(self, file_key: str) -> None:
@@ -998,7 +1008,11 @@ class GraphUpdater:
         """
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(
-                cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: file_key}
+                cs.CYPHER_DELETE_MODULE,
+                {
+                    cs.KEY_PATH: file_key,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                },
             )
 
     def _diff_dir_against_cache(
@@ -1277,7 +1291,11 @@ class GraphUpdater:
                 skipped_count += 1
                 continue
 
-            is_new = file_key not in old_hashes and file_key not in preexisting_paths
+            is_new = (
+                file_key not in old_hashes
+                and preexisting_paths is not None
+                and file_key not in preexisting_paths
+            )
             if not is_new:
                 logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
             else:
@@ -1334,7 +1352,16 @@ class GraphUpdater:
                     description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
                 )
 
-        deleted_keys = set(old_hashes.keys()) - current_file_keys
+        # On a cacheless rebuild old_hashes cannot name what disappeared, so
+        # the graph's own module paths join the reconciliation: a file that
+        # was deleted OR newly excluded since the previous index is absent
+        # from current_file_keys and its subtree must go. (Disk-deleted files
+        # are also swept by orphan pruning; excluded ones still exist on disk
+        # and only this reconciliation catches them.)
+        graph_paths = (
+            preexisting_paths if preexisting_paths is not None else frozenset()
+        )
+        deleted_keys = (set(old_hashes.keys()) | graph_paths) - current_file_keys
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
@@ -1543,9 +1570,14 @@ class GraphUpdater:
                 logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
                 for orphan_path in orphans:
                     logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
-                    self.ingestor.execute_write(
-                        delete_query, {cs.KEY_PATH: orphan_path}
-                    )
+                    if delete_query == cs.CYPHER_DELETE_MODULE:
+                        # Module deletes are project-scoped; a sibling
+                        # project's module can share the relative path.
+                        self._delete_module_entities(orphan_path)
+                    else:
+                        self.ingestor.execute_write(
+                            delete_query, {cs.KEY_PATH: orphan_path}
+                        )
                 total_pruned += len(orphans)
 
         # Drop external import-target modules that no module imports anymore,
