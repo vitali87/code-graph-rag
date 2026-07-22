@@ -46,6 +46,12 @@ MODE_WRITE_CHARS = ("w", "a", "x")
 MODE_READ_CHAR = "r"
 MODE_UPDATE_CHAR = "+"
 
+# fetch-style options objects carry the HTTP verb under this key; the verb
+# refines the sink's declared direction (an unlisted verb is unknown).
+HTTP_METHOD_OPTION_KEY = "method"
+HTTP_READ_VERBS = frozenset({"GET", "HEAD", "OPTIONS"})
+HTTP_WRITE_VERBS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
 # SQL leading keywords used to refine a DB handle execute() into read vs write.
 # An unlisted first keyword falls back to the method's declared direction
 # (execute -> READ_WRITE), so only add keywords whose direction is unambiguous from
