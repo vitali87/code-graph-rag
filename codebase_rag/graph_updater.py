@@ -189,6 +189,10 @@ class GraphUpdater:
         self.ingestor = ingestor
         self._sink: IngestorProtocol = FilteringIngestor(ingestor, self.capture)
         self._single_file: Path | None = None
+        # True while the current sync re-parses EVERY file (no cache/force):
+        # such a run re-resolves all edges itself, so graph reads may degrade
+        # on failure; an incremental run's correctness depends on them.
+        self._is_full_build = False
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -750,8 +754,11 @@ class GraphUpdater:
             rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
         except Exception:
             # Rehydration completes cross-file resolution for files this run
-            # did not re-parse; a graph that cannot answer degrades to the
-            # freshly parsed registry rather than aborting the sync.
+            # did not re-parse: a FULL build parsed them all, so it degrades
+            # to the freshly parsed registry; an incremental run would drop
+            # cross-file edges, so the outage aborts it.
+            if not self._is_full_build:
+                raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
         for row in rows:
@@ -800,7 +807,16 @@ class GraphUpdater:
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params):
+        try:
+            module_rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_MODULE_QNS, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in module_rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -823,12 +839,10 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         module_map = self.factory.definition_processor.module_qn_to_file_path
-        try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
-        except Exception:
-            logger.warning(ls.REHYDRATE_QUERY_FAILED)
-            return
-        for row in rows:
+        # Only incremental runs seed (full builds process every file), so a
+        # failed read here always aborts: a missing seed can silently let an
+        # added file overwrite a sibling module's qn.
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
@@ -862,6 +876,8 @@ class GraphUpdater:
                 {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
             )
         except Exception:
+            if not self._is_full_build:
+                raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
         for child, bases in self._rehydrated_bases_by_child(
@@ -914,10 +930,12 @@ class GraphUpdater:
                 cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
             )
         except Exception:
-            # Restoration is an optimisation over re-resolving the callers; a
-            # graph that cannot answer (the same outage that failed the
-            # module-path probe) degrades to a clean re-resolution rather
-            # than aborting the whole sync.
+            # A FULL build re-parses every caller, so nothing is lost and the
+            # sync may continue; an incremental run cannot re-resolve edges
+            # from files it will not parse, so the outage must abort it
+            # rather than silently drop them.
+            if not self._is_full_build:
+                raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
@@ -1006,7 +1024,10 @@ class GraphUpdater:
         try:
             rows = fetch_all(
                 cs.CYPHER_PROJECT_MODULE_PATHS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                },
             )
         except Exception:
             return None
@@ -1034,6 +1055,7 @@ class GraphUpdater:
                 cs.CYPHER_DELETE_MODULE,
                 {
                     cs.KEY_PATH: file_key,
+                    cs.KEY_PROJECT_NAME: self.project_name,
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
                 },
             )
@@ -1252,6 +1274,7 @@ class GraphUpdater:
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
         is_full_build = (force or not old_hashes) and self._single_file is None
+        self._is_full_build = is_full_build
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
@@ -1580,6 +1603,7 @@ class GraphUpdater:
             (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
         ]
 
+        read_failed = False
         for query_all, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all)
@@ -1587,6 +1611,7 @@ class GraphUpdater:
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
                 logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
+                read_failed = True
                 continue
             orphans = []
             for r in rows:
@@ -1617,6 +1642,12 @@ class GraphUpdater:
                             delete_query, {cs.KEY_PATH: orphan_path}
                         )
                 total_pruned += len(orphans)
+
+        if read_failed:
+            # The same outage that broke the path reads would break (or act
+            # on stale state through) the cleanup below; leave everything
+            # for the next healthy run.
+            return
 
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.

@@ -791,8 +791,8 @@ REHYDRATE_QUERY_FAILED = (
     "only this run's freshly parsed registry."
 )
 INBOUND_CAPTURE_FAILED = (
-    "Could not read inbound edges from the graph; dependent-file edges will "
-    "be re-resolved instead of restored."
+    "Could not read inbound edges from the graph; this full rebuild "
+    "re-parses every caller, so the edges are re-resolved from source."
 )
 
 # Orphan pruning logs

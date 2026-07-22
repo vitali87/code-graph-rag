@@ -71,6 +71,7 @@ class TestPruneOrphanNodes:
         assert len(delete_calls) == 1
         assert delete_calls[0].args[1] == {
             cs.KEY_PATH: "old_project/main.py",
+            cs.KEY_PROJECT_NAME: project_name,
             cs.KEY_PROJECT_PREFIX: f"{project_name}.",
         }
 

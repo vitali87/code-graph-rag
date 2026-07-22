@@ -338,9 +338,12 @@ PAYLOAD_QUALIFIED_NAME = "qualified_name"
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
-    # module subtree with it.
+    # module subtree with it. A repository-root __init__.py's module qn IS
+    # the bare project name (no trailing dot), so the prefix test alone
+    # would miss it.
     "MATCH (m:Module {path: $path}) "
-    "WHERE m.qualified_name STARTS WITH $project_prefix "
+    "WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
     "DETACH DELETE m, c"
 )
@@ -353,7 +356,10 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
 CYPHER_PROJECT_MODULE_PATHS = (
-    "MATCH (m:Module) WHERE m.qualified_name STARTS WITH $project_prefix "
+    # The bare-name alternative covers the repository-root __init__.py,
+    # whose module qn is the project name itself.
+    "MATCH (m:Module) WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
     "RETURN m.path AS path"
 )
 
