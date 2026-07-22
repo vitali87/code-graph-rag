@@ -550,7 +550,7 @@ class TestHostAwareLinkingHardening:
 
     def test_project_stem_keeps_double_underscore_base_names(self) -> None:
         helper = TestHostAwareLinking()
-        created, _ = helper._link(
+        created, ingestor = helper._link(
             [
                 TestHostAwareLinking._network("http://order--worker:8000/jobs/5"),
                 TestHostAwareLinking._endpoint(
@@ -560,3 +560,5 @@ class TestHostAwareLinkingHardening:
             ]
         )
         assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "order__worker__2adc9027" in target
