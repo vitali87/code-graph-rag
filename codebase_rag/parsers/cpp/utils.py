@@ -443,6 +443,15 @@ def _return_type_path(type_node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
+def new_expression_class_path(type_node: Node) -> str | None:
+    # The dotted class path a `new_expression`'s `type` field constructs.
+    # Shares the return-type reducer so template arguments reduce
+    # structurally: `Outer<int>::Inner` -> "Outer.Inner" (a textual cut at
+    # the first `<` would drop the `::Inner` suffix, issue #896 review), a
+    # primitive type yields None and the allocation stays silent.
+    return _return_type_path(type_node)
+
+
 def extract_return_type_name(func_node: Node) -> str | None:
     # The qualified class path a C++ function/method returns, for chained-call
     # typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
@@ -458,6 +467,29 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
     inner_node = _get_inner_function_node(func_node)
 
     declarator = inner_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    # A pointer/reference-returning definition (`const wchar_t*
+    # C::GetWindowClass()`) wraps the function_declarator in
+    # pointer/reference_declarator layers; reference_declarator exposes no
+    # `declarator` field, so fall back to scanning children (issue #896).
+    while declarator is not None and declarator.type in (
+        cs.CppNodeType.POINTER_DECLARATOR,
+        cs.CppNodeType.REFERENCE_DECLARATOR,
+        cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+    ):
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR) or next(
+            (
+                child
+                for child in declarator.children
+                if child.type
+                in (
+                    cs.CppNodeType.POINTER_DECLARATOR,
+                    cs.CppNodeType.REFERENCE_DECLARATOR,
+                    cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+                    cs.CppNodeType.FUNCTION_DECLARATOR,
+                )
+            ),
+            None,
+        )
     if not declarator:
         return None
 
