@@ -91,7 +91,9 @@ class TestComputeParserFingerprint:
         parsers_dir = pkg / cs.PARSER_FINGERPRINT_SOURCE_DIRS[0]
         parsers_dir.mkdir(parents=True)
         (parsers_dir / "some_parser.py").write_text("A = 1\n")
-        assert compute_parser_fingerprint(pkg) == compute_parser_fingerprint(pkg)
+        first = compute_parser_fingerprint(pkg)
+        second = compute_parser_fingerprint(pkg)
+        assert first == second
 
     def test_changes_when_roslyn_tool_source_changes(self, tmp_path: Path) -> None:
         # The bundled Roslyn frontend tool (.cs/.csproj) is parser code: an
