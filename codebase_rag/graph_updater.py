@@ -566,6 +566,7 @@ class GraphUpdater:
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
         if not force and self._single_file is None:
+            self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
         if not force and self._is_already_in_sync():
@@ -1081,6 +1082,42 @@ class GraphUpdater:
                 unignore_could_match_within(u, rel_dir) for u in self.unignore_paths
             )
         )
+
+    def _drop_cache_if_graph_lost(self) -> None:
+        """Discard the hash cache when the graph no longer holds this project.
+
+        The cache lives inside the repo, but the database is shared: cleaning
+        the database while indexing another repo, an MCP wipe_database, or a
+        fresh Memgraph instance voids the cache without touching it, and an
+        incremental sync that trusts it would skip every file and leave the
+        project silently empty.
+        """
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        if not cache_path.is_file():
+            return
+        fetch_all = getattr(self.ingestor, "fetch_all", None)
+        if fetch_all is None:
+            return
+        try:
+            rows = fetch_all(
+                cs.CYPHER_COUNT_PROJECT_MODULES,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            # A graph that cannot answer (connection refused, a sink that
+            # rejects reads) cannot invalidate the cache: fail open.
+            return
+        try:
+            # count() always yields exactly one row; anything else means the
+            # sink did not really answer and cannot invalidate the cache.
+            count = int(rows[0]["count"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return
+        if count:
+            return
+        logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        cache_path.unlink(missing_ok=True)
+        (self.repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
 
     def _warn_if_parser_changed(self) -> None:
         # No hash cache means a full build is coming: nothing to compare.

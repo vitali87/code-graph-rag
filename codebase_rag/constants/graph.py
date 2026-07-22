@@ -348,6 +348,10 @@ CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
+CYPHER_COUNT_PROJECT_MODULES = (
+    "MATCH (m:Module) WHERE m.qualified_name STARTS WITH $project_prefix "
+    "RETURN count(m) AS count"
+)
 
 # Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
