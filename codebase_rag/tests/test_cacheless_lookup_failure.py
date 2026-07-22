@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import create_and_run_updater
 
@@ -64,3 +66,28 @@ def test_fully_unreadable_graph_still_completes_the_rebuild(
         if c.args[0] == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
+
+
+def test_incremental_run_aborts_when_inbound_capture_fails(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A FULL build re-parses and re-resolves every edge, so it may degrade
+    # when the graph cannot be read; an INCREMENTAL run's correctness depends
+    # on those reads (inbound restore, rehydration): degrading would silently
+    # drop every edge from unchanged callers into the changed file, so the
+    # outage must abort the sync instead.
+    source = temp_repo / "m.py"
+    source.write_text("def f():\n    return 1\n", encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    source.write_text("def f():\n    return 2\n", encoding="utf-8")
+
+    def unavailable(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_INBOUND_EDGES:
+            raise RuntimeError("graph down")
+        return []
+
+    mock_ingestor.fetch_all.side_effect = unavailable
+
+    with pytest.raises(RuntimeError, match="graph down"):
+        create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)

@@ -122,6 +122,34 @@ class TestCachelessRebuild:
         assert any(qn.endswith(".kept") for qn in names), names
         assert not any(qn.endswith(".gen") for qn in names), names
 
+    def test_rebuild_without_cache_drops_root_init_symbols(
+        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ) -> None:
+        # A repository-level __init__.py's module qn IS the project name,
+        # with no dot after it: a `STARTS WITH $project_prefix` scope misses
+        # it during lookup and deletion, so its renamed symbols linger.
+        repo = tmp_path / "rootinitrepo"
+        repo.mkdir()
+        (repo / "__init__.py").write_text(
+            "def old_root():\n    return 1\n", encoding="utf-8"
+        )
+        _index(memgraph_ingestor, repo)
+
+        (repo / "__init__.py").write_text(
+            "def new_root():\n    return 1\n", encoding="utf-8"
+        )
+        (repo / cs.HASH_CACHE_FILENAME).unlink()
+        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        _index(memgraph_ingestor, repo)
+
+        rows = memgraph_ingestor.fetch_all(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'rootinitrepo' "
+            "RETURN f.qualified_name AS qn"
+        )
+        names = {str(row["qn"]) for row in rows}
+        assert any(qn.endswith(".new_root") for qn in names), names
+        assert not any(qn.endswith(".old_root") for qn in names), names
+
     def test_cacheless_rebuild_spares_sibling_project_with_same_path(
         self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
     ) -> None:
@@ -159,12 +187,16 @@ class TestCachelessRebuild:
         assert any(qn.endswith(".beta_fn") for qn in names), names
 
     def test_unreadable_file_is_not_reconciled_away(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self,
+        memgraph_ingestor: MemgraphIngestor,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # A file that cannot be read this run (permissions, transient IO) is
         # absent from the current key set, but it still EXISTS: sweeping its
         # subtree with the graph-path reconciliation would erase live state
-        # over a transient error.
+        # over a transient error. The read failure is injected at the hash
+        # helper (chmod is unreliable on Windows and as root).
         repo = tmp_path / "unreadrepo"
         repo.mkdir()
         (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
@@ -174,11 +206,17 @@ class TestCachelessRebuild:
 
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
-        locked.chmod(0o000)
-        try:
-            _index(memgraph_ingestor, repo)
-        finally:
-            locked.chmod(0o644)
+        import codebase_rag.graph_updater as gu
+
+        real_hash = gu._hash_file_with_bytes
+
+        def failing_hash(path: Path) -> tuple[str, bytes] | None:
+            if path.name == "locked.py":
+                return None
+            return real_hash(path)
+
+        monkeypatch.setattr(gu, "_hash_file_with_bytes", failing_hash)
+        _index(memgraph_ingestor, repo)
 
         rows = memgraph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'unreadrepo.' "
