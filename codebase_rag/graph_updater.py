@@ -801,7 +801,8 @@ class GraphUpdater:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
         dp = self.factory.definition_processor
-        module_asts = self._python_module_asts()
+        module_files = self._python_module_files()
+        module_asts = self._python_module_asts(module_files)
         entries = list(dp.pending_endpoints)
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
@@ -823,11 +824,14 @@ class GraphUpdater:
             # Test modules stay in the stale-EXPOSES drop above (so a
             # legacy graph sheds their endpoints) but emit nothing: a route
             # spun up inside a test is not a production endpoint (#910).
-            if self._is_test_module(
-                self.factory.definition_processor.module_qn_to_file_path.get(
-                    module_qn or ""
-                )
-            ):
+            # Rehydrated handlers live in graph-backed modules absent from
+            # the re-parse map, so the merged python-files map goes first.
+            path = module_files.get(
+                module_qn or ""
+            ) or self.factory.definition_processor.module_qn_to_file_path.get(
+                module_qn or ""
+            )
+            if self._is_test_module(path):
                 continue
             emit_endpoints(
                 self._sink,
@@ -932,7 +936,10 @@ class GraphUpdater:
         try:
             relative = path.relative_to(self.repo_path)
         except ValueError:
-            relative = path
+            # Outside the repo means the repo-relative judgement is
+            # impossible; stay permissive rather than matching absolute
+            # segments like a `/tmp/tests/` parent.
+            return False
         return matches_test_path(relative.as_posix())
 
     def _graph_route_module_paths(self) -> list[tuple[str, Path]]:
@@ -976,10 +983,9 @@ class GraphUpdater:
                 out.append(entry)
         return out
 
-    def _python_module_asts(self) -> dict[str, Node]:
+    def _python_module_files(self) -> dict[str, Path]:
         # Re-parsed files first; on an incremental run the unchanged modules
-        # holding the mounts come back from the graph's Module nodes, loaded
-        # through the disk-backed AST cache.
+        # come back from the graph's Module nodes.
         dp = self.factory.definition_processor
         files: dict[str, Path] = {
             qn: path
@@ -988,6 +994,10 @@ class GraphUpdater:
         }
         for qn, path in self._graph_python_modules():
             files.setdefault(qn, path)
+        return files
+
+    def _python_module_asts(self, files: Mapping[str, Path]) -> dict[str, Node]:
+        # Loaded through the disk-backed AST cache.
         asts: dict[str, Node] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
