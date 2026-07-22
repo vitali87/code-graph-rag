@@ -44,11 +44,28 @@ Child::Child(int v) : Base() {}
 Child::~Child() {}
 External::External(int v) {}
 
+class GrandBase {
+ public:
+  GrandBase();
+  ~GrandBase();
+};
+
+class Middle : public GrandBase {
+ public:
+  Middle(int v);
+  ~Middle();
+};
+
+GrandBase::GrandBase() {}
+GrandBase::~GrandBase() {}
+Middle::Middle(int v) {}
+
 int main() {
   int v = 1;
   Derived(1);
   Child c(v);
   External e(v);
+  Middle(2);
   return 0;
 }
 """
@@ -113,6 +130,19 @@ def test_undeclared_dtor_falls_through_to_base(
     run_updater(cpp_base_chain_project, mock_ingestor)
     calls = _calls(mock_ingestor)
     assert _has(calls, ".main.main", ".Base.~Base"), sorted(calls)
+
+
+def test_declaration_only_dtor_does_not_sever_the_chain(
+    cpp_base_chain_project: Path, mock_ingestor: MagicMock
+):
+    # ~Middle is declared but never defined in the parsed source, so no
+    # caller pass runs for it and it cannot emit ~Middle -> ~GrandBase.
+    # Destroying a Middle runs EVERY ancestor dtor unconditionally, so the
+    # construction site carries the full chain (Greptile round 1).
+    run_updater(cpp_base_chain_project, mock_ingestor)
+    calls = _calls(mock_ingestor)
+    assert _has(calls, ".main.main", ".Middle.~Middle"), sorted(calls)
+    assert _has(calls, ".main.main", ".GrandBase.~GrandBase"), sorted(calls)
 
 
 def test_external_base_emits_nothing(
