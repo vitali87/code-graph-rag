@@ -103,6 +103,40 @@ class Repo {
         assert _endswith_any(funcs, name), f"missing {name}: {funcs}"
 
 
+def test_mixin_members_are_registered(
+    dart_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # mixin_declaration exposes NO `body` field (its class_body child is
+    # positional, unlike class_definition/enum_declaration), so method
+    # ingestion returned early and a mixin's methods and getters silently
+    # vanished from the graph (found via PR #889 review: the ancestry
+    # guard could not see a mixin's getter).
+    (dart_project / "mixed.dart").write_text(
+        """
+mixin Swimmer {
+  double get speed {
+    return 1.0;
+  }
+  void swim() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
+
+    methods = get_node_names(mock_ingestor, NodeType.METHOD)
+    assert _endswith_any(methods, "mixed.Swimmer.speed"), sorted(methods)
+    assert _endswith_any(methods, "mixed.Swimmer.swim"), sorted(methods)
+    defines = {
+        (str(r[0][0][2]), str(r[0][2][2]))
+        for r in get_relationships(mock_ingestor, "DEFINES_METHOD")
+    }
+    assert any(
+        s.endswith("mixed.Swimmer") and d.endswith("mixed.Swimmer.swim")
+        for s, d in defines
+    ), sorted(defines)
+
+
 def test_function_span_covers_body(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
