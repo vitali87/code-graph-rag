@@ -440,6 +440,23 @@ class TestGoGeneratedRoutes:
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
 
+    def test_bare_const_path_with_selector_arg_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # A client can hold its URL in a module const too; only a
+        # concatenation is the generated registration shape.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/users"\n\n'
+                "func fetchUsers(client HTTPClient, opts Options) {\n"
+                "\tclient.Get(baseURL, opts.Header)\n"
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
 
 class TestTestModulesEmitNoEndpoints:
     # Issue #910: routes registered inside test files must not become
