@@ -29,10 +29,13 @@ if TYPE_CHECKING:
 # handler was deleted from relinking; delete-then-relink makes the pass
 # idempotent so changed URLs or routes drop their stale RESOLVES_TO edges.
 CYPHER_LIVE_NETWORK_RESOURCES = (
-    "MATCH ()-[e:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
+    "MATCH (f)-[e:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
     "RETURN r.qualified_name AS qualified_name, "
     "r.name AS name, r.kind AS kind, "
-    "collect(DISTINCT type(e)) AS directions"
+    "collect(DISTINCT type(e)) AS directions, "
+    # A rootful URL is same-origin, so its candidates are scoped to the
+    # projects that issued it: the sink sources' leading qn segment.
+    "collect(DISTINCT head(split(f.qualified_name, '.'))) AS caller_projects"
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
@@ -94,6 +97,7 @@ def decorator_receiver(decorator_text: str) -> str | None:
 # post/put/patch/delete-style calls (issue #878).
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _KEY_DIRECTIONS = "directions"
+_KEY_CALLER_PROJECTS = "caller_projects"
 
 
 def _direction_compatible(directions: frozenset[str], method: str) -> bool:
@@ -125,9 +129,16 @@ def url_matches_template(url: str, template: str) -> bool:
     comparison ignores scheme, host, port, query, and a trailing slash. A
     template opening with the unknown-lead marker (``/**/users/{id}``) has
     an unresolvable mount prefix and matches the URL path's tail instead.
+
+    A rootful relative URL (``/api/users``) is a same-origin request and
+    qualifies on its path alone (issue #908); a schemeless fragment without
+    a leading slash could be anything, and a protocol-relative
+    ``//cdn.example.com/x`` is an external reference; both stay rejected.
     """
     parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
         return False
     url_segments = [s for s in parsed.path.split("/") if s]
     template_segments = [s for s in template.split("/") if s]
@@ -318,10 +329,13 @@ def _emit_endpoint(
 
 def _collect_live_resources(
     ingestor: QueryProtocol,
-) -> tuple[dict[str, tuple[str, frozenset[str]]], dict[str, tuple[str, str | None]]]:
+) -> tuple[
+    dict[str, tuple[str, frozenset[str], frozenset[str]]],
+    dict[str, tuple[str, str | None]],
+]:
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
-    networks: dict[str, tuple[str, frozenset[str]]] = {}
+    networks: dict[str, tuple[str, frozenset[str], frozenset[str]]] = {}
     endpoints: dict[str, tuple[str, str | None]] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
         for row in ingestor.fetch_all(query):
@@ -337,7 +351,13 @@ def _collect_live_resources(
                     if isinstance(raw_directions, list)
                     else frozenset()
                 )
-                networks[qn] = (name, directions)
+                raw_callers = row.get(_KEY_CALLER_PROJECTS)
+                callers = (
+                    frozenset(c for c in raw_callers if isinstance(c, str))
+                    if isinstance(raw_callers, list)
+                    else frozenset()
+                )
+                networks[qn] = (name, directions, callers)
             elif kind == ResourceKind.ENDPOINT.value:
                 project = row.get(KEY_PROJECT)
                 endpoints[qn] = (name, project if isinstance(project, str) else None)
@@ -366,7 +386,9 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     cannot hit a write-only route). Templates without a literal segment are
     skipped entirely; they would match any same-length URL path. When the
     URL's hostname names an indexed project, only that project's endpoints
-    are candidates; an unmatched host keeps the full fan-out. A URL with no
+    are candidates; an unmatched host keeps the full fan-out. A rootful
+    relative URL is same-origin, so its candidates are the caller
+    projects' endpoints, never a global fan-out (issue #908). A URL with no
     exact match may still resolve through the bounded suffix mode (#911),
     recording the stripped lead on the edge. Returns the number of edges
     emitted.
@@ -378,39 +400,10 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     # the read side, so the single write goes through an ingestor view.
     writer = cast("IngestorProtocol", ingestor)
     created = 0
-    for network_qn, (url, directions) in networks.items():
-        host = _host_stem(url)
-        owned = {
-            qn
-            for qn, (_identity, project) in endpoints.items()
-            if project is not None and _project_stem(project) == host
-        }
-        if owned:
-            # Legacy rows carry no project and stay linkable even when the
-            # host pins a scoped project (partially migrated graphs).
-            legacy = {
-                qn for qn, (_identity, project) in endpoints.items() if project is None
-            }
-            candidates = owned | legacy
-        else:
-            candidates = set(endpoints)
-        exact: list[str] = []
-        suffix: dict[str, str] = {}
-        for endpoint_qn in candidates:
-            identity, _project = endpoints[endpoint_qn]
-            method, _, template = identity.partition(" ")
-            if not (
-                template
-                and _direction_compatible(directions, method)
-                and _has_literal_segment(template)
-            ):
-                continue
-            if url_matches_template(url, template):
-                exact.append(endpoint_qn)
-                continue
-            lead = url_suffix_match_lead(url, template)
-            if lead is not None:
-                suffix[endpoint_qn] = lead
+    for network_qn, (url, directions, caller_projects) in networks.items():
+        rootful = not urlparse(url).netloc and url.startswith("/")
+        candidates = _candidate_endpoints(url, rootful, caller_projects, endpoints)
+        exact, suffix = _match_candidates(url, directions, candidates, endpoints)
         for endpoint_qn in exact:
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
@@ -418,10 +411,18 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
             )
             created += 1
-        # Suffix matches are an inference: exact matches suppress them, and
-        # a tie between distinct endpoints is dropped instead of guessed.
-        if not exact and len(suffix) == 1:
-            endpoint_qn, lead = next(iter(suffix.items()))
+        if exact:
+            continue
+        if rootful and not suffix:
+            # An ingress-prefixed rootful call (`/y/<service>/review`)
+            # crosses projects by design, so the suffix search widens
+            # beyond the same-origin scope; the tie gate still applies.
+            _exact, suffix = _match_candidates(
+                url, directions, set(endpoints), endpoints
+            )
+        match = _resolve_suffix_match(suffix, endpoints)
+        if match is not None:
+            endpoint_qn, lead = match
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                 cs.RelationshipType.RESOLVES_TO,
@@ -430,3 +431,81 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             )
             created += 1
     return created
+
+
+def _candidate_endpoints(
+    url: str,
+    rootful: bool,
+    caller_projects: frozenset[str],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> set[str]:
+    # Host-scoped for absolute URLs (#879); caller-project-scoped for
+    # rootful same-origin requests (#908); full fan-out only for an
+    # absolute URL whose host names no indexed project.
+    host = _host_stem(url)
+    if rootful:
+        owned = {
+            qn
+            for qn, (_identity, project) in endpoints.items()
+            if project is not None and project in caller_projects
+        }
+    else:
+        owned = {
+            qn
+            for qn, (_identity, project) in endpoints.items()
+            if project is not None and _project_stem(project) == host
+        }
+    # Legacy rows carry no project and stay linkable even when the
+    # host pins a scoped project (partially migrated graphs).
+    legacy = {qn for qn, (_identity, project) in endpoints.items() if project is None}
+    if owned or rootful:
+        return owned | legacy
+    return set(endpoints)
+
+
+def _match_candidates(
+    url: str,
+    directions: frozenset[str],
+    candidates: set[str],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> tuple[list[str], dict[str, str]]:
+    # Exact template matches, plus suffix matches keyed by stripped lead.
+    exact: list[str] = []
+    suffix: dict[str, str] = {}
+    for endpoint_qn in candidates:
+        identity, _project = endpoints[endpoint_qn]
+        method, _, template = identity.partition(" ")
+        if not (
+            template
+            and _direction_compatible(directions, method)
+            and _has_literal_segment(template)
+        ):
+            continue
+        if url_matches_template(url, template):
+            exact.append(endpoint_qn)
+            continue
+        lead = url_suffix_match_lead(url, template)
+        if lead is not None:
+            suffix[endpoint_qn] = lead
+    return exact, suffix
+
+
+def _resolve_suffix_match(
+    suffix: dict[str, str], endpoints: dict[str, tuple[str, str | None]]
+) -> tuple[str, str] | None:
+    # Suffix matches are an inference: a unique match links, and a tie is
+    # dropped instead of guessed unless the stripped lead itself names
+    # exactly one candidate's project (`/y/some-service/review`).
+    if len(suffix) == 1:
+        return next(iter(suffix.items()))
+    named = [
+        (qn, lead)
+        for qn, lead in suffix.items()
+        if (project := endpoints[qn][1]) is not None
+        and _project_stem(project) in _lead_stems(lead)
+    ]
+    return named[0] if len(named) == 1 else None
+
+
+def _lead_stems(lead: str) -> set[str]:
+    return {segment.lower().replace("_", "-") for segment in lead.split("/") if segment}
