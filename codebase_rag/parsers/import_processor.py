@@ -1292,7 +1292,6 @@ class ImportProcessor:
                     if mapped
                     else self.project_name
                 )
-            self.import_mapping[module_qn][package_name] = import_path
             if is_dot_import:
                 # `import . "fmt"` binds the package's exported names, not the
                 # package identifier; a `.`-prefixed sentinel key (no identifier
@@ -1300,6 +1299,8 @@ class ImportProcessor:
                 self.import_mapping[module_qn][f"{cs.SEPARATOR_DOT}{package_name}"] = (
                     import_path
                 )
+            else:
+                self.import_mapping[module_qn][package_name] = import_path
             logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
