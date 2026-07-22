@@ -140,6 +140,10 @@ class _ModuleEvidence:
     framework_receivers: frozenset[str]
     net_http_imported: bool
     module_consts: Mapping[str, str]
+    # Names bound to a composite literal of a module-declared type
+    # (`wrapper := ServerInterfaceWrapper{...}`): the generated wiring
+    # shape that legitimises selector handlers (issue #909).
+    wrapper_receivers: frozenset[str]
 
 
 def _decode(node: Node | None) -> str | None:
@@ -320,13 +324,19 @@ def _go_server_evidence(
         return True
     # A generated `router.Get(BaseURL+"/x", wrapper.GetMe)` hands an
     # attribute-expression handler to a verb method (issue #909). The
-    # concatenated path narrows this to the generated shape: a client's
-    # `c.Get("/users", opts.Header)` or `c.Get(baseURL, opts.Header)`
-    # passes a plain literal or bare const and stays out.
+    # generated shape is narrow: a concatenated path AND a selector whose
+    # receiver is bound to a composite literal of a module-declared type
+    # (`wrapper := ServerInterfaceWrapper{...}`). A client passing
+    # `opts.Header` after a concat path has no such binding and stays out.
     if (
         concat_path
         and field in _GO_VERB_METHODS
-        and any(arg.type == cs.TS_GO_SELECTOR_EXPRESSION for arg in args[1:])
+        and any(
+            arg.type == cs.TS_GO_SELECTOR_EXPRESSION
+            and (_decode(arg.child_by_field_name(cs.FIELD_OPERAND)) or "")
+            in evidence.wrapper_receivers
+            for arg in args[1:]
+        )
     ):
         return True
     return _handler_evidence(
@@ -469,13 +479,23 @@ def _go_module_const(node: Node) -> tuple[str, str] | None:
 
 
 def _go_evidence(
-    node: Node, declared: set[str], receivers: set[str], consts: dict[str, str]
+    node: Node,
+    declared: set[str],
+    receivers: set[str],
+    consts: dict[str, str],
+    types: set[str],
+    composites: list[tuple[str, str]],
 ) -> bool:
     # Returns True when the node imports net/http.
     if node.type == cs.TS_GO_FUNCTION_DECLARATION:
         name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
         if name:
             declared.add(name)
+        return False
+    if node.type == cs.TS_GO_TYPE_SPEC:
+        type_name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
+        if type_name:
+            types.add(type_name)
         return False
     const = _go_module_const(node)
     if const is not None:
@@ -485,6 +505,16 @@ def _go_evidence(
     if names and value is not None:
         if _factory_callee(value) in _GO_FRAMEWORK_FACTORIES:
             receivers.update(n for n in names if n)
+        elif value.type == cs.TS_GO_COMPOSITE_LITERAL and len(names) == 1:
+            literal_type = value.child_by_field_name(cs.FIELD_TYPE)
+            type_name = (
+                _decode(literal_type)
+                if literal_type is not None
+                and literal_type.type == cs.TS_GO_TYPE_IDENTIFIER
+                else None
+            )
+            if names[0] and type_name:
+                composites.append((names[0], type_name))
         return False
     return node.type == cs.TS_GO_IMPORT_DECLARATION and f'"{_GO_NET_HTTP_IMPORT}"' in (
         _decode(node) or ""
@@ -495,17 +525,27 @@ def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvid
     declared: set[str] = set()
     receivers: set[str] = set()
     consts: dict[str, str] = {}
+    types: set[str] = set()
+    composites: list[tuple[str, str]] = []
     net_http = False
     stack = [root]
     is_go = language is cs.SupportedLanguage.GO
     while stack:
         node = stack.pop()
         if is_go:
-            net_http = _go_evidence(node, declared, receivers, consts) or net_http
+            net_http = (
+                _go_evidence(node, declared, receivers, consts, types, composites)
+                or net_http
+            )
         else:
             _js_evidence(node, declared, receivers)
         stack.extend(node.named_children)
-    return _ModuleEvidence(frozenset(declared), frozenset(receivers), net_http, consts)
+    # The type set only completes after the walk, so wrapper bindings are
+    # judged here rather than in-flight.
+    wrappers = frozenset(name for name, type_name in composites if type_name in types)
+    return _ModuleEvidence(
+        frozenset(declared), frozenset(receivers), net_http, consts, wrappers
+    )
 
 
 def _child_scope(scope: str, node: Node) -> str:

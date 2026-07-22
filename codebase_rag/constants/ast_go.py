@@ -33,6 +33,7 @@ TS_GO_ASSIGNMENT_STATEMENT = "assignment_statement"
 # the selector/subscript node shapes (only used by member-access reads, which Go
 # has none of, so they are inert placeholders here).
 TS_GO_IDENTIFIER = "identifier"
+TS_GO_TYPE_IDENTIFIER = "type_identifier"
 TS_GO_CONST_SPEC = "const_spec"
 TS_GO_RANGE_CLAUSE = "range_clause"
 # The init;cond;post header of a C-style Go for; its post statement lives in

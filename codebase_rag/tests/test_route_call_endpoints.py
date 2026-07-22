@@ -446,9 +446,7 @@ class TestGoGeneratedRoutes:
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
 
-    def test_concat_path_with_option_selector_is_ignored(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concat_path_with_option_selector_is_ignored(self, tmp_path: Path) -> None:
         # `client.Get(baseURL + "/me", opts.Header)` concatenates a const
         # AND passes a selector, but `opts` is a parameter, not a wrapper
         # bound to a module-declared type: no registration.
