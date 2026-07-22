@@ -691,6 +691,17 @@ class GraphUpdater:
         if orphan_ctors:
             logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
 
+        # After artifact resolution so a recovery-registered definition also
+        # counts; a prototype duplicating any bodied definition is dropped.
+        kept_prototypes = (
+            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
+        )
+        if kept_prototypes:
+            logger.info(
+                "Registered {} C/C++ function prototypes with no definition",
+                kept_prototypes,
+            )
+
         # After forward declarations so a base whose only representation is
         # a kept forward declaration still resolves to a real node.
         inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()

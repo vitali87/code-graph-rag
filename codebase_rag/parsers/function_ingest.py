@@ -122,6 +122,24 @@ class _DeferredCppArtifact(NamedTuple):
     lang_queries: LanguageQueries
 
 
+class _DeferredCppPrototype(NamedTuple):
+    """Free-function prototype held until every definition is registered.
+
+    A header prototype (`int FreeHelper(int);`) minted its own Function node
+    beside the definition's (`utils.h.FreeHelper` vs `utils.FreeHelper`);
+    calls bind to the definition, so the prototype node had zero incoming
+    edges and reported dead forever (issue #893). When a bodied definition
+    of the same namespace-qualified function registers anywhere, the
+    prototype is dropped, mirroring the forward-declared-class machinery;
+    a prototype-only function keeps its node.
+    """
+
+    func_node: Node
+    module_qn: str
+    lang_config: LanguageSpec
+    lang_queries: LanguageQueries
+
+
 class _DeferredJsAnonymous(NamedTuple):
     """Unnamed JS/TS function expression held back until named passes claim.
 
@@ -218,6 +236,7 @@ class FunctionIngestMixin:
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredJsAnonymous]
     _deferred_cpp_artifacts: list[_DeferredCppArtifact]
+    _deferred_cpp_prototypes: list[_DeferredCppPrototype]
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
@@ -312,6 +331,20 @@ class FunctionIngestMixin:
                 if cpp_utils.is_recovery_artifact_shape(func_node):
                     self._deferred_cpp_artifacts.append(
                         _DeferredCppArtifact(
+                            func_node, module_qn, lang_config, lang_queries
+                        )
+                    )
+                    continue
+                # A free-function PROTOTYPE (a declaration with a
+                # function_declarator) may duplicate a bodied definition in
+                # another file; hold it back so resolve_deferred_cpp_prototypes
+                # can drop it when the definition registers (issue #893).
+                if func_node.type == cs.CppNodeType.DECLARATION and any(
+                    child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+                    for child in func_node.children
+                ):
+                    self._deferred_cpp_prototypes.append(
+                        _DeferredCppPrototype(
                             func_node, module_qn, lang_config, lang_queries
                         )
                     )
@@ -801,6 +834,54 @@ class FunctionIngestMixin:
         registered = sum(
             1 for entry in deferred if self._resolve_one_cpp_artifact(entry)
         )
+        deferred.clear()
+        return registered
+
+    def resolve_deferred_cpp_prototypes(self) -> int:
+        """Register held-back free-function prototypes without a definition.
+
+        A prototype whose namespace-qualified name matches a registered
+        FUNCTION in any module duplicates that bodied definition (methods,
+        classes and other prototypes never match: prototypes are all still
+        held here, and the type filter excludes non-Function nodes); it is
+        dropped so calls and dead-code see one node per function. Returns
+        the number registered.
+        """
+        deferred = self._deferred_cpp_prototypes
+        registered = 0
+        for entry in deferred:
+            file_path = self.module_qn_to_file_path.get(entry.module_qn)
+            resolution = self._resolve_function_identity(
+                entry.func_node,
+                entry.module_qn,
+                cs.SupportedLanguage.CPP,
+                entry.lang_config,
+                file_path,
+            )
+            if not resolution:
+                continue
+            prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+            qn = resolution.qualified_name
+            ns_qn = qn[len(prefix) :] if qn.startswith(prefix) else qn
+            simple = ns_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
+            if any(
+                candidate.endswith(suffix)
+                and self.function_registry.get(candidate) == NodeType.FUNCTION
+                for candidate in self.function_registry.find_ending_with(simple)
+            ):
+                continue
+            self._register_function(
+                entry.func_node,
+                resolution,
+                entry.module_qn,
+                cs.SupportedLanguage.CPP,
+                entry.lang_config,
+                entry.lang_queries,
+            )
+            if return_type := cpp_utils.extract_return_type_name(entry.func_node):
+                self.method_return_types[resolution.qualified_name] = return_type
+            registered += 1
         deferred.clear()
         return registered
 

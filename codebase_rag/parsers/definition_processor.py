@@ -182,6 +182,9 @@ class DefinitionProcessor(
         # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
         # orphaned-ctor vs macro.
         self._deferred_cpp_artifacts: list = []
+        # Free-function prototypes held until every bodied definition is
+        # registered; resolve_deferred_cpp_prototypes drops duplicates (#893).
+        self._deferred_cpp_prototypes: list = []
         # (module_qn, def start_line) -> (method_qn, class_qn) for every
         # out-of-class C++ method the definition pass bound; Pass-3 call
         # attribution reuses these decisions instead of re-resolving.
