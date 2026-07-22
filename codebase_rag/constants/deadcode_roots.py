@@ -7,6 +7,13 @@
 # C++ file uniquely identifies them (member or free function).
 CPP_OPERATOR_PREFIX = "operator"
 
+# C/C++ program entries the OS runtime invokes with no visible call site:
+# hosted `main`/Windows `wmain`, GUI `WinMain`/`wWinMain`, and a DLL's
+# `DllMain`. Free functions on C/C++ files only.
+C_CPP_ENTRY_FUNCTION_NAMES: frozenset[str] = frozenset(
+    {"main", "wmain", "WinMain", "wWinMain", "DllMain"}
+)
+
 # Decorators whose presence marks a function/method as an implicit entry point
 # (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
 # Pydantic validators/serializers the framework invokes by registration).

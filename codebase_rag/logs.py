@@ -791,8 +791,18 @@ PARSER_FINGERPRINT_MISMATCH = (
     "stale. Run 'cgr start --clean' to rebuild it from scratch."
 )
 
+REHYDRATE_QUERY_FAILED = (
+    "Could not read persisted definitions from the graph; continuing with "
+    "only this run's freshly parsed registry."
+)
+INBOUND_CAPTURE_FAILED = (
+    "Could not read inbound edges from the graph; this full rebuild "
+    "re-parses every caller, so the edges are re-resolved from source."
+)
+
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"
 PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
