@@ -472,6 +472,10 @@ def _js_evidence(node: Node, declared: set[str], receivers: set[str]) -> None:
         if name and value is not None:
             if _factory_callee(value) in _JS_FRAMEWORK_FACTORIES:
                 receivers.add(name)
+            elif value.type in _JS_INLINE_HANDLER_TYPES:
+                # `const handler = async () => {}` declares a function just
+                # as much as a function statement does.
+                declared.add(name)
 
 
 def _go_bound_names_and_value(node: Node) -> tuple[list[str], Node | None]:
