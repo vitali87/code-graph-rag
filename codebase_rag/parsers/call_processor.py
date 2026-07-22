@@ -3604,15 +3604,15 @@ class CallProcessor:
         is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         if not is_ctor and not is_dtor:
             return
-        bases = [
-            base_qn
-            for base_qn in self._resolver.class_inheritance.get(class_qn, [])
-            if registry.get(base_qn) == NodeType.CLASS
-        ]
-        if not bases:
+        # The full INHERITS closure, not just direct bases: construction and
+        # destruction run EVERY ancestor's ctor/dtor unconditionally, and an
+        # intermediate whose definition lives outside the parsed source has
+        # no bodied caller pass to carry the chain onward (PR #894 review).
+        ancestors = self._cpp_registered_ancestors(class_qn)
+        if not ancestors:
             return
         if is_dtor:
-            for base_qn in bases:
+            for base_qn in ancestors:
                 self._emit_cpp_lifecycle_targets(
                     caller_spec, self._resolver.cpp_destructor_targets(base_qn)
                 )
@@ -3620,12 +3620,29 @@ class CallProcessor:
         named = self._cpp_member_init_class_qns(caller_node, module_qn)
         if class_qn in named:
             return
-        for base_qn in bases:
+        for base_qn in ancestors:
             if base_qn in named:
+                # The member-init pass owns this base's edge; its own deeper
+                # ancestors stay in the walk via the closure.
                 continue
             self._emit_cpp_lifecycle_targets(
                 caller_spec, self._resolver.java_constructor_targets(base_qn)
             )
+
+    def _cpp_registered_ancestors(self, class_qn: str) -> list[str]:
+        # Registered classes in the INHERITS closure, nearest first.
+        ancestors: list[str] = []
+        seen = {class_qn}
+        queue = list(self._resolver.class_inheritance.get(class_qn, []))
+        while queue:
+            current = queue.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            if self._resolver.function_registry.get(current) == NodeType.CLASS:
+                ancestors.append(current)
+            queue.extend(self._resolver.class_inheritance.get(current, []))
+        return ancestors
 
     def _emit_cpp_lifecycle_targets(
         self,
