@@ -29,10 +29,13 @@ if TYPE_CHECKING:
 # handler was deleted from relinking; delete-then-relink makes the pass
 # idempotent so changed URLs or routes drop their stale RESOLVES_TO edges.
 CYPHER_LIVE_NETWORK_RESOURCES = (
-    "MATCH ()-[e:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
+    "MATCH (f)-[e:READS_FROM|WRITES_TO]->(r:Resource {kind: 'NETWORK'}) "
     "RETURN r.qualified_name AS qualified_name, "
     "r.name AS name, r.kind AS kind, "
-    "collect(DISTINCT type(e)) AS directions"
+    "collect(DISTINCT type(e)) AS directions, "
+    # A rootful URL is same-origin, so its candidates are scoped to the
+    # projects that issued it: the sink sources' leading qn segment.
+    "collect(DISTINCT head(split(f.qualified_name, '.'))) AS caller_projects"
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
@@ -94,6 +97,7 @@ def decorator_receiver(decorator_text: str) -> str | None:
 # post/put/patch/delete-style calls (issue #878).
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _KEY_DIRECTIONS = "directions"
+_KEY_CALLER_PROJECTS = "caller_projects"
 
 
 def _direction_compatible(directions: frozenset[str], method: str) -> bool:
@@ -290,10 +294,13 @@ def _emit_endpoint(
 
 def _collect_live_resources(
     ingestor: QueryProtocol,
-) -> tuple[dict[str, tuple[str, frozenset[str]]], dict[str, tuple[str, str | None]]]:
+) -> tuple[
+    dict[str, tuple[str, frozenset[str], frozenset[str]]],
+    dict[str, tuple[str, str | None]],
+]:
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
-    networks: dict[str, tuple[str, frozenset[str]]] = {}
+    networks: dict[str, tuple[str, frozenset[str], frozenset[str]]] = {}
     endpoints: dict[str, tuple[str, str | None]] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
         for row in ingestor.fetch_all(query):
@@ -309,7 +316,13 @@ def _collect_live_resources(
                     if isinstance(raw_directions, list)
                     else frozenset()
                 )
-                networks[qn] = (name, directions)
+                raw_callers = row.get(_KEY_CALLER_PROJECTS)
+                callers = (
+                    frozenset(c for c in raw_callers if isinstance(c, str))
+                    if isinstance(raw_callers, list)
+                    else frozenset()
+                )
+                networks[qn] = (name, directions, callers)
             elif kind == ResourceKind.ENDPOINT.value:
                 project = row.get(KEY_PROJECT)
                 endpoints[qn] = (name, project if isinstance(project, str) else None)
@@ -338,7 +351,9 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     cannot hit a write-only route). Templates without a literal segment are
     skipped entirely; they would match any same-length URL path. When the
     URL's hostname names an indexed project, only that project's endpoints
-    are candidates; an unmatched host keeps the full fan-out. Returns the
+    are candidates; an unmatched host keeps the full fan-out. A rootful
+    relative URL is same-origin, so its candidates are the caller
+    projects' endpoints, never a global fan-out (issue #908). Returns the
     number of edges emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
@@ -348,19 +363,27 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     # the read side, so the single write goes through an ingestor view.
     writer = cast("IngestorProtocol", ingestor)
     created = 0
-    for network_qn, (url, directions) in networks.items():
+    for network_qn, (url, directions, caller_projects) in networks.items():
         host = _host_stem(url)
-        owned = {
-            qn
-            for qn, (_identity, project) in endpoints.items()
-            if project is not None and _project_stem(project) == host
-        }
-        if owned:
-            # Legacy rows carry no project and stay linkable even when the
-            # host pins a scoped project (partially migrated graphs).
-            legacy = {
-                qn for qn, (_identity, project) in endpoints.items() if project is None
+        rootful = not urlparse(url).netloc and url.startswith("/")
+        if rootful:
+            owned = {
+                qn
+                for qn, (_identity, project) in endpoints.items()
+                if project is not None and project in caller_projects
             }
+        else:
+            owned = {
+                qn
+                for qn, (_identity, project) in endpoints.items()
+                if project is not None and _project_stem(project) == host
+            }
+        # Legacy rows carry no project and stay linkable even when the
+        # host pins a scoped project (partially migrated graphs).
+        legacy = {
+            qn for qn, (_identity, project) in endpoints.items() if project is None
+        }
+        if owned or rootful:
             candidates = owned | legacy
         else:
             candidates = set(endpoints)

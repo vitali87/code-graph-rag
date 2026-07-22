@@ -608,6 +608,7 @@ class TestRootfulRelativeUrlMatch:
                 "name": "/users/42",
                 "kind": "NETWORK",
                 "directions": ["READS_FROM"],
+                "caller_projects": ["web"],
             },
             {
                 "qualified_name": endpoint_qn,
