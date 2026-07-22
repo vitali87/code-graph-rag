@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     # (label, handler qn, route decorators, module qn)
     PendingEndpoint = tuple[cs.NodeLabel, str, list[str], str | None]
-    PrefixResolver = Callable[[str, str], "list[str] | None"]
+    PrefixResolver = Callable[[str, str, str], "list[str] | None"]
 
 # Anchoring on live sink/EXPOSES edges keeps resources whose caller or
 # handler was deleted from relinking; delete-then-relink makes the pass
@@ -214,7 +214,16 @@ def emit_endpoints(
         if prefix_resolver is not None and module_qn is not None:
             receiver = decorator_receiver(decorator)
             if receiver is not None:
-                resolved = prefix_resolver(module_qn, receiver)
+                # The handler's lexical scope (qn segments between module and
+                # leaf) picks the right same-named router when factories
+                # shadow a module-level one.
+                scope = ""
+                prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+                if qualified_name.startswith(prefix):
+                    rest = qualified_name[len(prefix) :]
+                    if cs.SEPARATOR_DOT in rest:
+                        scope = rest.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                resolved = prefix_resolver(module_qn, receiver, scope)
                 if resolved:
                     prefixes = resolved
         # The qn is scoped by owning project (EXPOSES always comes from

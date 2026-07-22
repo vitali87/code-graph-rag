@@ -252,12 +252,12 @@ class TestUnknownLeadMatching:
 
 
 class TestLocalRouterNameCollisions:
-    def test_factory_local_shadow_falls_back_to_bare_template(
+    def test_factory_local_shadow_keeps_module_scope_resolution(
         self, tmp_path: Path
     ) -> None:
         # A factory-local router sharing the module-level router's name must
-        # not hijack its prefix; an ambiguous name yields the bare template
-        # rather than a wrong one.
+        # not hijack its prefix; scope-aware keys keep the module handler on
+        # the module-level router.
         files = {
             "main.py": (
                 "from fastapi import APIRouter, FastAPI\n\n"
@@ -274,7 +274,7 @@ class TestLocalRouterNameCollisions:
         }
         edges = _run(tmp_path, files)
         assert not _endpoint(edges, "main.get_user", "GET /admin/{user_id}"), edges
-        assert _endpoint(edges, "main.get_user", "GET /{user_id}"), edges
+        assert _endpoint(edges, "main.get_user", "GET /users/{user_id}"), edges
 
     def test_identical_reassignment_keeps_resolution(self, tmp_path: Path) -> None:
         # Re-running the same assignment is not ambiguity.
@@ -373,3 +373,29 @@ class TestIncrementalMountChanges:
         )
         deletes = [c.args[0] for c in mock.execute_write.call_args_list if c.args]
         assert any("EXPOSES" in q for q in deletes), deletes
+
+
+class TestScopeAwareRouterKeys:
+    def test_identical_factory_local_router_does_not_leak_its_mount(
+        self, tmp_path: Path
+    ) -> None:
+        # Same name AND identical constructor in another scope: the factory's
+        # prefixed mount must not attach to the module-level handler.
+        files = {
+            "main.py": (
+                "from fastapi import APIRouter, FastAPI\n\n"
+                "app = FastAPI()\n"
+                "router = APIRouter()\n\n\n"
+                "@router.get('/users/{user_id}')\n"
+                "def get_user(user_id: int):\n"
+                "    return {}\n\n\n"
+                "def make_v2(v2app):\n"
+                "    router = APIRouter()\n"
+                "    v2app.include_router(router, prefix='/v2')\n\n\n"
+                "app.include_router(router)\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "main.get_user", "GET /users/{user_id}"), edges
+        leaked = {e for h, e in edges if h.endswith("main.get_user") and "/v2/" in e}
+        assert not leaked, leaked
