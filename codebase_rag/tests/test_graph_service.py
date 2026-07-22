@@ -407,9 +407,7 @@ class TestLegacyPathKeyMigration:
     def test_drops_exact_legacy_constraints_when_present(self) -> None:
         executed = self._run_capture(self.LEGACY_ROWS)
 
-        assert (
-            "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
-        )
+        assert "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
         assert "DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;" in executed
 
     def test_purges_merged_and_keyless_nodes_when_legacy_present(self) -> None:

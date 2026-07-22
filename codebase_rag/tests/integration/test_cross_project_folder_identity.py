@@ -105,9 +105,7 @@ class TestCrossProjectFolderIdentity:
         folders = memgraph_ingestor.fetch_all(
             "MATCH (f:Folder {path: 'app'}) RETURN f.absolute_path AS ap"
         )
-        assert [r["ap"] for r in folders] == [
-            (service / "app").resolve().as_posix()
-        ]
+        assert [r["ap"] for r in folders] == [(service / "app").resolve().as_posix()]
         files = memgraph_ingestor.fetch_all(
             "MATCH (f:File {path: 'app/main.py'}) RETURN f.absolute_path AS ap"
         )
@@ -128,9 +126,7 @@ class TestLegacyPathKeyMigration:
         # Recreate the pre-fix schema: relative-path uniqueness plus one
         # Folder shared by two projects, one keyless File beneath it, and a
         # healthy single-owner File that must survive.
-        ing._execute_query(
-            "CREATE CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;"
-        )
+        ing._execute_query("CREATE CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;")
         ing._execute_query("CREATE CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;")
         ing._execute_query(
             "CREATE (svc:Project {name: 'svc-legacy'}), "
@@ -184,7 +180,6 @@ class TestLegacyPathKeyMigration:
         ing.ensure_constraints()
 
         survivor = ing.fetch_all(
-            "MATCH (n:File {absolute_path: '/tidy/app/main.py'}) "
-            "RETURN count(n) AS c"
+            "MATCH (n:File {absolute_path: '/tidy/app/main.py'}) RETURN count(n) AS c"
         )
         assert survivor[0]["c"] == 1
