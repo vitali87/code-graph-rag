@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.constants import LEGACY_NODE_CONSTRAINTS, NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.cypher_queries import (
     build_create_node_query,
     build_create_relationship_query,
@@ -365,7 +365,9 @@ class TestEnsureConstraints:
         ):
             ingestor.ensure_constraints()
 
-        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2
+        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(
+            LEGACY_NODE_CONSTRAINTS
+        )
         assert call_count == expected_queries
 
 
@@ -405,7 +407,9 @@ class TestFlushNodesEdgeCases:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/valid.txt", "name": "valid"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/valid.txt", "name": "valid"})
+        )
         ingestor.node_buffer.append(("File", {"name": "missing_path"}))
         ingestor.node_buffer.append(("UnknownLabel", {"id": "unknown"}))
 
@@ -548,7 +552,9 @@ class TestCreateMode:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/test.py", "name": "test"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
         ingestor.flush_nodes()
 
         call_args = mock_cursor.execute.call_args[0][0]
@@ -564,7 +570,9 @@ class TestCreateMode:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/test.py", "name": "test"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
         ingestor.flush_nodes()
 
         call_args = mock_cursor.execute.call_args[0][0]

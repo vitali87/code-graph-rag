@@ -1712,8 +1712,11 @@ class GraphUpdater:
                 self.remove_file_from_state(deleted_path)
                 self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
+                    # Keyed on the absolute path: a sibling project's File
+                    # node can share the relative path (issue #897).
                     self.ingestor.execute_write(
-                        cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
+                        cs.CYPHER_DELETE_FILE,
+                        {cs.KEY_PATH: deleted_path.resolve().as_posix()},
                     )
 
         self._restore_inbound_edges(captured_inbound)
@@ -1915,11 +1918,18 @@ class GraphUpdater:
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
                 if not (self.repo_path / path).exists():
-                    orphans.append(path)
+                    # File/Folder deletes key on the absolute path: a sibling
+                    # project's node can share the relative path (issue #897).
+                    key = (
+                        abs_path
+                        if isinstance(abs_path, str) and abs_path
+                        else (self.repo_path / path).resolve().as_posix()
+                    )
+                    orphans.append((path, key))
 
             if orphans:
                 logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
-                for orphan_path in orphans:
+                for orphan_path, orphan_key in orphans:
                     logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
                     if delete_query == cs.CYPHER_DELETE_MODULE:
                         # Module deletes are project-scoped; a sibling
@@ -1927,7 +1937,7 @@ class GraphUpdater:
                         self._delete_module_entities(orphan_path)
                     else:
                         self.ingestor.execute_write(
-                            delete_query, {cs.KEY_PATH: orphan_path}
+                            delete_query, {cs.KEY_PATH: orphan_key}
                         )
                 total_pruned += len(orphans)
 

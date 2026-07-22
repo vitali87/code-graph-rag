@@ -203,6 +203,10 @@ def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
 
+def build_drop_constraint_query(label: str, prop: str) -> str:
+    return f"DROP CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
+
+
 def build_index_query(label: str, prop: str) -> str:
     return f"CREATE INDEX ON :{label}({prop});"
 

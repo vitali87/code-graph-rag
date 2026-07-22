@@ -309,7 +309,11 @@ class DefinitionProcessor(
                 (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
                 if parent_container_qn
                 else (
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+                    (
+                        cs.NodeLabel.FOLDER,
+                        cs.KEY_ABSOLUTE_PATH,
+                        cached_resolve_posix(self.repo_path / parent_rel_path),
+                    )
                     if parent_rel_path != Path(".")
                     else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
                 )

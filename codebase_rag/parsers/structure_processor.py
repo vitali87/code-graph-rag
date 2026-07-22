@@ -50,7 +50,13 @@ class StructureProcessor:
             return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         if parent_container_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+        # Folder identity is the absolute path: relative paths collide across
+        # same-layout projects in the shared graph (issue #897).
+        return (
+            cs.NodeLabel.FOLDER,
+            cs.KEY_ABSOLUTE_PATH,
+            cached_resolve_posix(self.repo_path / parent_rel_path),
+        )
 
     def identify_structure(self) -> None:
         directories = {self.repo_path}
@@ -126,7 +132,11 @@ class StructureProcessor:
                 self.ingestor.ensure_relationship_batch(
                     parent_identifier,
                     cs.RelationshipType.CONTAINS_FOLDER,
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, relative_root.as_posix()),
+                    (
+                        cs.NodeLabel.FOLDER,
+                        cs.KEY_ABSOLUTE_PATH,
+                        cached_resolve_posix(root),
+                    ),
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
@@ -151,5 +161,5 @@ class StructureProcessor:
         self.ingestor.ensure_relationship_batch(
             parent_identifier,
             cs.RelationshipType.CONTAINS_FILE,
-            (cs.NodeLabel.FILE, cs.KEY_PATH, relative_filepath),
+            (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, cached_resolve_posix(file_path)),
         )

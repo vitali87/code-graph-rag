@@ -136,7 +136,11 @@ class TestPropertyConformance:
         contains = GraphRelRecord(
             (cs.NodeLabel.PROJECT.value, cs.UniqueKeyType.NAME.value, "proj"),
             cs.RelationshipType.CONTAINS_FILE.value,
-            (cs.NodeLabel.FILE.value, cs.UniqueKeyType.PATH.value, "LICENSE"),
+            (
+                cs.NodeLabel.FILE.value,
+                cs.UniqueKeyType.ABSOLUTE_PATH.value,
+                "/repo/LICENSE",
+            ),
         )
         nodes, rels = _clean_graph()
         nodes.append(file_node)

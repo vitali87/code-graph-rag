@@ -29,6 +29,7 @@ from ..constants import (
     KEY_PROJECT_NAME,
     KEY_PROPS,
     KEY_TO_VAL,
+    LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
@@ -41,6 +42,7 @@ from ..cypher_queries import (
     CYPHER_LIST_PROJECTS,
     build_constraint_query,
     build_create_node_query,
+    build_drop_constraint_query,
     build_create_relationship_query,
     build_index_query,
     build_merge_node_query,
@@ -288,6 +290,14 @@ class MemgraphIngestor:
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
+        # An existing database may still enforce a superseded key (Folder/File
+        # by relative path); the leftover constraint would reject the second
+        # same-relative-path node the current scheme creates (issue #897).
+        for label, prop in LEGACY_NODE_CONSTRAINTS:
+            try:
+                self._execute_query(build_drop_constraint_query(label, prop))
+            except Exception:
+                pass
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_constraint_query(label, prop))
