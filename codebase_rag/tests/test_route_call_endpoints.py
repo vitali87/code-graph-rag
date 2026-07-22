@@ -477,6 +477,45 @@ class TestGoGeneratedRoutes:
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
 
+    def test_wrapper_binding_in_another_function_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # A composite-literal binding legitimises selector handlers only
+        # inside its own function; one in `setup` must not turn a client
+        # call in `fetchMe` into a registration.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                "func setup() {\n"
+                "\topts := Options{}\n"
+                "\t_ = opts\n"
+                "}\n\n"
+                "func fetchMe(client HTTPClient, opts Options) {\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_module_level_wrapper_binding_registers(self, tmp_path: Path) -> None:
+        # A wrapper bound at FILE scope is visible in every function.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                'const prefix = "/internal"\n\n'
+                "type healthWrapper struct{}\n\n"
+                "var wrapper = healthWrapper{}\n\n"
+                "func mount(router Router) {\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.mount", "GET /internal/health"), edges
+
 
 class TestOptionsObjectRoutes:
     # Issue #907: one call, one object literal carrying method/path/handler.
