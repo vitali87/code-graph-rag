@@ -135,6 +135,10 @@ mixin Swimmer {
         s.endswith("mixed.Swimmer") and d.endswith("mixed.Swimmer.swim")
         for s, d in defines
     ), sorted(defines)
+    assert any(
+        s.endswith("mixed.Swimmer") and d.endswith("mixed.Swimmer.speed")
+        for s, d in defines
+    ), sorted(defines)
 
 
 def test_function_span_covers_body(
