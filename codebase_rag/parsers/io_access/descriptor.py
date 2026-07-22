@@ -114,6 +114,14 @@ class LanguageDescriptor:
     # with the expression unfielded). Lets the handle-binding walk read the RHS.
     # False for every language whose value is field-labelled.
     declarator_value_is_last_child: bool = False
+    # Import-normalised callees whose first argument is a format string
+    # (Go fmt.Sprintf); a sink target built by one renders its verbs as
+    # placeholders instead of collapsing to dynamic (issue #885).
+    format_call_names: frozenset[str] = frozenset()
+    # Alternate uninterpolated string literal read as a format string too
+    # (Go backtick raw strings). None where one string type covers all.
+    raw_string_type: str | None = None
+    raw_string_content_type: str | None = None
     # Interpolated-string node types (JS/TS template literals); substitutions
     # render as placeholders in captured resource identities (issue #884).
     template_string_type: str | None = None
@@ -162,6 +170,9 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_GO_CALL_EXPRESSION,
     string_type=cs.TS_GO_INTERPRETED_STRING,
     string_content_type=cs.TS_GO_INTERPRETED_STRING_CONTENT,
+    format_call_names=frozenset({"fmt.Sprintf"}),
+    raw_string_type=cs.TS_GO_RAW_STRING,
+    raw_string_content_type=cs.TS_GO_RAW_STRING_CONTENT,
     keyword_arg_type=None,
     nested_scope_types=frozenset(
         {
