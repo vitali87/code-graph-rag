@@ -8,8 +8,11 @@ can resolve to.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parsers.endpoints import parse_route_decorator
 
 
@@ -98,9 +101,10 @@ class TestEmitEndpoints:
         ingestor.ensure_node_batch.assert_called_once_with(
             cs.NodeLabel.RESOURCE,
             {
-                "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                "qualified_name": "resource::ENDPOINT::user-service::GET /users/{id}",
                 "name": "GET /users/{id}",
                 "kind": "ENDPOINT",
+                "project": "user-service",
             },
         )
         ingestor.ensure_relationship_batch.assert_called_once_with(
@@ -109,7 +113,7 @@ class TestEmitEndpoints:
             (
                 cs.NodeLabel.RESOURCE,
                 "qualified_name",
-                "resource::ENDPOINT::GET /users/{id}",
+                "resource::ENDPOINT::user-service::GET /users/{id}",
             ),
         )
 
@@ -422,3 +426,139 @@ class TestDirectionAwareLinking:
         from codebase_rag.parsers.endpoints import CYPHER_LIVE_NETWORK_RESOURCES
 
         assert "directions" in CYPHER_LIVE_NETWORK_RESOURCES
+
+
+class TestPerProjectEndpointIdentity:
+    def test_emit_scopes_endpoint_qn_by_project(self) -> None:
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.FUNCTION,
+            "user-service__abc.app.main.health",
+            ['@app.get("/health")'],
+        )
+        node = ingestor.ensure_node_batch.call_args.args[1]
+        assert node["qualified_name"] == (
+            "resource::ENDPOINT::user-service__abc::GET /health"
+        )
+        assert node["name"] == "GET /health"
+        assert node["project"] == "user-service__abc"
+
+
+class TestHostAwareLinking:
+    @staticmethod
+    def _network(url: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": ["READS_FROM"],
+        }
+
+    @staticmethod
+    def _endpoint(project: str, identity: str) -> dict[str, str]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{project}::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+            "project": project,
+        }
+
+    def _link(self, rows: list[dict[str, object]]) -> tuple[int, object]:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return link_endpoints(ingestor), ingestor
+
+    def test_host_matching_a_project_links_only_that_project(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://payment-service:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "payment-service__99e" in target
+
+    def test_underscore_host_matches_dash_project(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://cast_service:8000/api/v1/casts/5/"),
+                self._endpoint("cast-service__1a2", "GET /api/v1/casts/{id}/"),
+            ]
+        )
+        assert created == 1
+
+    def test_unmatched_host_keeps_fanout(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://localhost:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 2
+
+    def test_host_match_excludes_other_projects_tail_templates(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://user-service:8000/users/42"),
+                self._endpoint("user-service__2ad", "GET /users/{user_id}"),
+                self._endpoint("fst__be7", "GET /**/users/{user_id}"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "user-service__2ad" in target
+
+    def test_legacy_rows_without_project_stay_permissive(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://user-service:8000/health"),
+                {
+                    "qualified_name": "resource::ENDPOINT::GET /health",
+                    "name": "GET /health",
+                    "kind": "ENDPOINT",
+                },
+            ]
+        )
+        assert created == 1
+
+
+class TestHostAwareLinkingHardening:
+    def test_legacy_rows_stay_linkable_when_host_matches_a_project(self) -> None:
+        # A partially migrated graph: the host matches a scoped project, but
+        # a matching legacy (project-less) endpoint must not be dropped.
+        helper = TestHostAwareLinking()
+        created, _ = helper._link(
+            [
+                TestHostAwareLinking._network("http://user-service:8000/users/42"),
+                TestHostAwareLinking._endpoint("user-service__2ad", "GET /users/{id}"),
+                {
+                    "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                    "name": "GET /users/{id}",
+                    "kind": "ENDPOINT",
+                },
+            ]
+        )
+        assert created == 2
+
+    def test_project_stem_keeps_double_underscore_base_names(self) -> None:
+        helper = TestHostAwareLinking()
+        created, ingestor = helper._link(
+            [
+                TestHostAwareLinking._network("http://order--worker:8000/jobs/5"),
+                TestHostAwareLinking._endpoint(
+                    "order__worker__2adc9027", "GET /jobs/{id}"
+                ),
+                TestHostAwareLinking._endpoint("other__9f9f9f9f", "GET /jobs/{id}"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "order__worker__2adc9027" in target

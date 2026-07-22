@@ -36,9 +36,12 @@ CYPHER_LIVE_NETWORK_RESOURCES = (
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
     "RETURN DISTINCT r.qualified_name AS qualified_name, "
-    "r.name AS name, r.kind AS kind"
+    "r.name AS name, r.kind AS kind, r.project AS project"
 )
 CYPHER_DELETE_RESOLVES_TO = "MATCH ()-[r:RESOLVES_TO]->() DELETE r"
+
+KEY_PROJECT = "project"
+_PROJECT_HASH_SEPARATOR = "__"
 
 _HTTP_METHOD_NAMES = frozenset(
     {"get", "post", "put", "patch", "delete", "head", "options", "websocket"}
@@ -252,8 +255,12 @@ def _emit_endpoint(
 ) -> None:
     from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 
+    # The qn is scoped by owning project (EXPOSES always comes from within
+    # one), so same-template endpoints in different services stay distinct
+    # nodes and host-aware linking can tell them apart (#879).
+    project = qualified_name.split(cs.SEPARATOR_DOT, 1)[0]
     resource_qn = RESOURCE_QN_FORMAT.format(
-        kind=ResourceKind.ENDPOINT.value, identity=identity
+        kind=ResourceKind.ENDPOINT.value, identity=f"{project}::{identity}"
     )
     ingestor.ensure_node_batch(
         cs.NodeLabel.RESOURCE,
@@ -261,6 +268,7 @@ def _emit_endpoint(
             cs.KEY_QUALIFIED_NAME: resource_qn,
             cs.KEY_NAME: identity,
             KEY_KIND: ResourceKind.ENDPOINT.value,
+            KEY_PROJECT: project,
         },
     )
     ingestor.ensure_relationship_batch(
@@ -272,11 +280,11 @@ def _emit_endpoint(
 
 def _collect_live_resources(
     ingestor: QueryProtocol,
-) -> tuple[dict[str, tuple[str, frozenset[str]]], dict[str, str]]:
+) -> tuple[dict[str, tuple[str, frozenset[str]]], dict[str, tuple[str, str | None]]]:
     from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
 
     networks: dict[str, tuple[str, frozenset[str]]] = {}
-    endpoints: dict[str, str] = {}
+    endpoints: dict[str, tuple[str, str | None]] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
         for row in ingestor.fetch_all(query):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -293,8 +301,22 @@ def _collect_live_resources(
                 )
                 networks[qn] = (name, directions)
             elif kind == ResourceKind.ENDPOINT.value:
-                endpoints[qn] = name
+                project = row.get(KEY_PROJECT)
+                endpoints[qn] = (name, project if isinstance(project, str) else None)
     return networks, endpoints
+
+
+def _host_stem(url: str) -> str | None:
+    host = urlparse(url).hostname
+    return host.lower().replace("_", "-") if host else None
+
+
+def _project_stem(project: str) -> str:
+    # `user-service__2adc9027` deploys as host `user-service` (compose and
+    # cluster DNS use the service name); underscores and dashes are
+    # interchangeable across compose file and directory conventions. Only
+    # the LAST separator is the hash suffix; a base name may contain `__`.
+    return project.rsplit(_PROJECT_HASH_SEPARATOR, 1)[0].lower().replace("_", "-")
 
 
 def link_endpoints(ingestor: QueryProtocol) -> int:
@@ -304,8 +326,10 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     links to every endpoint whose template matches its URL path and whose
     method is reachable from the URL's sink directions (a read-only URL
     cannot hit a write-only route). Templates without a literal segment are
-    skipped entirely; they would match any same-length URL path. Returns
-    the number of edges emitted.
+    skipped entirely; they would match any same-length URL path. When the
+    URL's hostname names an indexed project, only that project's endpoints
+    are candidates; an unmatched host keeps the full fan-out. Returns the
+    number of edges emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
@@ -315,7 +339,23 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     writer = cast("IngestorProtocol", ingestor)
     created = 0
     for network_qn, (url, directions) in networks.items():
-        for endpoint_qn, identity in endpoints.items():
+        host = _host_stem(url)
+        owned = {
+            qn
+            for qn, (_identity, project) in endpoints.items()
+            if project is not None and _project_stem(project) == host
+        }
+        if owned:
+            # Legacy rows carry no project and stay linkable even when the
+            # host pins a scoped project (partially migrated graphs).
+            legacy = {
+                qn for qn, (_identity, project) in endpoints.items() if project is None
+            }
+            candidates = owned | legacy
+        else:
+            candidates = set(endpoints)
+        for endpoint_qn in candidates:
+            identity, _project = endpoints[endpoint_qn]
             method, _, template = identity.partition(" ")
             if (
                 template

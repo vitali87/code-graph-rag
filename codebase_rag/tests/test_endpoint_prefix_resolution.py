@@ -41,8 +41,10 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
+    # The endpoint qn is project-scoped (resource::ENDPOINT::<project>::
+    # <identity>); the identity is the last ::-part.
     return {
-        (c.args[0][2], c.args[2][2].removeprefix("resource::ENDPOINT::"))
+        (c.args[0][2], c.args[2][2].split("::")[-1])
         for c in mock.ensure_relationship_batch.call_args_list
         if str(c.args[1]) == EXPOSES
     }
