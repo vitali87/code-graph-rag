@@ -298,6 +298,49 @@ def test_field_initializer_getter_read_is_referenced(tmp_path: Path) -> None:
     ), rels
 
 
+def test_field_initializers_resolve_against_the_owning_class(tmp_path: Path) -> None:
+    # Two classes can define the same getter name: each field initializer
+    # must resolve against ITS OWN class, and one class's read must not
+    # dedup away the other's.
+    files = {
+        "app.dart": (
+            "int wrap(int v) {\n"
+            "  return v;\n"
+            "}\n"
+            "\n"
+            "class Alpha {\n"
+            "  int get tone => 1;\n"
+            "  late final int a = wrap(tone);\n"
+            "}\n"
+            "\n"
+            "class Beta {\n"
+            "  int get tone => 2;\n"
+            "  late final int b = wrap(tone);\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert any(r == REFERENCES and b.endswith("Alpha.tone") for _a, r, b in rels), rels
+    assert any(r == REFERENCES and b.endswith("Beta.tone") for _a, r, b in rels), rels
+
+
+def test_initializer_closure_read_is_referenced(tmp_path: Path) -> None:
+    # A closure INSIDE a field initializer belongs to no method pass: its
+    # body must still be walked or the getter it reads reports dead.
+    files = {
+        "app.dart": (
+            "class Deck {\n"
+            "  int get tone => 1;\n"
+            "  late final int Function() pick = () {\n"
+            "    return tone;\n"
+            "  };\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert any(r == REFERENCES and b.endswith("Deck.tone") for _a, r, b in rels), rels
+
+
 def test_getter_call_chain_is_not_double_counted(tmp_path: Path) -> None:
     # `other.total()` is an invocation the call pass already resolves; the
     # read pass must not add a REFERENCES edge for the same chain, or every
