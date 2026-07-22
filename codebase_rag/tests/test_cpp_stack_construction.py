@@ -94,6 +94,14 @@ int lambdaCapture() {
   };
   return h();
 }
+
+int lambdaInitCapture() {
+  auto m = [mproject = 1]() {
+    FlutterWindow mwindow(mproject);
+    return 0;
+  };
+  return m();
+}
 """
 
 
@@ -221,6 +229,21 @@ def test_lambda_capture_counts_as_evidence(
     calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
     assert any(
         d.endswith(".FlutterWindow.FlutterWindow") and ".lambdaCapture" in s
+        for s, d in calls
+    ), sorted(calls)
+
+
+def test_lambda_init_capture_counts_as_evidence(
+    cpp_vexing_project: Path, mock_ingestor: MagicMock
+):
+    # An init-capture (`[mproject = 1]`) binds a fresh name inside the
+    # lambda; its leading identifier is evidence too (Greptile round 6).
+    run_updater(cpp_vexing_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert not any(qn.endswith(".mwindow") for qn in functions), sorted(functions)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert any(
+        d.endswith(".FlutterWindow.FlutterWindow") and ".lambdaInitCapture" in s
         for s, d in calls
     ), sorted(calls)
 
