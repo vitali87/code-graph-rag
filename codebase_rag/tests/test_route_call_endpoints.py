@@ -403,3 +403,66 @@ class TestTestModulesEmitNoEndpoints:
     ) -> None:
         edges = _run(tmp_path, {"api.py": self._PY_SOURCE}, "python")
         assert _endpoint(edges, "api.list_cases", "GET /cases"), edges
+
+    def test_rehydrated_test_module_handler_stays_excluded(
+        self, tmp_path: Path
+    ) -> None:
+        # An incremental run rehydrates unchanged handlers from the graph;
+        # dp.module_qn_to_file_path only covers re-parsed files, so the gate
+        # must also see graph-backed module paths or a test handler fails
+        # open and re-emits after stale cleanup.
+        from codebase_rag.parsers.endpoint_prefixes import (
+            CYPHER_PROJECT_PY_MODULES,
+            CYPHER_PROJECT_ROUTE_HANDLERS,
+        )
+
+        parsers, queries = load_parsers()
+        source = tmp_path / "tests" / "test_api.py"
+        source.parent.mkdir(parents=True)
+        source.write_text(self._PY_SOURCE, encoding="utf-8")
+        project = tmp_path.name
+        module_qn = f"{project}.tests.test_api"
+
+        class _Ingestor:
+            # Concrete (not MagicMock) so isinstance(_, QueryProtocol) holds.
+            def __init__(self) -> None:
+                self.ensure_node_batch = MagicMock()
+                self.ensure_relationship_batch = MagicMock()
+                self.flush_all = MagicMock()
+                self.execute_write = MagicMock()
+
+            def fetch_all(
+                self, query: str, params: dict[str, object] | None = None
+            ) -> list[dict[str, object]]:
+                if query == CYPHER_PROJECT_PY_MODULES:
+                    return [
+                        {
+                            "qualified_name": module_qn,
+                            "path": "tests/test_api.py",
+                        }
+                    ]
+                if query == CYPHER_PROJECT_ROUTE_HANDLERS:
+                    return [
+                        {
+                            "qualified_name": f"{module_qn}.list_cases",
+                            "decorators": ['@app.get("/cases")'],
+                            "labels": ["Function"],
+                        }
+                    ]
+                return []
+
+        ingestor = _Ingestor()
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            capture=_CAPTURE_IO,
+        )
+        updater._emit_pending_endpoints()
+        exposes = [
+            c
+            for c in ingestor.ensure_relationship_batch.call_args_list
+            if str(c.args[1]) == EXPOSES
+        ]
+        assert not exposes, exposes
