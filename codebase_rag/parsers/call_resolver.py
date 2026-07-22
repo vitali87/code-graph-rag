@@ -779,8 +779,10 @@ class CallResolver:
         # first-party types the base can hand back are its type arguments
         # (`State<GridBtn>.widget` is a GridBtn), so bind when exactly one
         # argument's class defines the member (issue #875). A first-party
-        # base, a declared receiver, or an own member named like the
-        # receiver all fall through to the unique-member gate instead.
+        # base, a declared receiver, or a member named like the receiver on
+        # the class or ANY registered ancestor (a first-party mixin's getter
+        # is inherited, not handed back by the external base) all fall
+        # through to the unique-member gate instead.
         if not class_context:
             return None
         type_args = self.type_inference.dart_extends_type_args.get(class_context)
@@ -791,7 +793,7 @@ class CallResolver:
             return None
         if local_var_types and receiver in local_var_types:
             return None
-        if f"{class_context}{cs.SEPARATOR_DOT}{receiver}" in self.function_registry:
+        if self._dart_registered_member_named(class_context, receiver):
             return None
         bases = self.class_inheritance.get(class_context)
         # resolve_deferred_inherits rewrote bases in place, so a registered
@@ -806,6 +808,23 @@ class CallResolver:
         if len(matches) == 1:
             return self.function_registry[matches[0]], matches[0]
         return None
+
+    def _dart_registered_member_named(self, class_qn: str, name: str) -> bool:
+        # True when the class or any registered first-party ancestor
+        # (extends base or `with` mixin, both in class_inheritance) defines
+        # a member with this name. Dart `implements` contributes interface
+        # only, never implementation, so it cannot supply a receiver.
+        seen: set[str] = set()
+        stack = [class_qn]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if f"{current}{cs.SEPARATOR_DOT}{name}" in self.function_registry:
+                return True
+            stack.extend(self.class_inheritance.get(current, ()))
+        return False
 
     def _resolve_js_member_call_unique(
         self, call_name: str, module_qn: str

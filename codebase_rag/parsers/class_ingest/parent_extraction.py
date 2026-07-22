@@ -241,12 +241,28 @@ def extract_dart_extends_type_args(
     type_args = find_child_by_type(superclass, cs.TS_DART_TYPE_ARGUMENTS)
     if type_args is None:
         return []
-    return [
-        resolve_to_qn(name, module_qn)
-        for child in type_args.named_children
-        if child.type == cs.TS_DART_TYPE_IDENTIFIER
-        and (name := safe_decode_text(child))
-    ]
+    # An import-prefixed argument (`State<models.GridBtn>`) is two FLAT
+    # sibling type_identifiers, distinguishable from a two-argument list
+    # (`Pair<A, B>`) only by the joining `.` token, so walk ALL children
+    # and glue dot-joined runs into one dotted name. A nested generic's own
+    # arguments (`List<T>`) and nullable markers carry no bindable
+    # first-party identity and are skipped.
+    names: list[str] = []
+    parts: list[str] = []
+    pending_dot = False
+    for child in type_args.children:
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
+            if parts and not pending_dot:
+                names.append(cs.SEPARATOR_DOT.join(parts))
+                parts = []
+            if name := safe_decode_text(child):
+                parts.append(name)
+            pending_dot = False
+        elif child.type == cs.SEPARATOR_DOT:
+            pending_dot = True
+    if parts:
+        names.append(cs.SEPARATOR_DOT.join(parts))
+    return [resolve_to_qn(name, module_qn) for name in names]
 
 
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
