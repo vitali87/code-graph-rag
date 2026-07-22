@@ -371,6 +371,74 @@ class TestEnsureConstraints:
         assert call_count == expected_queries
 
 
+class TestLegacyPathKeyMigration:
+    """Superseded Folder/File relative-path keys must migrate safely (#897)."""
+
+    LEGACY_ROWS = [
+        {"constraint type": "unique", "label": "Folder", "properties": ["path"]},
+        {"constraint type": "unique", "label": "File", "properties": ["path"]},
+    ]
+    CLEAN_ROWS = [
+        {
+            "constraint type": "unique",
+            "label": "Folder",
+            "properties": ["absolute_path"],
+        },
+        {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
+    ]
+
+    def _run_capture(self, show_rows: list[dict]) -> list[str]:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed: list[str] = []
+
+        def capture(query: str, params: dict | None = None) -> list[dict]:
+            executed.append(query)
+            if query.startswith("SHOW CONSTRAINT"):
+                return show_rows
+            if "purged" in query:
+                return [{"purged": 0}]
+            return []
+
+        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture):
+            ingestor.ensure_constraints()
+        return executed
+
+    def test_drops_exact_legacy_constraints_when_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS)
+
+        assert (
+            "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
+        )
+        assert "DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;" in executed
+
+    def test_purges_merged_and_keyless_nodes_when_legacy_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_clean_database_issues_no_drops_or_purges(self) -> None:
+        executed = self._run_capture(self.CLEAN_ROWS)
+
+        assert not any(q.startswith("DROP CONSTRAINT") for q in executed)
+        assert not any("DETACH DELETE" in q for q in executed)
+
+    def test_show_constraint_failure_propagates(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        def refuse(query: str, params: dict | None = None) -> list[dict]:
+            if query.startswith("SHOW CONSTRAINT"):
+                raise ConnectionError("connection refused")
+            return []
+
+        with (
+            patch.object(MemgraphIngestor, "_execute_query", side_effect=refuse),
+            pytest.raises(ConnectionError),
+        ):
+            ingestor.ensure_constraints()
+
+
 class TestFlushNodesEdgeCases:
     def test_skips_nodes_with_unknown_label(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)

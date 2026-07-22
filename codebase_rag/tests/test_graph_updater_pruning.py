@@ -398,3 +398,60 @@ class TestDeletedFileInProcessFiles:
 
         updater.run(force=True)
         mock_prune.assert_called_once()
+
+
+class TestPruneSiblingRootPrefix:
+    """A sibling repo root sharing a string prefix must not be pruned (#897)."""
+
+    def _updater(self, py_project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+    def test_prune_skips_sibling_root_sharing_path_prefix(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        updater = self._updater(py_project, mock_ingestor)
+        repo_abs = py_project.resolve().as_posix()
+        sibling_abs = f"{repo_abs}-old/app.py"
+
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "app.py", "absolute_path": sibling_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []
+
+    def test_prune_still_sweeps_own_missing_file(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        updater = self._updater(py_project, mock_ingestor)
+        own_abs = (py_project / "gone.py").resolve().as_posix()
+
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "gone.py", "absolute_path": own_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert len(file_deletes) == 1
+        assert file_deletes[0].args[1] == {cs.KEY_PATH: own_abs}
