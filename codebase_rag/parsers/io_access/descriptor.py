@@ -118,6 +118,10 @@ class LanguageDescriptor:
     # (Go fmt.Sprintf); a sink target built by one renders its verbs as
     # placeholders instead of collapsing to dynamic (issue #885).
     format_call_names: frozenset[str] = frozenset()
+    # Alternate uninterpolated string literal read as a format string too
+    # (Go backtick raw strings). None where one string type covers all.
+    raw_string_type: str | None = None
+    raw_string_content_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -161,6 +165,8 @@ _GO_DESCRIPTOR = LanguageDescriptor(
     string_type=cs.TS_GO_INTERPRETED_STRING,
     string_content_type=cs.TS_GO_INTERPRETED_STRING_CONTENT,
     format_call_names=frozenset({"fmt.Sprintf"}),
+    raw_string_type=cs.TS_GO_RAW_STRING,
+    raw_string_content_type=cs.TS_GO_RAW_STRING_CONTENT,
     keyword_arg_type=None,
     nested_scope_types=frozenset(
         {
