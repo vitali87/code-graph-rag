@@ -33,3 +33,34 @@ def test_module_path_lookup_failure_forces_delete_before_reingest(
         if c.args[0] == cs.CYPHER_DELETE_MODULE
     }
     assert "m.py" in deleted_paths, deleted_paths
+
+
+def test_fully_unreadable_graph_still_completes_the_rebuild(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A sink whose EVERY read fails (graph briefly down while writes queue)
+    # must not abort the sync: the failed probe routes all files through
+    # delete-before-reingest, and the inbound-edge capture that path then
+    # attempts hits the same unreadable graph and must degrade to a clean
+    # re-resolution, not an unhandled exception.
+    (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def unavailable(query: str, params: dict | None = None) -> list:
+        raise RuntimeError("graph down")
+
+    mock_ingestor.fetch_all.side_effect = unavailable
+
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
+
+    deleted_paths = {
+        c.args[1][cs.KEY_PATH]
+        for c in mock_ingestor.execute_write.call_args_list
+        if c.args[0] == cs.CYPHER_DELETE_MODULE
+    }
+    assert "m.py" in deleted_paths, deleted_paths
+    module_qns = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.MODULE
+    }
+    assert any(str(qn).endswith(".m") for qn in module_qns), module_qns

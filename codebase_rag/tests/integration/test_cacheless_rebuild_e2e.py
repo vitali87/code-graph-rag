@@ -138,13 +138,51 @@ class TestCachelessRebuild:
             )
             _index(memgraph_ingestor, repo)
 
+        # Rename alpha's function so the rebuild demonstrably DELETES the
+        # old subtree; beta's survival then proves the delete was
+        # project-scoped rather than simply absent.
+        (alpha / "lib" / "shared.py").write_text(
+            "def alpha_renamed():\n    return 1\n", encoding="utf-8"
+        )
         (alpha / cs.HASH_CACHE_FILENAME).unlink()
         (alpha / cs.DIR_MTIMES_FILENAME).unlink()
         _index(memgraph_ingestor, alpha)
 
         rows = memgraph_ingestor.fetch_all(
-            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'betaproj.' "
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'alphaproj.' "
+            "OR f.qualified_name STARTS WITH 'betaproj.' "
             "RETURN f.qualified_name AS qn"
         )
         names = {str(row["qn"]) for row in rows}
+        assert not any(qn.endswith(".alpha_fn") for qn in names), names
+        assert any(qn.endswith(".alpha_renamed") for qn in names), names
         assert any(qn.endswith(".beta_fn") for qn in names), names
+
+    def test_unreadable_file_is_not_reconciled_away(
+        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ) -> None:
+        # A file that cannot be read this run (permissions, transient IO) is
+        # absent from the current key set, but it still EXISTS: sweeping its
+        # subtree with the graph-path reconciliation would erase live state
+        # over a transient error.
+        repo = tmp_path / "unreadrepo"
+        repo.mkdir()
+        (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
+        locked = repo / "locked.py"
+        locked.write_text("def locked_fn():\n    return 1\n", encoding="utf-8")
+        _index(memgraph_ingestor, repo)
+
+        (repo / cs.HASH_CACHE_FILENAME).unlink()
+        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        locked.chmod(0o000)
+        try:
+            _index(memgraph_ingestor, repo)
+        finally:
+            locked.chmod(0o644)
+
+        rows = memgraph_ingestor.fetch_all(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'unreadrepo.' "
+            "RETURN f.qualified_name AS qn"
+        )
+        names = {str(row["qn"]) for row in rows}
+        assert any(qn.endswith(".locked_fn") for qn in names), names
