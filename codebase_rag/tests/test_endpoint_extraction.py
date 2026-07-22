@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import pytest
 
+from unittest.mock import MagicMock
+
+from codebase_rag import constants as cs
 from codebase_rag.parsers.endpoints import parse_route_decorator
 
 
@@ -324,3 +327,105 @@ class TestReviewHardening:
 
         assert "READS_FROM|WRITES_TO" in CYPHER_LIVE_NETWORK_RESOURCES
         assert "EXPOSES" in CYPHER_LIVE_ENDPOINT_RESOURCES
+
+
+class TestPerProjectEndpointIdentity:
+    def test_emit_scopes_endpoint_qn_by_project(self) -> None:
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.FUNCTION,
+            "user-service__abc.app.main.health",
+            ['@app.get("/health")'],
+        )
+        node = ingestor.ensure_node_batch.call_args.args[1]
+        assert node["qualified_name"] == (
+            "resource::ENDPOINT::user-service__abc::GET /health"
+        )
+        assert node["name"] == "GET /health"
+        assert node["project"] == "user-service__abc"
+
+
+class TestHostAwareLinking:
+    @staticmethod
+    def _network(url: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": ["READS_FROM"],
+        }
+
+    @staticmethod
+    def _endpoint(project: str, identity: str) -> dict[str, str]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{project}::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+            "project": project,
+        }
+
+    def _link(self, rows: list[dict[str, object]]) -> tuple[int, object]:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return link_endpoints(ingestor), ingestor
+
+    def test_host_matching_a_project_links_only_that_project(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://payment-service:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "payment-service__99e" in target
+
+    def test_underscore_host_matches_dash_project(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://cast_service:8000/api/v1/casts/5/"),
+                self._endpoint("cast-service__1a2", "GET /api/v1/casts/{id}/"),
+            ]
+        )
+        assert created == 1
+
+    def test_unmatched_host_keeps_fanout(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://localhost:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 2
+
+    def test_host_match_excludes_other_projects_tail_templates(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://user-service:8000/users/42"),
+                self._endpoint("user-service__2ad", "GET /users/{user_id}"),
+                self._endpoint("fst__be7", "GET /**/users/{user_id}"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "user-service__2ad" in target
+
+    def test_legacy_rows_without_project_stay_permissive(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://user-service:8000/health"),
+                {
+                    "qualified_name": "resource::ENDPOINT::GET /health",
+                    "name": "GET /health",
+                    "kind": "ENDPOINT",
+                },
+            ]
+        )
+        assert created == 1
