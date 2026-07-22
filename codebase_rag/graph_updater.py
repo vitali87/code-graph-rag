@@ -1924,7 +1924,11 @@ class GraphUpdater:
                     continue
                 abs_path = r.get("absolute_path")
                 qn = r.get("qualified_name", "")
-                if isinstance(abs_path, str) and not abs_path.startswith(repo_abs):
+                # Component-aware containment: a bare prefix test would also
+                # match a sibling root such as <repo>-old (issue #897).
+                if isinstance(abs_path, str) and not (
+                    abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
+                ):
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue

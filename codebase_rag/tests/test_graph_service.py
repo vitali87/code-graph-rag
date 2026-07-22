@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import LEGACY_NODE_CONSTRAINTS, NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.cypher_queries import (
     build_create_node_query,
     build_create_relationship_query,
@@ -338,8 +338,9 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def capture_query(query: str) -> None:
+        def capture_query(query: str) -> list[dict]:
             executed_queries.append(query)
+            return []
 
         with patch.object(
             MemgraphIngestor, "_execute_query", side_effect=capture_query
@@ -354,20 +355,20 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         call_count = 0
 
-        def fail_then_succeed(query: str) -> None:
+        def fail_first_create(query: str) -> list[dict]:
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
+            if call_count == 2:
                 raise RuntimeError("Constraint already exists")
+            return []
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=fail_then_succeed
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_create
         ):
             ingestor.ensure_constraints()
 
-        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(
-            LEGACY_NODE_CONSTRAINTS
-        )
+        # One SHOW plus a create-constraint and a create-index per label.
+        expected_queries = 1 + len(NODE_UNIQUE_CONSTRAINTS) * 2
         assert call_count == expected_queries
 
 
