@@ -4794,13 +4794,15 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         lang_config: LanguageSpec,
         prop_names: set[str],
+        parent_qn: str | None = None,
     ) -> None:
         # Field initializers run in the class's OWN scope: bare reads resolve
         # against the owning class (two classes may share a getter name), and
         # each class gets its own dedup set. A closure inside an initializer
         # belongs to no method pass, so its body is walked here; only
         # method/constructor bodies (owned by a class-body signature) have
-        # their own pass. Nested classes recurse with their own context.
+        # their own pass. Dart forbids nested class declarations, but the
+        # defensive recursion still threads the enclosing context through.
         class_types = lang_config.class_node_types
         name_node = next(
             (
@@ -4811,15 +4813,22 @@ class CallProcessor:
             None,
         )
         class_name = safe_decode_text(name_node) if name_node is not None else None
-        class_ctx = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}" if class_name else None
+        owner_qn = parent_qn if parent_qn is not None else module_qn
+        class_ctx = f"{owner_qn}{cs.SEPARATOR_DOT}{class_name}" if class_name else None
         seen: set[str] = set()
         shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
 
         def shadow_spans() -> dict[str, list[tuple[int, int]]]:
             # Initializer closures declare parameters; their spans confine
-            # any shadowing to the closure itself.
+            # any shadowing to the closure itself. Member signatures and
+            # owned bodies stay out: a method parameter scopes its own body,
+            # which this walk never reads.
             if not shadow_cell:
-                shadow_cell.append(self._dart_shadow_spans(class_node, class_node))
+                shadow_cell.append(
+                    self._dart_shadow_spans(
+                        class_node, class_node, skip_owned_members=True
+                    )
+                )
             return shadow_cell[0]
 
         stack = list(class_node.children)
@@ -4834,6 +4843,7 @@ class CallProcessor:
                     local_var_types,
                     lang_config,
                     prop_names,
+                    parent_qn=class_ctx,
                 )
                 continue
             if _dart_is_owned_function_body(node):
@@ -4926,7 +4936,10 @@ class CallProcessor:
         )
 
     def _dart_shadow_spans(
-        self, caller_node: Node, walk_root: Node
+        self,
+        caller_node: Node,
+        walk_root: Node,
+        skip_owned_members: bool = False,
     ) -> dict[str, list[tuple[int, int]]]:
         # {declared name: [byte span of each declaring SCOPE]} for parameters
         # and locals. A declaration shadows a same-name getter only for bare
@@ -4952,6 +4965,15 @@ class CallProcessor:
             stack.extend(walk_root.children)
         while stack:
             node = stack.pop()
+            # For the class-initializer pass, member signatures and owned
+            # bodies are invisible to the READ walk, so their parameters and
+            # locals must not join the shadow map either: a method parameter
+            # scopes its own body, never a sibling field initializer.
+            if skip_owned_members and (
+                node.type in cs.DART_SIGNATURE_TYPES
+                or _dart_is_owned_function_body(node)
+            ):
+                continue
             for name in _dart_declared_names(node):
                 spans.setdefault(name, []).append(scope_span(node))
             stack.extend(node.children)
