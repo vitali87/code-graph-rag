@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -118,6 +118,29 @@ _DART_LOCAL_DECLARATION_TYPES = frozenset(
         cs.TS_DART_INITIALIZED_IDENTIFIER,
     }
 )
+
+
+def _dart_declared_names(node: Node) -> list[str]:
+    # The name(s) a parameter or local declaration binds; anything else
+    # declares nothing.
+    if node.type == cs.TS_DART_FORMAL_PARAMETER:
+        return [
+            name
+            for child in node.named_children
+            if child.type == cs.TS_DART_IDENTIFIER and (name := safe_decode_text(child))
+        ]
+    if node.type in _DART_LOCAL_DECLARATION_TYPES:
+        declared = next(
+            (
+                child
+                for child in node.named_children
+                if child.type == cs.TS_DART_IDENTIFIER
+            ),
+            None,
+        )
+        if declared is not None and (name := safe_decode_text(declared)):
+            return [name]
+    return []
 
 
 def _dart_is_bare_read(node: Node) -> bool:
@@ -4616,33 +4639,27 @@ class CallProcessor:
         # Dart lambda's reads attribute to the enclosing method, matching the
         # flat-attribute call pass), so their parameters join the shadow set.
         class_types = lang_config.class_node_types
-        shadow_spans: dict[str, list[tuple[int, int]]] | None = None
         seen: set[str] = set()
 
         # The grammar splits a definition into a signature node and a SIBLING
         # function_body: the signature holds no reads, so walk the body.
         body = dart_utils.dart_body_node(caller_node)
         walk_root = body if body is not None else caller_node
+        shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
+
+        def shadow_spans() -> dict[str, list[tuple[int, int]]]:
+            # Built lazily on the first bare read; most callers have none.
+            if not shadow_cell:
+                shadow_cell.append(self._dart_shadow_spans(caller_node, walk_root))
+            return shadow_cell[0]
+
         stack = list(walk_root.children)
         while stack:
             node = stack.pop()
-            node_type = node.type
-            if node_type in class_types:
+            if node.type in class_types:
                 continue
-            read_name: str | None = None
-            if node_type == cs.TS_DART_SELECTOR:
-                read_name = dart_utils.dart_member_read_name(node)
-            elif node_type == cs.TS_DART_CASCADE_SECTION:
-                read_name = dart_utils.dart_cascade_read_name(node)
-            elif node_type == cs.TS_DART_IDENTIFIER and _dart_is_bare_read(node):
-                name = safe_decode_text(node)
-                if name and name in prop_names:
-                    if shadow_spans is None:
-                        shadow_spans = self._dart_shadow_spans(caller_node, walk_root)
-                    pos = node.start_byte
-                    if not any(lo <= pos < hi for lo, hi in shadow_spans.get(name, ())):
-                        read_name = name
-            if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
+            read_name = self._dart_read_name(node, prop_names, shadow_spans)
+            if read_name:
                 self._emit_dart_property_read(
                     read_name,
                     caller_spec,
@@ -4653,6 +4670,42 @@ class CallProcessor:
                     seen,
                 )
             stack.extend(node.children)
+
+    def _dart_read_name(
+        self,
+        node: Node,
+        prop_names: set[str],
+        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
+    ) -> str | None:
+        # The dotted name this node READS, or None: member selectors and
+        # cascades reassemble their receiver chain; a bare identifier counts
+        # only when no in-scope local/parameter shadows it.
+        node_type = node.type
+        if node_type == cs.TS_DART_SELECTOR:
+            read_name = dart_utils.dart_member_read_name(node)
+        elif node_type == cs.TS_DART_CASCADE_SECTION:
+            read_name = dart_utils.dart_cascade_read_name(node)
+        elif node_type == cs.TS_DART_IDENTIFIER and _dart_is_bare_read(node):
+            read_name = self._dart_unshadowed_name(node, prop_names, shadow_spans)
+        else:
+            return None
+        if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
+            return read_name
+        return None
+
+    def _dart_unshadowed_name(
+        self,
+        node: Node,
+        prop_names: set[str],
+        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
+    ) -> str | None:
+        name = safe_decode_text(node)
+        if not name or name not in prop_names:
+            return None
+        pos = node.start_byte
+        if any(lo <= pos < hi for lo, hi in shadow_spans().get(name, ())):
+            return None
+        return name
 
     def _emit_dart_property_read(
         self,
@@ -4707,25 +4760,8 @@ class CallProcessor:
             stack.extend(walk_root.children)
         while stack:
             node = stack.pop()
-            node_type = node.type
-            if node_type == cs.TS_DART_FORMAL_PARAMETER:
-                for child in node.named_children:
-                    if child.type == cs.TS_DART_IDENTIFIER and (
-                        name := safe_decode_text(child)
-                    ):
-                        spans.setdefault(name, []).append(scope_span(node))
-                continue
-            if node_type in _DART_LOCAL_DECLARATION_TYPES:
-                declared = next(
-                    (
-                        child
-                        for child in node.named_children
-                        if child.type == cs.TS_DART_IDENTIFIER
-                    ),
-                    None,
-                )
-                if declared is not None and (name := safe_decode_text(declared)):
-                    spans.setdefault(name, []).append(scope_span(node))
+            for name in _dart_declared_names(node):
+                spans.setdefault(name, []).append(scope_span(node))
             stack.extend(node.children)
         return spans
 
