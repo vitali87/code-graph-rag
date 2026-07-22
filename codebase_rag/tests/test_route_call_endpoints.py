@@ -354,3 +354,73 @@ class TestStaleRouteCleanup:
         assert any(
             module_qn in (c.args[1].get("module_qns") or []) for c in cleanups
         ), cleanups
+
+
+class TestGoGeneratedRoutes:
+    # Issue #909: oapi-codegen emits `router.Get(BaseURL+"/x", wrapper.H)`;
+    # the path is a module-const concatenation and the handler an attribute.
+
+    _GEN_SOURCE = (
+        "package main\n\n"
+        'import "github.com/go-chi/chi/v5"\n\n'
+        'const BaseURL = "/api/v1"\n\n'
+        "func HandlerFromMux(wrapper ServerInterfaceWrapper, router chi.Router) {\n"
+        '\trouter.Get(BaseURL+"/me", wrapper.GetMe)\n'
+        '\trouter.Post(BaseURL+"/logout", wrapper.PostLogout)\n'
+        "}\n"
+    )
+
+    def test_const_concat_with_attribute_handler_registers(
+        self, tmp_path: Path
+    ) -> None:
+        edges = _run(tmp_path, {"gen.go": self._GEN_SOURCE}, "go")
+        assert _endpoint(edges, "gen.HandlerFromMux", "GET /api/v1/me"), edges
+        assert _endpoint(edges, "gen.HandlerFromMux", "POST /api/v1/logout"), edges
+
+    def test_const_block_resolves_too(self, tmp_path: Path) -> None:
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                "const (\n"
+                '\tprefix = "/internal"\n'
+                ")\n\n"
+                "func mount(router Router) {\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.mount", "GET /internal/health"), edges
+
+    def test_client_const_concat_without_handler_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "func fetchMe(c HTTPClient) {\n"
+                '\tc.Get(baseURL + "/me")\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_function_local_strings_do_not_resolve(self, tmp_path: Path) -> None:
+        # A flat name map would let one function's local leak into another
+        # and mint a WRONG template; only module-level consts resolve.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                "func other() {\n"
+                '\tprefix := "/wrong"\n'
+                "\t_ = prefix\n"
+                "}\n\n"
+                "func mount(router Router) {\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
