@@ -36,6 +36,23 @@ DETACH DELETE p, container, defined
 
 CYPHER_SHOW_CONSTRAINTS = "SHOW CONSTRAINT INFO;"
 
+# Damage detectors for the issue #897 migration. Sharing always leaves a
+# single-hop signature: the topmost merged node has containment parents in
+# two projects (Project roots are never merged, so the parents are distinct
+# nodes). Keyless rows match the second purge's predicate directly.
+CYPHER_ANY_SHARED_STRUCTURE = (
+    "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
+    "WHERE (n:Folder OR n:File) "
+    "WITH n, count(parent) AS parents "
+    "WHERE parents > 1 "
+    "RETURN 1 AS damaged LIMIT 1"
+)
+
+CYPHER_ANY_KEYLESS_STRUCTURE = (
+    "MATCH (n) WHERE (n:Folder OR n:File) AND n.absolute_path IS NULL "
+    "RETURN 1 AS damaged LIMIT 1"
+)
+
 # The superseded relative-path key merged same-layout projects onto shared
 # Folder/File nodes (issue #897). A merged node cannot be split, so anything
 # the containment walk reaches from more than one Project is purged; the

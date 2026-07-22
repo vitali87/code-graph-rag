@@ -358,7 +358,7 @@ class TestEnsureConstraints:
         def fail_first_create(query: str) -> list[dict]:
             nonlocal call_count
             call_count += 1
-            if call_count == 2:
+            if query.startswith("CREATE CONSTRAINT") and call_count == 4:
                 raise RuntimeError("Constraint already exists")
             return []
 
@@ -367,8 +367,9 @@ class TestEnsureConstraints:
         ):
             ingestor.ensure_constraints()
 
-        # One SHOW plus a create-constraint and a create-index per label.
-        expected_queries = 1 + len(NODE_UNIQUE_CONSTRAINTS) * 2
+        # One SHOW, two damage probes, then a create-constraint and a
+        # create-index per label.
+        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2
         assert call_count == expected_queries
 
 
@@ -388,9 +389,7 @@ class TestLegacyPathKeyMigration:
         {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
     ]
 
-    def _run_capture(
-        self, show_rows: list[dict], damaged: bool = False
-    ) -> list[str]:
+    def _run_capture(self, show_rows: list[dict], damaged: bool = False) -> list[str]:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed: list[str] = []
 

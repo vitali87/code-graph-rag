@@ -38,6 +38,8 @@ from ..constants import (
     REL_TYPE_CALLS,
 )
 from ..cypher_queries import (
+    CYPHER_ANY_KEYLESS_STRUCTURE,
+    CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
@@ -314,7 +316,9 @@ class MemgraphIngestor:
         node the current scheme creates. Merged nodes cannot be split, so
         they are purged along with keyless legacy rows; re-indexing rebuilds
         them with per-project identity. Dropping a constraint is idempotent
-        in Memgraph, so any failure here is real and propagates.
+        in Memgraph, so any failure here is real and propagates. The purge
+        keys off the data, not the constraints: damage outlives the schema
+        when an earlier partial upgrade already dropped them.
         """
         existing_rows = self._execute_query(CYPHER_SHOW_CONSTRAINTS)
         legacy_present = [
@@ -325,10 +329,13 @@ class MemgraphIngestor:
                 for row in existing_rows
             )
         ]
-        if not legacy_present:
-            return
         for label, prop in legacy_present:
             self._execute_query(build_drop_constraint_query(label, prop))
+        damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
+            self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
+        )
+        if not damaged:
+            return
         purged = 0
         for purge_query in (
             CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
