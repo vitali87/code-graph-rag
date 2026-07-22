@@ -59,6 +59,16 @@ def _base_simple_name(spelling: str) -> str:
     return flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
 
+def _has_internal_linkage(cursor: Cursor) -> bool:
+    # Internal linkage (`static`, anonymous namespace): libclang's linkage
+    # kind covers both uniformly. Some cursor kinds raise on the property in
+    # older libclangs, so fail open (treated as external).
+    try:
+        return cursor.linkage.name == "INTERNAL"
+    except Exception:
+        return False
+
+
 def _classify(cursor: Cursor) -> str | None:
     kind = cursor.kind.name
     if kind in fc.CLASS_KIND_NAMES:
@@ -131,6 +141,10 @@ class _Collector:
         # parses the definition; prefer its location so the span join targets
         # the definition node, not the prototype.
         self._usr_definitions: dict[str, tuple[str, int]] = {}
+        # Function node keys with INTERNAL linkage (`static`, anonymous
+        # namespace): each TU owns a separate function, so the prototype
+        # dedupe never drops them.
+        self._internal_linkage_keys: set[_NodeKey] = set()
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -214,6 +228,8 @@ class _Collector:
         )
         if qn is None:
             return None
+        if label == fc.LABEL_FUNCTION and _has_internal_linkage(cursor):
+            self._internal_linkage_keys.add((label, qn))
         self.covered.add(rel)
         self._add_module(module_qn, rel, cursor.location.file.name)
         self._add_node(
@@ -722,15 +738,49 @@ class _Collector:
                     cs.RelationshipType.CONTAINS_MODULE,
                     (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 )
-        for label, props, _ in self.nodes.values():
+        dropped = self._duplicate_prototype_keys()
+        for key, (label, props, _) in self.nodes.items():
+            if key in dropped:
+                continue
             ingestor.ensure_node_batch(label, props)
             self._register(label, props)
         for rel_type, from_label, from_qn, to_label, to_qn in self.edges:
+            if (from_label, from_qn) in dropped or (to_label, to_qn) in dropped:
+                continue
             ingestor.ensure_relationship_batch(
                 (from_label, cs.KEY_QUALIFIED_NAME, from_qn),
                 rel_type,
                 (to_label, cs.KEY_QUALIFIED_NAME, to_qn),
             )
+
+    def _duplicate_prototype_keys(self) -> set[_NodeKey]:
+        # A free-function PROTOTYPE node duplicating a bodied definition in
+        # another file (utils.h.FreeHelper beside utils.FreeHelper) has zero
+        # incoming edges forever, so it is dropped along with its edges,
+        # mirroring the tree-sitter pass (issue #893). Namespace-qualified
+        # comparison: the longest matching module prefix is stripped so the
+        # header's extension segment never defeats the match.
+        module_qns = sorted(self.modules.keys(), key=len, reverse=True)
+
+        def ns_of(qn: str) -> str:
+            for module_qn in module_qns:
+                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+                    return qn[len(module_qn) + 1 :]
+            return qn
+
+        defined = {
+            ns_of(qn)
+            for (label, qn), (_, _, is_def) in self.nodes.items()
+            if label == fc.LABEL_FUNCTION and is_def
+        }
+        return {
+            (label, qn)
+            for (label, qn), (_, _, is_def) in self.nodes.items()
+            if label == fc.LABEL_FUNCTION
+            and not is_def
+            and (label, qn) not in self._internal_linkage_keys
+            and ns_of(qn) in defined
+        }
 
 
 def _walk(cursor: Cursor, collector: _Collector, enclosing: _Scope = None) -> None:
