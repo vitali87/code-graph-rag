@@ -273,9 +273,7 @@ class RouterRegistry:
         key = (imported[0], "", rest)
         return key if key in self._routers else None
 
-    def _resolve_bare(
-        self, module_qn: str, text: str, scope: str
-    ) -> _RouterKey | None:
+    def _resolve_bare(self, module_qn: str, text: str, scope: str) -> _RouterKey | None:
         for enclosing in _scope_chain(scope):
             if (module_qn, enclosing, text) in self._routers:
                 return (module_qn, enclosing, text)

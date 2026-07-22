@@ -400,9 +400,7 @@ class TestScopeAwareRouterKeys:
 
 
 class TestClassScopedRouters:
-    def test_same_named_class_level_routers_stay_distinct(
-        self, tmp_path: Path
-    ) -> None:
+    def test_same_named_class_level_routers_stay_distinct(self, tmp_path: Path) -> None:
         # Class bodies are scopes too: two classes defining a class-level
         # `router` must not collide into one module-level key.
         files = {
