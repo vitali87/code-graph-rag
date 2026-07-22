@@ -386,6 +386,9 @@ def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
     if (
         is_dart
         and node.type.endswith(cs.DART_EXPRESSION_NODE_SUFFIX)
+        # A scope-opening node (function_expression) IS the first-class
+        # value; only flat operator nodes hand a swallowed ternary onward.
+        and node.type not in cs.DART_NESTED_SCOPE_NODE_TYPES
         and (kids := node.named_children)
         and kids[-1].type == cs.TS_PY_CONDITIONAL_EXPRESSION
     ):
