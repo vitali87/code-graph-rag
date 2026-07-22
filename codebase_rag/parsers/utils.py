@@ -808,9 +808,12 @@ def ingest_method(
     # depends on it, so without persistence those edges drop (issue #532 parity).
     # A C# property_declaration IS a property by grammar (no decorator to
     # inspect); marking it lets the C# member-read pass find it, exactly as
-    # Python's @property marking feeds its attribute-access pass.
-    is_property = _is_property_decorator(decorators) or (
-        method_node.type == cs.TS_CSHARP_PROPERTY_DECLARATION
+    # Python's @property marking feeds its attribute-access pass. A Dart
+    # getter_signature is the same shape (issue #869): its accesses are
+    # attribute reads the Dart getter-read pass resolves through this flag.
+    is_property = _is_property_decorator(decorators) or method_node.type in (
+        cs.TS_CSHARP_PROPERTY_DECLARATION,
+        cs.TS_DART_GETTER_SIGNATURE,
     )
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True

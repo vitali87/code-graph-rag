@@ -119,9 +119,11 @@ def test_conditional_tearoff_references_both_branches(tmp_path: Path) -> None:
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goRight"), rels
     assert _has(rels, ".Selector.build", REFERENCES, ".Selector.goLeft"), rels
-    # The condition is only truthiness-tested, never handed over; expanding
-    # it would resurface the Python operand order on Dart's ternary.
-    assert not _has(rels, ".Selector.build", REFERENCES, ".Selector.isRight")
+    # The condition is never handed over as a value, but truthiness-testing
+    # a GETTER invokes it: the getter-read pass (issue #869) records that
+    # read. An operand-order regression is caught by the positive
+    # assertions above (the consequence would go missing).
+    assert _has(rels, ".Selector.build", REFERENCES, ".Selector.isRight"), rels
 
 
 def test_list_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
