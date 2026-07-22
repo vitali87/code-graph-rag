@@ -722,15 +722,46 @@ class _Collector:
                     cs.RelationshipType.CONTAINS_MODULE,
                     (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 )
-        for label, props, _ in self.nodes.values():
+        dropped = self._duplicate_prototype_keys()
+        for key, (label, props, _) in self.nodes.items():
+            if key in dropped:
+                continue
             ingestor.ensure_node_batch(label, props)
             self._register(label, props)
         for rel_type, from_label, from_qn, to_label, to_qn in self.edges:
+            if (from_label, from_qn) in dropped or (to_label, to_qn) in dropped:
+                continue
             ingestor.ensure_relationship_batch(
                 (from_label, cs.KEY_QUALIFIED_NAME, from_qn),
                 rel_type,
                 (to_label, cs.KEY_QUALIFIED_NAME, to_qn),
             )
+
+    def _duplicate_prototype_keys(self) -> set[_NodeKey]:
+        # A free-function PROTOTYPE node duplicating a bodied definition in
+        # another file (utils.h.FreeHelper beside utils.FreeHelper) has zero
+        # incoming edges forever, so it is dropped along with its edges,
+        # mirroring the tree-sitter pass (issue #893). Namespace-qualified
+        # comparison: the longest matching module prefix is stripped so the
+        # header's extension segment never defeats the match.
+        module_qns = sorted(self.modules.keys(), key=len, reverse=True)
+
+        def ns_of(qn: str) -> str:
+            for module_qn in module_qns:
+                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+                    return qn[len(module_qn) + 1 :]
+            return qn
+
+        defined = {
+            ns_of(qn)
+            for (label, qn), (_, _, is_def) in self.nodes.items()
+            if label == fc.LABEL_FUNCTION and is_def
+        }
+        return {
+            (label, qn)
+            for (label, qn), (_, _, is_def) in self.nodes.items()
+            if label == fc.LABEL_FUNCTION and not is_def and ns_of(qn) in defined
+        }
 
 
 def _walk(cursor: Cursor, collector: _Collector, enclosing: _Scope = None) -> None:
