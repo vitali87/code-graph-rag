@@ -215,6 +215,33 @@ def test_loop_catch_and_pattern_binders_shadow_bare_reads(tmp_path: Path) -> Non
     assert not _has(rels, ".Bag.churn", REFERENCES, ".Bag.alpha"), rels
 
 
+def test_reads_before_the_binder_still_reference_the_getter(tmp_path: Path) -> None:
+    # A binder is live only AFTER its declaration: the for-in ITERABLE and
+    # the try BODY precede theirs, so a getter read there is genuine and
+    # must not be suppressed by the statement-wide shadow.
+    files = {
+        "app.dart": (
+            "class Scanner {\n"
+            "  int get total => 1;\n"
+            "  int get errorCode => 2;\n"
+            "  void scan() {\n"
+            "    for (final total in [total]) {\n"
+            "      print(total);\n"
+            "    }\n"
+            "    try {\n"
+            "      print(errorCode);\n"
+            "    } catch (errorCode) {\n"
+            "      print(errorCode);\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Scanner.scan", REFERENCES, ".Scanner.total"), rels
+    assert _has(rels, ".Scanner.scan", REFERENCES, ".Scanner.errorCode"), rels
+
+
 def test_call_result_cascade_read_is_referenced(tmp_path: Path) -> None:
     # `getMarker()..startYr` reads the getter through a call-result cascade:
     # the receiver chain carries a call hop the resolver types from the
