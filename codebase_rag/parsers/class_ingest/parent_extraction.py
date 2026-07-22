@@ -224,6 +224,47 @@ def extract_dart_parent_classes(
     return parents
 
 
+def extract_dart_extends_type_args(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    # `extends Base<T, U>`: the clause's type arguments resolved to qns, so
+    # a member call on an undeclared receiver inside the subclass can bind
+    # against the first-party types an EXTERNAL generic base hands back
+    # (`State<GridBtn>.widget` is a GridBtn, issue #875). The type_arguments
+    # child of `superclass` belongs to the extends base; a mixin's own
+    # arguments nest under `mixins` and are not collected.
+    superclass = find_child_by_type(class_node, cs.TS_DART_SUPERCLASS)
+    if superclass is None:
+        return []
+    type_args = find_child_by_type(superclass, cs.TS_DART_TYPE_ARGUMENTS)
+    if type_args is None:
+        return []
+    # An import-prefixed argument (`State<models.GridBtn>`) is two FLAT
+    # sibling type_identifiers, distinguishable from a two-argument list
+    # (`Pair<A, B>`) only by the joining `.` token, so walk ALL children
+    # and glue dot-joined runs into one dotted name. A nested generic's own
+    # arguments (`List<T>`) and nullable markers carry no bindable
+    # first-party identity and are skipped.
+    names: list[str] = []
+    parts: list[str] = []
+    pending_dot = False
+    for child in type_args.children:
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
+            if parts and not pending_dot:
+                names.append(cs.SEPARATOR_DOT.join(parts))
+                parts = []
+            if name := safe_decode_text(child):
+                parts.append(name)
+            pending_dot = False
+        elif child.type == cs.SEPARATOR_DOT:
+            pending_dot = True
+    if parts:
+        names.append(cs.SEPARATOR_DOT.join(parts))
+    return [resolve_to_qn(name, module_qn) for name in names]
+
+
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
     return [guess for _, guess in extract_cpp_parent_bases(class_node, module_qn)]
 

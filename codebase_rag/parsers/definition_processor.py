@@ -69,6 +69,10 @@ class DefinitionProcessor(
         # whether they override an EXTERNAL base is only decidable once every
         # class is registered, so resolve_deferred_inherits consumes this.
         self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
+        # {class_qn: [type_arg_qns]} for a Dart `extends Base<T, ...>` clause;
+        # read at call resolution to bind a member call on an undeclared
+        # receiver against the type arguments of an EXTERNAL base (#875).
+        self.dart_extends_type_args: dict[str, list[str]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
