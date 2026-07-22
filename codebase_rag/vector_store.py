@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import time
 from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError, version
@@ -105,6 +106,12 @@ def close_vector_store_client() -> None:
 
 def close_qdrant_client() -> None:
     close_vector_store_client()
+
+
+# Left to garbage collection, the client's __del__ runs during interpreter
+# shutdown, where qdrant's close() imports portalocker and dies with
+# ImportError; atexit runs while imports still work.
+atexit.register(close_vector_store_client)
 
 
 def _selected_backend() -> VectorStoreBackend | None:

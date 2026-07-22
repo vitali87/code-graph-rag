@@ -779,6 +779,11 @@ INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+HASH_CACHE_ORPHANED = (
+    "Hash cache exists but project '{project}' has no modules in the graph; "
+    "the database was likely wiped since the last sync. Discarding the cache "
+    "and rebuilding fully."
+)
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
     "Parser code changed since this graph was built. Incremental sync keeps "

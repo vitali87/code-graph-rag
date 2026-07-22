@@ -81,6 +81,9 @@ CPP_EXTENSIONS = (
     EXT_CPPM,
     EXT_CCM,
 )
+# Translation-unit sources: only these can define a linkable OS entry point;
+# headers and C++ module interface files never are the entry unit.
+C_CPP_SOURCE_EXTENSIONS = (EXT_C, EXT_CPP, EXT_CC, EXT_CXX)
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
@@ -310,6 +313,11 @@ IGNORE_PATTERNS = frozenset(
     {
         ".cache",
         ".claude",
+        # Android NDK per-ABI CMake build cache; ships compiler-probe
+        # sources (CMakeCCompilerId.c) that index as project code.
+        ".cxx",
+        # Dart/Flutter tool cache (package_config, generated plugin code).
+        ".dart_tool",
         ".eclipse",
         ".eggs",
         ".env",

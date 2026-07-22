@@ -12,6 +12,23 @@
 # argument_part directly inside the `cascade_section`.
 TS_DART_SELECTOR = "selector"
 TS_DART_ARGUMENT_PART = "argument_part"
+# Inside an argument_part: `arguments` holds `argument` wrappers for
+# positional values and `named_argument` (label + expression) for named ones.
+TS_DART_ARGUMENTS = "arguments"
+TS_DART_ARGUMENT = "argument"
+TS_DART_NAMED_ARGUMENT = "named_argument"
+TS_DART_LABEL = "label"
+# First-class value containers in argument position: `handlers: [a, b]` and
+# `{...}` literals hold tear-offs one level down. Dart's ternary shares
+# Python's `conditional_expression` node TYPE but orders operands
+# [condition, consequence, alternative], not [body, condition, alternative].
+TS_DART_LIST_LITERAL = "list_literal"
+TS_DART_SET_OR_MAP_LITERAL = "set_or_map_literal"
+# Inside a set_or_map_literal: a MAP entry is a `pair` whose `value` field
+# holds the stored expression; `type_arguments` (`<String, T>{...}`) carry
+# types, never values.
+TS_DART_PAIR = "pair"
+TS_DART_TYPE_ARGUMENTS = "type_arguments"
 TS_DART_CASCADE_SECTION = "cascade_section"
 TS_DART_CASCADE_SELECTOR = "cascade_selector"
 TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR = "unconditional_assignable_selector"
@@ -86,6 +103,10 @@ TS_DART_FUNCTION_BODY = "function_body"
 # `@override`-style metadata: a preceding SIBLING of the (wrapped)
 # signature, not a child, so the highlights walk collects it explicitly.
 TS_DART_ANNOTATION = "annotation"
+# The decorator string as captured on Method nodes; when the enclosing class
+# has an external base, a method carrying it is framework-invoked and roots
+# the dead-code walk.
+DART_OVERRIDE_ANNOTATION = "@override"
 
 # Module and import/directive nodes
 TS_DART_PROGRAM = "program"

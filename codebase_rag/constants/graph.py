@@ -362,6 +362,11 @@ CYPHER_PROJECT_MODULE_PATHS = (
     "OR m.qualified_name STARTS WITH $project_prefix "
     "RETURN m.path AS path"
 )
+CYPHER_COUNT_PROJECT_MODULES = (
+    "MATCH (m:Module) WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
+    "RETURN count(m) AS count"
+)
 
 # Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
