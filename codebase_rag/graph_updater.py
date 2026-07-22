@@ -798,9 +798,7 @@ class GraphUpdater:
             if not isinstance(decorators, list):
                 continue
             routes = [
-                d
-                for d in decorators
-                if isinstance(d, str) and parse_route_decorator(d)
+                d for d in decorators if isinstance(d, str) and parse_route_decorator(d)
             ]
             if not routes:
                 continue

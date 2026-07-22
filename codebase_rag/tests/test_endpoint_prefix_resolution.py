@@ -369,7 +369,5 @@ class TestIncrementalMountChanges:
         assert (f"{project}.routes.get_user", "GET /api/users/{user_id}") in exposes, (
             exposes
         )
-        deletes = [
-            c.args[0] for c in mock.execute_write.call_args_list if c.args
-        ]
+        deletes = [c.args[0] for c in mock.execute_write.call_args_list if c.args]
         assert any("EXPOSES" in q for q in deletes), deletes
