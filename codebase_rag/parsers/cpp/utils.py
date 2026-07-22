@@ -628,10 +628,14 @@ def cpp_enclosing_function_value_names(node: Node) -> set[str]:
         if current.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
             # A lambda or local-class member body opens its own scope; a
             # candidate inside one takes evidence only from that scope,
-            # which for a lambda includes its parameters.
-            if current.type == cs.TS_CPP_LAMBDA_EXPRESSION:
-                _collect_cpp_parameter_names(current, names)
-            return names
+            # which for a lambda includes its parameters and captured
+            # names. A default capture (`[=]`/`[&]`) pulls in every
+            # enclosing local, so the walk continues outward instead.
+            if current.type != cs.TS_CPP_LAMBDA_EXPRESSION:
+                return names
+            _collect_cpp_parameter_names(current, names)
+            if not _lambda_captures_by_default(current, names):
+                return names
         current = current.parent
     return set()
 
@@ -654,6 +658,22 @@ def _collect_preceding_declaration_names(
         for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
             if name := _declarator_bound_name(declarator):
                 names.add(name)
+
+
+def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
+    # Collect explicit capture names; True when a default capture
+    # (`[=]` / `[&]`) is present, meaning every enclosing local is visible.
+    has_default = False
+    for child in lambda_node.children:
+        if child.type != cs.TS_CPP_LAMBDA_CAPTURE_SPECIFIER:
+            continue
+        for cap in child.children:
+            if cap.type == cs.CppNodeType.IDENTIFIER:
+                if name := safe_decode_text(cap):
+                    names.add(name)
+            elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
+                has_default = True
+    return has_default
 
 
 def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:

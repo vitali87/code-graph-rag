@@ -85,6 +85,15 @@ int lambdaScope() {
   };
   return g(1);
 }
+
+int lambdaCapture() {
+  int kproject = 1;
+  auto h = [kproject]() {
+    FlutterWindow kwindow(kproject);
+    return 0;
+  };
+  return h();
+}
 """
 
 
@@ -198,6 +207,21 @@ def test_lambda_parameter_counts_as_evidence(
     assert any(
         d.endswith(".FlutterWindow.FlutterWindow")
         and ".lambdaScope" in s
+        for s, d in calls
+    ), sorted(calls)
+
+
+def test_lambda_capture_counts_as_evidence(
+    cpp_vexing_project: Path, mock_ingestor: MagicMock
+):
+    # A captured value (`[kproject]() { ... }`) is in scope inside the
+    # lambda body just like a parameter (Greptile round 5).
+    run_updater(cpp_vexing_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert not any(qn.endswith(".kwindow") for qn in functions), sorted(functions)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert any(
+        d.endswith(".FlutterWindow.FlutterWindow") and ".lambdaCapture" in s
         for s, d in calls
     ), sorted(calls)
 

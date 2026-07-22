@@ -257,3 +257,8 @@ CPP_RESERVED_DEF_NAMES = frozenset(
         "catch",
     }
 )
+
+# Lambda capture list: `[a]` holds identifiers, `[=]`/`[&]` a default
+# capture pulling every enclosing local into scope.
+TS_CPP_LAMBDA_CAPTURE_SPECIFIER = "lambda_capture_specifier"
+TS_CPP_LAMBDA_DEFAULT_CAPTURE = "lambda_default_capture"
