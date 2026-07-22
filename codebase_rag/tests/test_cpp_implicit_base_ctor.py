@@ -56,9 +56,20 @@ class Middle : public GrandBase {
   ~Middle();
 };
 
+class MidCtor : public GrandBase {
+ public:
+  MidCtor(int v);
+};
+
+class LeafCtor : public MidCtor {
+ public:
+  LeafCtor(int v);
+};
+
 GrandBase::GrandBase() {}
 GrandBase::~GrandBase() {}
 Middle::Middle(int v) {}
+LeafCtor::LeafCtor(int v) {}
 
 int main() {
   int v = 1;
@@ -153,6 +164,20 @@ def test_declaration_only_dtor_does_not_sever_the_chain(
     calls = _calls(mock_ingestor)
     assert _has(calls, ".main.main", ".Middle.~Middle"), sorted(calls)
     assert _has(calls, ".main.main", ".GrandBase.~GrandBase"), sorted(calls)
+
+
+def test_declaration_only_ctor_does_not_sever_the_chain(
+    cpp_base_chain_project: Path, mock_ingestor: MagicMock
+):
+    # MidCtor's ctor is declared but never defined in the parsed source,
+    # so no caller pass can emit MidCtor -> GrandBase. Construction runs
+    # EVERY ancestor ctor unconditionally, so the derived definition
+    # carries the full chain, mirroring the dtor closure (Greptile
+    # round 4).
+    run_updater(cpp_base_chain_project, mock_ingestor)
+    calls = _calls(mock_ingestor)
+    assert _has(calls, ".LeafCtor.LeafCtor", ".MidCtor.MidCtor"), sorted(calls)
+    assert _has(calls, ".LeafCtor.LeafCtor", ".GrandBase.GrandBase"), sorted(calls)
 
 
 def test_external_base_emits_nothing(
