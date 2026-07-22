@@ -2,10 +2,13 @@
 
 JS and Go frameworks register routes through calls rather than decorators:
 Express-style ``app.get('/path', handler)`` and ``app.route('/p').get(fn)``
-chains, Go ``http.HandleFunc("/path", h)`` (including Go 1.22 ``"GET /p"``
-patterns) and echo/gin/chi-style verb methods (``e.GET("/p", h)``). This
-walker recognises them in cached module ASTs and yields ``METHOD /template``
-registrations so they become ENDPOINT resources like Python decorators do.
+chains, options-object calls whose single argument carries method, path and
+handler (fastify ``.route({...})``, hapi ``server.route({...})``, in-house
+``app.endpoint({...})`` gateways, issue #907), Go ``http.HandleFunc("/path",
+h)`` (including Go 1.22 ``"GET /p"`` patterns) and echo/gin/chi-style verb
+methods (``e.GET("/p", h)``). This walker recognises them in cached module
+ASTs and yields ``METHOD /template`` registrations so they become ENDPOINT
+resources like Python decorators do.
 
 The evidence gate is twofold. The path must be a literal opening with ``/``
 (or a ``VERB /path`` pattern); backtick literals count when they carry no
@@ -79,6 +82,14 @@ _JS_VERBS = {
 _JS_ROUTE_CHAIN = "route"
 _JS_FRAMEWORK_FACTORIES = frozenset({"express", "express.Router"})
 _JS_INLINE_HANDLER_TYPES = frozenset({cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUNCTION})
+
+# Options-object registrations (issue #907): one member call whose single
+# argument is an object literal carrying method, path and handler, as in
+# fastify `.route({...})`, hapi `server.route({...})` and in-house
+# `app.endpoint({...})` gateways.
+_JS_OPTIONS_PATH_KEYS = ("route", "url", "path")
+_JS_OPTIONS_METHOD_KEY = "method"
+_JS_OPTIONS_HANDLER_KEY = "handler"
 
 _HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 # echo/gin use uppercase verb methods; chi uses Go-idiomatic PascalCase.
@@ -292,6 +303,102 @@ def _js_chained_registration(
     return RouteRegistration(method, path, handler, scope)
 
 
+def _object_entries(obj: Node) -> dict[str, Node]:
+    # Key -> value node for an object literal; a shorthand property maps the
+    # name to its own identifier node.
+    entries: dict[str, Node] = {}
+    for child in obj.named_children:
+        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+            name = _decode(child)
+            if name:
+                entries[name] = child
+            continue
+        if child.type != cs.TS_PAIR:
+            continue
+        key = child.child_by_field_name(cs.FIELD_KEY)
+        value = child.child_by_field_name(cs.FIELD_VALUE)
+        if key is None or value is None:
+            continue
+        name = (
+            _decode(key)
+            if key.type == cs.TS_PROPERTY_IDENTIFIER
+            else _literal_path(key, _JS_PATH_LITERALS)
+        )
+        if name:
+            entries[name] = value
+    return entries
+
+
+def _options_methods(node: Node | None) -> list[str]:
+    # A literal verb, or an array of them; anything dynamic yields nothing.
+    if node is None:
+        return []
+    values = node.named_children if node.type == cs.TS_ARRAY else [node]
+    methods = []
+    for value in values:
+        verb = (_literal_path(value, _JS_PATH_LITERALS) or "").upper()
+        if verb in _HTTP_METHODS:
+            methods.append(verb)
+    return methods
+
+
+def _js_options_registrations(
+    call: Node, scope: str, evidence: _ModuleEvidence
+) -> list[RouteRegistration]:
+    fn = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if fn is None or fn.type != cs.TS_MEMBER_EXPRESSION:
+        return []
+    args = _call_args(call)
+    if len(args) != 1 or args[0].type != cs.TS_OBJECT:
+        return []
+    entries = _object_entries(args[0])
+    path = next(
+        (
+            p
+            for key in _JS_OPTIONS_PATH_KEYS
+            if (p := _literal_path(entries.get(key), _JS_PATH_LITERALS)) is not None
+        ),
+        None,
+    )
+    if path is None or not path.startswith("/"):
+        return []
+    methods = _options_methods(entries.get(_JS_OPTIONS_METHOD_KEY))
+    if not methods:
+        return []
+    # The handler shape is the server evidence: an inline function, or an
+    # identifier declared in the module. A client's request({url, method})
+    # has neither; a handler referenced through an import stays a ceiling.
+    handler = entries.get(_JS_OPTIONS_HANDLER_KEY)
+    handler_name = (
+        _decode(handler)
+        if handler is not None
+        and handler.type in (cs.TS_PY_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
+        else None
+    )
+    if not (
+        (handler is not None and handler.type in _JS_INLINE_HANDLER_TYPES)
+        or (handler_name is not None and handler_name in evidence.declared_functions)
+    ):
+        return []
+    return [RouteRegistration(m, path, handler_name, scope) for m in methods]
+
+
+def _js_registrations(
+    call: Node, scope: str, evidence: _ModuleEvidence
+) -> list[RouteRegistration]:
+    single = _js_registration(call, scope, evidence)
+    if single is not None:
+        return [single]
+    return _js_options_registrations(call, scope, evidence)
+
+
+def _go_registrations(
+    call: Node, scope: str, evidence: _ModuleEvidence
+) -> list[RouteRegistration]:
+    single = _go_registration(call, scope, evidence)
+    return [] if single is None else [single]
+
+
 def _go_server_evidence(
     fn: Node, field: str, args: list[Node], evidence: _ModuleEvidence
 ) -> bool:
@@ -433,11 +540,11 @@ def collect_route_registrations(
     if language is cs.SupportedLanguage.GO:
         scope_types = _GO_SCOPE_TYPES
         call_type = cs.TS_GO_CALL_EXPRESSION
-        extract = _go_registration
+        extract = _go_registrations
     else:
         scope_types = _JS_SCOPE_TYPES
         call_type = cs.TS_CALL_EXPRESSION
-        extract = _js_registration
+        extract = _js_registrations
     out: list[RouteRegistration] = []
     stack: list[tuple[Node, str]] = [(root, "")]
     while stack:
@@ -447,8 +554,6 @@ def collect_route_registrations(
             stack.extend((child, inner) for child in node.named_children)
             continue
         if node.type == call_type:
-            registration = extract(node, scope, evidence)
-            if registration is not None:
-                out.append(registration)
+            out.extend(extract(node, scope, evidence))
         stack.extend((child, scope) for child in node.named_children)
     return out

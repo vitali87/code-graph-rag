@@ -359,9 +359,7 @@ class TestStaleRouteCleanup:
 class TestOptionsObjectRoutes:
     # Issue #907: one call, one object literal carrying method/path/handler.
 
-    def test_endpoint_options_object_with_inline_handler(
-        self, tmp_path: Path
-    ) -> None:
+    def test_endpoint_options_object_with_inline_handler(self, tmp_path: Path) -> None:
         files = {
             "gateway.ts": (
                 "const app = createApp()\n\n"
@@ -425,9 +423,7 @@ class TestOptionsObjectRoutes:
         edges = _run(tmp_path, files, "javascript")
         assert not edges, edges
 
-    def test_imported_handler_identifier_is_not_evidence(
-        self, tmp_path: Path
-    ) -> None:
+    def test_imported_handler_identifier_is_not_evidence(self, tmp_path: Path) -> None:
         # A handler referenced through an import is a documented ceiling: the
         # object shape alone must not register when nothing in the module
         # backs the handler up.
