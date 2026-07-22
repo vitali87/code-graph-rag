@@ -205,8 +205,7 @@ def test_lambda_parameter_counts_as_evidence(
     assert not any(qn.endswith(".lwindow") for qn in functions), sorted(functions)
     calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
     assert any(
-        d.endswith(".FlutterWindow.FlutterWindow")
-        and ".lambdaScope" in s
+        d.endswith(".FlutterWindow.FlutterWindow") and ".lambdaScope" in s
         for s, d in calls
     ), sorted(calls)
 
