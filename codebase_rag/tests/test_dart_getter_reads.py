@@ -378,3 +378,72 @@ def test_method_parameter_does_not_shadow_initializer_read(tmp_path: Path) -> No
     assert any(r == REFERENCES and b.endswith("Widgeta.tone") for _a, r, b in rels), (
         rels
     )
+
+
+def test_receiver_position_getter_read_is_referenced(tmp_path: Path) -> None:
+    # `_wonders.length` reads the `_wonders` getter even though the FINAL
+    # member (`length`) is external: the chain head in receiver position is
+    # a read (issue #873, wonderous `_HomeScreenState._wonders`).
+    files = {
+        "app.dart": (
+            "class Screen {\n"
+            "  List<int> get _wonders => [1, 2];\n"
+            "  int get _numWonders => _wonders.length;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Screen._numWonders", REFERENCES, ".Screen._wonders"), rels
+
+
+def test_receiver_position_read_shadowed_by_local(tmp_path: Path) -> None:
+    # A local named like the getter owns the receiver position inside its
+    # scope: no read of the getter may be fabricated.
+    files = {
+        "app.dart": (
+            "class Screen {\n"
+            "  List<int> get _wonders => [1, 2];\n"
+            "  int count() {\n"
+            "    final _wonders = <int>[3];\n"
+            "    return _wonders.length;\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".Screen.count", REFERENCES, ".Screen._wonders"), rels
+
+
+def test_cascade_receiver_getter_read_is_referenced(tmp_path: Path) -> None:
+    # `_wonders..add(3)` reads the `_wonders` getter to obtain the cascade
+    # receiver; the cascaded call itself belongs to the call pass.
+    files = {
+        "app.dart": (
+            "class Screen {\n"
+            "  List<int> get _wonders => [1, 2];\n"
+            "  void fill() {\n"
+            "    _wonders..add(3);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Screen.fill", REFERENCES, ".Screen._wonders"), rels
+
+
+def test_invoked_chain_head_is_not_a_property_read(tmp_path: Path) -> None:
+    # `_wonders(3)` is an invocation the call pass owns: a head followed
+    # directly by an argument_part must stay out of the read pass.
+    files = {
+        "app.dart": (
+            "class Screen {\n"
+            "  int _wonders(int n) => n;\n"
+            "  int get _tone => 1;\n"
+            "  void fill() {\n"
+            "    _wonders(3);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".Screen.fill", REFERENCES, ".Screen._wonders"), rels

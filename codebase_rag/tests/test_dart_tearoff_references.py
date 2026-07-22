@@ -168,3 +168,46 @@ def test_map_and_set_literal_tearoffs_are_referenced(tmp_path: Path) -> None:
     assert _has(rels, ".Table.register", REFERENCES, ".Table.onDrag"), rels
     assert _has(rels, ".Table.register", REFERENCES, ".Table.onSetA"), rels
     assert _has(rels, ".Table.register", REFERENCES, ".Table.onTyped"), rels
+
+
+def test_constructor_argument_ternary_tearoff_is_referenced(tmp_path: Path) -> None:
+    # A tear-off inside a ternary handed to a RESOLVABLE constructor
+    # (`Footer(onReset: cond ? _handleReset : null)`) is stored by the
+    # constructed object and invoked later; issue #873's second repro
+    # (wonderous `_CollectionScreenState._handleReset`).
+    files = {
+        "app.dart": (
+            "class Footer {\n"
+            "  final void Function()? onReset;\n"
+            "  Footer({this.onReset});\n"
+            "}\n"
+            "class Screen {\n"
+            "  void _handleReset() {}\n"
+            "  Footer build(int discovered, int explored) {\n"
+            "    return Footer(onReset: discovered + explored > 0"
+            " ? _handleReset : null);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, ".Screen.build", REFERENCES, ".Screen._handleReset"), rels
+
+
+def test_constructor_argument_direct_tearoff_is_referenced(tmp_path: Path) -> None:
+    files = {
+        "app.dart": (
+            "class Footer {\n"
+            "  final void Function()? onReset;\n"
+            "  Footer({this.onReset});\n"
+            "}\n"
+            "class Screen {\n"
+            "  void _handleReset() {}\n"
+            "  Footer build() {\n"
+            "    return Footer(onReset: _handleReset);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, ".Screen.build", REFERENCES, ".Screen._handleReset"), rels
