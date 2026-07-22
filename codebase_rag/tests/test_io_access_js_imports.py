@@ -348,6 +348,4 @@ class TestTemplateLiteralUrls:
                 )
             },
         )
-        assert _edge(
-            rels, "m.log", WRITES_TO, "resource::FILE::logs/{date}.txt"
-        ), rels
+        assert _edge(rels, "m.log", WRITES_TO, "resource::FILE::logs/{date}.txt"), rels
