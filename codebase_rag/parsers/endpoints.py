@@ -144,6 +144,41 @@ def url_matches_template(url: str, template: str) -> bool:
     )
 
 
+# Bounded suffix mode (issue #911): ingress mounts (`/y/<service>/review` to
+# `POST /review`) and proxy rewrites (`/api/cases` to `GET /cases`) put
+# infrastructure lead segments on the client path. At most this many are
+# stripped, and only when exactly one candidate endpoint matches.
+_MAX_SUFFIX_LEAD_SEGMENTS = 2
+KEY_LEAD_PREFIX = "lead_prefix"
+
+
+def url_suffix_match_lead(url: str, template: str) -> str | None:
+    """The stripped lead when ``template`` matches a proper tail of ``url``.
+
+    ``/y/some-service/review`` against ``/review`` yields
+    ``/y/some-service``. Gated: one or two stripped lead segments only, and
+    a template carrying the unknown-lead marker already tail-matches in
+    :func:`url_matches_template`, so it stays out of this mode.
+    """
+    parsed = urlparse(url)
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
+        return None
+    url_segments = [s for s in parsed.path.split("/") if s]
+    template_segments = [s for s in template.split("/") if s]
+    if not template_segments or template_segments[0] == UNKNOWN_LEAD_SEGMENT:
+        return None
+    lead = len(url_segments) - len(template_segments)
+    if not 1 <= lead <= _MAX_SUFFIX_LEAD_SEGMENTS:
+        return None
+    matches = all(
+        _TEMPLATE_PARAM_RE.match(expected) or expected == actual
+        for actual, expected in zip(url_segments[lead:], template_segments, strict=True)
+    )
+    return "/" + "/".join(url_segments[:lead]) if matches else None
+
+
 def _has_literal_segment(template: str) -> bool:
     """True when at least one path segment is not a template parameter.
 
@@ -331,8 +366,10 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     cannot hit a write-only route). Templates without a literal segment are
     skipped entirely; they would match any same-length URL path. When the
     URL's hostname names an indexed project, only that project's endpoints
-    are candidates; an unmatched host keeps the full fan-out. Returns the
-    number of edges emitted.
+    are candidates; an unmatched host keeps the full fan-out. A URL with no
+    exact match may still resolve through the bounded suffix mode (#911),
+    recording the stripped lead on the edge. Returns the number of edges
+    emitted.
     """
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
@@ -357,19 +394,39 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             candidates = owned | legacy
         else:
             candidates = set(endpoints)
+        exact: list[str] = []
+        suffix: dict[str, str] = {}
         for endpoint_qn in candidates:
             identity, _project = endpoints[endpoint_qn]
             method, _, template = identity.partition(" ")
-            if (
+            if not (
                 template
                 and _direction_compatible(directions, method)
                 and _has_literal_segment(template)
-                and url_matches_template(url, template)
             ):
-                writer.ensure_relationship_batch(
-                    (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
-                    cs.RelationshipType.RESOLVES_TO,
-                    (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                )
-                created += 1
+                continue
+            if url_matches_template(url, template):
+                exact.append(endpoint_qn)
+                continue
+            lead = url_suffix_match_lead(url, template)
+            if lead is not None:
+                suffix[endpoint_qn] = lead
+        for endpoint_qn in exact:
+            writer.ensure_relationship_batch(
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
+                cs.RelationshipType.RESOLVES_TO,
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+            )
+            created += 1
+        # Suffix matches are an inference: exact matches suppress them, and
+        # a tie between distinct endpoints is dropped instead of guessed.
+        if not exact and len(suffix) == 1:
+            endpoint_qn, lead = next(iter(suffix.items()))
+            writer.ensure_relationship_batch(
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
+                cs.RelationshipType.RESOLVES_TO,
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                properties={KEY_LEAD_PREFIX: lead},
+            )
+            created += 1
     return created
