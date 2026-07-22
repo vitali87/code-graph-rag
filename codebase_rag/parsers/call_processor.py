@@ -2288,6 +2288,9 @@ class CallProcessor:
                 caller_node, caller_spec, caller_qn, module_qn
             )
             self._ingest_cpp_member_init_ctor_calls(caller_node, caller_spec, module_qn)
+            self._ingest_cpp_implicit_base_lifecycle_calls(
+                caller_node, caller_spec, caller_qn, module_qn
+            )
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -3562,6 +3565,87 @@ class CallProcessor:
                 )
                 if class_qn is not None:
                     self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _ingest_cpp_implicit_base_lifecycle_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+    ) -> None:
+        # A ctor whose member initializer list does not name a base still
+        # runs that base's default ctor, and a dtor runs base dtors after
+        # its own body; neither has an AST node (issue #892), so base-chain
+        # lifecycles reached only implicitly reported dead (wonderous
+        # Win32Window). The caller's identity comes from its qn (leaf ==
+        # class simple name for a ctor, `~name` for a dtor, parent a
+        # registered class), which covers out-of-class definitions whose
+        # per-caller pass runs at module level. Registry guarded: only
+        # bases resolved to registered classes emit, and a delegating ctor
+        # (`: Derived(0)`) emits nothing because the delegated-to ctor owns
+        # the base call.
+        registry = self._resolver.function_registry
+        class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or registry.get(class_qn) != NodeType.CLASS:
+            return
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        is_ctor = leaf == simple
+        is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
+        if not is_ctor and not is_dtor:
+            return
+        bases = [
+            base_qn
+            for base_qn in self._resolver.class_inheritance.get(class_qn, [])
+            if registry.get(base_qn) == NodeType.CLASS
+        ]
+        if not bases:
+            return
+        if is_dtor:
+            for base_qn in bases:
+                for dtor_type, dtor_qn in sorted(
+                    self._resolver.cpp_destructor_targets(base_qn)
+                ):
+                    for variant in registry.variants(dtor_qn):
+                        self.ingestor.ensure_relationship_batch(
+                            caller_spec,
+                            cs.RelationshipType.CALLS,
+                            (dtor_type, cs.KEY_QUALIFIED_NAME, variant),
+                        )
+            return
+        named = self._cpp_member_init_class_qns(caller_node, module_qn)
+        if class_qn in named:
+            return
+        for base_qn in bases:
+            if base_qn in named:
+                continue
+            for ctor_type, ctor_qn in sorted(
+                self._resolver.java_constructor_targets(base_qn)
+            ):
+                for variant in registry.variants(ctor_qn):
+                    self.ingestor.ensure_relationship_batch(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
+
+    def _cpp_member_init_class_qns(self, caller_node: Node, module_qn: str) -> set[str]:
+        # Class qns the ctor's member initializer list names explicitly;
+        # those base ctors are already emitted by the member-init pass.
+        named: set[str] = set()
+        for init_list in caller_node.children:
+            if init_list.type != cs.CppNodeType.FIELD_INITIALIZER_LIST:
+                continue
+            for initializer in init_list.named_children:
+                if initializer.type != cs.CppNodeType.FIELD_INITIALIZER:
+                    continue
+                name = self._cpp_member_init_head_name(initializer)
+                if name and (
+                    resolved := self._resolver._resolve_type_to_class_qn(
+                        name, module_qn
+                    )
+                ):
+                    named.add(resolved)
+        return named
 
     def _emit_cpp_ctor_calls(
         self, caller_spec: tuple[str, str, str], class_qn: str

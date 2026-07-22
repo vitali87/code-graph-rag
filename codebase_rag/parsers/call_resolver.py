@@ -520,9 +520,29 @@ class CallResolver:
         # prefix scan over every member (Gemini review, PR #799).
         dtor_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         dtor_type = self.function_registry.get(dtor_qn)
-        if dtor_type is None:
-            return set()
-        return {(dtor_type, dtor_qn)}
+        if dtor_type is not None:
+            return {(dtor_type, dtor_qn)}
+        # A class with no declared dtor still runs its BASE dtors at end of
+        # lifetime (issue #892); fall through INHERITS to the nearest
+        # declared one so the base chain stays reachable.
+        targets: set[tuple[str, str]] = set()
+        seen = {class_qn}
+        stack = list(self.class_inheritance.get(class_qn, []))
+        while stack:
+            base_qn = stack.pop()
+            if base_qn in seen:
+                continue
+            seen.add(base_qn)
+            base_simple = base_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            base_dtor_qn = (
+                f"{base_qn}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{base_simple}"
+            )
+            base_dtor_type = self.function_registry.get(base_dtor_qn)
+            if base_dtor_type is not None:
+                targets.add((base_dtor_type, base_dtor_qn))
+                continue
+            stack.extend(self.class_inheritance.get(base_qn, []))
+        return targets
 
     def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
         # The class constructed by a `return {...};` inside caller_qn: the
