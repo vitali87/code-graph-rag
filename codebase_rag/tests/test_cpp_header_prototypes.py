@@ -21,6 +21,7 @@ from codebase_rag.tests.conftest import run_updater
 UTILS_H = """
 int FreeHelper(int x);
 int OnlyProto(int x);
+static int TuLocal(int x);
 
 namespace alpha {
 int Scoped(int x);
@@ -30,6 +31,7 @@ int Scoped(int x);
 UTILS_CPP = """
 #include "utils.h"
 int FreeHelper(int x) { return x; }
+int TuLocal(int x) { return x; }
 
 namespace beta {
 int Scoped(int x) { return x; }
@@ -99,6 +101,18 @@ def test_prototype_only_function_keeps_its_node(
     run_updater(cpp_proto_project, mock_ingestor)
     functions = _functions(mock_ingestor)
     assert any(qn.endswith(".utils.h.OnlyProto") for qn in functions), sorted(functions)
+
+
+def test_static_prototype_is_never_deduped(
+    cpp_proto_project: Path, mock_ingestor: MagicMock
+):
+    # `static int TuLocal(int);` has INTERNAL linkage: each translation
+    # unit owns a separate function, so a definition registered from any
+    # other module is not its definition and must not drop it (Greptile
+    # round 2).
+    run_updater(cpp_proto_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert any(qn.endswith(".utils.h.TuLocal") for qn in functions), sorted(functions)
 
 
 def test_namespace_mismatch_keeps_the_prototype(
