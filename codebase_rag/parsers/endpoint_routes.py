@@ -16,7 +16,7 @@ receiver is bound in-module to a known framework factory (``express()``,
 ``echo.New()``, ``chi.NewRouter()``, ...), or ``http.Handle*`` with
 ``net/http`` imported, or one of its handler arguments is an inline
 function, a function declared in the module, or (Go verb methods on a
-const-derived path, the generated shape) an attribute expression like
+concatenated path, the generated shape) an attribute expression like
 ``wrapper.GetMe``. A bare ``apiClient.get('/users')`` has none of these
 and is ignored.
 
@@ -308,7 +308,7 @@ def _go_server_evidence(
     field: str,
     args: list[Node],
     evidence: _ModuleEvidence,
-    const_derived_path: bool,
+    concat_path: bool,
 ) -> bool:
     if _receiver_is_framework(fn, evidence):
         return True
@@ -320,10 +320,11 @@ def _go_server_evidence(
         return True
     # A generated `router.Get(BaseURL+"/x", wrapper.GetMe)` hands an
     # attribute-expression handler to a verb method (issue #909). The
-    # const-derived path narrows this to the generated shape: a client's
-    # `c.Get("/users", opts.Header)` passes a plain literal and stays out.
+    # concatenated path narrows this to the generated shape: a client's
+    # `c.Get("/users", opts.Header)` or `c.Get(baseURL, opts.Header)`
+    # passes a plain literal or bare const and stays out.
     if (
-        const_derived_path
+        concat_path
         and field in _GO_VERB_METHODS
         and any(arg.type == cs.TS_GO_SELECTOR_EXPRESSION for arg in args[1:])
     ):
@@ -372,10 +373,10 @@ def _go_registration(
     path = _go_path_value(path_node, evidence)
     if path is None or field is None:
         return None
-    const_derived = (
-        path_node is not None and _literal_path(path_node, _GO_PATH_LITERALS) is None
-    )
-    if not _go_server_evidence(fn, field, args, evidence, const_derived):
+    # Only a CONCATENATION is the generated registration shape; a bare
+    # const identifier can just as well hold a client's URL.
+    concat_path = path_node is not None and path_node.type == cs.TS_BINARY_EXPRESSION
+    if not _go_server_evidence(fn, field, args, evidence, concat_path):
         return None
     handler = _handler_identifier(
         args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
