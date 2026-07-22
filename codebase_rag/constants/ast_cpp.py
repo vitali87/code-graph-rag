@@ -180,6 +180,8 @@ TS_CPP_COMPOUND_STATEMENT = "compound_statement"
 # `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests
 # inside this wrapper, one level below the statement node.
 TS_CPP_CONDITION_CLAUSE = "condition_clause"
+# A lambda's parameter list hangs off this declarator (no name to declare).
+TS_CPP_ABSTRACT_FUNCTION_DECLARATOR = "abstract_function_declarator"
 TS_CPP_DECLARATION = "declaration"
 TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"

@@ -627,7 +627,10 @@ def cpp_enclosing_function_value_names(node: Node) -> set[str]:
             return names
         if current.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
             # A lambda or local-class member body opens its own scope; a
-            # candidate inside one takes evidence only from that scope.
+            # candidate inside one takes evidence only from that scope,
+            # which for a lambda includes its parameters.
+            if current.type == cs.TS_CPP_LAMBDA_EXPRESSION:
+                _collect_cpp_parameter_names(current, names)
             return names
         current = current.parent
     return set()
@@ -654,9 +657,14 @@ def _collect_preceding_declaration_names(
 
 
 def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:
+    # A lambda's parameter list hangs off an abstract_function_declarator
+    # (no name to declare); a function's off its function_declarator.
     declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
     while declarator is not None:
-        if declarator.type == cs.CppNodeType.FUNCTION_DECLARATOR:
+        if declarator.type in (
+            cs.CppNodeType.FUNCTION_DECLARATOR,
+            cs.TS_CPP_ABSTRACT_FUNCTION_DECLARATOR,
+        ):
             break
         declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
     if declarator is None:

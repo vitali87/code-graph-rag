@@ -3577,16 +3577,21 @@ class CallProcessor:
         # most-vexing-parse misparse `FlutterWindow window(project);` (a
         # "function declaration" whose arguments are bare in-scope locals).
         # Revive-only: nothing is emitted unless the declared type resolves
-        # to a registered first-party class. Nested lambda / local-class
-        # scopes are skipped; their declarations belong to their own caller.
+        # to a registered first-party class. Lambda bodies are walked
+        # because their calls flat-attribute to the enclosing caller (the
+        # general call pass does the same); local-class scopes are skipped,
+        # their method bodies being genuinely separate callers. The walk
+        # descends into a declaration's own children too: a lambda bound by
+        # `auto g = [](...) { ... }` nests inside one.
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
-            if node.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            if node.type in cs.CPP_COMPOUND_TYPES:
                 continue
             if node.type != cs.CppNodeType.DECLARATION:
                 stack.extend(node.children)
                 continue
+            stack.extend(node.children)
             if not self._cpp_declaration_is_construction(node):
                 continue
             type_name = self._cpp_declaration_type_name(node)
