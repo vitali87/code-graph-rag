@@ -267,6 +267,11 @@ class RouterRegistry:
         head, _, rest = text.partition(cs.SEPARATOR_DOT)
         if cs.SEPARATOR_DOT in rest:
             return None
+        # `UsersApi.router` addresses a class-scoped router in this module
+        # through the class name.
+        scoped = (module_qn, head, rest)
+        if scoped in self._routers:
+            return scoped
         imported = self._imports.get(module_qn, {}).get(head)
         if imported is None or imported[1]:
             return None
