@@ -364,7 +364,11 @@ class TestGoGeneratedRoutes:
         "package main\n\n"
         'import "github.com/go-chi/chi/v5"\n\n'
         'const BaseURL = "/api/v1"\n\n'
-        "func HandlerFromMux(wrapper ServerInterfaceWrapper, router chi.Router) {\n"
+        "type ServerInterfaceWrapper struct {\n"
+        "\tHandler ServerInterface\n"
+        "}\n\n"
+        "func HandlerFromMux(si ServerInterface, router chi.Router) {\n"
+        "\twrapper := ServerInterfaceWrapper{Handler: si}\n"
         '\trouter.Get(BaseURL+"/me", wrapper.GetMe)\n'
         '\trouter.Post(BaseURL+"/logout", wrapper.PostLogout)\n'
         "}\n"
@@ -384,7 +388,9 @@ class TestGoGeneratedRoutes:
                 "const (\n"
                 '\tprefix = "/internal"\n'
                 ")\n\n"
+                "type healthWrapper struct{}\n\n"
                 "func mount(router Router) {\n"
+                "\twrapper := healthWrapper{}\n"
                 '\trouter.Get(prefix+"/health", wrapper.Health)\n'
                 "}\n"
             ),
@@ -434,6 +440,24 @@ class TestGoGeneratedRoutes:
                 "package main\n\n"
                 "func fetchUsers(client HTTPClient, opts Options) {\n"
                 '\tclient.Get("/users", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_concat_path_with_option_selector_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # `client.Get(baseURL + "/me", opts.Header)` concatenates a const
+        # AND passes a selector, but `opts` is a parameter, not a wrapper
+        # bound to a module-declared type: no registration.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "func fetchMe(client HTTPClient, opts Options) {\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
                 "}\n"
             ),
         }
