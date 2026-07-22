@@ -271,6 +271,7 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     mock.ingestor = mock_ingestor
     mock.parsers = parsers
     mock.queries = queries
+    mock.project_name = temp_repo.resolve().name
 
     mock.factory = MagicMock()
     mock.factory.definition_processor = MagicMock()

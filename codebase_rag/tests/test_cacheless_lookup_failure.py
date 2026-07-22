@@ -96,8 +96,11 @@ def test_full_build_module_qn_rehydration_failure_degrades(
 ) -> None:
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
+    failed_queries: list[str] = []
+
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_ALL_MODULE_QNS:
+            failed_queries.append(query)
             raise RuntimeError("graph down")
         return []
 
@@ -105,6 +108,9 @@ def test_full_build_module_qn_rehydration_failure_degrades(
 
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
+    # The guard must actually have been refused; module creation alone also
+    # happens when the rehydration query is never reached.
+    assert failed_queries
     module_qns = {
         c.args[1].get(cs.KEY_QUALIFIED_NAME)
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -118,8 +124,11 @@ def test_full_build_inherits_rehydration_failure_degrades(
 ) -> None:
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
 
+    failed_queries: list[str] = []
+
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_ALL_INHERITS:
+            failed_queries.append(query)
             raise RuntimeError("graph down")
         return []
 
@@ -127,6 +136,7 @@ def test_full_build_inherits_rehydration_failure_degrades(
 
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
+    assert failed_queries
     module_qns = {
         c.args[1].get(cs.KEY_QUALIFIED_NAME)
         for c in mock_ingestor.ensure_node_batch.call_args_list
