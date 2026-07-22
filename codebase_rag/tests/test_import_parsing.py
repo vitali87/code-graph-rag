@@ -43,30 +43,15 @@ class TestImportParsing:
     def test_python_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python import statement parsing."""
 
-        import_patterns = [
-            "import os",
-            "import sys, json",
-            "from pathlib import Path",
-            "from collections import defaultdict, Counter",
-            "from . import local_module",
-            "from ..parent import something",
-        ]
-
-        for pattern in import_patterns:
-            try:
-                assert hasattr(
-                    graph_updater.factory.import_processor, "_parse_python_imports"
-                )
-                assert hasattr(
-                    graph_updater.factory.import_processor,
-                    "_handle_python_import_statement",
-                )
-                assert hasattr(
-                    graph_updater.factory.import_processor,
-                    "_handle_python_import_from_statement",
-                )
-            except Exception as e:
-                pytest.fail(f"Python import parsing failed for '{pattern}': {e}")
+        assert hasattr(graph_updater.factory.import_processor, "_parse_python_imports")
+        assert hasattr(
+            graph_updater.factory.import_processor,
+            "_handle_python_import_statement",
+        )
+        assert hasattr(
+            graph_updater.factory.import_processor,
+            "_handle_python_import_from_statement",
+        )
 
     def test_import_mapping_functionality(self, graph_updater: GraphUpdater) -> None:
         """Test that import mapping works correctly."""
@@ -107,13 +92,10 @@ class TestImportParsing:
             graph_updater.factory.import_processor, "_resolve_relative_import"
         )
 
-        try:
-            method = getattr(
-                graph_updater.factory.import_processor, "_resolve_relative_import"
-            )
-            assert callable(method)
-        except Exception as e:
-            pytest.fail(f"Relative import resolution method check failed: {e}")
+        method = getattr(
+            graph_updater.factory.import_processor, "_resolve_relative_import"
+        )
+        assert callable(method)
 
     def test_language_specific_import_methods(
         self, graph_updater: GraphUpdater
@@ -146,15 +128,10 @@ class TestImportParsing:
         graph_updater.function_registry = FunctionRegistryTrie()
         assert len(graph_updater.function_registry) == 0
 
-        try:
-            result = (
-                graph_updater.factory.call_processor._resolver.resolve_function_call(
-                    "nonexistent", module_qn
-                )
-            )
-            assert result is None
-        except Exception as e:
-            pytest.fail(f"Function resolution crashed unexpectedly: {e}")
+        result = graph_updater.factory.call_processor._resolver.resolve_function_call(
+            "nonexistent", module_qn
+        )
+        assert result is None
 
     def test_python_alias_import_parsing(self) -> None:
         PY_LANGUAGE = Language(tsp.language())

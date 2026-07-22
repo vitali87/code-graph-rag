@@ -16,6 +16,8 @@ SERVICE_MEMGRAPH = "memgraph"
 SERVICE_QDRANT = "qdrant"
 SERVICE_LAB = "lab"
 
+LOOPBACK_HOST = "127.0.0.1"
+
 
 class StackState(StrEnum):
     RUNNING = "running"

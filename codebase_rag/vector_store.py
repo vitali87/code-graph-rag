@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -558,7 +559,7 @@ def _normalize_milvus_score(raw_score: float) -> float:
 
 def _uses_milvus_lite_30_cosine_distance() -> bool:
     uri = settings.MILVUS_URI
-    if uri.startswith(("http://", "https://", "tcp://")):
+    if urlsplit(uri).scheme in ("http", "https", "tcp"):
         return False
     try:
         lite_version = version("milvus-lite")
