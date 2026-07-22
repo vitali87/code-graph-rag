@@ -338,8 +338,17 @@ class TestIncrementalMountChanges:
                 return handler_rows
             return []
 
-        mock = MagicMock()
-        mock.fetch_all.side_effect = fake_fetch
+        class _QueryableIngestor:
+            # Concrete (not MagicMock) so isinstance(_, QueryProtocol) holds,
+            # matching how the real MemgraphIngestor is detected at runtime.
+            def __init__(self) -> None:
+                self.ensure_node_batch = MagicMock()
+                self.ensure_relationship_batch = MagicMock()
+                self.flush_all = MagicMock()
+                self.fetch_all = MagicMock(side_effect=fake_fetch)
+                self.execute_write = MagicMock()
+
+        mock = _QueryableIngestor()
         updater = GraphUpdater(
             ingestor=mock,
             repo_path=tmp_path,

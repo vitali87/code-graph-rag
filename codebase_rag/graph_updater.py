@@ -41,10 +41,12 @@ from .parsers.csharp_frontend import (
     run_csharp_frontend,
 )
 from .parsers.endpoint_prefixes import (
+    CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
+    CYPHER_PROJECT_ROUTE_HANDLERS,
     build_router_registry,
 )
-from .parsers.endpoints import emit_endpoints, link_endpoints
+from .parsers.endpoints import emit_endpoints, link_endpoints, parse_route_decorator
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -735,11 +737,36 @@ class GraphUpdater:
         self._generate_semantic_embeddings()
 
     def _emit_pending_endpoints(self) -> None:
-        dp = self.factory.definition_processor
-        if not dp.pending_endpoints:
+        if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
-        registry = build_router_registry(self._python_module_asts())
-        for label, qn, decorators, module_qn in dp.pending_endpoints:
+        dp = self.factory.definition_processor
+        module_asts = self._python_module_asts()
+        entries = list(dp.pending_endpoints)
+        # A mount-only incremental change re-parses just the mounting module;
+        # the unchanged handlers must still re-emit under the new prefix, so
+        # they come back from the graph. A full build queued them all already.
+        if not self._is_full_build:
+            entries.extend(
+                self._rehydrated_route_handlers(
+                    {qn for _label, qn, _decorators, _module in entries},
+                    set(module_asts),
+                )
+            )
+        if not entries:
+            return
+        # Re-emitted handlers drop their previous EXPOSES first, so a
+        # template that changed prefix loses its stale anchor and the orphan
+        # cleanup prunes the outdated endpoint node.
+        if isinstance(self.ingestor, QueryProtocol):
+            try:
+                self.ingestor.execute_write(
+                    CYPHER_DELETE_HANDLER_EXPOSES,
+                    {"qns": [qn for _label, qn, _decorators, _module in entries]},
+                )
+            except Exception:
+                logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+        registry = build_router_registry(module_asts)
+        for label, qn, decorators, module_qn in entries:
             emit_endpoints(
                 self._sink,
                 label,
@@ -749,6 +776,47 @@ class GraphUpdater:
                 prefix_resolver=registry.mount_prefixes,
             )
         dp.pending_endpoints.clear()
+
+    def _rehydrated_route_handlers(
+        self, already_pending: set[str], module_qns: set[str]
+    ) -> list[tuple[cs.NodeLabel, str, list[str], str | None]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
+        except Exception:
+            return []
+        out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            decorators = row.get(cs.KEY_DECORATORS)
+            if not isinstance(qn, str) or qn in already_pending:
+                continue
+            if not isinstance(decorators, list):
+                continue
+            routes = [
+                d
+                for d in decorators
+                if isinstance(d, str) and parse_route_decorator(d)
+            ]
+            if not routes:
+                continue
+            labels = row.get("labels")
+            label = (
+                cs.NodeLabel.METHOD
+                if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
+                else cs.NodeLabel.FUNCTION
+            )
+            module_qn = max(
+                (m for m in module_qns if qn.startswith(m + cs.SEPARATOR_DOT)),
+                key=len,
+                default=None,
+            )
+            out.append((label, qn, routes, module_qn))
+        return out
 
     def _python_module_asts(self) -> dict[str, Node]:
         # Re-parsed files first; on an incremental run the unchanged modules

@@ -39,6 +39,24 @@ CYPHER_PROJECT_PY_MODULES = (
     "RETURN m.qualified_name AS qualified_name, m.path AS path"
 )
 
+# A mount-only incremental change re-parses just the mounting module, so the
+# unchanged route handlers must come back from the graph to re-emit their
+# templates under the new prefix.
+CYPHER_PROJECT_ROUTE_HANDLERS = (
+    "MATCH (f) WHERE (f:Function OR f:Method) "
+    "AND f.qualified_name STARTS WITH $project_prefix "
+    "AND f.decorators IS NOT NULL "
+    "RETURN labels(f) AS labels, f.qualified_name AS qualified_name, "
+    "f.decorators AS decorators"
+)
+
+# Re-emitted handlers drop their previous EXPOSES edges first, so an
+# outdated template loses its anchor and the orphan cleanup can prune it.
+CYPHER_DELETE_HANDLER_EXPOSES = (
+    "MATCH (f)-[e:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) "
+    "WHERE f.qualified_name IN $qns DELETE e"
+)
+
 
 class _Kind(Enum):
     APP = "app"
@@ -194,13 +212,24 @@ class RouterRegistry:
         routers: dict[tuple[str, str], _Router],
         mounts: dict[tuple[str, str], list[_Mount]],
         imports: dict[str, dict[str, _ImportBinding | None]],
+        ambiguous: set[tuple[str, str]] | None = None,
     ) -> None:
         self._routers = routers
         self._mounts = mounts
         self._imports = imports
+        self._ambiguous = ambiguous or set()
 
     def resolve_var(self, module_qn: str, text: str) -> tuple[str, str] | None:
-        """The router key a variable reference addresses, if any."""
+        """The router key a variable reference addresses, if any.
+
+        A name assigned differing router definitions in one module (a
+        factory-local shadow of a module-level router) is ambiguous and
+        resolves to nothing, so no scope's prefix can hijack another's.
+        """
+        key = self._resolve_var(module_qn, text)
+        return None if key is None or key in self._ambiguous else key
+
+    def _resolve_var(self, module_qn: str, text: str) -> tuple[str, str] | None:
         if cs.SEPARATOR_DOT not in text:
             if (module_qn, text) in self._routers:
                 return (module_qn, text)
@@ -288,6 +317,7 @@ class RouterRegistry:
 def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
     """Collect router definitions, mounts and imports from module ASTs."""
     routers: dict[tuple[str, str], _Router] = {}
+    ambiguous: set[tuple[str, str]] = set()
     raw_mounts: list[_RawMount] = []
     raw_imports: dict[str, dict[str, str]] = {}
 
@@ -316,9 +346,12 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
                     )
                     if kind is not None:
                         value, given = _keyword_argument(right)
-                        routers[(module_qn, _decode(left) or "")] = _Router(
-                            kind, _string_value(value) if given else ""
-                        )
+                        key = (module_qn, _decode(left) or "")
+                        new = _Router(kind, _string_value(value) if given else "")
+                        if key in routers and routers[key] != new:
+                            ambiguous.add(key)
+                        else:
+                            routers[key] = new
             elif node.type == cs.TS_PY_CALL:
                 fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
                 if fn is not None and fn.type == cs.TS_PY_ATTRIBUTE:
@@ -357,7 +390,7 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
             resolved[local] = (target, attr) if target is not None else None
         imports[module_qn] = resolved
 
-    registry = RouterRegistry(routers, {}, imports)
+    registry = RouterRegistry(routers, {}, imports, ambiguous)
     mounts: dict[tuple[str, str], list[_Mount]] = registry._mounts
     for raw in raw_mounts:
         child_key = registry.resolve_var(raw.module_qn, raw.child_text)
