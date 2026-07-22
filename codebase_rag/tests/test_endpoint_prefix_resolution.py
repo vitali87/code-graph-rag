@@ -250,12 +250,12 @@ class TestUnknownLeadMatching:
 
 
 class TestLocalRouterNameCollisions:
-    def test_factory_local_shadow_falls_back_to_bare_template(
+    def test_factory_local_shadow_keeps_module_scope_resolution(
         self, tmp_path: Path
     ) -> None:
         # A factory-local router sharing the module-level router's name must
-        # not hijack its prefix; an ambiguous name yields the bare template
-        # rather than a wrong one.
+        # not hijack its prefix; scope-aware keys keep the module handler on
+        # the module-level router.
         files = {
             "main.py": (
                 "from fastapi import APIRouter, FastAPI\n\n"
@@ -272,7 +272,7 @@ class TestLocalRouterNameCollisions:
         }
         edges = _run(tmp_path, files)
         assert not _endpoint(edges, "main.get_user", "GET /admin/{user_id}"), edges
-        assert _endpoint(edges, "main.get_user", "GET /{user_id}"), edges
+        assert _endpoint(edges, "main.get_user", "GET /users/{user_id}"), edges
 
     def test_identical_reassignment_keeps_resolution(self, tmp_path: Path) -> None:
         # Re-running the same assignment is not ambiguity.

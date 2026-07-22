@@ -75,6 +75,17 @@ _MOUNT_METHODS = frozenset({"include_router", "register_blueprint"})
 
 _ImportBinding = tuple[str, str]  # (module_qn, attr); attr '' = the module
 
+# A router key is (module_qn, scope, var): scope is the dotted chain of
+# enclosing function names ('' at module level), so two factories using the
+# same local router name stay distinct and cannot leak mounts across scopes.
+_RouterKey = tuple[str, str, str]
+
+
+def _scope_chain(scope: str) -> list[str]:
+    # Innermost first, ending at module level: 'a.b' -> ['a.b', 'a', ''].
+    parts = scope.split(cs.SEPARATOR_DOT) if scope else []
+    return [cs.SEPARATOR_DOT.join(parts[:i]) for i in range(len(parts), -1, -1)]
+
 
 @dataclass(frozen=True)
 class _Router:
@@ -84,7 +95,7 @@ class _Router:
 
 @dataclass(frozen=True)
 class _Mount:
-    parent: tuple[str, str] | None  # (module_qn, var); None = unresolvable
+    parent: _RouterKey | None  # None = unresolvable
     prefix: str | None  # literal mount prefix; None = non-literal
     given: bool  # whether the mount call passed a prefix at all
 
@@ -92,6 +103,7 @@ class _Mount:
 @dataclass(frozen=True)
 class _RawMount:
     module_qn: str
+    scope: str
     parent_text: str
     child_text: str
     prefix: str | None
@@ -209,35 +221,41 @@ class RouterRegistry:
 
     def __init__(
         self,
-        routers: dict[tuple[str, str], _Router],
-        mounts: dict[tuple[str, str], list[_Mount]],
+        routers: dict[_RouterKey, _Router],
+        mounts: dict[_RouterKey, list[_Mount]],
         imports: dict[str, dict[str, _ImportBinding | None]],
-        ambiguous: set[tuple[str, str]] | None = None,
+        ambiguous: set[_RouterKey] | None = None,
     ) -> None:
         self._routers = routers
         self._mounts = mounts
         self._imports = imports
         self._ambiguous = ambiguous or set()
 
-    def resolve_var(self, module_qn: str, text: str) -> tuple[str, str] | None:
+    def resolve_var(
+        self, module_qn: str, text: str, scope: str = ""
+    ) -> _RouterKey | None:
         """The router key a variable reference addresses, if any.
 
-        A name assigned differing router definitions in one module (a
-        factory-local shadow of a module-level router) is ambiguous and
-        resolves to nothing, so no scope's prefix can hijack another's.
+        Lookup walks the lexical scope chain outwards (closures see enclosing
+        names), so two factories using one local name stay separate. A name
+        assigned differing router definitions in one scope is ambiguous and
+        resolves to nothing, so no assignment's prefix can hijack another's.
         """
-        key = self._resolve_var(module_qn, text)
+        key = self._resolve_var(module_qn, text, scope)
         return None if key is None or key in self._ambiguous else key
 
-    def _resolve_var(self, module_qn: str, text: str) -> tuple[str, str] | None:
+    def _resolve_var(
+        self, module_qn: str, text: str, scope: str
+    ) -> _RouterKey | None:
         if cs.SEPARATOR_DOT not in text:
-            if (module_qn, text) in self._routers:
-                return (module_qn, text)
+            for enclosing in _scope_chain(scope):
+                if (module_qn, enclosing, text) in self._routers:
+                    return (module_qn, enclosing, text)
             imported = self._imports.get(module_qn, {}).get(text)
             if imported is not None:
                 imported_module, attr = imported
-                if attr and (imported_module, attr) in self._routers:
-                    return (imported_module, attr)
+                if attr and (imported_module, "", attr) in self._routers:
+                    return (imported_module, "", attr)
             return None
         head, _, rest = text.partition(cs.SEPARATOR_DOT)
         if cs.SEPARATOR_DOT in rest:
@@ -245,16 +263,18 @@ class RouterRegistry:
         imported = self._imports.get(module_qn, {}).get(head)
         if imported is None or imported[1]:
             return None
-        key = (imported[0], rest)
+        key = (imported[0], "", rest)
         return key if key in self._routers else None
 
-    def mount_prefixes(self, module_qn: str, receiver: str) -> list[str] | None:
+    def mount_prefixes(
+        self, module_qn: str, receiver: str, scope: str = ""
+    ) -> list[str] | None:
         """Full mount prefixes for a decorator receiver, or None if unknown.
 
         Each entry is ready to prepend to the decorator path; an
         unresolvable prefix in the chain yields an ``/**`` lead.
         """
-        key = self.resolve_var(module_qn, receiver)
+        key = self.resolve_var(module_qn, receiver, scope)
         if key is None:
             return None
         rendered: list[str] = []
@@ -265,7 +285,7 @@ class RouterRegistry:
         return rendered
 
     def _full(
-        self, key: tuple[str, str], visiting: frozenset[tuple[str, str]]
+        self, key: _RouterKey, visiting: frozenset[_RouterKey]
     ) -> list[tuple[str, bool]]:
         router = self._routers[key]
         if router.kind is _Kind.APP:
@@ -316,16 +336,26 @@ class RouterRegistry:
 
 def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
     """Collect router definitions, mounts and imports from module ASTs."""
-    routers: dict[tuple[str, str], _Router] = {}
-    ambiguous: set[tuple[str, str]] = set()
+    routers: dict[_RouterKey, _Router] = {}
+    ambiguous: set[_RouterKey] = set()
     raw_mounts: list[_RawMount] = []
     raw_imports: dict[str, dict[str, str]] = {}
 
     for module_qn, root in module_asts.items():
         module_imports: dict[str, str] = {}
-        stack = [root]
+        stack: list[tuple[Node, str]] = [(root, "")]
         while stack:
-            node = stack.pop()
+            node, scope = stack.pop()
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
+                if not name:
+                    inner = scope
+                elif scope:
+                    inner = f"{scope}{cs.SEPARATOR_DOT}{name}"
+                else:
+                    inner = name
+                stack.extend((child, inner) for child in node.named_children)
+                continue
             if node.type in (
                 cs.TS_PY_IMPORT_STATEMENT,
                 cs.TS_PY_IMPORT_FROM_STATEMENT,
@@ -346,7 +376,7 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
                     )
                     if kind is not None:
                         value, given = _keyword_argument(right)
-                        key = (module_qn, _decode(left) or "")
+                        key = (module_qn, scope, _decode(left) or "")
                         new = _Router(kind, _string_value(value) if given else "")
                         if key in routers and routers[key] != new:
                             ambiguous.add(key)
@@ -367,13 +397,14 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
                         raw_mounts.append(
                             _RawMount(
                                 module_qn,
+                                scope,
                                 parent_text,
                                 child_text,
                                 _string_value(value) if given else None,
                                 given,
                             )
                         )
-            stack.extend(node.named_children)
+            stack.extend((child, scope) for child in node.named_children)
         raw_imports[module_qn] = module_imports
 
     modules = set(module_asts)
@@ -391,12 +422,12 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
         imports[module_qn] = resolved
 
     registry = RouterRegistry(routers, {}, imports, ambiguous)
-    mounts: dict[tuple[str, str], list[_Mount]] = registry._mounts
+    mounts: dict[_RouterKey, list[_Mount]] = registry._mounts
     for raw in raw_mounts:
-        child_key = registry.resolve_var(raw.module_qn, raw.child_text)
+        child_key = registry.resolve_var(raw.module_qn, raw.child_text, raw.scope)
         if child_key is None:
             continue
-        parent_key = registry.resolve_var(raw.module_qn, raw.parent_text)
+        parent_key = registry.resolve_var(raw.module_qn, raw.parent_text, raw.scope)
         mounts.setdefault(child_key, []).append(
             _Mount(parent_key, raw.prefix, raw.given)
         )
