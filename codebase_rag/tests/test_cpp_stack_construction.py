@@ -77,6 +77,14 @@ int conditionInit() {
   }
   return 0;
 }
+
+int lambdaScope() {
+  auto g = [](int lproject) {
+    FlutterWindow lwindow(lproject);
+    return 0;
+  };
+  return g(1);
+}
 """
 
 
@@ -176,6 +184,22 @@ def test_condition_init_name_counts_as_evidence(
     assert _has(calls, ".main.conditionInit", ".FlutterWindow.FlutterWindow"), sorted(
         calls
     )
+
+
+def test_lambda_parameter_counts_as_evidence(
+    cpp_vexing_project: Path, mock_ingestor: MagicMock
+):
+    # A candidate inside a lambda body takes evidence from the lambda's OWN
+    # scope, which includes its parameters (Greptile round 4).
+    run_updater(cpp_vexing_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert not any(qn.endswith(".lwindow") for qn in functions), sorted(functions)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert any(
+        d.endswith(".FlutterWindow.FlutterWindow")
+        and ".lambdaScope" in s
+        for s, d in calls
+    ), sorted(calls)
 
 
 def test_out_of_scope_names_keep_prototypes(
