@@ -46,8 +46,9 @@ from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
 from . import node_type as nt
+from . import parent_extraction as pe
 from . import relationships as rel
-from .utils import csharp_has_override_modifier
+from .utils import csharp_has_override_modifier, find_child_by_type
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -149,6 +150,7 @@ class ClassIngestMixin:
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
+    dart_extends_type_args: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -925,6 +927,12 @@ class ClassIngestMixin:
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
+        if language == cs.SupportedLanguage.DART and (
+            type_args := pe.extract_dart_extends_type_args(
+                member_node, module_qn, self._resolve_to_qn
+            )
+        ):
+            self.dart_extends_type_args[class_qn] = type_args
         if language == cs.SupportedLanguage.CPP:
             # Record this class's member-field types now (from the class body,
             # usually a header) so out-of-line method bodies in other files can
@@ -1142,6 +1150,11 @@ class ClassIngestMixin:
         module_qn: str | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
+        if body_node is None and class_node.type == cs.TS_DART_MIXIN_DECLARATION:
+            # mixin_declaration is the one Dart type declaration whose
+            # class_body is a positional child, not a `body` field; without
+            # this fallback a mixin's members silently vanish.
+            body_node = find_child_by_type(class_node, cs.TS_DART_CLASS_BODY)
         if not body_node:
             return
 
@@ -1476,8 +1489,6 @@ class ClassIngestMixin:
         )
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:
-        from . import parent_extraction as pe
-
         return pe.extract_cpp_base_class_name(parent_text)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
