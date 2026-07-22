@@ -1976,6 +1976,24 @@ class CallProcessor:
                 csharp_prop_names,
             )
 
+        # Same need again, Dart shape (issue #869): a getter access is a bare
+        # identifier or a member selector, never an invocation, so callers
+        # that only READ a getter emit nothing and dead-code flags it
+        # (wonderous' _enableVideo/startYr family).
+        if language == cs.SupportedLanguage.DART and (
+            dart_prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_dart_getter_reads(
+                caller_node,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                local_var_types,
+                class_context,
+                queries[language][cs.QUERY_CONFIG],
+                dart_prop_names,
+            )
+
         # Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
         # methods; emit those edges when the operand is a first-party type.
         if language == cs.SupportedLanguage.PYTHON:
@@ -4047,6 +4065,12 @@ class CallProcessor:
         # produces schema-invalid edges.
         if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
             return
+        # A Dart getter in argument position is a VALUE READ, not a tear-off:
+        # the getter-read pass owns those edges (with shadow handling), so
+        # emitting here would fabricate liveness for a local that hides the
+        # getter (issue #869).
+        if language == cs.SupportedLanguage.DART and registry.is_property(res_qn):
+            return
         for target_qn in registry.variants(res_qn):
             ensure_rel(
                 source_spec,
@@ -4533,6 +4557,140 @@ class CallProcessor:
                                     (method_label, qn_key, target_qn),
                                 )
             stack.extend(node.children)
+
+    def _ingest_dart_getter_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        # Emit a REFERENCES edge (a read is not an invocation; the call graph
+        # stays invocation-only) from the caller to each getter it reads:
+        # bare identifiers resolve against the enclosing class (implicit
+        # this), member selectors reassemble their receiver chain and resolve
+        # through receiver typing. Registry-guarded: only resolutions landing
+        # on a MARKED property emit, so unrelated same-name locals or
+        # functions never fabricate an edge. Nested closures are walked (a
+        # Dart lambda's reads attribute to the enclosing method, matching the
+        # flat-attribute call pass), so their parameters join the shadow set.
+        resolver = self._resolver
+        resolve_func = resolver.resolve_function_call
+        registry = resolver.function_registry
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        refs_rel = cs.RelationshipType.REFERENCES
+        class_types = lang_config.class_node_types
+        shadowed: set[str] | None = None
+        seen: set[str] = set()
+
+        def emit(read_name: str) -> None:
+            if read_name in seen:
+                return
+            resolved = resolve_func(
+                read_name, module_qn, local_var_types, class_context, caller_qn
+            )
+            if not resolved:
+                return
+            _res_type, res_qn = resolved
+            if not registry.is_property(res_qn) or res_qn == caller_qn:
+                return
+            seen.add(read_name)
+            ensure_rel(
+                caller_spec,
+                refs_rel,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, res_qn),
+            )
+
+        # The grammar splits a definition into a signature node and a SIBLING
+        # function_body: the signature holds no reads, so walk the body.
+        body = dart_utils.dart_body_node(caller_node)
+        walk_root = body if body is not None else caller_node
+        stack = list(walk_root.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type in class_types:
+                continue
+            if node_type == cs.TS_DART_SELECTOR:
+                read_name = dart_utils.dart_member_read_name(node)
+                if (
+                    read_name
+                    and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names
+                ):
+                    emit(read_name)
+            elif node_type == cs.TS_DART_IDENTIFIER:
+                name = safe_decode_text(node)
+                following = node.next_named_sibling
+                parent = node.parent
+                # A bare read only: a chain head (following selector) is the
+                # member pass's job, an argument_part head is a call target,
+                # a label's identifier names a parameter, and a selector's
+                # own identifier is the member already handled above.
+                if (
+                    name
+                    and name in prop_names
+                    and (
+                        following is None
+                        or following.type
+                        not in (cs.TS_DART_SELECTOR, cs.TS_DART_ARGUMENT_PART)
+                    )
+                    and parent is not None
+                    and parent.type
+                    not in (
+                        cs.TS_DART_LABEL,
+                        cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+                        cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+                        cs.TS_DART_CASCADE_SELECTOR,
+                    )
+                ):
+                    if shadowed is None:
+                        shadowed = self._dart_shadow_names(caller_node, walk_root)
+                    if name not in shadowed:
+                        emit(name)
+            stack.extend(node.children)
+
+    def _dart_shadow_names(self, caller_node: Node, walk_root: Node) -> set[str]:
+        # Names declared as parameters or locals anywhere in the walked
+        # scopes: a same-name declaration hides the getter for bare reads.
+        # Parameters live in the SIGNATURE node, locals in the sibling body,
+        # so both roots are walked. Whole-body, not span-scoped (cf.
+        # _csharp_shadow_spans): a read BEFORE a later same-name local is
+        # suppressed too, which under-references (safe direction) and only
+        # for a shadow pattern Dart analyzers already discourage.
+        names: set[str] = set()
+        stack = list(caller_node.children)
+        if walk_root is not caller_node:
+            stack.extend(walk_root.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type == cs.TS_DART_FORMAL_PARAMETER:
+                for child in node.named_children:
+                    if child.type == cs.TS_DART_IDENTIFIER and (
+                        name := safe_decode_text(child)
+                    ):
+                        names.add(name)
+                continue
+            if node_type in (
+                cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+                cs.TS_DART_INITIALIZED_IDENTIFIER,
+            ):
+                declared = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    None,
+                )
+                if declared is not None and (name := safe_decode_text(declared)):
+                    names.add(name)
+            stack.extend(node.children)
+        return names
 
     def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
         # The identifier actually being READ in receiver position: unwrap

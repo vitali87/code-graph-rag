@@ -210,6 +210,27 @@ def dart_call_name(call_node: Node) -> str | None:
     return _assemble_chain(tokens)
 
 
+def dart_member_read_name(selector_node: Node) -> str | None:
+    """The dotted name a member-selector READ targets, or None.
+
+    `marker.startYr` is `identifier` + `selector(.startYr)`: reassemble the
+    receiver chain plus the member. A selector followed by an argument_part
+    selector is an invocation the call pass owns; a chain broken by an index
+    or arbitrary expression has no static name. A `this` base is dropped so
+    the bare member resolves against the caller's class.
+    """
+    following = selector_node.next_named_sibling
+    if following is not None and _selector_has_argument_part(following):
+        return None
+    member = _selector_member_name(selector_node)
+    if member is None:
+        return None
+    receiver = _walk_chain(selector_node.prev_named_sibling, allow_calls=True)
+    if receiver is None:
+        return None
+    return _assemble_chain([*receiver, member])
+
+
 def dart_return_type_name(node: Node) -> str | None:
     """The declared return type of a Dart signature, or None.
 
