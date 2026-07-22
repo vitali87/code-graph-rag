@@ -103,6 +103,10 @@ TS_DART_FUNCTION_BODY = "function_body"
 # `@override`-style metadata: a preceding SIBLING of the (wrapped)
 # signature, not a child, so the highlights walk collects it explicitly.
 TS_DART_ANNOTATION = "annotation"
+# The decorator string as captured on Method nodes; when the enclosing class
+# has an external base, a method carrying it is framework-invoked and roots
+# the dead-code walk.
+DART_OVERRIDE_ANNOTATION = "@override"
 
 # Module and import/directive nodes
 TS_DART_PROGRAM = "program"
