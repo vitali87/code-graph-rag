@@ -548,9 +548,8 @@ async def run_with_cancellation[T](
         )
         return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         app_context.console.print(
             f"\n{style(cs.MSG_THINKING_CANCELLED, cs.Color.YELLOW)}"
         )

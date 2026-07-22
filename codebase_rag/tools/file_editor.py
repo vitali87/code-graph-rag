@@ -21,12 +21,15 @@ from . import tool_descriptions as td
 
 
 class FileEditor:
-    __slots__ = ("project_root", "dmp", "parsers")
+    __slots__ = ("project_root", "dmp", "parsers", "_write_lock")
 
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
+        # ponytail: one lock serialises all async writes; per-path locks if
+        # write contention ever matters.
+        self._write_lock = asyncio.Lock()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
@@ -267,9 +270,10 @@ class FileEditor:
                 logger.warning(ls.FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(file_path=str(file_path), error_message=error_msg)
 
-            await asyncio.to_thread(
-                file_path.write_text, new_content, encoding=cs.ENCODING_UTF8
-            )
+            async with self._write_lock:
+                await asyncio.to_thread(
+                    file_path.write_text, new_content, encoding=cs.ENCODING_UTF8
+                )
 
             logger.success(ls.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
             return EditResult(file_path=str(file_path), success=True)
