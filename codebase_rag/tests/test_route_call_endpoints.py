@@ -100,6 +100,33 @@ class TestExpressRoutes:
         # The endpoint stays anchored even without a resolvable handler.
         assert any(qn.endswith("server") for _label, qn in anchors), edges
 
+    def test_client_verb_calls_are_ignored(self, tmp_path: Path) -> None:
+        # An HTTP client's `.get('/path')` is an OUTBOUND call, not a route
+        # registration: no framework-bound receiver and no handler evidence.
+        files = {
+            "client.js": (
+                "const apiClient = require('./api')\n"
+                "const request = require('superagent')\n"
+                "const options = {timeout: 5}\n\n"
+                "apiClient.get('/users', options)\n"
+                "request.get('/users')\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert not edges, edges
+
+    def test_static_template_literal_path_registers(self, tmp_path: Path) -> None:
+        # A backtick literal with no substitutions is literal route evidence.
+        files = {
+            "server.js": (
+                "const express = require('express')\n"
+                "const app = express()\n\n"
+                "app.get(`/health`, (req, res) => res.json({ok: true}))\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert _endpoint(edges, "server", "GET /health"), edges
+
     def test_non_routes_are_ignored(self, tmp_path: Path) -> None:
         files = {
             "server.js": (
@@ -184,6 +211,51 @@ class TestGoRoutes:
         edges = _run(tmp_path, files, "go")
         assert _endpoint(edges, "main.getUser", "GET /users/:id"), edges
 
+    def test_client_selector_calls_are_ignored(self, tmp_path: Path) -> None:
+        # A REST client's `client.GET("/users")` and a plain registry's
+        # `registry.Handle("/key", value)` are not route registrations.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func main() {\n"
+                "\tclient := NewClient()\n"
+                '\tclient.GET("/users")\n'
+                '\tregistry.Handle("/key", value)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_raw_string_route_registers(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "net/http"\n\n'
+                "func handleHealth(w http.ResponseWriter, r *http.Request) {}\n\n"
+                "func main() {\n"
+                "\thttp.HandleFunc(`/health`, handleHealth)\n"
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "main.handleHealth", "ANY /health"), edges
+
+    def test_chi_pascalcase_verbs(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "github.com/go-chi/chi/v5"\n\n'
+                "func listArticles(w http.ResponseWriter, r *http.Request) {}\n\n"
+                "func main() {\n"
+                "\tr := chi.NewRouter()\n"
+                '\tr.Get("/articles", listArticles)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "main.listArticles", "GET /articles"), edges
+
     def test_non_verb_calls_are_ignored(self, tmp_path: Path) -> None:
         files = {
             "main.go": (
@@ -241,3 +313,44 @@ class TestRouteTemplateMatching:
             },
         ]
         assert link_endpoints(ingestor) == 1
+
+
+class TestStaleRouteCleanup:
+    def test_module_without_routes_still_drops_stale_exposes(
+        self, tmp_path: Path
+    ) -> None:
+        # An incremental edit that removes a module's LAST route must still
+        # clean that module's old EXPOSES edges: cleanup is keyed on every
+        # scanned route-language module, not on the new registrations.
+        parsers, queries = load_parsers()
+        (tmp_path / "server.js").write_text(
+            "const express = require('express')\nconst app = express()\n",
+            encoding="utf-8",
+        )
+
+        class _QueryableIngestor:
+            # Concrete (not MagicMock) so isinstance(_, QueryProtocol) holds.
+            def __init__(self) -> None:
+                self.ensure_node_batch = MagicMock()
+                self.ensure_relationship_batch = MagicMock()
+                self.flush_all = MagicMock()
+                self.fetch_all = MagicMock(return_value=[])
+                self.execute_write = MagicMock()
+
+        mock = _QueryableIngestor()
+        GraphUpdater(
+            ingestor=mock,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            capture=_CAPTURE_IO,
+        ).run()
+        module_qn = f"{tmp_path.name}.server"
+        cleanups = [
+            c
+            for c in mock.execute_write.call_args_list
+            if c.args and "EXPOSES" in c.args[0] and len(c.args) > 1
+        ]
+        assert any(
+            module_qn in (c.args[1].get("module_qns") or []) for c in cleanups
+        ), cleanups
