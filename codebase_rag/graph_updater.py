@@ -47,8 +47,10 @@ from .parsers.endpoint_prefixes import (
     build_router_registry,
 )
 from .parsers.endpoint_routes import (
+    CYPHER_DELETE_MODULE_EXPOSES,
     CYPHER_PROJECT_MODULES,
     ROUTE_CALL_LANGUAGES,
+    ROUTE_MODULE_EXTENSIONS,
     RouteRegistration,
     collect_route_registrations,
 )
@@ -832,19 +834,31 @@ class GraphUpdater:
     def _emit_route_call_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
-        entries: list[tuple[cs.NodeLabel, str, str]] = []
-        for module_qn, (root, language) in self._route_module_asts().items():
+        modules = self._route_module_asts()
+        if not modules:
+            return
+        # Cleanup keyed on every scanned module, prefix-wide, BEFORE emission:
+        # a module whose last route disappeared (or whose attribution moved)
+        # still sheds its old EXPOSES edges even though it contributes no new
+        # registrations.
+        self._drop_stale_module_exposes(sorted(modules))
+        for module_qn, (root, language) in modules.items():
             for registration in collect_route_registrations(root, language):
                 label, source_qn = self._route_source(module_qn, registration)
                 identity = f"{registration.method} {registration.path}"
-                entries.append((label, source_qn, identity))
-        if not entries:
+                _emit_endpoint(self._sink, label, source_qn, identity)
+
+    def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
+        # Route-language modules get EXPOSES only from the route-call pass,
+        # so the module-prefix sweep cannot touch Python decorator endpoints.
+        if not isinstance(self.ingestor, QueryProtocol):
             return
-        self._drop_stale_handler_exposes(
-            sorted({qn for _label, qn, _identity in entries})
-        )
-        for label, qn, identity in entries:
-            _emit_endpoint(self._sink, label, qn, identity)
+        try:
+            self.ingestor.execute_write(
+                CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
+            )
+        except Exception:
+            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _route_source(
         self, module_qn: str, registration: RouteRegistration
@@ -877,7 +891,10 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         files: dict[str, Path] = dict(dp.module_qn_to_file_path)
         if isinstance(self.ingestor, QueryProtocol):
-            params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+            params = {
+                cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                "extensions": list(ROUTE_MODULE_EXTENSIONS),
+            }
             try:
                 rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
             except Exception:
