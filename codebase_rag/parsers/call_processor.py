@@ -2288,6 +2288,7 @@ class CallProcessor:
                 caller_node, caller_spec, caller_qn, module_qn
             )
             self._ingest_cpp_member_init_ctor_calls(caller_node, caller_spec, module_qn)
+            self._ingest_cpp_declaration_ctor_calls(caller_node, caller_spec, module_qn)
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -3562,6 +3563,82 @@ class CallProcessor:
                 )
                 if class_qn is not None:
                     self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    def _ingest_cpp_declaration_ctor_calls(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+    ) -> None:
+        # A declaration-shaped stack construction has no call node, so its
+        # ctor (and end-of-lifetime dtor) got no edge and reported dead
+        # (issue #871). Two shapes: `Point origin(10, 10)` (an
+        # init_declarator whose argument list is a direct child) and the
+        # most-vexing-parse misparse `FlutterWindow window(project);` (a
+        # "function declaration" whose arguments are bare in-scope locals).
+        # Revive-only: nothing is emitted unless the declared type resolves
+        # to a registered first-party class. Lambda bodies are walked
+        # because their calls flat-attribute to the enclosing caller (the
+        # general call pass does the same); local-class scopes are skipped,
+        # their method bodies being genuinely separate callers. The walk
+        # descends into a declaration's own children too: a lambda bound by
+        # `auto g = [](...) { ... }` nests inside one.
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in cs.CPP_COMPOUND_TYPES:
+                continue
+            if node.type != cs.CppNodeType.DECLARATION:
+                stack.extend(node.children)
+                continue
+            stack.extend(node.children)
+            if not self._cpp_declaration_is_construction(node):
+                continue
+            type_name = self._cpp_declaration_type_name(node)
+            class_qn = (
+                self._resolver._resolve_type_to_class_qn(type_name, module_qn)
+                if type_name
+                else None
+            )
+            if class_qn is not None:
+                self._emit_cpp_construction_edges(caller_spec, class_qn)
+
+    @staticmethod
+    def _cpp_declaration_is_construction(node: Node) -> bool:
+        # `Point origin(10, 10)`: an init_declarator carrying a direct
+        # argument list; otherwise the most-vexing-parse evidence test.
+        for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+            if declarator.type == cs.CppNodeType.INIT_DECLARATOR and any(
+                child.type == cs.TS_ARGUMENT_LIST for child in declarator.children
+            ):
+                return True
+        return cpp_utils.is_cpp_vexing_parse_construction(node)
+
+    def _emit_cpp_construction_edges(
+        self, caller_spec: tuple[str, str, str], class_qn: str
+    ) -> None:
+        registry = self._resolver.function_registry
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                caller_spec,
+                cs.RelationshipType.INSTANTIATES,
+                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
+            )
+        self._emit_cpp_ctor_calls(caller_spec, class_qn)
+
+    @staticmethod
+    def _cpp_declaration_type_name(node: Node) -> str | None:
+        # The written type spelling, normalized like a member-init head:
+        # registered class qns are unspecialized and dot-separated, so cut
+        # at the first `<` and normalize `::`.
+        type_node = node.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return None
+        name = type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT) or None
 
     def _emit_cpp_ctor_calls(
         self, caller_spec: tuple[str, str, str], class_qn: str
