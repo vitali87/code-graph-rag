@@ -128,10 +128,13 @@ def url_matches_template(url: str, template: str) -> bool:
 
     A rootful relative URL (``/api/users``) is a same-origin request and
     qualifies on its path alone (issue #908); a schemeless fragment without
-    a leading slash could be anything and stays rejected.
+    a leading slash could be anything, and a protocol-relative
+    ``//cdn.example.com/x`` is an external reference; both stay rejected.
     """
     parsed = urlparse(url)
-    if not parsed.netloc and not url.startswith("/"):
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
         return False
     url_segments = [s for s in parsed.path.split("/") if s]
     template_segments = [s for s in template.split("/") if s]
