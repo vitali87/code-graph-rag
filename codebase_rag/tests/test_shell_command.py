@@ -900,7 +900,7 @@ class TestAwkSedXargsIntegration:
         test_file = temp_project_root / "data.txt"
         test_file.write_text("hello world\n", encoding="utf-8")
         result = await shell_commander.execute("cat data.txt | awk '{print $1}'")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "hello" in result.stdout
 
     async def test_safe_sed_allowed(
@@ -909,7 +909,7 @@ class TestAwkSedXargsIntegration:
         test_file = temp_project_root / "data.txt"
         test_file.write_text("foo bar\n", encoding="utf-8")
         result = await shell_commander.execute("cat data.txt | sed 's/foo/baz/'")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "baz" in result.stdout
 
     async def test_safe_xargs_allowed(
@@ -918,7 +918,7 @@ class TestAwkSedXargsIntegration:
         test_file = temp_project_root / "file.txt"
         test_file.write_text("content\n", encoding="utf-8")
         result = await shell_commander.execute("echo file.txt | xargs cat")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "content" in result.stdout
 
 
