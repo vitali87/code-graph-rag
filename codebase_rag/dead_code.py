@@ -83,7 +83,9 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
-def _is_c_cpp_entry_root(name: str, is_method: bool, path: str, qn: str) -> bool:
+def _is_c_cpp_entry_root(
+    name: str, is_method: bool, path: str, qn: str, project_prefix: str
+) -> bool:
     # A C/C++ program entry (`main`, Windows' `wWinMain`/`WinMain`/`wmain`, a
     # DLL's `DllMain`) is invoked by the OS runtime, never by a call the graph
     # sees, so it roots its whole call tree (an unrooted wWinMain reported all
@@ -96,12 +98,15 @@ def _is_c_cpp_entry_root(name: str, is_method: bool, path: str, qn: str) -> bool
         return False
     if not path.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
         return False
-    # File scope: the qn segment before the leaf is the module itself, whose
-    # segment is the file stem (`proj.runner.main.wWinMain` for
-    # runner/main.cpp); a namespace inserts its own segment there.
-    parts = qn.split(cs.SEPARATOR_DOT)
-    stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    return len(parts) >= 2 and parts[-2] == stem
+    # File scope, exactly: a file-scope definition's qn is the project prefix
+    # plus the path's dotted form (extension dropped) plus the name
+    # (`proj.runner.main.wWinMain` for runner/main.cpp). A namespace inserts
+    # its own segment, even one named like the file stem (`namespace main`
+    # in main.cpp), so nothing short of the exact qn earns the root.
+    dotted_module = path.rsplit(cs.SEPARATOR_DOT, 1)[0].replace(
+        cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+    )
+    return qn == f"{project_prefix}{dotted_module}{cs.SEPARATOR_DOT}{name}"
 
 
 def _is_cpp_operator_root(name: str, path: str) -> bool:
@@ -295,7 +300,7 @@ def dead_code_from_graph(
         elif _is_rust_runtime_root(leaf, qn in method_qns, path):
             roots.add(qn)
         elif _is_cpp_operator_root(leaf, path) or _is_c_cpp_entry_root(
-            leaf, qn in method_qns, path, qn
+            leaf, qn in method_qns, path, qn, project_prefix
         ):
             roots.add(qn)
         elif _is_java_serialization_root(
