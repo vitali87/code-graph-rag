@@ -266,6 +266,38 @@ def test_call_result_cascade_read_is_referenced(tmp_path: Path) -> None:
     assert _has(rels, ".Board.ping", REFERENCES, ".Marker.startYr"), rels
 
 
+def test_field_initializer_getter_read_is_referenced(tmp_path: Path) -> None:
+    # A class FIELD INITIALIZER reads getters outside any method body
+    # (wonderous: `late final TextStyle body = _createFont(contentFont, ...)`),
+    # so neither a method caller's walk nor the module pass (which skipped
+    # class subtrees) saw it, and the getter reported dead.
+    files = {
+        "app.dart": (
+            "int wrap(int v) {\n"
+            "  return v;\n"
+            "}\n"
+            "\n"
+            "class Palette {\n"
+            "  int get base => 3;\n"
+            "  int get factor => 2;\n"
+            "  int get unusedTone => 9;\n"
+            "  late final int wrapped = wrap(base);\n"
+            "  late final int scaled = factor * 2;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert any(
+        r == REFERENCES and b.endswith(".Palette.base") for _a, r, b in rels
+    ), rels
+    assert any(
+        r == REFERENCES and b.endswith(".Palette.factor") for _a, r, b in rels
+    ), rels
+    assert not any(
+        r == REFERENCES and b.endswith(".Palette.unusedTone") for _a, r, b in rels
+    ), rels
+
+
 def test_getter_call_chain_is_not_double_counted(tmp_path: Path) -> None:
     # `other.total()` is an invocation the call pass already resolves; the
     # read pass must not add a REFERENCES edge for the same chain, or every
