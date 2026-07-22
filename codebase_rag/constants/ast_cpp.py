@@ -177,6 +177,9 @@ FIELD_MACRO = "macro"
 TS_CPP_STRING_LITERAL = "string_literal"
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
+# `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests
+# inside this wrapper, one level below the statement node.
+TS_CPP_CONDITION_CLAUSE = "condition_clause"
 TS_CPP_DECLARATION = "declaration"
 TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"

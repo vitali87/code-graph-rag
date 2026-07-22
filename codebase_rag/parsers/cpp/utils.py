@@ -636,11 +636,16 @@ def cpp_enclosing_function_value_names(node: Node) -> set[str]:
 def _collect_preceding_declaration_names(
     scope: Node, node: Node, names: set[str]
 ) -> None:
-    # Declared names among `scope`'s direct children that lexically
-    # precede `node`.
+    # Declared names among `scope`'s direct children that lexically precede
+    # `node`. An if/switch condition declaration (`if (int p = 1)`) nests
+    # one level down inside condition_clause yet scopes over the branch
+    # body, so that wrapper's declarations count too.
     for sibling in scope.children:
         if sibling.start_byte >= node.start_byte:
             return
+        if sibling.type == cs.TS_CPP_CONDITION_CLAUSE:
+            _collect_preceding_declaration_names(sibling, node, names)
+            continue
         if sibling.type != cs.CppNodeType.DECLARATION:
             continue
         for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
