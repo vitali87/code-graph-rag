@@ -147,6 +147,21 @@ _DART_NON_READ_PARENT_TYPES = (
 )
 
 
+def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
+    # The byte span a declaration shadows: its nearest enclosing scope, with
+    # statement scopes (for/try) starting at the declaration END because the
+    # for-in iterable and the try body precede their binder. No scope
+    # ancestor (a signature parameter) falls through to the whole body.
+    anc = decl.parent
+    while anc is not None and anc is not walk_root:
+        if anc.type in _DART_SHADOW_SCOPE_TYPES:
+            if anc.type in _DART_STATEMENT_SCOPE_TYPES:
+                return (decl.end_byte, anc.end_byte)
+            return (anc.start_byte, anc.end_byte)
+        anc = anc.parent
+    return (walk_root.start_byte, walk_root.end_byte)
+
+
 def _dart_is_owned_function_body(node: Node) -> bool:
     # A function_body belonging to a top-level function or class member has
     # its OWN caller pass; a closure's or local function's body does not (a
@@ -4947,18 +4962,6 @@ class CallProcessor:
         # suppress the enclosing method's read (cf. _csharp_shadow_spans).
         # Method parameters live in the SIGNATURE, outside the walked body,
         # so their scope walk falls through to the whole body.
-        whole_body = (walk_root.start_byte, walk_root.end_byte)
-
-        def scope_span(decl: Node) -> tuple[int, int]:
-            anc = decl.parent
-            while anc is not None and anc is not walk_root:
-                if anc.type in _DART_SHADOW_SCOPE_TYPES:
-                    if anc.type in _DART_STATEMENT_SCOPE_TYPES:
-                        return (decl.end_byte, anc.end_byte)
-                    return (anc.start_byte, anc.end_byte)
-                anc = anc.parent
-            return whole_body
-
         spans: dict[str, list[tuple[int, int]]] = {}
         stack = list(caller_node.children)
         if walk_root is not caller_node:
@@ -4975,7 +4978,7 @@ class CallProcessor:
             ):
                 continue
             for name in _dart_declared_names(node):
-                spans.setdefault(name, []).append(scope_span(node))
+                spans.setdefault(name, []).append(_dart_scope_span(node, walk_root))
             stack.extend(node.children)
         return spans
 
