@@ -101,9 +101,10 @@ class TestEmitEndpoints:
         ingestor.ensure_node_batch.assert_called_once_with(
             cs.NodeLabel.RESOURCE,
             {
-                "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                "qualified_name": "resource::ENDPOINT::user-service::GET /users/{id}",
                 "name": "GET /users/{id}",
                 "kind": "ENDPOINT",
+                "project": "user-service",
             },
         )
         ingestor.ensure_relationship_batch.assert_called_once_with(
@@ -112,7 +113,7 @@ class TestEmitEndpoints:
             (
                 cs.NodeLabel.RESOURCE,
                 "qualified_name",
-                "resource::ENDPOINT::GET /users/{id}",
+                "resource::ENDPOINT::user-service::GET /users/{id}",
             ),
         )
 
