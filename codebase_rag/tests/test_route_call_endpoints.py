@@ -449,3 +449,15 @@ class TestOptionsObjectRoutes:
         }
         edges = _run(tmp_path, files, "javascript")
         assert not edges, edges
+
+    def test_const_arrow_handler_registers(self, tmp_path: Path) -> None:
+        # A handler bound with `const handler = async () => {}` is as much
+        # module-declared evidence as a function declaration.
+        files = {
+            "server.js": (
+                "const handler = async (req, reply) => reply.send({})\n\n"
+                "fastify.route({ method: 'GET', url: '/x', handler })\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "javascript")
+        assert _endpoint(edges, "server.handler", "GET /x"), edges
