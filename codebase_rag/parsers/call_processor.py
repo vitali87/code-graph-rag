@@ -140,6 +140,7 @@ def _dart_is_bare_read(node: Node) -> bool:
         cs.TS_DART_CASCADE_SELECTOR,
     )
 
+
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
 _PY_SCOPE_BOUNDARY_TYPES = frozenset(
@@ -4639,9 +4640,7 @@ class CallProcessor:
                     if shadow_spans is None:
                         shadow_spans = self._dart_shadow_spans(caller_node, walk_root)
                     pos = node.start_byte
-                    if not any(
-                        lo <= pos < hi for lo, hi in shadow_spans.get(name, ())
-                    ):
+                    if not any(lo <= pos < hi for lo, hi in shadow_spans.get(name, ())):
                         read_name = name
             if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
                 self._emit_dart_property_read(
