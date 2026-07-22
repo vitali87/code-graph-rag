@@ -244,9 +244,7 @@ class RouterRegistry:
         key = self._resolve_var(module_qn, text, scope)
         return None if key is None or key in self._ambiguous else key
 
-    def _resolve_var(
-        self, module_qn: str, text: str, scope: str
-    ) -> _RouterKey | None:
+    def _resolve_var(self, module_qn: str, text: str, scope: str) -> _RouterKey | None:
         if cs.SEPARATOR_DOT not in text:
             for enclosing in _scope_chain(scope):
                 if (module_qn, enclosing, text) in self._routers:
