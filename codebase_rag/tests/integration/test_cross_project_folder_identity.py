@@ -167,6 +167,33 @@ class TestLegacyPathKeyMigration:
         )
         assert survivor[0]["c"] == 1
 
+    def test_purge_runs_when_constraints_already_dropped(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # An earlier partial upgrade already dropped the legacy constraints
+        # but left the merged nodes behind: repair must still trigger.
+        ing = memgraph_ingestor
+        ing._execute_query(
+            "CREATE (svc:Project {name: 'svc-legacy'}), "
+            "(cli:Project {name: 'cli-legacy'}), "
+            "(shared:Folder {path: 'app', absolute_path: '/legacy/svc/app'}), "
+            "(keyless:File {path: 'app/main.py'}), "
+            "(svc)-[:CONTAINS_FOLDER]->(shared), "
+            "(cli)-[:CONTAINS_FOLDER]->(shared), "
+            "(shared)-[:CONTAINS_FILE]->(keyless)"
+        )
+
+        ing.ensure_constraints()
+
+        shared_left = ing.fetch_all(
+            "MATCH (n:Folder {path: 'app'}) RETURN count(n) AS c"
+        )
+        assert shared_left[0]["c"] == 0
+        keyless_left = ing.fetch_all(
+            "MATCH (n:File) WHERE n.absolute_path IS NULL RETURN count(n) AS c"
+        )
+        assert keyless_left[0]["c"] == 0
+
     def test_clean_database_keeps_structure_untouched(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:

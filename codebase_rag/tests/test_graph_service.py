@@ -388,7 +388,9 @@ class TestLegacyPathKeyMigration:
         {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
     ]
 
-    def _run_capture(self, show_rows: list[dict]) -> list[str]:
+    def _run_capture(
+        self, show_rows: list[dict], damaged: bool = False
+    ) -> list[str]:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed: list[str] = []
 
@@ -396,8 +398,10 @@ class TestLegacyPathKeyMigration:
             executed.append(query)
             if query.startswith("SHOW CONSTRAINT"):
                 return show_rows
+            if "damaged" in query:
+                return [{"damaged": 1}] if damaged else []
             if "purged" in query:
-                return [{"purged": 0}]
+                return [{"purged": 2}]
             return []
 
         with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture):
@@ -411,7 +415,16 @@ class TestLegacyPathKeyMigration:
         assert "DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;" in executed
 
     def test_purges_merged_and_keyless_nodes_when_legacy_present(self) -> None:
-        executed = self._run_capture(self.LEGACY_ROWS)
+        executed = self._run_capture(self.LEGACY_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_purges_when_damage_outlives_constraints(self) -> None:
+        # An earlier partial upgrade may have dropped the legacy constraints
+        # while leaving the merged nodes behind: repair keys off the data.
+        executed = self._run_capture(self.CLEAN_ROWS, damaged=True)
 
         purge_queries = [q for q in executed if "DETACH DELETE" in q]
         assert any("count(DISTINCT p)" in q for q in purge_queries)
