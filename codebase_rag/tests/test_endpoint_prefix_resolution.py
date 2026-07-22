@@ -440,3 +440,44 @@ class TestClassScopedRouters:
         }
         edges = _run(tmp_path, files)
         assert _endpoint(edges, "UsersApi.get_user", "GET /api/users/{user_id}"), edges
+
+    def test_imported_class_attribute_mount_resolves(self, tmp_path: Path) -> None:
+        # `from routes import UsersApi` then `UsersApi.router`.
+        files = {
+            "routes.py": (
+                "from fastapi import APIRouter\n\n\n"
+                "class UsersApi:\n"
+                "    router = APIRouter(prefix='/users')\n\n"
+                "    @router.get('/{user_id}')\n"
+                "    def get_user(self, user_id: int):\n"
+                "        return {}\n"
+            ),
+            "main.py": (
+                "from fastapi import FastAPI\n\n"
+                "from routes import UsersApi\n\n"
+                "app = FastAPI()\n"
+                "app.include_router(UsersApi.router, prefix='/api')\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "UsersApi.get_user", "GET /api/users/{user_id}"), edges
+
+    def test_aliased_class_import_mount_resolves(self, tmp_path: Path) -> None:
+        files = {
+            "routes.py": (
+                "from fastapi import APIRouter\n\n\n"
+                "class UsersApi:\n"
+                "    router = APIRouter(prefix='/users')\n\n"
+                "    @router.get('/{user_id}')\n"
+                "    def get_user(self, user_id: int):\n"
+                "        return {}\n"
+            ),
+            "main.py": (
+                "from fastapi import FastAPI\n\n"
+                "from routes import UsersApi as Api\n\n"
+                "app = FastAPI()\n"
+                "app.include_router(Api.router, prefix='/api')\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "UsersApi.get_user", "GET /api/users/{user_id}"), edges
