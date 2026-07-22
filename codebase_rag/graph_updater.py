@@ -40,7 +40,13 @@ from .parsers.csharp_frontend import (
     find_csharp_project,
     run_csharp_frontend,
 )
-from .parsers.endpoints import link_endpoints
+from .parsers.endpoint_prefixes import (
+    CYPHER_DELETE_HANDLER_EXPOSES,
+    CYPHER_PROJECT_PY_MODULES,
+    CYPHER_PROJECT_ROUTE_HANDLERS,
+    build_router_registry,
+)
+from .parsers.endpoints import emit_endpoints, link_endpoints, parse_route_decorator
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -66,6 +72,38 @@ from .utils.path_utils import (
     unignore_could_match_within,
 )
 from .utils.source_extraction import extract_source_with_fallback
+
+
+def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
+    owner: str | None = None
+    for candidate in module_qns:
+        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
+            owner is None or len(candidate) > len(owner)
+        ):
+            owner = candidate
+    return owner
+
+
+def _route_handler_entry(
+    row: Mapping[str, object], already_pending: set[str], module_qns: set[str]
+) -> tuple[cs.NodeLabel, str, list[str], str | None] | None:
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    decorators = row.get(cs.KEY_DECORATORS)
+    if not isinstance(qn, str) or qn in already_pending:
+        return None
+    if not isinstance(decorators, list):
+        return None
+    routes = [d for d in decorators if isinstance(d, str) and parse_route_decorator(d)]
+    if not routes:
+        return None
+    labels = row.get("labels")
+    label = (
+        cs.NodeLabel.METHOD
+        if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
+        else cs.NodeLabel.FUNCTION
+    )
+    return (label, qn, routes, _owning_module_qn(qn, module_qns))
+
 
 type FileHashCache = dict[str, str]
 type DirMtimesCache = dict[str, float]
@@ -711,6 +749,10 @@ class GraphUpdater:
 
         self.factory.definition_processor.process_all_method_overrides()
 
+        # Deferred endpoint emission: every module is parsed now, so router
+        # mount prefixes (possibly cross-module) can resolve (issue #877).
+        self._emit_pending_endpoints()
+
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
         self.finding_analyzer.analyze(
@@ -725,6 +767,107 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+    def _emit_pending_endpoints(self) -> None:
+        if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
+            return
+        dp = self.factory.definition_processor
+        module_asts = self._python_module_asts()
+        entries = list(dp.pending_endpoints)
+        # A mount-only incremental change re-parses just the mounting module;
+        # the unchanged handlers must still re-emit under the new prefix, so
+        # they come back from the graph. A full build queued them all already.
+        if not self._is_full_build:
+            entries.extend(
+                self._rehydrated_route_handlers(
+                    {qn for _label, qn, _decorators, _module in entries},
+                    set(module_asts),
+                )
+            )
+        if not entries:
+            return
+        self._drop_stale_handler_exposes(
+            [qn for _label, qn, _decorators, _module in entries]
+        )
+        registry = build_router_registry(module_asts)
+        for label, qn, decorators, module_qn in entries:
+            emit_endpoints(
+                self._sink,
+                label,
+                qn,
+                decorators,
+                module_qn=module_qn,
+                prefix_resolver=registry.mount_prefixes,
+            )
+        dp.pending_endpoints.clear()
+
+    def _drop_stale_handler_exposes(self, handler_qns: list[str]) -> None:
+        # Re-emitted handlers drop their previous EXPOSES first, so a
+        # template that changed prefix loses its stale anchor and the orphan
+        # cleanup prunes the outdated endpoint node.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(
+                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
+            )
+        except Exception:
+            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _rehydrated_route_handlers(
+        self, already_pending: set[str], module_qns: set[str]
+    ) -> list[tuple[cs.NodeLabel, str, list[str], str | None]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
+        except Exception:
+            return []
+        out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            entry = _route_handler_entry(row, already_pending, module_qns)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def _python_module_asts(self) -> dict[str, Node]:
+        # Re-parsed files first; on an incremental run the unchanged modules
+        # holding the mounts come back from the graph's Module nodes, loaded
+        # through the disk-backed AST cache.
+        dp = self.factory.definition_processor
+        files: dict[str, Path] = {
+            qn: path
+            for qn, path in dp.module_qn_to_file_path.items()
+            if path.suffix == ".py"
+        }
+        for qn, path in self._graph_python_modules():
+            files.setdefault(qn, path)
+        asts: dict[str, Node] = {}
+        for qn, path in files.items():
+            entry = self.ast_cache.load(path)
+            if entry is not None and entry[1] == cs.SupportedLanguage.PYTHON:
+                asts[qn] = entry[0]
+        return asts
+
+    def _graph_python_modules(self) -> list[tuple[str, Path]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
+        except Exception:
+            return []
+        out: list[tuple[str, Path]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(rel_path, str):
+                out.append((qn, self.repo_path / rel_path))
+        return out
 
     def _link_endpoint_resources(self) -> None:
         # After flush_all so this run's Resource nodes are queryable; NETWORK

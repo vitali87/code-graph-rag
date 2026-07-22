@@ -13,9 +13,16 @@ from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
 from .. import constants as cs
+from .endpoint_prefixes import UNKNOWN_LEAD_SEGMENT
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..services import IngestorProtocol, QueryProtocol
+
+    # (label, handler qn, route decorators, module qn)
+    PendingEndpoint = tuple[cs.NodeLabel, str, list[str], str | None]
+    PrefixResolver = Callable[[str, str, str], "list[str] | None"]
 
 # Anchoring on live sink/EXPOSES edges keeps resources whose caller or
 # handler was deleted from relinking; delete-then-relink makes the pass
@@ -41,9 +48,11 @@ _DEFAULT_ROUTE_METHOD = "GET"
 
 # ponytail: decorators arrive as raw text, so this is a text parse, not an
 # AST walk. The literal must open the argument list (a leading quote), which
-# rejects computed paths like (prefix + "/users").
+# rejects computed paths like (prefix + "/users"). The receiver names the
+# router variable the route hangs off, for mount-prefix resolution.
 _DECORATOR_CALL_RE = re.compile(
-    r"^@(?:\w+\.)*(?P<name>\w+)\(\s*(?P<quote>['\"])(?P<path>/[^'\"]*)(?P=quote)",
+    r"^@(?:(?P<receiver>\w+(?:\.\w+)*)\.)?(?P<name>\w+)"
+    r"\(\s*(?P<quote>['\"])(?P<path>/[^'\"]*)(?P=quote)",
 )
 _METHODS_KWARG_RE = re.compile(r"methods\s*=\s*[\[({](?P<items>[^\])}]*)[\])}]")
 _METHOD_ITEM_RE = re.compile(r"['\"](\w+)['\"]")
@@ -68,6 +77,12 @@ def parse_route_decorator(decorator_text: str) -> list[tuple[str, str]]:
         return [(_DEFAULT_ROUTE_METHOD, path)]
     methods = _METHOD_ITEM_RE.findall(methods_match.group("items"))
     return [(m.upper(), path) for m in methods]
+
+
+def decorator_receiver(decorator_text: str) -> str | None:
+    """The variable a route decorator hangs off (``router`` in ``@router.get``)."""
+    match = _DECORATOR_CALL_RE.match(decorator_text.strip())
+    return match.group("receiver") if match is not None else None
 
 
 # The client side has no parsed method, so the sink edge type is the only
@@ -101,14 +116,21 @@ def url_matches_template(url: str, template: str) -> bool:
     """Match a literal request URL's path against a route template.
 
     Template segments like ``{id}`` match exactly one path segment; the
-    comparison ignores scheme, host, port, query, and a trailing slash.
+    comparison ignores scheme, host, port, query, and a trailing slash. A
+    template opening with the unknown-lead marker (``/**/users/{id}``) has
+    an unresolvable mount prefix and matches the URL path's tail instead.
     """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         return False
     url_segments = [s for s in parsed.path.split("/") if s]
     template_segments = [s for s in template.split("/") if s]
-    if len(url_segments) != len(template_segments):
+    if template_segments and template_segments[0] == UNKNOWN_LEAD_SEGMENT:
+        template_segments = template_segments[1:]
+        if len(url_segments) < len(template_segments):
+            return False
+        url_segments = url_segments[len(url_segments) - len(template_segments) :]
+    elif len(url_segments) != len(template_segments):
         return False
     return all(
         _TEMPLATE_PARAM_RE.match(expected) or expected == actual
@@ -121,13 +143,35 @@ def _has_literal_segment(template: str) -> bool:
 
     An all-parameter template (``/{id}/``, ``/<path:path>``, or the bare
     root ``/``) matches any URL of the right shape, so linking it to a
-    literal URL carries no evidence and only fabricates traces.
+    literal URL carries no evidence and only fabricates traces. The
+    unknown-lead marker is not evidence either.
     """
     return any(
         not _TEMPLATE_PARAM_RE.match(segment)
         for segment in template.split("/")
-        if segment
+        if segment and segment != UNKNOWN_LEAD_SEGMENT
     )
+
+
+def queue_endpoints(
+    pending: list[PendingEndpoint],
+    label: cs.NodeLabel,
+    qualified_name: str,
+    decorators: object,
+    module_qn: str | None,
+) -> None:
+    """Defer a handler's endpoint emission until mount prefixes can resolve.
+
+    Only handlers with at least one route decorator queue; everything else
+    is dropped here so the pending list stays proportional to real routes.
+    """
+    if not isinstance(decorators, list):
+        return
+    route_decorators = [
+        d for d in decorators if isinstance(d, str) and parse_route_decorator(d)
+    ]
+    if route_decorators:
+        pending.append((label, qualified_name, route_decorators, module_qn))
 
 
 def emit_endpoints(
@@ -135,11 +179,19 @@ def emit_endpoints(
     label: cs.NodeLabel,
     qualified_name: str,
     decorators: object,
+    *,
+    module_qn: str | None = None,
+    prefix_resolver: PrefixResolver | None = None,
 ) -> None:
-    """Emit an ENDPOINT Resource plus an EXPOSES edge per route decorator."""
+    """Emit an ENDPOINT Resource plus an EXPOSES edge per route decorator.
+
+    With a resolver, each decorator's receiver variable is looked up and the
+    route path is prepended with every mount prefix of that router (a route
+    mounted twice yields one endpoint per mount). An unknown receiver keeps
+    the bare decorator path.
+    """
     # Imported lazily: parsers.utils imports this module, and the io_access
     # package init pulls extract, which imports parsers.utils back.
-    from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 
     # A filtering sink that would drop the EXPOSES edge must not receive the
     # Resource node either, or selective capture leaves an orphaned endpoint.
@@ -151,24 +203,71 @@ def emit_endpoints(
     for decorator in decorators:
         if not isinstance(decorator, str):
             continue
-        for method, path in parse_route_decorator(decorator):
-            identity = f"{method} {path}"
-            resource_qn = RESOURCE_QN_FORMAT.format(
-                kind=ResourceKind.ENDPOINT.value, identity=identity
-            )
-            ingestor.ensure_node_batch(
-                cs.NodeLabel.RESOURCE,
-                {
-                    cs.KEY_QUALIFIED_NAME: resource_qn,
-                    cs.KEY_NAME: identity,
-                    KEY_KIND: ResourceKind.ENDPOINT.value,
-                },
-            )
-            ingestor.ensure_relationship_batch(
-                (label, cs.KEY_QUALIFIED_NAME, qualified_name),
-                cs.RelationshipType.EXPOSES,
-                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
-            )
+        pairs = parse_route_decorator(decorator)
+        if not pairs:
+            continue
+        prefixes = _decorator_prefixes(
+            decorator, qualified_name, module_qn, prefix_resolver
+        )
+        for method, path in pairs:
+            for prefix in prefixes:
+                _emit_endpoint(
+                    ingestor, label, qualified_name, f"{method} {prefix}{path}"
+                )
+
+
+def _handler_scope(qualified_name: str, module_qn: str) -> str:
+    # The handler's lexical scope (qn segments between module and leaf)
+    # picks the right same-named router when factories shadow a
+    # module-level one.
+    prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+    if not qualified_name.startswith(prefix):
+        return ""
+    rest = qualified_name[len(prefix) :]
+    return rest.rsplit(cs.SEPARATOR_DOT, 1)[0] if cs.SEPARATOR_DOT in rest else ""
+
+
+def _decorator_prefixes(
+    decorator: str,
+    qualified_name: str,
+    module_qn: str | None,
+    prefix_resolver: PrefixResolver | None,
+) -> list[str]:
+    if prefix_resolver is None or module_qn is None:
+        return [""]
+    receiver = decorator_receiver(decorator)
+    if receiver is None:
+        return [""]
+    resolved = prefix_resolver(
+        module_qn, receiver, _handler_scope(qualified_name, module_qn)
+    )
+    return resolved if resolved else [""]
+
+
+def _emit_endpoint(
+    ingestor: IngestorProtocol,
+    label: cs.NodeLabel,
+    qualified_name: str,
+    identity: str,
+) -> None:
+    from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
+
+    resource_qn = RESOURCE_QN_FORMAT.format(
+        kind=ResourceKind.ENDPOINT.value, identity=identity
+    )
+    ingestor.ensure_node_batch(
+        cs.NodeLabel.RESOURCE,
+        {
+            cs.KEY_QUALIFIED_NAME: resource_qn,
+            cs.KEY_NAME: identity,
+            KEY_KIND: ResourceKind.ENDPOINT.value,
+        },
+    )
+    ingestor.ensure_relationship_batch(
+        (label, cs.KEY_QUALIFIED_NAME, qualified_name),
+        cs.RelationshipType.EXPOSES,
+        (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+    )
 
 
 def _collect_live_resources(

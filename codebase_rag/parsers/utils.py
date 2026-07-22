@@ -23,7 +23,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
-from .endpoints import emit_endpoints
+from .endpoints import emit_endpoints, queue_endpoints
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
@@ -710,6 +710,7 @@ def ingest_method(
     external_override_names: frozenset[str] = frozenset(),
     annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None,
     skip_cpp_artifact_check: bool = False,
+    pending_endpoints: list | None = None,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -836,9 +837,22 @@ def ingest_method(
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
-    emit_endpoints(
-        ingestor, cs.NodeLabel.METHOD, method_qn, method_props.get(cs.KEY_DECORATORS)
-    )
+    if pending_endpoints is not None:
+        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
+        queue_endpoints(
+            pending_endpoints,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            method_props.get(cs.KEY_DECORATORS),
+            module_qn,
+        )
+    else:
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            method_props.get(cs.KEY_DECORATORS),
+        )
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)

@@ -27,7 +27,7 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
-from .endpoints import emit_endpoints
+from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -204,6 +204,7 @@ class FunctionIngestMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     java_anon_overrides: list[tuple[str, str, str, str]]
+    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
@@ -1047,11 +1048,14 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
-        emit_endpoints(
-            self.ingestor,
+        # Deferred: emission happens after Pass 2 so router mount prefixes
+        # (possibly declared in other modules) can resolve (issue #877).
+        queue_endpoints(
+            self.pending_endpoints,
             cs.NodeLabel.FUNCTION,
             resolution.qualified_name,
             func_props.get(cs.KEY_DECORATORS),
+            module_qn,
         )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
