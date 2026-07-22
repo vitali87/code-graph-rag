@@ -56,6 +56,20 @@ int prototypes() {
   FlutterWindow factory();
   return 0;
 }
+
+int laterShadow() {
+  FlutterWindow protoA(SomeType);
+  int SomeType = 1;
+  return SomeType;
+}
+
+int nestedShadow() {
+  FlutterWindow protoB(SomeType);
+  if (1) {
+    int SomeType = 2;
+  }
+  return 0;
+}
 """
 
 
@@ -139,3 +153,21 @@ def test_genuine_local_prototypes_are_not_constructions(
         calls
     )
     assert not _has(calls, ".main.prototypes", ".SomeType.SomeType"), sorted(calls)
+
+
+def test_out_of_scope_names_keep_prototypes(
+    cpp_vexing_project: Path, mock_ingestor: MagicMock
+):
+    # At `FlutterWindow protoA(SomeType);` name lookup finds only the TYPE
+    # SomeType: the same-named local declared LATER (laterShadow) or inside
+    # a sibling nested block (nestedShadow) is not visible there, so both
+    # stay genuine prototypes (Greptile/CodeRabbit round 1: whole-function
+    # name collection reclassified them as constructions).
+    run_updater(cpp_vexing_project, mock_ingestor)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert not _has(calls, ".main.laterShadow", ".FlutterWindow.FlutterWindow"), sorted(
+        calls
+    )
+    assert not _has(calls, ".main.nestedShadow", ".FlutterWindow.FlutterWindow"), (
+        sorted(calls)
+    )
