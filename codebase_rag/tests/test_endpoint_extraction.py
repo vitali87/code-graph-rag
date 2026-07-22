@@ -581,6 +581,9 @@ class TestRootfulRelativeUrlMatch:
             ("/api/users", "/users", False),
             ("users/42", "/users/{id}", False),
             ("not a url", "/users/{id}", False),
+            # Protocol-relative is an EXTERNAL reference, not a same-origin
+            # request; accepting it would fan out to every endpoint.
+            ("//cdn.example.com/users/42", "/users/{id}", False),
         ],
     )
     def test_rootful_relative_urls(
