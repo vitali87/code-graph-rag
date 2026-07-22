@@ -23,6 +23,10 @@ int FreeHelper(int x);
 int OnlyProto(int x);
 static int TuLocal(int x);
 
+namespace {
+int AnonLocal(int x);
+}
+
 namespace alpha {
 int Scoped(int x);
 }
@@ -32,6 +36,7 @@ UTILS_CPP = """
 #include "utils.h"
 int FreeHelper(int x) { return x; }
 int TuLocal(int x) { return x; }
+int AnonLocal(int x) { return x; }
 
 namespace beta {
 int Scoped(int x) { return x; }
@@ -113,6 +118,17 @@ def test_static_prototype_is_never_deduped(
     run_updater(cpp_proto_project, mock_ingestor)
     functions = _functions(mock_ingestor)
     assert any(qn.endswith(".utils.h.TuLocal") for qn in functions), sorted(functions)
+
+
+def test_anonymous_namespace_prototype_is_never_deduped(
+    cpp_proto_project: Path, mock_ingestor: MagicMock
+):
+    # A function inside an anonymous namespace is translation-unit-local
+    # even without `static`, so a same-named definition in another module
+    # is not its definition (Greptile round 3).
+    run_updater(cpp_proto_project, mock_ingestor)
+    functions = _functions(mock_ingestor)
+    assert any(qn.endswith(".utils.h.AnonLocal") for qn in functions), sorted(functions)
 
 
 def test_namespace_mismatch_keeps_the_prototype(
