@@ -687,3 +687,80 @@ class TestGoSprintfUrls:
         assert _has(
             rels, "main.fetchTrim", READS_FROM, "resource::NETWORK::<dynamic>"
         ), rels
+
+    def test_indexed_verbs_become_placeholders(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchReview(id int, slug string) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                '"http://svc:8000/products/%[1]d/reviews/%[2]s", id, slug))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchReview",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}/reviews/{*}",
+        ), rels
+
+    def test_indexed_width_and_precision_become_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchScore(w, p int, v float64) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                '"http://svc:8000/scores/%[3]*.[2]*[1]f", v, p, w))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchScore",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/scores/{*}",
+        ), rels
+
+    def test_raw_format_string_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchRaw(id int) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                "`http://svc:8000/products/%d`, id))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchRaw",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+    def test_dot_imported_sprintf_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t. "fmt"\n\t"net/http"\n)\n\n'
+                "func fetchDot(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(Sprintf("http://svc:8000/products/%d", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchDot",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
