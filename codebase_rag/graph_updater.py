@@ -40,7 +40,11 @@ from .parsers.csharp_frontend import (
     find_csharp_project,
     run_csharp_frontend,
 )
-from .parsers.endpoints import link_endpoints
+from .parsers.endpoint_prefixes import (
+    CYPHER_PROJECT_PY_MODULES,
+    build_router_registry,
+)
+from .parsers.endpoints import emit_endpoints, link_endpoints
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -711,6 +715,10 @@ class GraphUpdater:
 
         self.factory.definition_processor.process_all_method_overrides()
 
+        # Deferred endpoint emission: every module is parsed now, so router
+        # mount prefixes (possibly cross-module) can resolve (issue #877).
+        self._emit_pending_endpoints()
+
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
         self.finding_analyzer.analyze(
@@ -725,6 +733,51 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+    def _emit_pending_endpoints(self) -> None:
+        dp = self.factory.definition_processor
+        if not dp.pending_endpoints:
+            return
+        registry = build_router_registry(self._python_module_asts())
+        for label, qn, decorators, module_qn in dp.pending_endpoints:
+            emit_endpoints(
+                self._sink,
+                label,
+                qn,
+                decorators,
+                module_qn=module_qn,
+                prefix_resolver=registry.mount_prefixes,
+            )
+        dp.pending_endpoints.clear()
+
+    def _python_module_asts(self) -> dict[str, Node]:
+        # Re-parsed files first; on an incremental run the unchanged modules
+        # holding the mounts come back from the graph's Module nodes, loaded
+        # through the disk-backed AST cache.
+        dp = self.factory.definition_processor
+        files: dict[str, Path] = {
+            qn: path
+            for qn, path in dp.module_qn_to_file_path.items()
+            if path.suffix == ".py"
+        }
+        if isinstance(self.ingestor, QueryProtocol):
+            params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+            try:
+                rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
+            except Exception:
+                rows = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+                if isinstance(qn, str) and isinstance(rel_path, str):
+                    files.setdefault(qn, self.repo_path / rel_path)
+        asts: dict[str, Node] = {}
+        for qn, path in files.items():
+            entry = self.ast_cache.load(path)
+            if entry is not None and entry[1] == cs.SupportedLanguage.PYTHON:
+                asts[qn] = entry[0]
+        return asts
 
     def _link_endpoint_resources(self) -> None:
         # After flush_all so this run's Resource nodes are queryable; NETWORK

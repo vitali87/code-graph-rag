@@ -207,6 +207,12 @@ class DefinitionProcessor(
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
         self.declared_module_qns: set[str] = set()
+        # Route-decorated handlers deferred from Pass 2: endpoint templates
+        # need router mount prefixes, which may live in modules parsed later
+        # (issue #877). (label, qn, route decorators, module_qn).
+        self.pending_endpoints: list[
+            tuple[cs.NodeLabel, str, list[str], str | None]
+        ] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and

@@ -1113,6 +1113,7 @@ class ClassIngestMixin:
                 # primitives) instead of dangling on a phantom Class qn.
                 defer_containment=self._deferred_parent_links,
                 module_qn=owner_module_qn,
+                pending_endpoints=self.pending_endpoints,
             )
             # Record the method's return type (Self -> impl target) so a chained
             # call (`Ping::new(msg).into_frame()`) and a call-bound local
@@ -1224,8 +1225,10 @@ class ClassIngestMixin:
                 method_qualified_name=method_qualified_name,
                 file_path=file_path,
                 repo_path=self.repo_path,
+                module_qn=module_qn,
                 external_override_names=external_override_names,
                 annotated_override_sink=annotated_override_sink,
+                pending_endpoints=self.pending_endpoints,
             )
             if (
                 ingested_qn is not None
