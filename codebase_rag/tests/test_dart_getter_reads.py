@@ -432,13 +432,14 @@ def test_cascade_receiver_getter_read_is_referenced(tmp_path: Path) -> None:
 
 
 def test_invoked_chain_head_is_not_a_property_read(tmp_path: Path) -> None:
-    # `_wonders(3)` is an invocation the call pass owns: a head followed
-    # directly by an argument_part must stay out of the read pass.
+    # `_wonders(3)` on a getter returning a callable is an invocation the
+    # call pass owns (it emits the CALLS edge that keeps the getter alive):
+    # a head followed directly by an argument_part must stay out of the
+    # read pass or every such site would double as a phantom read.
     files = {
         "app.dart": (
             "class Screen {\n"
-            "  int _wonders(int n) => n;\n"
-            "  int get _tone => 1;\n"
+            "  int Function(int) get _wonders => (n) => n;\n"
             "  void fill() {\n"
             "    _wonders(3);\n"
             "  }\n"
@@ -447,3 +448,4 @@ def test_invoked_chain_head_is_not_a_property_read(tmp_path: Path) -> None:
     }
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".Screen.fill", REFERENCES, ".Screen._wonders"), rels
+    assert _has(rels, ".Screen.fill", "CALLS", ".Screen._wonders"), rels

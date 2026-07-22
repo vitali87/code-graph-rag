@@ -211,3 +211,28 @@ def test_constructor_argument_direct_tearoff_is_referenced(tmp_path: Path) -> No
     }
     rels = _run_rels(tmp_path, files)
     assert _has(rels, ".Screen.build", REFERENCES, ".Screen._handleReset"), rels
+
+
+def test_closure_argument_is_not_unwrapped_as_ternary(tmp_path: Path) -> None:
+    # A closure argument (`on: () => flag ? f : g`) IS the first-class value:
+    # the swallowed-ternary expansion must never tear a scope-opening node
+    # apart, even though `function_expression` shares the `_expression`
+    # suffix with the grammar's flat operator nodes. The grammar wraps the
+    # body in `function_expression_body`, and the expansion additionally
+    # excludes nested-scope nodes outright.
+    from codebase_rag.parsers.call_processor import _first_class_value_children
+
+    parsers, _ = load_parsers()
+    if "dart" not in parsers:
+        pytest.skip("dart parser not available")
+    tree = parsers["dart"].parse(b"void t() { render(on: () => flag ? f : g); }")
+    stack = [tree.root_node]
+    closure = None
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_DART_FUNCTION_EXPRESSION:
+            closure = node
+            break
+        stack.extend(node.named_children)
+    assert closure is not None
+    assert _first_class_value_children(closure, is_dart=True) is None
