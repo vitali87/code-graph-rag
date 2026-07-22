@@ -125,9 +125,13 @@ def url_matches_template(url: str, template: str) -> bool:
     comparison ignores scheme, host, port, query, and a trailing slash. A
     template opening with the unknown-lead marker (``/**/users/{id}``) has
     an unresolvable mount prefix and matches the URL path's tail instead.
+
+    A rootful relative URL (``/api/users``) is a same-origin request and
+    qualifies on its path alone (issue #908); a schemeless fragment without
+    a leading slash could be anything and stays rejected.
     """
     parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
+    if not parsed.netloc and not url.startswith("/"):
         return False
     url_segments = [s for s in parsed.path.split("/") if s]
     template_segments = [s for s in template.split("/") if s]
