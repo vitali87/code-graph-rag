@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import difflib
 from pathlib import Path
 
@@ -266,8 +267,9 @@ class FileEditor:
                 logger.warning(ls.FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(file_path=str(file_path), error_message=error_msg)
 
-            with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
-                f.write(new_content)
+            await asyncio.to_thread(
+                file_path.write_text, new_content, encoding=cs.ENCODING_UTF8
+            )
 
             logger.success(ls.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
             return EditResult(file_path=str(file_path), success=True)

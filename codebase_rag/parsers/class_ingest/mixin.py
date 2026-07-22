@@ -140,7 +140,8 @@ class _DeferredForwardDecl(NamedTuple):
 
 
 class ClassIngestMixin:
-    __slots__ = ()
+    # No __slots__: this mixin lazily creates _deferred_* registries on the
+    # host instance, which requires the host to provide a __dict__.
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str

@@ -542,10 +542,7 @@ async def run_with_cancellation[T](
         return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
     except TimeoutError:
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(task, return_exceptions=True)
         app_context.console.print(
             f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
         )
@@ -553,10 +550,7 @@ async def run_with_cancellation[T](
     except (asyncio.CancelledError, KeyboardInterrupt):
         if not task.done():
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(task, return_exceptions=True)
         app_context.console.print(
             f"\n{style(cs.MSG_THINKING_CANCELLED, cs.Color.YELLOW)}"
         )
@@ -676,7 +670,7 @@ async def _run_agent_response_loop(
             )
             continue
 
-        asyncio.create_task(_refresh_context_tokens(list(message_history)))
+        _spawn_background(_refresh_context_tokens(list(message_history)))
 
         output_text = response.output
         if not isinstance(output_text, str):
@@ -834,6 +828,15 @@ def _token_usage() -> tuple[int, int, float]:
     return used, max_ctx, pct
 
 
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _spawn_background(coro: Coroutine[None, None, None]) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     try:
         config = settings.active_orchestrator_config
@@ -858,7 +861,7 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     baseline_messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
     ]
-    asyncio.create_task(_refresh_context_tokens(baseline_messages))
+    _spawn_background(_refresh_context_tokens(baseline_messages))
 
 
 def _short_model_id() -> tuple[str, str]:
@@ -1127,11 +1130,8 @@ def _thinking_with_status_bar(message: str):
 
         async def _refresh_bar() -> None:
             while True:
-                try:
-                    live.update(render())
-                    await asyncio.sleep(0.25)
-                except asyncio.CancelledError:
-                    return
+                live.update(render())
+                await asyncio.sleep(0.25)
 
         refresh_task = asyncio.get_running_loop().create_task(_refresh_bar())
         try:
