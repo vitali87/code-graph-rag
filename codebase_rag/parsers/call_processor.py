@@ -128,6 +128,23 @@ _DART_LOCAL_DECLARATION_TYPES = frozenset(
 _DART_STATEMENT_SCOPE_TYPES = frozenset(
     {cs.TS_DART_FOR_STATEMENT, cs.TS_DART_TRY_STATEMENT}
 )
+# Parents whose direct identifier is never a value read: member/cascade
+# selectors carry the chain passes' members, a label names a parameter,
+# catch parameters only BIND names, and a signature's identifier is the
+# DECLARED name (the module pass walks class bodies for field initializers,
+# so signatures are in view there).
+_DART_NON_READ_PARENT_TYPES = (
+    frozenset(
+        {
+            cs.TS_DART_LABEL,
+            cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CASCADE_SELECTOR,
+            cs.TS_DART_CATCH_PARAMETERS,
+        }
+    )
+    | cs.DART_SIGNATURE_TYPES
+)
 
 
 def _dart_declared_names(node: Node) -> list[str]:
@@ -201,14 +218,7 @@ def _dart_is_bare_read(node: Node) -> bool:
     ):
         return False
     parent = node.parent
-    if parent is None or parent.type in (
-        cs.TS_DART_LABEL,
-        cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
-        cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
-        cs.TS_DART_CASCADE_SELECTOR,
-        # Catch parameters only BIND names; they never read.
-        cs.TS_DART_CATCH_PARAMETERS,
-    ):
+    if parent is None or parent.type in _DART_NON_READ_PARENT_TYPES:
         return False
     if parent.type == cs.TS_DART_FOR_LOOP_PARTS:
         # The FIRST identifier of a for-in is the loop BINDER, not a read;
@@ -4707,6 +4717,12 @@ class CallProcessor:
         # function_body: the signature holds no reads, so walk the body.
         body = dart_utils.dart_body_node(caller_node)
         walk_root = body if body is not None else caller_node
+        # The bodiless caller is the MODULE pass: class subtrees must be
+        # descended there because FIELD INITIALIZERS read getters outside
+        # any method body (`late final body = _createFont(contentFont, ..)`),
+        # while every function_body is skipped (each method's own pass walks
+        # it). Method callers keep skipping nested classes instead.
+        is_module_scope = body is None
         shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
 
         def shadow_spans() -> dict[str, list[tuple[int, int]]]:
@@ -4718,7 +4734,10 @@ class CallProcessor:
         stack = list(walk_root.children)
         while stack:
             node = stack.pop()
-            if node.type in class_types:
+            if is_module_scope:
+                if node.type == cs.TS_DART_FUNCTION_BODY:
+                    continue
+            elif node.type in class_types:
                 continue
             read_name = self._dart_read_name(node, prop_names, shadow_spans)
             if read_name:
