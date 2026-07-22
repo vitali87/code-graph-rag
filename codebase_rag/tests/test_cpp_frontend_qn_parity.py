@@ -34,6 +34,8 @@ public:
 
 int free_proto(int n);
 
+static int static_proto(int n);
+
 }  // namespace geo
 """
 
@@ -50,6 +52,8 @@ void Shape::describe() {}
 int free_proto(int n) { return n + 1; }
 
 int only_in_cpp(int a) { return a; }
+
+int static_proto(int n) { return n; }
 
 }  // namespace geo
 """

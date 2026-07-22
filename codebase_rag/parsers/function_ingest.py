@@ -338,10 +338,18 @@ class FunctionIngestMixin:
                 # A free-function PROTOTYPE (a declaration with a
                 # function_declarator) may duplicate a bodied definition in
                 # another file; hold it back so resolve_deferred_cpp_prototypes
-                # can drop it when the definition registers (issue #893).
-                if func_node.type == cs.CppNodeType.DECLARATION and any(
-                    child.type == cs.CppNodeType.FUNCTION_DECLARATOR
-                    for child in func_node.children
+                # can drop it when the definition registers (issue #893). A
+                # `static` prototype has INTERNAL linkage (each translation
+                # unit owns a separate function), so no cross-module
+                # definition can be its definition: it registers inline as
+                # before.
+                if (
+                    func_node.type == cs.CppNodeType.DECLARATION
+                    and any(
+                        child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+                        for child in func_node.children
+                    )
+                    and not cpp_utils.cpp_declaration_is_static(func_node)
                 ):
                     self._deferred_cpp_prototypes.append(
                         _DeferredCppPrototype(

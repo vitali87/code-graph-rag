@@ -538,3 +538,13 @@ def extract_class_name_from_out_of_class_method_qualified(
     if len(names) >= 2:
         return cs.SEPARATOR_DOUBLE_COLON.join(names[:-1])
     return None
+
+
+def cpp_declaration_is_static(decl_node: Node) -> bool:
+    # `static int helper();` -- internal linkage marks a TU-local function.
+    return any(
+        child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
+        and child.text is not None
+        and safe_decode_text(child) == cs.CPP_KEYWORD_STATIC
+        for child in decl_node.children
+    )

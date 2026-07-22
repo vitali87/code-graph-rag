@@ -59,6 +59,15 @@ def _base_simple_name(spelling: str) -> str:
     return flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
 
+def _is_static_cursor(cursor: Cursor) -> bool:
+    # Internal linkage: `static` at file scope. storage_class raises on some
+    # cursor kinds in older libclangs, so fail open (treated as non-static).
+    try:
+        return cursor.storage_class.name == "STATIC"
+    except Exception:
+        return False
+
+
 def _classify(cursor: Cursor) -> str | None:
     kind = cursor.kind.name
     if kind in fc.CLASS_KIND_NAMES:
@@ -131,6 +140,9 @@ class _Collector:
         # parses the definition; prefer its location so the span join targets
         # the definition node, not the prototype.
         self._usr_definitions: dict[str, tuple[str, int]] = {}
+        # Function node keys declared `static` (internal linkage): each TU
+        # owns a separate function, so the prototype dedupe never drops them.
+        self._static_function_keys: set[_NodeKey] = set()
 
     def _node_props(self, cursor: Cursor, qn: str, name: str, rel: str) -> PropertyDict:
         return {
@@ -214,6 +226,8 @@ class _Collector:
         )
         if qn is None:
             return None
+        if label == fc.LABEL_FUNCTION and _is_static_cursor(cursor):
+            self._static_function_keys.add((label, qn))
         self.covered.add(rel)
         self._add_module(module_qn, rel, cursor.location.file.name)
         self._add_node(
@@ -760,7 +774,10 @@ class _Collector:
         return {
             (label, qn)
             for (label, qn), (_, _, is_def) in self.nodes.items()
-            if label == fc.LABEL_FUNCTION and not is_def and ns_of(qn) in defined
+            if label == fc.LABEL_FUNCTION
+            and not is_def
+            and (label, qn) not in self._static_function_keys
+            and ns_of(qn) in defined
         }
 
 
