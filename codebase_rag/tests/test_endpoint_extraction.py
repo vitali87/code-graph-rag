@@ -623,3 +623,62 @@ class TestRootfulRelativeUrlMatch:
             cs.RelationshipType.RESOLVES_TO,
             (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
         )
+
+
+class TestRootfulCandidateScoping:
+    """A rootful URL is a SAME-ORIGIN request: its candidates are the
+    endpoints of the projects that issued it (the sink edges' source
+    projects), never a global fan-out across every indexed project.
+    """
+
+    def test_rootful_links_only_within_caller_projects(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": ["frontend"],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::frontend::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "frontend",
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "resource::ENDPOINT::frontend::GET /users/{id}" in args[2]
+
+    def test_rootful_with_unknown_callers_does_not_fan_out(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": [],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 0
