@@ -287,6 +287,11 @@ MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
+MG_LEGACY_PURGE = (
+    "Purged {count} Folder/File node(s) written by the superseded "
+    "relative-path key (issue #897); re-run with --update-graph for "
+    "affected projects to rebuild their containment."
+)
 MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
 MG_INDEXES_DONE = "Indexes checked/created."
 MG_NODE_BUFFER_FLUSH = (

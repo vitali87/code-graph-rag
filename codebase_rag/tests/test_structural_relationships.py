@@ -282,6 +282,14 @@ def test_contains_package_relationships(
         )
 
 
+def _folder_id(root: Path, rel: str) -> tuple[str, str, str]:
+    return ("Folder", "absolute_path", (root / rel).resolve().as_posix())
+
+
+def _file_id(root: Path, rel: str) -> tuple[str, str, str]:
+    return ("File", "absolute_path", (root / rel).resolve().as_posix())
+
+
 def test_contains_folder_relationships(
     complex_project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -301,35 +309,35 @@ def test_contains_folder_relationships(
     expected_folder_relationships = [
         (
             ("Project", "name", project_name),
-            ("Folder", "path", "frontend"),
+            _folder_id(complex_project, "frontend"),
         ),
         (
             ("Project", "name", project_name),
-            ("Folder", "path", "docs"),
+            _folder_id(complex_project, "docs"),
         ),
         (
             ("Project", "name", project_name),
-            ("Folder", "path", "config"),
+            _folder_id(complex_project, "config"),
         ),
         (
             ("Project", "name", project_name),
-            ("Folder", "path", "assets"),
+            _folder_id(complex_project, "assets"),
         ),
         (
-            ("Folder", "path", "frontend"),
-            ("Folder", "path", "frontend/src"),
+            _folder_id(complex_project, "frontend"),
+            _folder_id(complex_project, "frontend/src"),
         ),
         (
-            ("Folder", "path", "frontend/src"),
-            ("Folder", "path", "frontend/src/components"),
+            _folder_id(complex_project, "frontend/src"),
+            _folder_id(complex_project, "frontend/src/components"),
         ),
         (
-            ("Folder", "path", "docs"),
-            ("Folder", "path", "docs/guides"),
+            _folder_id(complex_project, "docs"),
+            _folder_id(complex_project, "docs/guides"),
         ),
         (
-            ("Folder", "path", "assets"),
-            ("Folder", "path", "assets/images"),
+            _folder_id(complex_project, "assets"),
+            _folder_id(complex_project, "assets/images"),
         ),
     ]
 
@@ -369,123 +377,123 @@ def test_contains_file_relationships(
     expected_file_relationships = [
         (
             ("Project", "name", project_name),
-            ("File", "path", "README.md"),
+            _file_id(complex_project, "README.md"),
         ),
         (
             ("Project", "name", project_name),
-            ("File", "path", ".gitignore"),
+            _file_id(complex_project, ".gitignore"),
         ),
         (
             ("Project", "name", project_name),
-            ("File", "path", "LICENSE"),
+            _file_id(complex_project, "LICENSE"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage"),
-            ("File", "path", "mypackage/__init__.py"),
+            _file_id(complex_project, "mypackage/__init__.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage"),
-            ("File", "path", "mypackage/core.py"),
+            _file_id(complex_project, "mypackage/core.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage.utils"),
-            ("File", "path", "mypackage/utils/__init__.py"),
+            _file_id(complex_project, "mypackage/utils/__init__.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage.utils"),
-            ("File", "path", "mypackage/utils/helpers.py"),
+            _file_id(complex_project, "mypackage/utils/helpers.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage.utils"),
-            ("File", "path", "mypackage/utils/constants.py"),
+            _file_id(complex_project, "mypackage/utils/constants.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage.utils.deep"),
-            ("File", "path", "mypackage/utils/deep/__init__.py"),
+            _file_id(complex_project, "mypackage/utils/deep/__init__.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.mypackage.utils.deep"),
-            ("File", "path", "mypackage/utils/deep/nested.py"),
+            _file_id(complex_project, "mypackage/utils/deep/nested.py"),
         ),
         (
-            ("Folder", "path", "frontend"),
-            ("File", "path", "frontend/package.json"),
+            _folder_id(complex_project, "frontend"),
+            _file_id(complex_project, "frontend/package.json"),
         ),
         (
-            ("Folder", "path", "frontend"),
-            ("File", "path", "frontend/index.js"),
+            _folder_id(complex_project, "frontend"),
+            _file_id(complex_project, "frontend/index.js"),
         ),
         (
-            ("Folder", "path", "frontend/src"),
-            ("File", "path", "frontend/src/app.js"),
+            _folder_id(complex_project, "frontend/src"),
+            _file_id(complex_project, "frontend/src/app.js"),
         ),
         (
-            ("Folder", "path", "frontend/src"),
-            ("File", "path", "frontend/src/utils.js"),
+            _folder_id(complex_project, "frontend/src"),
+            _file_id(complex_project, "frontend/src/utils.js"),
         ),
         (
-            ("Folder", "path", "frontend/src/components"),
-            ("File", "path", "frontend/src/components/Button.jsx"),
+            _folder_id(complex_project, "frontend/src/components"),
+            _file_id(complex_project, "frontend/src/components/Button.jsx"),
         ),
         (
-            ("Folder", "path", "frontend/src/components"),
-            ("File", "path", "frontend/src/components/Modal.tsx"),
+            _folder_id(complex_project, "frontend/src/components"),
+            _file_id(complex_project, "frontend/src/components/Modal.tsx"),
         ),
         (
-            ("Folder", "path", "docs"),
-            ("File", "path", "docs/api.md"),
+            _folder_id(complex_project, "docs"),
+            _file_id(complex_project, "docs/api.md"),
         ),
         (
-            ("Folder", "path", "docs"),
-            ("File", "path", "docs/tutorial.rst"),
+            _folder_id(complex_project, "docs"),
+            _file_id(complex_project, "docs/tutorial.rst"),
         ),
         (
-            ("Folder", "path", "docs/guides"),
-            ("File", "path", "docs/guides/setup.md"),
+            _folder_id(complex_project, "docs/guides"),
+            _file_id(complex_project, "docs/guides/setup.md"),
         ),
         (
-            ("Folder", "path", "docs/guides"),
-            ("File", "path", "docs/guides/advanced.md"),
+            _folder_id(complex_project, "docs/guides"),
+            _file_id(complex_project, "docs/guides/advanced.md"),
         ),
         (
-            ("Folder", "path", "config"),
-            ("File", "path", "config/settings.yaml"),
+            _folder_id(complex_project, "config"),
+            _file_id(complex_project, "config/settings.yaml"),
         ),
         (
-            ("Folder", "path", "config"),
-            ("File", "path", "config/database.ini"),
+            _folder_id(complex_project, "config"),
+            _file_id(complex_project, "config/database.ini"),
         ),
         (
-            ("Folder", "path", "assets"),
-            ("File", "path", "assets/logo.png"),
+            _folder_id(complex_project, "assets"),
+            _file_id(complex_project, "assets/logo.png"),
         ),
         (
-            ("Folder", "path", "assets"),
-            ("File", "path", "assets/style.css"),
+            _folder_id(complex_project, "assets"),
+            _file_id(complex_project, "assets/style.css"),
         ),
         (
-            ("Folder", "path", "assets/images"),
-            ("File", "path", "assets/images/hero.jpg"),
+            _folder_id(complex_project, "assets/images"),
+            _file_id(complex_project, "assets/images/hero.jpg"),
         ),
         (
-            ("Folder", "path", "assets/images"),
-            ("File", "path", "assets/images/icon.svg"),
-        ),
-        (
-            ("Package", "qualified_name", f"{project_name}.tests"),
-            ("File", "path", "tests/__init__.py"),
+            _folder_id(complex_project, "assets/images"),
+            _file_id(complex_project, "assets/images/icon.svg"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.tests"),
-            ("File", "path", "tests/test_core.py"),
+            _file_id(complex_project, "tests/__init__.py"),
+        ),
+        (
+            ("Package", "qualified_name", f"{project_name}.tests"),
+            _file_id(complex_project, "tests/test_core.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.tests.unit"),
-            ("File", "path", "tests/unit/__init__.py"),
+            _file_id(complex_project, "tests/unit/__init__.py"),
         ),
         (
             ("Package", "qualified_name", f"{project_name}.tests.unit"),
-            ("File", "path", "tests/unit/test_utils.py"),
+            _file_id(complex_project, "tests/unit/test_utils.py"),
         ),
     ]
 
@@ -956,7 +964,7 @@ def test_edge_cases_empty_folders_and_special_files(
         (
             call[0][0] == ("Project", "name", project_name)
             and call[0][1] == "CONTAINS_FOLDER"
-            and call[0][2] == ("Folder", "path", "empty")
+            and call[0][2] == _folder_id(project_path, "empty")
         )
         for call in all_calls
     )
@@ -969,7 +977,7 @@ def test_edge_cases_empty_folders_and_special_files(
                 or call[0][0] == ("Package", "qualified_name", project_name)
             )
             and call[0][1] == "CONTAINS_FILE"
-            and call[0][2] == ("File", "path", ".env")
+            and call[0][2] == _file_id(project_path, ".env")
         )
         for call in all_calls
     )
@@ -977,9 +985,9 @@ def test_edge_cases_empty_folders_and_special_files(
 
     hidden_workflow_found = any(
         (
-            call[0][0] == ("Folder", "path", ".github/workflows")
+            call[0][0] == _folder_id(project_path, ".github/workflows")
             and call[0][1] == "CONTAINS_FILE"
-            and call[0][2] == ("File", "path", ".github/workflows/ci.yml")
+            and call[0][2] == _file_id(project_path, ".github/workflows/ci.yml")
         )
         for call in all_calls
     )
@@ -994,7 +1002,7 @@ def test_edge_cases_empty_folders_and_special_files(
                     or call[0][0] == ("Package", "qualified_name", project_name)
                 )
                 and call[0][1] == "CONTAINS_FILE"
-                and call[0][2] == ("File", "path", special_file)
+                and call[0][2] == _file_id(project_path, special_file)
             )
             for call in all_calls
         )

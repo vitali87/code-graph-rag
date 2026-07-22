@@ -13,6 +13,7 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ...utils.path_utils import cached_resolve_posix
 from . import constants as fc
 from .qn import CppQnResolver
 
@@ -648,7 +649,12 @@ class _Collector:
         if package_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn)
         if parent_rel != Path(cs.SEPARATOR_DOT):
-            return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel.as_posix())
+            # Folder identity is the absolute path (issue #897).
+            return (
+                cs.NodeLabel.FOLDER,
+                cs.KEY_ABSOLUTE_PATH,
+                cached_resolve_posix(self.resolver.repo_path / parent_rel),
+            )
         return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.resolver.project_name)
 
     def _register(self, label: str, props: PropertyDict) -> None:

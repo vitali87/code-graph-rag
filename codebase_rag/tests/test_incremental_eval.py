@@ -70,15 +70,17 @@ class TestStatefulStore:
 
     def test_delete_file_detaches(self) -> None:
         s = _StatefulIngestor()
-        _node(s, _FILE, path="callee.py")
+        _node(s, _FILE, path="callee.py", absolute_path="/r/callee.py")
         _node(s, _MODULE, qualified_name="proj", path="x")
         s.ensure_relationship_batch(
-            (_MODULE, _QN, "proj"), _CONTAINS_FILE, (_FILE, cs.KEY_PATH, "callee.py")
+            (_MODULE, _QN, "proj"),
+            _CONTAINS_FILE,
+            (_FILE, cs.KEY_ABSOLUTE_PATH, "/r/callee.py"),
         )
-        s.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: "callee.py"})
+        s.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: "/r/callee.py"})
 
-        assert (_FILE, "callee.py") not in s.nodes
-        assert all(e[4] != "callee.py" for e in s.edges)
+        assert (_FILE, "/r/callee.py") not in s.nodes
+        assert all(e[4] != "/r/callee.py" for e in s.edges)
 
     def test_fetch_all_excludes_external_modules(self) -> None:
         s = _StatefulIngestor()

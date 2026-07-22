@@ -210,7 +210,11 @@ class AstGrepTier:
         if parent_container_qn:
             parent = (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
         elif parent_rel_path != Path("."):
-            parent = (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+            parent = (
+                cs.NodeLabel.FOLDER,
+                cs.KEY_ABSOLUTE_PATH,
+                cached_resolve_posix(self._repo_path / parent_rel_path),
+            )
         else:
             parent = (cs.NodeLabel.PROJECT, cs.KEY_NAME, self._project_name)
         self._ingestor.ensure_relationship_batch(

@@ -8,6 +8,7 @@ KEY_NODE_ID = "node_id"
 KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
+KEY_PURGED = "purged"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -78,6 +79,7 @@ ONEOF_RESOURCE = "resource"
 class UniqueKeyType(StrEnum):
     NAME = KEY_NAME
     PATH = KEY_PATH
+    ABSOLUTE_PATH = KEY_ABSOLUTE_PATH
     QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
@@ -109,8 +111,12 @@ class NodeLabel(StrEnum):
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.PROJECT: UniqueKeyType.NAME,
     NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FOLDER: UniqueKeyType.PATH,
-    NodeLabel.FILE: UniqueKeyType.PATH,
+    # Folder and File identity must be per checkout: keyed on the bare
+    # relative path, two same-layout projects in the shared graph merge
+    # onto one node and delete-project crosses into the sibling's subtree
+    # (issue #897).
+    NodeLabel.FOLDER: UniqueKeyType.ABSOLUTE_PATH,
+    NodeLabel.FILE: UniqueKeyType.ABSOLUTE_PATH,
     NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
@@ -347,8 +353,10 @@ CYPHER_DELETE_MODULE = (
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
     "DETACH DELETE m, c"
 )
-CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
+# Keyed on absolute_path: the relative path is shared across same-layout
+# projects, and a path-only delete would take the sibling's node (issue #897).
+CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
+CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
@@ -458,6 +466,14 @@ MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
+
+# Superseded unique constraints that must be dropped from existing shared
+# databases; a leftover Folder/File path constraint would keep rejecting the
+# second same-relative-path node the fix now creates (issue #897).
+LEGACY_NODE_CONSTRAINTS: tuple[tuple[str, str], ...] = (
+    (NodeLabel.FOLDER.value, UniqueKeyType.PATH.value),
+    (NodeLabel.FILE.value, UniqueKeyType.PATH.value),
+)
 
 CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
 CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"

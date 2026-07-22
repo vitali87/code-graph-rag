@@ -338,8 +338,9 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def capture_query(query: str) -> None:
+        def capture_query(query: str) -> list[dict]:
             executed_queries.append(query)
+            return []
 
         with patch.object(
             MemgraphIngestor, "_execute_query", side_effect=capture_query
@@ -354,19 +355,99 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         call_count = 0
 
-        def fail_then_succeed(query: str) -> None:
+        def fail_first_create(query: str) -> list[dict]:
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
+            if query.startswith("CREATE CONSTRAINT") and call_count == 4:
                 raise RuntimeError("Constraint already exists")
+            return []
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=fail_then_succeed
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_create
         ):
             ingestor.ensure_constraints()
 
-        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2
+        # One SHOW, two damage probes, then a create-constraint and a
+        # create-index per label.
+        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2
         assert call_count == expected_queries
+
+
+class TestLegacyPathKeyMigration:
+    """Superseded Folder/File relative-path keys must migrate safely (#897)."""
+
+    LEGACY_ROWS = [
+        {"constraint type": "unique", "label": "Folder", "properties": ["path"]},
+        {"constraint type": "unique", "label": "File", "properties": ["path"]},
+    ]
+    CLEAN_ROWS = [
+        {
+            "constraint type": "unique",
+            "label": "Folder",
+            "properties": ["absolute_path"],
+        },
+        {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
+    ]
+
+    def _run_capture(self, show_rows: list[dict], damaged: bool = False) -> list[str]:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed: list[str] = []
+
+        def capture(query: str, params: dict | None = None) -> list[dict]:
+            executed.append(query)
+            if query.startswith("SHOW CONSTRAINT"):
+                return show_rows
+            if "damaged" in query:
+                return [{"damaged": 1}] if damaged else []
+            if "purged" in query:
+                return [{"purged": 2}]
+            return []
+
+        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture):
+            ingestor.ensure_constraints()
+        return executed
+
+    def test_drops_exact_legacy_constraints_when_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS)
+
+        assert "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
+        assert "DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;" in executed
+
+    def test_purges_merged_and_keyless_nodes_when_legacy_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_purges_when_damage_outlives_constraints(self) -> None:
+        # An earlier partial upgrade may have dropped the legacy constraints
+        # while leaving the merged nodes behind: repair keys off the data.
+        executed = self._run_capture(self.CLEAN_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_clean_database_issues_no_drops_or_purges(self) -> None:
+        executed = self._run_capture(self.CLEAN_ROWS)
+
+        assert not any(q.startswith("DROP CONSTRAINT") for q in executed)
+        assert not any("DETACH DELETE" in q for q in executed)
+
+    def test_show_constraint_failure_propagates(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        def refuse(query: str, params: dict | None = None) -> list[dict]:
+            if query.startswith("SHOW CONSTRAINT"):
+                raise ConnectionError("connection refused")
+            return []
+
+        with (
+            patch.object(MemgraphIngestor, "_execute_query", side_effect=refuse),
+            pytest.raises(ConnectionError),
+        ):
+            ingestor.ensure_constraints()
 
 
 class TestFlushNodesEdgeCases:
@@ -405,7 +486,9 @@ class TestFlushNodesEdgeCases:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/valid.txt", "name": "valid"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/valid.txt", "name": "valid"})
+        )
         ingestor.node_buffer.append(("File", {"name": "missing_path"}))
         ingestor.node_buffer.append(("UnknownLabel", {"id": "unknown"}))
 
@@ -548,7 +631,9 @@ class TestCreateMode:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/test.py", "name": "test"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
         ingestor.flush_nodes()
 
         call_args = mock_cursor.execute.call_args[0][0]
@@ -564,7 +649,9 @@ class TestCreateMode:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor.node_buffer.append(("File", {"path": "/test.py", "name": "test"}))
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
         ingestor.flush_nodes()
 
         call_args = mock_cursor.execute.call_args[0][0]

@@ -235,9 +235,15 @@ class _StatefulIngestor:
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:
-                self._detach_delete(self._nodes_at_path(_FILE_LABEL, path))
+                # Mirrors the real query: File/Folder delete keys on the
+                # absolute path (issue #897).
+                self._detach_delete(
+                    self._nodes_at_path(_FILE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
+                )
             case cs.CYPHER_DELETE_FOLDER:
-                self._detach_delete(self._nodes_at_path(_FOLDER_LABEL, path))
+                self._detach_delete(
+                    self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case _:
@@ -255,11 +261,13 @@ class _StatefulIngestor:
             rows.append(row)
         return rows
 
-    def _nodes_at_path(self, label: str, path: PropertyValue) -> set[_NodeId]:
+    def _nodes_at_path(
+        self, label: str, path: PropertyValue, key: str = cs.KEY_PATH
+    ) -> set[_NodeId]:
         return {
             (node_label, uid)
             for (node_label, uid), props in self.nodes.items()
-            if node_label == label and props.get(cs.KEY_PATH) == path
+            if node_label == label and props.get(key) == path
         }
 
     def _delete_module_subtree(self, path: PropertyValue) -> None:

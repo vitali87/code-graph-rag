@@ -34,6 +34,45 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD*]->(defined)
 DETACH DELETE p, container, defined
 """
 
+CYPHER_SHOW_CONSTRAINTS = "SHOW CONSTRAINT INFO;"
+
+# Damage detectors for the issue #897 migration. Sharing always leaves a
+# single-hop signature: the topmost merged node has containment parents in
+# two projects (Project roots are never merged, so the parents are distinct
+# nodes). Keyless rows match the second purge's predicate directly.
+CYPHER_ANY_SHARED_STRUCTURE = (
+    "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
+    "WHERE (n:Folder OR n:File) "
+    "WITH n, count(parent) AS parents "
+    "WHERE parents > 1 "
+    "RETURN 1 AS damaged LIMIT 1"
+)
+
+CYPHER_ANY_KEYLESS_STRUCTURE = (
+    "MATCH (n) WHERE (n:Folder OR n:File) AND n.absolute_path IS NULL "
+    "RETURN 1 AS damaged LIMIT 1"
+)
+
+# The superseded relative-path key merged same-layout projects onto shared
+# Folder/File nodes (issue #897). A merged node cannot be split, so anything
+# the containment walk reaches from more than one Project is purged; the
+# next re-index rebuilds it with per-project identity.
+CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
+    "MATCH (p:Project)"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
+    "WHERE (n:Folder OR n:File) "
+    "WITH n, count(DISTINCT p) AS owners "
+    "WHERE owners > 1 "
+    "DETACH DELETE n RETURN count(n) AS purged"
+)
+
+# Rows written before absolute_path existed can never match the current
+# delete queries; they are unmanageable and must go with the migration.
+CYPHER_PURGE_KEYLESS_STRUCTURE = (
+    "MATCH (n) WHERE (n:Folder OR n:File) AND n.absolute_path IS NULL "
+    "DETACH DELETE n RETURN count(n) AS purged"
+)
+
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
 RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
@@ -201,6 +240,10 @@ ORDER BY n.qualified_name
 
 def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
+
+
+def build_drop_constraint_query(label: str, prop: str) -> str:
+    return f"DROP CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
 
 def build_index_query(label: str, prop: str) -> str:

@@ -25,23 +25,33 @@ from ..constants import (
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
     KEY_FROM_VAL,
+    KEY_LABEL,
     KEY_NAME,
     KEY_PROJECT_NAME,
+    KEY_PROPERTIES,
     KEY_PROPS,
+    KEY_PURGED,
     KEY_TO_VAL,
+    LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
 from ..cypher_queries import (
+    CYPHER_ANY_KEYLESS_STRUCTURE,
+    CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+    CYPHER_PURGE_KEYLESS_STRUCTURE,
+    CYPHER_SHOW_CONSTRAINTS,
     build_constraint_query,
     build_create_node_query,
     build_create_relationship_query,
+    build_drop_constraint_query,
     build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
@@ -288,6 +298,7 @@ class MemgraphIngestor:
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
+        self._migrate_legacy_path_keys()
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_constraint_query(label, prop))
@@ -295,6 +306,46 @@ class MemgraphIngestor:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
+
+    def _migrate_legacy_path_keys(self) -> None:
+        """Retire the superseded Folder/File relative-path keys (issue #897).
+
+        A database that still enforces the legacy constraints was written by
+        the old key, which merged same-layout projects onto shared nodes; the
+        leftover constraint would also reject the second same-relative-path
+        node the current scheme creates. Merged nodes cannot be split, so
+        they are purged along with keyless legacy rows; re-indexing rebuilds
+        them with per-project identity. Dropping a constraint is idempotent
+        in Memgraph, so any failure here is real and propagates. The purge
+        keys off the data, not the constraints: damage outlives the schema
+        when an earlier partial upgrade already dropped them.
+        """
+        existing_rows = self._execute_query(CYPHER_SHOW_CONSTRAINTS)
+        legacy_present = [
+            (label, prop)
+            for label, prop in LEGACY_NODE_CONSTRAINTS
+            if any(
+                row.get(KEY_LABEL) == label and row.get(KEY_PROPERTIES) == [prop]
+                for row in existing_rows
+            )
+        ]
+        for label, prop in legacy_present:
+            self._execute_query(build_drop_constraint_query(label, prop))
+        damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
+            self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
+        )
+        if not damaged:
+            return
+        purged = 0
+        for purge_query in (
+            CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+            CYPHER_PURGE_KEYLESS_STRUCTURE,
+        ):
+            rows = self._execute_query(purge_query)
+            if rows:
+                purged += int(str(rows[0][KEY_PURGED]))
+        if purged:
+            logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)

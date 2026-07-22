@@ -98,7 +98,9 @@ class InMemoryGraph:
         self._purge_nodes(to_delete)
 
     def _delete_node_by_path(self, label: str, path: PropertyValue) -> None:
-        self._purge_nodes(set(self._find_nodes(label, cs.KEY_PATH, path)))
+        # Mirrors the real query: File/Folder deletes key on the absolute
+        # path (issue #897).
+        self._purge_nodes(set(self._find_nodes(label, cs.KEY_ABSOLUTE_PATH, path)))
 
     def _purge_nodes(self, to_delete: set[NodeId]) -> None:
         deleted_props = {nid: self.nodes[nid] for nid in to_delete}
@@ -118,7 +120,31 @@ class InMemoryGraph:
         }
 
     def snapshot(self) -> tuple[frozenset[NodeId], frozenset[RelTuple]]:
-        return frozenset(self.nodes.keys()), frozenset(self.rels)
+        # File/Folder identity is the absolute path, which differs between
+        # the golden and incremental tmp roots; normalise those ids back to
+        # the relative path so the two graphs stay comparable.
+        alias: dict[PropertyValue, PropertyValue] = {
+            props[cs.KEY_ABSOLUTE_PATH]: props[cs.KEY_PATH]
+            for (label, _uid), props in self.nodes.items()
+            if label in (cs.NodeLabel.FILE, cs.NodeLabel.FOLDER)
+            and cs.KEY_ABSOLUTE_PATH in props
+        }
+        nodes = frozenset(
+            (label, alias.get(uid, uid)) for (label, uid) in self.nodes.keys()
+        )
+        rels = frozenset(
+            (
+                fl,
+                cs.KEY_PATH if fk == cs.KEY_ABSOLUTE_PATH else fk,
+                alias.get(fv, fv) if fk == cs.KEY_ABSOLUTE_PATH else fv,
+                rel,
+                tl,
+                cs.KEY_PATH if tk == cs.KEY_ABSOLUTE_PATH else tk,
+                alias.get(tv, tv) if tk == cs.KEY_ABSOLUTE_PATH else tv,
+            )
+            for (fl, fk, fv, rel, tl, tk, tv) in self.rels
+        )
+        return nodes, rels
 
 
 NODE_UNIQUE_KEYS = cs.NODE_UNIQUE_CONSTRAINTS
