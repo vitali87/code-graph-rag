@@ -233,15 +233,22 @@ def _dart_pattern_bound_names(node: Node) -> list[str]:
 
 
 def _dart_is_bare_read(node: Node) -> bool:
-    # A bare-identifier getter read only: a chain head (following selector or
-    # cascade) belongs to the member/cascade passes, an argument_part head is
-    # a call target, a label's identifier names a parameter, and a selector's
+    # A bare-identifier getter read, INCLUDING a receiver-position chain head:
+    # `_wonders.length` reads the `_wonders` getter even though the member
+    # pass only emits for the final member (issue #873). Only a head invoked
+    # directly (`f(x)` = identifier + selector(argument_part)) belongs to the
+    # call pass; a label's identifier names a parameter, and a selector's
     # own identifier is the member the chain pass already handled.
     following = node.next_named_sibling
-    if following is not None and following.type in (
-        cs.TS_DART_SELECTOR,
-        cs.TS_DART_ARGUMENT_PART,
-        cs.TS_DART_CASCADE_SECTION,
+    if following is not None and (
+        following.type == cs.TS_DART_ARGUMENT_PART
+        or (
+            following.type == cs.TS_DART_SELECTOR
+            and any(
+                child.type == cs.TS_DART_ARGUMENT_PART
+                for child in following.named_children
+            )
+        )
     ):
         return False
     parent = node.parent
@@ -376,6 +383,21 @@ def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
         return _py_dict_values(node)
     if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
         return _conditional_result_operands(node, is_dart)
+    if (
+        is_dart
+        and node.type.endswith(cs.DART_EXPRESSION_NODE_SUFFIX)
+        # A scope-opening node (function_expression) IS the first-class
+        # value; only flat operator nodes hand a swallowed ternary onward.
+        and node.type not in cs.DART_NESTED_SCOPE_NODE_TYPES
+        and (kids := node.named_children)
+        and kids[-1].type == cs.TS_PY_CONDITIONAL_EXPRESSION
+    ):
+        # tree-sitter-dart parses low-precedence operators OVER the ternary
+        # (`a + b > 0 ? f : null` -> additive_expression(a, +,
+        # conditional_expression(...))), swallowing the conditional as the
+        # LAST child of the operator node; its result operands are still the
+        # handed-over values (issue #873).
+        return [kids[-1]]
     if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
         return [
             operand
@@ -1135,13 +1157,16 @@ class CallProcessor:
             if not all_call_nodes and language not in (
                 cs.SupportedLanguage.CSHARP,
                 cs.SupportedLanguage.CPP,
+                cs.SupportedLanguage.DART,
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
-                # properties (`return Size;`), and C++, where a ctor's
+                # properties (`return Size;`), C++, where a ctor's
                 # member initializer list (`: buffer(g, 0)`) runs base
-                # ctors without any call_expression node; both passes run
-                # per caller inside class processing, so they proceed.
+                # ctors without any call_expression node, and Dart, where
+                # a getter body can read another getter (`=> _wonders.length`,
+                # issue #873); these passes run per caller inside class
+                # processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
