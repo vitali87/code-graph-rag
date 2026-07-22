@@ -314,8 +314,9 @@ def _host_stem(url: str) -> str | None:
 def _project_stem(project: str) -> str:
     # `user-service__2adc9027` deploys as host `user-service` (compose and
     # cluster DNS use the service name); underscores and dashes are
-    # interchangeable across compose file and directory conventions.
-    return project.split(_PROJECT_HASH_SEPARATOR, 1)[0].lower().replace("_", "-")
+    # interchangeable across compose file and directory conventions. Only
+    # the LAST separator is the hash suffix; a base name may contain `__`.
+    return project.rsplit(_PROJECT_HASH_SEPARATOR, 1)[0].lower().replace("_", "-")
 
 
 def link_endpoints(ingestor: QueryProtocol) -> int:
@@ -344,7 +345,17 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             for qn, (_identity, project) in endpoints.items()
             if project is not None and _project_stem(project) == host
         }
-        candidates = owned if owned else set(endpoints)
+        if owned:
+            # Legacy rows carry no project and stay linkable even when the
+            # host pins a scoped project (partially migrated graphs).
+            legacy = {
+                qn
+                for qn, (_identity, project) in endpoints.items()
+                if project is None
+            }
+            candidates = owned | legacy
+        else:
+            candidates = set(endpoints)
         for endpoint_qn in candidates:
             identity, _project = endpoints[endpoint_qn]
             method, _, template = identity.partition(" ")
