@@ -9,11 +9,14 @@ registrations so they become ENDPOINT resources like Python decorators do.
 
 The evidence gate is twofold. The path must be a literal opening with ``/``
 (or a ``VERB /path`` pattern); backtick literals count when they carry no
-substitution. And the call must look like a SERVER registration, not an
-outbound client request: either its receiver is bound in-module to a known
-framework factory (``express()``, ``echo.New()``, ``chi.NewRouter()``, ...),
-or ``http.Handle*`` with ``net/http`` imported, or one of its handler
-arguments is an inline function or a function declared in the module. A bare
+substitution, and Go paths may concatenate module-level string consts
+(``BaseURL+"/x"``, the oapi-codegen shape, issue #909). And the call must
+look like a SERVER registration, not an outbound client request: either its
+receiver is bound in-module to a known framework factory (``express()``,
+``echo.New()``, ``chi.NewRouter()``, ...), or ``http.Handle*`` with
+``net/http`` imported, or one of its handler arguments is an inline
+function, a function declared in the module, or (Go verb methods) an
+attribute expression like ``wrapper.GetMe``. A bare
 ``apiClient.get('/users')`` has none of these and is ignored.
 
 EXPOSES attribution is a ladder: a bare-identifier handler defined in the
@@ -23,8 +26,8 @@ wiring site.
 
 Ceilings (each simply yields nothing, never a wrong template): sub-router
 mounting (``app.use('/prefix', router)``), gorilla mux ``.Methods()``
-chains, handlers referenced through imports or attributes, factories bound
-in a different module.
+chains, JS handlers referenced through imports or attributes, factories and
+consts bound in a different module.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from tree_sitter import Node
 
 METHOD_ANY = "ANY"
@@ -98,6 +103,7 @@ _GO_FRAMEWORK_FACTORIES = frozenset(
 )
 _GO_HTTP_PACKAGE = "http"
 _GO_NET_HTTP_IMPORT = "net/http"
+_GO_CONCAT_OPERATOR = "+"
 # Go 1.22 ServeMux patterns: "GET /products/{id}".
 _GO_PATTERN_RE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (/\S*)$")
 
@@ -124,11 +130,15 @@ class RouteRegistration:
 @dataclass(frozen=True)
 class _ModuleEvidence:
     # Server-side evidence collected in a pre-pass: functions declared in the
-    # module, receivers bound to a framework factory, and whether net/http is
-    # imported (which legitimises `http.Handle*`).
+    # module, receivers bound to a framework factory, whether net/http is
+    # imported (which legitimises `http.Handle*`), and module-level string
+    # consts (which resolve generated `BaseURL+"/x"` paths, issue #909).
+    # Module scope only: a flat map of function locals could leak one
+    # function's binding into another and mint a WRONG template.
     declared_functions: frozenset[str]
     framework_receivers: frozenset[str]
     net_http_imported: bool
+    module_consts: Mapping[str, str]
 
 
 def _decode(node: Node | None) -> str | None:
@@ -303,9 +313,43 @@ def _go_server_evidence(
         and _decode(fn.child_by_field_name(cs.FIELD_OPERAND)) == _GO_HTTP_PACKAGE
     ):
         return True
+    # A generated `router.Get(BaseURL+"/x", wrapper.GetMe)` hands an
+    # attribute-expression handler to a verb method; with a rooted path this
+    # is registration shape, not a client call (issue #909).
+    if field in _GO_VERB_METHODS and any(
+        arg.type == cs.TS_GO_SELECTOR_EXPRESSION for arg in args[1:]
+    ):
+        return True
     return _handler_evidence(
         args[1:], evidence, frozenset({cs.TS_GO_FUNC_LITERAL}), cs.TS_GO_IDENTIFIER
     )
+
+
+def _go_path_value(
+    node: Node | None, evidence: _ModuleEvidence, depth: int = 0
+) -> str | None:
+    # A literal, a module-level string const, or a `+` concatenation of
+    # those (oapi-codegen keeps BaseURL adjacent to its routes, issue #909).
+    if node is None or depth > _CHAIN_DEPTH_LIMIT:
+        return None
+    literal = _literal_path(node, _GO_PATH_LITERALS)
+    if literal is not None:
+        return literal
+    if node.type == cs.TS_GO_IDENTIFIER:
+        return evidence.module_consts.get(_decode(node) or "")
+    if (
+        node.type == cs.TS_BINARY_EXPRESSION
+        and _decode(node.child_by_field_name(cs.FIELD_OPERATOR)) == _GO_CONCAT_OPERATOR
+    ):
+        left = _go_path_value(
+            node.child_by_field_name(cs.TS_FIELD_LEFT), evidence, depth + 1
+        )
+        right = _go_path_value(
+            node.child_by_field_name(cs.TS_FIELD_RIGHT), evidence, depth + 1
+        )
+        if left is not None and right is not None:
+            return left + right
+    return None
 
 
 def _go_registration(
@@ -316,7 +360,7 @@ def _go_registration(
         return None
     field = _decode(fn.child_by_field_name(cs.FIELD_FIELD))
     args = _call_args(call)
-    path = _literal_path(args[0] if args else None, _GO_PATH_LITERALS)
+    path = _go_path_value(args[0] if args else None, evidence)
     if path is None or field is None:
         return None
     if not _go_server_evidence(fn, field, args, evidence):
@@ -385,12 +429,44 @@ def _go_bound_names_and_value(node: Node) -> tuple[list[str], Node | None]:
     return names, value
 
 
-def _go_evidence(node: Node, declared: set[str], receivers: set[str]) -> bool:
+def _go_module_const(node: Node) -> tuple[str, str] | None:
+    # `const BaseURL = "/api/v1"` at FILE scope (also inside a const block):
+    # (name, literal). Anything scoped, multi-named, or non-literal is None.
+    if node.type != cs.TS_GO_CONST_SPEC:
+        return None
+    declaration = node.parent
+    if (
+        declaration is None
+        or declaration.parent is None
+        or declaration.parent.type != cs.TS_GO_SOURCE_FILE
+    ):
+        return None
+    names = [c for c in node.named_children if c.type == cs.TS_GO_IDENTIFIER]
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_GO_EXPRESSION_LIST:
+        values = value.named_children
+        value = values[0] if len(values) == 1 else None
+    if len(names) != 1 or value is None:
+        return None
+    name = _decode(names[0])
+    literal = _literal_path(value, _GO_PATH_LITERALS)
+    if name is None or literal is None:
+        return None
+    return name, literal
+
+
+def _go_evidence(
+    node: Node, declared: set[str], receivers: set[str], consts: dict[str, str]
+) -> bool:
     # Returns True when the node imports net/http.
     if node.type == cs.TS_GO_FUNCTION_DECLARATION:
         name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
         if name:
             declared.add(name)
+        return False
+    const = _go_module_const(node)
+    if const is not None:
+        consts[const[0]] = const[1]
         return False
     names, value = _go_bound_names_and_value(node)
     if names and value is not None:
@@ -405,17 +481,18 @@ def _go_evidence(node: Node, declared: set[str], receivers: set[str]) -> bool:
 def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvidence:
     declared: set[str] = set()
     receivers: set[str] = set()
+    consts: dict[str, str] = {}
     net_http = False
     stack = [root]
     is_go = language is cs.SupportedLanguage.GO
     while stack:
         node = stack.pop()
         if is_go:
-            net_http = _go_evidence(node, declared, receivers) or net_http
+            net_http = _go_evidence(node, declared, receivers, consts) or net_http
         else:
             _js_evidence(node, declared, receivers)
         stack.extend(node.named_children)
-    return _ModuleEvidence(frozenset(declared), frozenset(receivers), net_http)
+    return _ModuleEvidence(frozenset(declared), frozenset(receivers), net_http, consts)
 
 
 def _child_scope(scope: str, node: Node) -> str:
