@@ -920,3 +920,23 @@ class TestAwkSedXargsIntegration:
         result = await shell_commander.execute("echo file.txt | xargs cat")
         assert result.return_code == 0
         assert "content" in result.stdout
+
+
+class TestSpawnFailureDiagnostics:
+    async def test_spawn_failure_names_failing_segment(
+        self, shell_commander: ShellCommander, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed spawn must say WHICH pipeline segment failed and why: a
+        # bare str(OSError) leaves CI reading `assert -1 == 0` with no cause
+        # (issue #902, the intermittent awk failure on the Windows runner).
+        async def fail_spawn(*args: object, **kwargs: object) -> None:
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.shell_command.asyncio.create_subprocess_exec",
+            fail_spawn,
+        )
+        result = await shell_commander.execute("cat data.txt | awk '{print $1}'")
+        assert result.return_code == -1
+        assert "cat data.txt" in result.stderr, result.stderr
+        assert "No such file or directory" in result.stderr, result.stderr
