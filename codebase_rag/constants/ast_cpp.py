@@ -78,6 +78,9 @@ CPP_EXPORT_PREFIXES = (
 # C++ keywords for class detection
 CPP_KEYWORD_CLASS = "class"
 CPP_KEYWORD_STRUCT = "struct"
+# `static` storage on a declaration: internal linkage, TU-local symbol.
+CPP_KEYWORD_STATIC = "static"
+TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 # A C/C++ class/struct/union tag with no body is a forward declaration
@@ -177,6 +180,11 @@ FIELD_MACRO = "macro"
 TS_CPP_STRING_LITERAL = "string_literal"
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
+# `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests
+# inside this wrapper, one level below the statement node.
+TS_CPP_CONDITION_CLAUSE = "condition_clause"
+# A lambda's parameter list hangs off this declarator (no name to declare).
+TS_CPP_ABSTRACT_FUNCTION_DECLARATOR = "abstract_function_declarator"
 TS_CPP_DECLARATION = "declaration"
 TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
@@ -252,3 +260,10 @@ CPP_RESERVED_DEF_NAMES = frozenset(
         "catch",
     }
 )
+
+# Lambda capture list: `[a]` holds identifiers, `[=]`/`[&]` a default
+# capture pulling every enclosing local into scope.
+TS_CPP_LAMBDA_CAPTURE_SPECIFIER = "lambda_capture_specifier"
+TS_CPP_LAMBDA_DEFAULT_CAPTURE = "lambda_default_capture"
+# `[name = expr]` init-capture: binds its leading identifier in the lambda.
+TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
