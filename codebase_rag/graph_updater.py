@@ -746,9 +746,15 @@ class GraphUpdater:
             return
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
-        for row in self.ingestor.fetch_all(
-            cs.CYPHER_ALL_DEFINITION_QNS, project_params
-        ):
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+        except Exception:
+            # Rehydration completes cross-file resolution for files this run
+            # did not re-parse; a graph that cannot answer degrades to the
+            # freshly parsed registry rather than aborting the sync.
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -817,7 +823,12 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         module_map = self.factory.definition_processor.module_qn_to_file_path
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+        except Exception:
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
@@ -845,10 +856,14 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
-        rows = self.ingestor.fetch_all(
-            cs.CYPHER_ALL_INHERITS,
-            {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
-        )
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_INHERITS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
         for child, bases in self._rehydrated_bases_by_child(
             rows, class_inheritance
         ).items():
@@ -894,9 +909,17 @@ class GraphUpdater:
         # context-sensitive).
         if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
             return []
-        return self.ingestor.fetch_all(
-            cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
-        )
+        try:
+            return self.ingestor.fetch_all(
+                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+            )
+        except Exception:
+            # Restoration is an optimisation over re-resolving the callers; a
+            # graph that cannot answer (the same outage that failed the
+            # module-path probe) degrades to a clean re-resolution rather
+            # than aborting the whole sync.
+            logger.warning(ls.INBOUND_CAPTURE_FAILED)
+            return []
 
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
@@ -1254,6 +1277,7 @@ class GraphUpdater:
         skipped_count = 0
         changed_count = 0
         unreadable_count = 0
+        unreadable_keys: set[str] = set()
 
         current_file_keys: set[str] = set()
 
@@ -1266,6 +1290,7 @@ class GraphUpdater:
                     file_mtime = filepath.stat().st_mtime
                 except OSError:
                     unreadable_count += 1
+                    unreadable_keys.add(file_key)
                     continue
                 if file_mtime <= cache_mtime:
                     new_hashes[file_key] = old_hashes[file_key]
@@ -1276,6 +1301,7 @@ class GraphUpdater:
             hashed = _hash_file_with_bytes(filepath)
             if hashed is None:
                 unreadable_count += 1
+                unreadable_keys.add(file_key)
                 continue
             current_hash, file_bytes = hashed
 
@@ -1357,11 +1383,17 @@ class GraphUpdater:
         # was deleted OR newly excluded since the previous index is absent
         # from current_file_keys and its subtree must go. (Disk-deleted files
         # are also swept by orphan pruning; excluded ones still exist on disk
-        # and only this reconciliation catches them.)
+        # and only this reconciliation catches them.) A file that merely
+        # could not be READ this run still exists: sweeping it would erase
+        # live state over a transient error, so unreadable keys are exempt.
         graph_paths = (
             preexisting_paths if preexisting_paths is not None else frozenset()
         )
-        deleted_keys = (set(old_hashes.keys()) | graph_paths) - current_file_keys
+        deleted_keys = (
+            (set(old_hashes.keys()) | graph_paths)
+            - current_file_keys
+            - unreadable_keys
+        )
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
@@ -1549,7 +1581,13 @@ class GraphUpdater:
         ]
 
         for query_all, delete_query, label in prune_specs:
-            rows = self.ingestor.fetch_all(query_all)
+            try:
+                rows = self.ingestor.fetch_all(query_all)
+            except Exception:
+                # A graph that cannot be read cannot be pruned safely; the
+                # next healthy run sweeps whatever this one left behind.
+                logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
+                continue
             orphans = []
             for r in rows:
                 path = r.get("path")
