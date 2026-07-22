@@ -562,3 +562,124 @@ class TestHostAwareLinkingHardening:
         assert created == 1
         target = ingestor.ensure_relationship_batch.call_args.args[2][2]
         assert "order__worker__2adc9027" in target
+
+
+class TestRootfulRelativeUrlMatch:
+    """Issue #908: same-origin clients fetch rootful relative paths.
+
+    A browser frontend's ``fetch("/api/users/42")`` carries no scheme or
+    host; the path alone must qualify as a match candidate. A schemeless
+    fragment without a leading slash stays rejected: it could be anything.
+    """
+
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("/users/42", "/users/{id}", True),
+            ("/users/42?verbose=1", "/users/{id}", True),
+            ("/users/42/", "/users/{id}", True),
+            ("/api/users", "/users", False),
+            ("users/42", "/users/{id}", False),
+            ("not a url", "/users/{id}", False),
+            # Protocol-relative is an EXTERNAL reference, not a same-origin
+            # request; accepting it would fan out to every endpoint.
+            ("//cdn.example.com/users/42", "/users/{id}", False),
+        ],
+    )
+    def test_rootful_relative_urls(
+        self, url: str, template: str, matches: bool
+    ) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+    def test_rootful_relative_url_links_to_endpoint(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        network_qn = "resource::NETWORK::/users/42"
+        endpoint_qn = "resource::ENDPOINT::web::GET /users/{id}"
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": network_qn,
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": ["web"],
+            },
+            {
+                "qualified_name": endpoint_qn,
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "web",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.RESOURCE, "qualified_name", network_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
+        )
+
+
+class TestRootfulCandidateScoping:
+    """A rootful URL is a SAME-ORIGIN request: its candidates are the
+    endpoints of the projects that issued it (the sink edges' source
+    projects), never a global fan-out across every indexed project.
+    """
+
+    def test_rootful_links_only_within_caller_projects(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": ["frontend"],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::frontend::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "frontend",
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "resource::ENDPOINT::frontend::GET /users/{id}" in args[2]
+
+    def test_rootful_with_unknown_callers_does_not_fan_out(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": [],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 0
