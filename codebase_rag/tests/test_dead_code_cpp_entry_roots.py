@@ -82,6 +82,17 @@ def test_header_defined_entry_name_is_not_rooted() -> None:
     assert len(reported) == 1, reported
 
 
+def test_namespace_named_like_file_stem_is_not_rooted() -> None:
+    # `namespace main { int main(); }` in main.cpp: the segment before the
+    # leaf equals the file stem, but it is the NAMESPACE, not the module.
+    # Only the exact file-scope qn (project prefix + dotted path + name)
+    # earns the root.
+    nodes = [_node("proj.app.main.main.main", "main", "app/main.cpp")]
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    assert len(reported) == 1, reported
+
+
 def test_namespace_scoped_main_is_not_rooted() -> None:
     # `namespace detail { int main(); }` is an ordinary function the OS
     # cannot invoke; only a file-scope entry (qn directly under the module,
