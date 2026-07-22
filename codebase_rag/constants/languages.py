@@ -310,6 +310,11 @@ IGNORE_PATTERNS = frozenset(
     {
         ".cache",
         ".claude",
+        # Android NDK per-ABI CMake build cache; ships compiler-probe
+        # sources (CMakeCCompilerId.c) that index as project code.
+        ".cxx",
+        # Dart/Flutter tool cache (package_config, generated plugin code).
+        ".dart_tool",
         ".eclipse",
         ".eggs",
         ".env",
