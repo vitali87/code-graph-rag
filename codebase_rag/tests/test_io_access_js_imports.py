@@ -150,7 +150,9 @@ def test_local_default_import_does_not_hit_builtin_sink(tmp_path: Path) -> None:
 WRITES_TO = cs.RelationshipType.WRITES_TO.value
 
 
-def _run_io_directed(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
+def _run_io_directed(
+    tmp_path: Path, files: dict[str, str]
+) -> set[tuple[str, str, str]]:
     parsers, queries = load_parsers()
     if "javascript" not in parsers:
         pytest.skip("javascript parser not available")
