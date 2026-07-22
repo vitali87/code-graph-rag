@@ -197,3 +197,70 @@ def test_registered_implemented_interface_method_is_not_flagged(
     on_event = next(v for k, v in props.items() if k.endswith("Worker.onEvent"))
     assert not run.get(cs.KEY_OVERRIDES_EXTERNAL), run
     assert on_event.get(cs.KEY_OVERRIDES_EXTERNAL) is True, on_event
+
+
+def test_grandchild_of_external_base_is_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # External ancestry is transitive: `Mid extends ExternalWidget` and
+    # `Leaf extends Mid`. Leaf's @override of a name Mid does not define can
+    # only target the external grandparent, so it roots; its @override of
+    # Mid's own method resolves via OVERRIDES edges and must not.
+    root = temp_repo / "dartgrand"
+    root.mkdir(parents=True)
+    (root / "app.dart").write_text(
+        "import 'package:flutter/material.dart';\n"
+        "\n"
+        "class Mid extends StatelessWidget {\n"
+        "  void tick() {}\n"
+        "}\n"
+        "\n"
+        "class Leaf extends Mid {\n"
+        "  @override\n"
+        "  void tick() {}\n"
+        "\n"
+        "  @override\n"
+        "  Widget build(BuildContext context) {\n"
+        "    return Container();\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="dart")
+    props = _method_props(mock_ingestor)
+    leaf_tick = next(v for k, v in props.items() if k.endswith("Leaf.tick"))
+    leaf_build = next(v for k, v in props.items() if k.endswith("Leaf.build"))
+    assert not leaf_tick.get(cs.KEY_OVERRIDES_EXTERNAL), leaf_tick
+    assert leaf_build.get(cs.KEY_OVERRIDES_EXTERNAL) is True, leaf_build
+
+
+def test_bare_class_object_override_is_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A class with no ancestry clause still extends Object implicitly:
+    # `@override toString` is invoked by string interpolation, never by a
+    # call the graph sees, so it roots; an unannotated sibling stays a
+    # candidate.
+    root = temp_repo / "dartbare"
+    root.mkdir(parents=True)
+    (root / "model.dart").write_text(
+        "class Money {\n"
+        "  int cents = 0;\n"
+        "\n"
+        "  @override\n"
+        "  String toString() {\n"
+        "    return 'cents';\n"
+        "  }\n"
+        "\n"
+        "  int helper() {\n"
+        "    return cents;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="dart")
+    props = _method_props(mock_ingestor)
+    to_string = next(v for k, v in props.items() if k.endswith("Money.toString"))
+    helper = next(v for k, v in props.items() if k.endswith("Money.helper"))
+    assert to_string.get(cs.KEY_OVERRIDES_EXTERNAL) is True, to_string
+    assert not helper.get(cs.KEY_OVERRIDES_EXTERNAL), helper
