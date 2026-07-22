@@ -1500,6 +1500,8 @@ class IOAccessProcessor:
             content_type=descriptor.string_content_type,
             keyword_arg_type=descriptor.keyword_arg_type,
             wrapper_type=descriptor.argument_wrapper_type,
+            template_type=descriptor.template_string_type,
+            substitution_type=descriptor.template_substitution_type,
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
@@ -1538,6 +1540,8 @@ class IOAccessProcessor:
             content_type=descriptor.string_content_type,
             keyword_arg_type=descriptor.keyword_arg_type,
             wrapper_type=descriptor.argument_wrapper_type,
+            template_type=descriptor.template_string_type,
+            substitution_type=descriptor.template_substitution_type,
         )
 
     @staticmethod

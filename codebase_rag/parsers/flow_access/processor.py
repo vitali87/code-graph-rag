@@ -1126,6 +1126,8 @@ class FlowProcessor:
                 content_type=jc.descriptor.string_content_type,
                 keyword_arg_type=jc.descriptor.keyword_arg_type,
                 wrapper_type=jc.descriptor.argument_wrapper_type,
+                template_type=jc.descriptor.template_string_type,
+                substitution_type=jc.descriptor.template_substitution_type,
             )
             for _via, taint in args:
                 if taint is None:
@@ -1440,6 +1442,8 @@ class FlowProcessor:
             content_type=jc.descriptor.string_content_type,
             keyword_arg_type=jc.descriptor.keyword_arg_type,
             wrapper_type=jc.descriptor.argument_wrapper_type,
+            template_type=jc.descriptor.template_string_type,
+            substitution_type=jc.descriptor.template_substitution_type,
         )
         return HandleBinding(kind=sink.kind, identity=identity)
 

@@ -330,3 +330,24 @@ class TestTemplateLiteralUrls:
             READS_FROM,
             "resource::NETWORK::http://svc:8000/products/{*}",
         ), rels
+
+    def test_handle_constructor_template_keeps_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        # Identity must not depend on the analysis path: the handle
+        # constructor reads templates exactly like direct sinks.
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "import fs from 'fs'\n\n"
+                    "export function log(date, line) {\n"
+                    "  const s = fs.createWriteStream(`logs/${date}.txt`)\n"
+                    "  s.write(line)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(
+            rels, "m.log", WRITES_TO, "resource::FILE::logs/{date}.txt"
+        ), rels
