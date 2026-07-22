@@ -195,7 +195,6 @@ def emit_endpoints(
     """
     # Imported lazily: parsers.utils imports this module, and the io_access
     # package init pulls extract, which imports parsers.utils back.
-    from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 
     # A filtering sink that would drop the EXPOSES edge must not receive the
     # Resource node either, or selective capture leaves an orphaned endpoint.
@@ -210,47 +209,73 @@ def emit_endpoints(
         pairs = parse_route_decorator(decorator)
         if not pairs:
             continue
-        prefixes = [""]
-        if prefix_resolver is not None and module_qn is not None:
-            receiver = decorator_receiver(decorator)
-            if receiver is not None:
-                # The handler's lexical scope (qn segments between module and
-                # leaf) picks the right same-named router when factories
-                # shadow a module-level one.
-                scope = ""
-                prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
-                if qualified_name.startswith(prefix):
-                    rest = qualified_name[len(prefix) :]
-                    if cs.SEPARATOR_DOT in rest:
-                        scope = rest.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                resolved = prefix_resolver(module_qn, receiver, scope)
-                if resolved:
-                    prefixes = resolved
-        # The qn is scoped by owning project (EXPOSES always comes from
-        # within one), so same-template endpoints in different services stay
-        # distinct nodes and host-aware linking can tell them apart (#879).
-        project = qualified_name.split(cs.SEPARATOR_DOT, 1)[0]
+        prefixes = _decorator_prefixes(
+            decorator, qualified_name, module_qn, prefix_resolver
+        )
         for method, path in pairs:
             for prefix in prefixes:
-                identity = f"{method} {prefix}{path}"
-                resource_qn = RESOURCE_QN_FORMAT.format(
-                    kind=ResourceKind.ENDPOINT.value,
-                    identity=f"{project}::{identity}",
+                _emit_endpoint(
+                    ingestor, label, qualified_name, f"{method} {prefix}{path}"
                 )
-                ingestor.ensure_node_batch(
-                    cs.NodeLabel.RESOURCE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: resource_qn,
-                        cs.KEY_NAME: identity,
-                        KEY_KIND: ResourceKind.ENDPOINT.value,
-                        KEY_PROJECT: project,
-                    },
-                )
-                ingestor.ensure_relationship_batch(
-                    (label, cs.KEY_QUALIFIED_NAME, qualified_name),
-                    cs.RelationshipType.EXPOSES,
-                    (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
-                )
+
+
+def _handler_scope(qualified_name: str, module_qn: str) -> str:
+    # The handler's lexical scope (qn segments between module and leaf)
+    # picks the right same-named router when factories shadow a
+    # module-level one.
+    prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+    if not qualified_name.startswith(prefix):
+        return ""
+    rest = qualified_name[len(prefix) :]
+    return rest.rsplit(cs.SEPARATOR_DOT, 1)[0] if cs.SEPARATOR_DOT in rest else ""
+
+
+def _decorator_prefixes(
+    decorator: str,
+    qualified_name: str,
+    module_qn: str | None,
+    prefix_resolver: PrefixResolver | None,
+) -> list[str]:
+    if prefix_resolver is None or module_qn is None:
+        return [""]
+    receiver = decorator_receiver(decorator)
+    if receiver is None:
+        return [""]
+    resolved = prefix_resolver(
+        module_qn, receiver, _handler_scope(qualified_name, module_qn)
+    )
+    return resolved if resolved else [""]
+
+
+def _emit_endpoint(
+    ingestor: IngestorProtocol,
+    label: cs.NodeLabel,
+    qualified_name: str,
+    identity: str,
+) -> None:
+    from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
+
+    # The qn is scoped by owning project (EXPOSES always comes from within
+    # one), so same-template endpoints in different services stay distinct
+    # nodes and host-aware linking can tell them apart (#879).
+    project = qualified_name.split(cs.SEPARATOR_DOT, 1)[0]
+    resource_qn = RESOURCE_QN_FORMAT.format(
+        kind=ResourceKind.ENDPOINT.value, identity=f"{project}::{identity}"
+    )
+    ingestor.ensure_node_batch(
+        cs.NodeLabel.RESOURCE,
+        {
+            cs.KEY_QUALIFIED_NAME: resource_qn,
+            cs.KEY_NAME: identity,
+            KEY_KIND: ResourceKind.ENDPOINT.value,
+            KEY_PROJECT: project,
+        },
+    )
+    ingestor.ensure_relationship_batch(
+        (label, cs.KEY_QUALIFIED_NAME, qualified_name),
+        cs.RelationshipType.EXPOSES,
+        (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+    )
 
 
 def _collect_live_resources(

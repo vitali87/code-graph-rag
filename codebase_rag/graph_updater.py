@@ -73,6 +73,38 @@ from .utils.path_utils import (
 )
 from .utils.source_extraction import extract_source_with_fallback
 
+
+def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
+    owner: str | None = None
+    for candidate in module_qns:
+        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
+            owner is None or len(candidate) > len(owner)
+        ):
+            owner = candidate
+    return owner
+
+
+def _route_handler_entry(
+    row: Mapping[str, object], already_pending: set[str], module_qns: set[str]
+) -> tuple[cs.NodeLabel, str, list[str], str | None] | None:
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    decorators = row.get(cs.KEY_DECORATORS)
+    if not isinstance(qn, str) or qn in already_pending:
+        return None
+    if not isinstance(decorators, list):
+        return None
+    routes = [d for d in decorators if isinstance(d, str) and parse_route_decorator(d)]
+    if not routes:
+        return None
+    labels = row.get("labels")
+    label = (
+        cs.NodeLabel.METHOD
+        if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
+        else cs.NodeLabel.FUNCTION
+    )
+    return (label, qn, routes, _owning_module_qn(qn, module_qns))
+
+
 type FileHashCache = dict[str, str]
 type DirMtimesCache = dict[str, float]
 
@@ -754,17 +786,9 @@ class GraphUpdater:
             )
         if not entries:
             return
-        # Re-emitted handlers drop their previous EXPOSES first, so a
-        # template that changed prefix loses its stale anchor and the orphan
-        # cleanup prunes the outdated endpoint node.
-        if isinstance(self.ingestor, QueryProtocol):
-            try:
-                self.ingestor.execute_write(
-                    CYPHER_DELETE_HANDLER_EXPOSES,
-                    {"qns": [qn for _label, qn, _decorators, _module in entries]},
-                )
-            except Exception:
-                logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+        self._drop_stale_handler_exposes(
+            [qn for _label, qn, _decorators, _module in entries]
+        )
         registry = build_router_registry(module_asts)
         for label, qn, decorators, module_qn in entries:
             emit_endpoints(
@@ -776,6 +800,19 @@ class GraphUpdater:
                 prefix_resolver=registry.mount_prefixes,
             )
         dp.pending_endpoints.clear()
+
+    def _drop_stale_handler_exposes(self, handler_qns: list[str]) -> None:
+        # Re-emitted handlers drop their previous EXPOSES first, so a
+        # template that changed prefix loses its stale anchor and the orphan
+        # cleanup prunes the outdated endpoint node.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(
+                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
+            )
+        except Exception:
+            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _rehydrated_route_handlers(
         self, already_pending: set[str], module_qns: set[str]
@@ -791,30 +828,9 @@ class GraphUpdater:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            qn = row.get(cs.KEY_QUALIFIED_NAME)
-            decorators = row.get(cs.KEY_DECORATORS)
-            if not isinstance(qn, str) or qn in already_pending:
-                continue
-            if not isinstance(decorators, list):
-                continue
-            routes = [
-                d for d in decorators if isinstance(d, str) and parse_route_decorator(d)
-            ]
-            if not routes:
-                continue
-            labels = row.get("labels")
-            label = (
-                cs.NodeLabel.METHOD
-                if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
-                else cs.NodeLabel.FUNCTION
-            )
-            module_qn: str | None = None
-            for candidate in module_qns:
-                if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
-                    module_qn is None or len(candidate) > len(module_qn)
-                ):
-                    module_qn = candidate
-            out.append((label, qn, routes, module_qn))
+            entry = _route_handler_entry(row, already_pending, module_qns)
+            if entry is not None:
+                out.append(entry)
         return out
 
     def _python_module_asts(self) -> dict[str, Node]:

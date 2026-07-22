@@ -82,7 +82,8 @@ _RouterKey = tuple[str, str, str]
 
 
 def _scope_chain(scope: str) -> list[str]:
-    # Innermost first, ending at module level: 'a.b' -> ['a.b', 'a', ''].
+    # Every enclosing scope from the innermost outwards, ending with the
+    # module level (the empty string).
     parts = scope.split(cs.SEPARATOR_DOT) if scope else []
     return [cs.SEPARATOR_DOT.join(parts[:i]) for i in range(len(parts), -1, -1)]
 
@@ -154,36 +155,45 @@ def _first_positional(call: Node) -> Node | None:
     return None
 
 
-def _import_targets(module_qn: str, node: Node) -> dict[str, str]:
-    # local name -> dotted target. Relative imports resolve against the
-    # importing module's own qn, so they come back fully qualified; absolute
-    # ones resolve later by suffix match.
+def _aliased_import(child: Node) -> tuple[str, str] | None:
+    dotted = _decode(child.child_by_field_name(cs.TS_FIELD_NAME))
+    alias = _decode(child.child_by_field_name(cs.FIELD_ALIAS))
+    return (alias, dotted) if dotted and alias else None
+
+
+def _plain_import_targets(node: Node) -> dict[str, str]:
     out: dict[str, str] = {}
-    if node.type == cs.TS_PY_IMPORT_STATEMENT:
-        for child in node.named_children:
-            if child.type == cs.TS_PY_DOTTED_NAME:
-                dotted = _decode(child)
-                if dotted:
-                    # `import a.b` binds only the head name `a`.
-                    head = dotted.split(cs.SEPARATOR_DOT)[0]
-                    out[head] = head
-            elif child.type == cs.TS_ALIASED_IMPORT:
-                dotted = _decode(child.child_by_field_name(cs.TS_FIELD_NAME))
-                alias = _decode(child.child_by_field_name(cs.FIELD_ALIAS))
-                if dotted and alias:
-                    out[alias] = dotted
-        return out
-    if node.type != cs.TS_PY_IMPORT_FROM_STATEMENT:
-        return out
+    for child in node.named_children:
+        if child.type == cs.TS_PY_DOTTED_NAME:
+            dotted = _decode(child)
+            if dotted:
+                # `import a.b` binds only the head name `a`.
+                head = dotted.split(cs.SEPARATOR_DOT)[0]
+                out[head] = head
+        elif child.type == cs.TS_ALIASED_IMPORT:
+            if (pair := _aliased_import(child)) is not None:
+                out[pair[0]] = pair[1]
+    return out
+
+
+def _from_import_base(module_qn: str, base: str) -> str:
+    # A relative base resolves against the importing module's own qn, so it
+    # comes back fully qualified; an absolute base resolves later by suffix.
+    if not base.startswith(cs.SEPARATOR_DOT):
+        return base
+    level = len(base) - len(base.lstrip(cs.SEPARATOR_DOT))
+    rest = base[level:]
+    parts = module_qn.split(cs.SEPARATOR_DOT)[:-level]
+    return cs.SEPARATOR_DOT.join(parts + ([rest] if rest else []))
+
+
+def _from_import_targets(module_qn: str, node: Node) -> dict[str, str]:
     base_node = node.child_by_field_name(cs.FIELD_MODULE_NAME)
     base = _decode(base_node)
     if base is None:
-        return out
-    if base.startswith(cs.SEPARATOR_DOT):
-        level = len(base) - len(base.lstrip(cs.SEPARATOR_DOT))
-        rest = base[level:]
-        parts = module_qn.split(cs.SEPARATOR_DOT)[:-level]
-        base = cs.SEPARATOR_DOT.join(parts + ([rest] if rest else []))
+        return {}
+    base = _from_import_base(module_qn, base)
+    out: dict[str, str] = {}
     for child in node.named_children:
         if child is base_node:
             continue
@@ -192,11 +202,18 @@ def _import_targets(module_qn: str, node: Node) -> dict[str, str]:
             if name and cs.SEPARATOR_DOT not in name:
                 out[name] = f"{base}{cs.SEPARATOR_DOT}{name}"
         elif child.type == cs.TS_ALIASED_IMPORT:
-            name = _decode(child.child_by_field_name(cs.TS_FIELD_NAME))
-            alias = _decode(child.child_by_field_name(cs.FIELD_ALIAS))
-            if name and alias:
-                out[alias] = f"{base}{cs.SEPARATOR_DOT}{name}"
+            if (pair := _aliased_import(child)) is not None:
+                out[pair[0]] = f"{base}{cs.SEPARATOR_DOT}{pair[1]}"
     return out
+
+
+def _import_targets(module_qn: str, node: Node) -> dict[str, str]:
+    # local name -> dotted target.
+    if node.type == cs.TS_PY_IMPORT_STATEMENT:
+        return _plain_import_targets(node)
+    if node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+        return _from_import_targets(module_qn, node)
+    return {}
 
 
 def _resolve_module(modules: set[str], importer_qn: str, dotted: str) -> str | None:
@@ -297,15 +314,7 @@ class RouterRegistry:
         results: list[tuple[str, bool]] = []
         for mount in mounts:
             seg_text, seg_unknown = self._segment(router, mount)
-            if (
-                mount.parent is None
-                or mount.parent in visiting
-                or mount.parent not in self._routers
-            ):
-                bases = [("", True)]
-            else:
-                bases = self._full(mount.parent, visiting | {key})
-            for base_text, base_unknown in bases:
+            for base_text, base_unknown in self._mount_bases(mount, visiting | {key}):
                 if seg_unknown:
                     # The unknown part swallows everything above it; the
                     # known tail below it survives behind the marker.
@@ -313,6 +322,17 @@ class RouterRegistry:
                 else:
                     results.append((base_text + seg_text, base_unknown))
         return results
+
+    def _mount_bases(
+        self, mount: _Mount, visiting: frozenset[_RouterKey]
+    ) -> list[tuple[str, bool]]:
+        if (
+            mount.parent is None
+            or mount.parent in visiting
+            or mount.parent not in self._routers
+        ):
+            return [("", True)]
+        return self._full(mount.parent, visiting)
 
     @staticmethod
     def _segment(router: _Router, mount: _Mount) -> tuple[str, bool]:
@@ -332,26 +352,29 @@ class RouterRegistry:
         return (include_prefix + router.prefix, False)
 
 
-def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
-    """Collect router definitions, mounts and imports from module ASTs."""
-    routers: dict[_RouterKey, _Router] = {}
-    ambiguous: set[_RouterKey] = set()
-    raw_mounts: list[_RawMount] = []
-    raw_imports: dict[str, dict[str, str]] = {}
+def _inner_scope(scope: str, node: Node) -> str:
+    name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
+    if not name:
+        return scope
+    return f"{scope}{cs.SEPARATOR_DOT}{name}" if scope else name
 
-    for module_qn, root in module_asts.items():
+
+class _Collector:
+    """Accumulates router definitions, mounts and imports from module ASTs."""
+
+    def __init__(self) -> None:
+        self.routers: dict[_RouterKey, _Router] = {}
+        self.ambiguous: set[_RouterKey] = set()
+        self.raw_mounts: list[_RawMount] = []
+        self.raw_imports: dict[str, dict[str, str]] = {}
+
+    def collect_module(self, module_qn: str, root: Node) -> None:
         module_imports: dict[str, str] = {}
         stack: list[tuple[Node, str]] = [(root, "")]
         while stack:
             node, scope = stack.pop()
             if node.type == cs.TS_PY_FUNCTION_DEFINITION:
-                name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
-                if not name:
-                    inner = scope
-                elif scope:
-                    inner = f"{scope}{cs.SEPARATOR_DOT}{name}"
-                else:
-                    inner = name
+                inner = _inner_scope(scope, node)
                 stack.extend((child, inner) for child in node.named_children)
                 continue
             if node.type in (
@@ -360,52 +383,59 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
             ):
                 module_imports.update(_import_targets(module_qn, node))
             elif node.type == cs.TS_PY_ASSIGNMENT:
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                right = node.child_by_field_name(cs.FIELD_RIGHT)
-                if (
-                    left is not None
-                    and left.type == cs.TS_PY_IDENTIFIER
-                    and right is not None
-                    and right.type == cs.TS_PY_CALL
-                ):
-                    callee = _decode(right.child_by_field_name(cs.TS_FIELD_FUNCTION))
-                    kind = _FACTORY_KINDS.get(
-                        (callee or "").split(cs.SEPARATOR_DOT)[-1]
-                    )
-                    if kind is not None:
-                        value, given = _keyword_argument(right)
-                        key = (module_qn, scope, _decode(left) or "")
-                        new = _Router(kind, _string_value(value) if given else "")
-                        if key in routers and routers[key] != new:
-                            ambiguous.add(key)
-                        else:
-                            routers[key] = new
+                self._record_assignment(module_qn, scope, node)
             elif node.type == cs.TS_PY_CALL:
-                fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-                if fn is not None and fn.type == cs.TS_PY_ATTRIBUTE:
-                    method = _decode(fn.child_by_field_name(cs.TS_ATTRIBUTE))
-                    parent_text = _decode(fn.child_by_field_name(cs.FIELD_OBJECT))
-                    child_text = _decode(_first_positional(node))
-                    if (
-                        method in _MOUNT_METHODS
-                        and parent_text is not None
-                        and child_text is not None
-                    ):
-                        value, given = _keyword_argument(node)
-                        raw_mounts.append(
-                            _RawMount(
-                                module_qn,
-                                scope,
-                                parent_text,
-                                child_text,
-                                _string_value(value) if given else None,
-                                given,
-                            )
-                        )
+                self._record_mount(module_qn, scope, node)
             stack.extend((child, scope) for child in node.named_children)
-        raw_imports[module_qn] = module_imports
+        self.raw_imports[module_qn] = module_imports
 
-    modules = set(module_asts)
+    def _record_assignment(self, module_qn: str, scope: str, node: Node) -> None:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        right = node.child_by_field_name(cs.FIELD_RIGHT)
+        if (
+            left is None
+            or left.type != cs.TS_PY_IDENTIFIER
+            or right is None
+            or right.type != cs.TS_PY_CALL
+        ):
+            return
+        callee = _decode(right.child_by_field_name(cs.TS_FIELD_FUNCTION))
+        kind = _FACTORY_KINDS.get((callee or "").split(cs.SEPARATOR_DOT)[-1])
+        if kind is None:
+            return
+        value, given = _keyword_argument(right)
+        key = (module_qn, scope, _decode(left) or "")
+        new = _Router(kind, _string_value(value) if given else "")
+        if key in self.routers and self.routers[key] != new:
+            self.ambiguous.add(key)
+        else:
+            self.routers[key] = new
+
+    def _record_mount(self, module_qn: str, scope: str, node: Node) -> None:
+        fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn is None or fn.type != cs.TS_PY_ATTRIBUTE:
+            return
+        method = _decode(fn.child_by_field_name(cs.TS_ATTRIBUTE))
+        parent_text = _decode(fn.child_by_field_name(cs.FIELD_OBJECT))
+        child_text = _decode(_first_positional(node))
+        if method not in _MOUNT_METHODS or parent_text is None or child_text is None:
+            return
+        value, given = _keyword_argument(node)
+        self.raw_mounts.append(
+            _RawMount(
+                module_qn,
+                scope,
+                parent_text,
+                child_text,
+                _string_value(value) if given else None,
+                given,
+            )
+        )
+
+
+def _resolve_import_bindings(
+    modules: set[str], raw_imports: dict[str, dict[str, str]]
+) -> dict[str, dict[str, _ImportBinding | None]]:
     imports: dict[str, dict[str, _ImportBinding | None]] = {}
     for module_qn, module_imports in raw_imports.items():
         resolved: dict[str, _ImportBinding | None] = {}
@@ -418,10 +448,18 @@ def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
             target = _resolve_module(modules, module_qn, head) if head else None
             resolved[local] = (target, attr) if target is not None else None
         imports[module_qn] = resolved
+    return imports
 
-    registry = RouterRegistry(routers, {}, imports, ambiguous)
+
+def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
+    """Collect router definitions, mounts and imports from module ASTs."""
+    collector = _Collector()
+    for module_qn, root in module_asts.items():
+        collector.collect_module(module_qn, root)
+    imports = _resolve_import_bindings(set(module_asts), collector.raw_imports)
+    registry = RouterRegistry(collector.routers, {}, imports, collector.ambiguous)
     mounts: dict[_RouterKey, list[_Mount]] = registry._mounts
-    for raw in raw_mounts:
+    for raw in collector.raw_mounts:
         child_key = registry.resolve_var(raw.module_qn, raw.child_text, raw.scope)
         if child_key is None:
             continue
