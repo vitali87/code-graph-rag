@@ -179,12 +179,12 @@ def match_normalised[T](
 _URL_STRUCTURE_DELIMITERS = "/?#"
 OPAQUE_PLACEHOLDER = "{*}"
 
-# Go fmt verbs (`%d`, `%-8.2f`, `%v`, ...); `%%` is a literal percent, and an
-# explicit argument index (`%[2]s`, `%[3]*.[2]*[1]f`) may precede the width,
-# the precision, and the verb.
-_FORMAT_VERB_RE = re.compile(
-    r"%(?:%|[#+\- 0]*(?:\[\d+\])?[\d*]*(?:\.(?:\[\d+\])?[\d*]*)?(?:\[\d+\])?[a-zA-Z])"
-)
+# Go fmt verbs (`%d`, `%-8.2f`, `%v`, `%[2]s`, `%[3]*.[2]*[1]f`, ...); `%%`
+# is a literal percent. One charset covers every spec character (flags,
+# width, precision, argument indexes) and excludes the verb letter, so the
+# scan is unambiguous and linear; malformed specs simply stay literal, as
+# fmt itself would render them as `%!` errors.
+_FORMAT_VERB_RE = re.compile(r"%(?:%|[0-9#+\-. *\[\]]*[a-zA-Z])")
 
 
 def _dot_import_format_call(
