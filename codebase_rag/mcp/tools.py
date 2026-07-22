@@ -51,6 +51,27 @@ from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 
 
+def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
+    with open(full_path, encoding=cs.ENCODING_UTF8) as f:
+        skipped_count = sum(1 for _ in itertools.islice(f, start))
+
+        if limit is not None:
+            sliced_lines = [line for _, line in zip(range(limit), f)]
+        else:
+            sliced_lines = list(f)
+
+        paginated_content = "".join(sliced_lines)
+        remaining_lines_count = sum(1 for _ in f)
+
+    total_lines = skipped_count + len(sliced_lines) + remaining_lines_count
+    header = cs.MCP_PAGINATION_HEADER.format(
+        start=start + 1,
+        end=start + len(sliced_lines),
+        total=total_lines,
+    )
+    return header + paginated_content
+
+
 class MCPToolsRegistry:
     def __init__(
         self,
@@ -655,28 +676,9 @@ class MCPToolsRegistry:
                         message=lg.FILE_OUTSIDE_ROOT.format(action="access")
                     )
                 start = offset if offset is not None else 0
-
-                with open(full_path, encoding=cs.ENCODING_UTF8) as f:
-                    skipped_count = sum(1 for _ in itertools.islice(f, start))
-
-                    if limit is not None:
-                        sliced_lines = [line for _, line in zip(range(limit), f)]
-                    else:
-                        sliced_lines = list(f)
-
-                    paginated_content = "".join(sliced_lines)
-
-                    remaining_lines_count = sum(1 for _ in f)
-                    total_lines = (
-                        skipped_count + len(sliced_lines) + remaining_lines_count
-                    )
-
-                    header = cs.MCP_PAGINATION_HEADER.format(
-                        start=start + 1,
-                        end=start + len(sliced_lines),
-                        total=total_lines,
-                    )
-                    return header + paginated_content
+                return await asyncio.to_thread(
+                    _read_file_slice, full_path, start, limit
+                )
             else:
                 result = await self._file_reader_tool.function(file_path=file_path)
                 return str(result)

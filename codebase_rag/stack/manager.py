@@ -33,7 +33,6 @@ class StackManager:
         package_compose: Path | None = None,
         memgraph_host: str | None = None,
         memgraph_port: int | None = None,
-        qdrant_host: str = "localhost",
         qdrant_port: int = 6333,
         project_name: str = cs.COMPOSE_PROJECT_NAME,
     ) -> None:
@@ -44,7 +43,6 @@ class StackManager:
         )
         self.memgraph_host = memgraph_host or settings.MEMGRAPH_HOST
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
-        self.qdrant_host = qdrant_host
         self.qdrant_port = qdrant_port
         self.project_name = project_name
 
@@ -181,11 +179,11 @@ class StackManager:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
                 service=cs.SERVICE_QDRANT,
-                host=self.qdrant_host,
+                host=cs.LOOPBACK_HOST,
                 port=self.qdrant_port,
             )
         )
-        if not wait_for_qdrant(self.qdrant_host, self.qdrant_port, timeout):
+        if not wait_for_qdrant(self.qdrant_port, timeout):
             raise StackError(
                 cs.ERR_STACK_NOT_HEALTHY.format(
                     service=cs.SERVICE_QDRANT, timeout=timeout
@@ -196,9 +194,7 @@ class StackManager:
         memgraph_ok = wait_for_memgraph(
             self.memgraph_host, self.memgraph_port, timeout=0.1, interval=0.0
         )
-        qdrant_ok = wait_for_qdrant(
-            self.qdrant_host, self.qdrant_port, timeout=0.1, interval=0.0
-        )
+        qdrant_ok = wait_for_qdrant(self.qdrant_port, timeout=0.1, interval=0.0)
         match (memgraph_ok, qdrant_ok):
             case (True, True):
                 state = cs.StackState.RUNNING
@@ -212,7 +208,7 @@ class StackManager:
             qdrant_reachable=qdrant_ok,
             compose_file=self.compose_file,
             memgraph_endpoint=f"{self.memgraph_host}:{self.memgraph_port}",
-            qdrant_endpoint=f"{self.qdrant_host}:{self.qdrant_port}",
+            qdrant_endpoint=f"{cs.LOOPBACK_HOST}:{self.qdrant_port}",
         )
 
     def ensure_running(self) -> StackStatus:
