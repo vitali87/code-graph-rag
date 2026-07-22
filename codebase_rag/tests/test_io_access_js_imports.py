@@ -255,3 +255,97 @@ class TestFetchMethodOption:
         )
         assert _edge(rels, "m.send", READS_FROM, self.RESOURCE), rels
         assert _edge(rels, "m.send", WRITES_TO, self.RESOURCE), rels
+
+
+class TestTemplateLiteralUrls:
+    """A template literal is the dominant way JS clients build URLs; its
+    interpolations must become placeholders, not discard the whole URL
+    (issue #884, the JS analogue of the Python f-string fix).
+    """
+
+    def test_fetch_template_literal_keeps_placeholder(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function load(productId) {\n"
+                    "  return fetch(`http://svc:8000/products/${productId}`)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(
+            rels,
+            "m.load",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{productId}",
+        ), rels
+
+    def test_axios_template_literal_keeps_placeholder(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "import axios from 'axios'\n\n"
+                    "export function stock(id) {\n"
+                    "  return axios.get(`http://svc:8000/products/${id}/stock`)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(
+            rels,
+            "m.stock",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{id}/stock",
+        ), rels
+
+    def test_all_interpolation_template_stays_dynamic(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function go(base, path) {\n"
+                    "  return fetch(`${base}${path}`)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.go", READS_FROM, "resource::NETWORK::<dynamic>"), rels
+
+    def test_delimiter_bearing_substitution_collapses(self, tmp_path: Path) -> None:
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "export function page(offset, limit) {\n"
+                    "  return fetch(`http://svc:8000/products/${offset / limit}`)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(
+            rels,
+            "m.page",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+    def test_handle_constructor_template_keeps_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        # Identity must not depend on the analysis path: the handle
+        # constructor reads templates exactly like direct sinks.
+        rels = _run_io_directed(
+            tmp_path,
+            {
+                "m.js": (
+                    "import fs from 'fs'\n\n"
+                    "export function log(date, line) {\n"
+                    "  const s = fs.createWriteStream(`logs/${date}.txt`)\n"
+                    "  s.write(line)\n"
+                    "}\n"
+                )
+            },
+        )
+        assert _edge(rels, "m.log", WRITES_TO, "resource::FILE::logs/{date}.txt"), rels
