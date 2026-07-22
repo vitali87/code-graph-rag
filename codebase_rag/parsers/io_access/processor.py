@@ -12,6 +12,9 @@ from ..import_processor import ImportProcessor
 from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
     DYNAMIC_TARGET,
+    HTTP_METHOD_OPTION_KEY,
+    HTTP_READ_VERBS,
+    HTTP_WRITE_VERBS,
     KEY_KIND,
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
@@ -1080,7 +1083,48 @@ class IOAccessProcessor:
             keyword_arg_type=descriptor.keyword_arg_type,
             wrapper_type=descriptor.argument_wrapper_type,
         )
-        self._emit(caller_spec, sink.direction, sink.kind, identity)
+        direction = sink.direction
+        if sink.method_options_arg is not None:
+            direction = self._method_options_direction(node, sink, descriptor)
+        self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _method_options_direction(
+        self, call_node: Node, sink: IOSink, descriptor: LanguageDescriptor
+    ) -> IODirection:
+        # fetch(url, {method: 'POST'}) is a write even though the sink's
+        # declared direction is READ (the no-options default GET). A verb
+        # that cannot be read (options variable, spread, computed value)
+        # is honest READ_WRITE rather than a guessed read.
+        options = positional_arg_node(
+            call_node, sink.method_options_arg or 0, descriptor.argument_wrapper_type
+        )
+        if options is None:
+            return sink.direction
+        if options.type != cs.TS_OBJECT:
+            return IODirection.READ_WRITE
+        method_pair = None
+        saw_non_pair = False
+        for child in options.named_children:
+            if child.type != cs.TS_PAIR:
+                saw_non_pair = True
+                continue
+            key = safe_decode_text(child.child_by_field_name(cs.FIELD_KEY))
+            if key is not None and key.strip("'\"") == HTTP_METHOD_OPTION_KEY:
+                method_pair = child
+        if method_pair is None:
+            # A spread ({...opts}) can smuggle a verb in; a plain object
+            # without one keeps the declared default.
+            return IODirection.READ_WRITE if saw_non_pair else sink.direction
+        verb = string_literal(
+            method_pair.child_by_field_name(cs.FIELD_VALUE),
+            descriptor.string_type,
+            descriptor.string_content_type,
+        ).upper()
+        if verb in HTTP_WRITE_VERBS:
+            return IODirection.WRITE
+        if verb in HTTP_READ_VERBS:
+            return IODirection.READ
+        return IODirection.READ_WRITE
 
     def _emit_arg_handle_sink(
         self,

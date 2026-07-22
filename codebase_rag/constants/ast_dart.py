@@ -60,6 +60,10 @@ TS_DART_TRY_STATEMENT = "try_statement"
 TS_DART_CATCH_PARAMETERS = "catch_parameters"
 TS_DART_PATTERN_VARIABLE_DECLARATION = "pattern_variable_declaration"
 DART_PATTERN_NODE_SUFFIX = "_pattern"
+# The grammar's flat operator nodes (additive_expression, if_null_expression,
+# logical_and_expression, ...) share this suffix; a low-precedence operator
+# swallows a trailing ternary as its LAST named child.
+DART_EXPRESSION_NODE_SUFFIX = "_expression"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 

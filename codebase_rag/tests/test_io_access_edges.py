@@ -394,3 +394,68 @@ def test_sql_commit_is_write_only(tmp_path: Path) -> None:
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.tx", WRITES_TO, "resource::DATABASE::db.sqlite")
     assert not _has(rels, "m.tx", READS_FROM, "resource::DATABASE::db.sqlite")
+
+
+def test_fstring_url_keeps_interpolation_placeholder(tmp_path: Path) -> None:
+    # An interpolated segment must stay visible as a placeholder; truncating
+    # the resource to its first literal fragment fabricates a URL that then
+    # resolves to the wrong endpoint (issue #876).
+    files = {
+        "m.py": (
+            "import requests\n\n"
+            "def fetch(user_id):\n"
+            "    requests.get(f'http://user-service:8000/users/{user_id}')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(
+        rels,
+        "m.fetch",
+        READS_FROM,
+        "resource::NETWORK::http://user-service:8000/users/{user_id}",
+    )
+    assert not _has(
+        rels,
+        "m.fetch",
+        READS_FROM,
+        "resource::NETWORK::http://user-service:8000/users/",
+    )
+
+
+def test_fstring_without_literal_content_is_dynamic(tmp_path: Path) -> None:
+    # Placeholders alone carry no identity: same-named variables in unrelated
+    # projects would collide into one shared resource node.
+    files = {
+        "m.py": (
+            "import requests\n\ndef fetch(url, uid):\n    requests.get(f'{url}{uid}')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.fetch", READS_FROM, "resource::NETWORK::<dynamic>")
+
+
+def test_escape_sequence_does_not_truncate_path(tmp_path: Path) -> None:
+    # tree-sitter splits string content around escape sequences; the resource
+    # identity must keep the whole literal, not just the first fragment.
+    files = {"m.py": 'def load():\n    open("logs\\nightly.txt")\n'}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.load", READS_FROM, "resource::FILE::logs\\nightly.txt")
+
+
+def test_interpolation_with_slash_collapses_to_opaque_placeholder(
+    tmp_path: Path,
+) -> None:
+    # An expression containing a path or parse delimiter would fabricate
+    # extra URL segments ({offset/limit} reads as two segments) or change
+    # how urlparse splits the URL, so it collapses to an opaque placeholder.
+    files = {
+        "m.py": (
+            "import requests\n\n"
+            "def page(offset, limit):\n"
+            "    requests.get(f'http://svc:8000/users/{offset/limit}')\n"
+        ),
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(
+        rels, "m.page", READS_FROM, "resource::NETWORK::http://svc:8000/users/{*}"
+    )
