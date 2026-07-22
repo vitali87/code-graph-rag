@@ -808,11 +808,12 @@ class GraphUpdater:
                 if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
                 else cs.NodeLabel.FUNCTION
             )
-            module_qn = max(
-                (m for m in module_qns if qn.startswith(m + cs.SEPARATOR_DOT)),
-                key=len,
-                default=None,
-            )
+            module_qn: str | None = None
+            for candidate in module_qns:
+                if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
+                    module_qn is None or len(candidate) > len(module_qn)
+                ):
+                    module_qn = candidate
             out.append((label, qn, routes, module_qn))
         return out
 
