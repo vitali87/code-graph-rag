@@ -83,6 +83,32 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _is_c_cpp_entry_root(
+    name: str, is_method: bool, path: str, qn: str, project_prefix: str
+) -> bool:
+    # A C/C++ program entry (`main`, Windows' `wWinMain`/`WinMain`/`wmain`, a
+    # DLL's `DllMain`) is invoked by the OS runtime, never by a call the graph
+    # sees, so it roots its whole call tree (an unrooted wWinMain reported all
+    # 34 windows/runner symbols of a Flutter desktop shim dead). Only a free
+    # function at FILE scope in a translation-unit source counts: a method, a
+    # namespace-scoped `main`, or a header-defined `WinMain` is ordinary code
+    # the OS cannot invoke. (Linkage is not captured in the graph, so a
+    # file-scope `static DllMain` in a source file still roots.)
+    if is_method or name not in cs.C_CPP_ENTRY_FUNCTION_NAMES:
+        return False
+    if not path.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+        return False
+    # File scope, exactly: a file-scope definition's qn is the project prefix
+    # plus the path's dotted form (extension dropped) plus the name
+    # (`proj.runner.main.wWinMain` for runner/main.cpp). A namespace inserts
+    # its own segment, even one named like the file stem (`namespace main`
+    # in main.cpp), so nothing short of the exact qn earns the root.
+    dotted_module = path.rsplit(cs.SEPARATOR_DOT, 1)[0].replace(
+        cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+    )
+    return qn == f"{project_prefix}{dotted_module}{cs.SEPARATOR_DOT}{name}"
+
+
 def _is_cpp_operator_root(name: str, path: str) -> bool:
     # A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
     # `operator""_json`) is invoked by operator/literal SYNTAX, not a named call
@@ -273,7 +299,9 @@ def dead_code_from_graph(
             roots.add(qn)
         elif _is_rust_runtime_root(leaf, qn in method_qns, path):
             roots.add(qn)
-        elif _is_cpp_operator_root(leaf, path):
+        elif _is_cpp_operator_root(leaf, path) or _is_c_cpp_entry_root(
+            leaf, qn in method_qns, path, qn, project_prefix
+        ):
             roots.add(qn)
         elif _is_java_serialization_root(
             leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
