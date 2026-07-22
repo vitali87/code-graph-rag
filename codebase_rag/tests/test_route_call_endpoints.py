@@ -436,9 +436,7 @@ class TestOptionsObjectRoutes:
         edges = _run(tmp_path, files, "javascript")
         assert not edges, edges
 
-    def test_client_request_with_local_handler_is_ignored(
-        self, tmp_path: Path
-    ) -> None:
+    def test_client_request_with_local_handler_is_ignored(self, tmp_path: Path) -> None:
         # A client SDK's request({...}) may pass a locally declared callback
         # under a handler key; only registration members (.route/.endpoint)
         # accept the options-object shape.

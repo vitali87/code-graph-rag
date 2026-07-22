@@ -90,6 +90,9 @@ _JS_INLINE_HANDLER_TYPES = frozenset({cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUN
 _JS_OPTIONS_PATH_KEYS = ("route", "url", "path")
 _JS_OPTIONS_METHOD_KEY = "method"
 _JS_OPTIONS_HANDLER_KEY = "handler"
+# Only registration members accept the options-object shape; a client SDK's
+# `.request({...})` can carry a local callback under a handler key too.
+_JS_OPTIONS_MEMBERS = frozenset({"route", "endpoint"})
 
 _HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 # echo/gin use uppercase verb methods; chi uses Go-idiomatic PascalCase.
@@ -347,6 +350,8 @@ def _js_options_registrations(
 ) -> list[RouteRegistration]:
     fn = call.child_by_field_name(cs.FIELD_FUNCTION)
     if fn is None or fn.type != cs.TS_MEMBER_EXPRESSION:
+        return []
+    if _decode(fn.child_by_field_name(cs.FIELD_PROPERTY)) not in _JS_OPTIONS_MEMBERS:
         return []
     args = _call_args(call)
     if len(args) != 1 or args[0].type != cs.TS_OBJECT:
