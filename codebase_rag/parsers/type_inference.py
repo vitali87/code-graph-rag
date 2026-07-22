@@ -63,6 +63,7 @@ class TypeInferenceEngine:
         "_rust_type_inference",
         "_cpp_type_inference",
         "_dart_type_inference",
+        "dart_extends_type_args",
     )
 
     def __init__(
@@ -90,6 +91,7 @@ class TypeInferenceEngine:
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        dart_extends_type_args: dict[str, list[str]] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -166,6 +168,12 @@ class TypeInferenceEngine:
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
+        )
+        # Shared reference (as with class_field_types): Dart `extends Base<T>`
+        # type arguments per class qn, read by the resolver's undeclared
+        # receiver fallback (#875).
+        self.dart_extends_type_args = (
+            dart_extends_type_args if dart_extends_type_args is not None else {}
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
