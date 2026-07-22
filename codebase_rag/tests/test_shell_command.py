@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import shutil
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -924,19 +926,48 @@ class TestAwkSedXargsIntegration:
 
 class TestSpawnFailureDiagnostics:
     async def test_spawn_failure_names_failing_segment(
-        self, shell_commander: ShellCommander, monkeypatch: pytest.MonkeyPatch
+        self,
+        shell_commander: ShellCommander,
+        temp_project_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # A failed spawn must say WHICH pipeline segment failed and why: a
         # bare str(OSError) leaves CI reading `assert -1 == 0` with no cause
         # (issue #902, the intermittent awk failure on the Windows runner).
-        async def fail_spawn(*args: object, **kwargs: object) -> None:
-            raise FileNotFoundError(2, "No such file or directory")
+        # The stub fails only the SECOND segment so the error must attribute
+        # the right one, and the resolved executable must appear too.
+        (temp_project_root / "data.txt").write_text("hello world\n", encoding="utf-8")
+        real_spawn = asyncio.create_subprocess_exec
+        awk_executable = shutil.which("awk") or "awk"
+
+        async def fail_awk_spawn(
+            program: str,
+            *args: str,
+            stdin: int | None = None,
+            stdout: int | None = None,
+            stderr: int | None = None,
+            cwd: Path | None = None,
+            env: dict[str, str] | None = None,
+        ) -> asyncio.subprocess.Process:
+            if Path(program).stem == "awk":
+                raise FileNotFoundError(2, "No such file or directory")
+            return await real_spawn(
+                program,
+                *args,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
+                env=env,
+            )
 
         monkeypatch.setattr(
             "codebase_rag.tools.shell_command.asyncio.create_subprocess_exec",
-            fail_spawn,
+            fail_awk_spawn,
         )
         result = await shell_commander.execute("cat data.txt | awk '{print $1}'")
         assert result.return_code == -1
-        assert "cat data.txt" in result.stderr, result.stderr
+        assert "awk '{print $1}'" in result.stderr, result.stderr
+        assert "cat data.txt" not in result.stderr, result.stderr
+        assert awk_executable in result.stderr, result.stderr
         assert "No such file or directory" in result.stderr, result.stderr
