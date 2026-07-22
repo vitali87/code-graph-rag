@@ -20,14 +20,15 @@
     <img src="https://img.shields.io/github/forks/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
   -->
-  <!-- Codecov, SonarCloud, and OpenSSF Scorecard badges are fed by GitHub-side CI. Uncomment once that CI is confirmed to publish to these services again.
+  <a href="https://github.com/vitali87/code-graph-rag/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/vitali87/code-graph-rag/ci.yml?branch=main" alt="CI" />
+  </a>
   <a href="https://codecov.io/gh/vitali87/code-graph-rag">
     <img src="https://codecov.io/gh/vitali87/code-graph-rag/graph/badge.svg" alt="Codecov" />
   </a>
   <a href="https://sonarcloud.io/summary/overall?id=vitali87_code-graph-rag">
     <img src="https://sonarcloud.io/api/project_badges/measure?project=vitali87_code-graph-rag&metric=alert_status" alt="Quality Gate Status" />
   </a>
-  -->
   <!--
   <a href="https://mseep.ai/app/vitali87-code-graph-rag">
     <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
@@ -36,17 +37,18 @@
   <a href="https://code-graph-rag.com">
     <img src="https://img.shields.io/badge/Enterprise-Support%20%26%20Services-6366f1" alt="Enterprise Support" />
   </a>
+  <a href="https://pypi.org/project/code-graph-rag/">
+    <img src="https://img.shields.io/pypi/v/code-graph-rag" alt="PyPI Version" />
+  </a>
   <a href="https://pepy.tech/projects/code-graph-rag">
     <img src="https://static.pepy.tech/personalized-badge/code-graph-rag?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads" />
   </a>
   <a href="https://skillsllm.com/security-check/DHsMGRb1Ysys">
     <img src="https://skillsllm.com/security-check/badge.svg?owner=vitali87&repo=code-graph-rag" alt="SkillsLLM Security Check" />
   </a>
-  <!-- OpenSSF Scorecard only tracks GitHub-hosted repos. Uncomment once the Scorecard workflow is confirmed running on the authoritative GitHub repo.
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
   </a>
-  -->
   <!--
   <a href="https://gitcgr.com/vitali87/code-graph-rag">
     <img src="https://gitcgr.com/badge/vitali87/code-graph-rag.svg" alt="gitcgr" />
