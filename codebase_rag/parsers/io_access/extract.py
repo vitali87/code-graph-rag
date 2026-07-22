@@ -173,6 +173,12 @@ def match_normalised[T](
     return hit
 
 
+# A `/` inside a placeholder reads as a path-segment split downstream, and
+# `?` / `#` change where urlparse cuts query and fragment.
+_URL_STRUCTURE_DELIMITERS = "/?#"
+OPAQUE_PLACEHOLDER = "{*}"
+
+
 def string_literal(
     arg: Node | None,
     string_type: str = cs.TS_PY_STRING,
@@ -185,7 +191,8 @@ def string_literal(
     # interpolation as its literal `{expr}` source so the identity stays a
     # placeholder-marked whole rather than a truncated prefix (issue #876).
     # Placeholders alone carry no identity, so all-interpolation strings
-    # stay dynamic.
+    # stay dynamic. An expression containing a path or URL-parse delimiter
+    # would fabricate segment structure, so it collapses to `{*}`.
     parts: list[str] = []
     has_content = False
     for child in arg.named_children:
@@ -195,7 +202,9 @@ def string_literal(
             has_content = True
             parts.append(child.text.decode(cs.ENCODING_UTF8))
         elif child.type == cs.TS_PY_INTERPOLATION:
-            parts.append(child.text.decode(cs.ENCODING_UTF8))
+            text = child.text.decode(cs.ENCODING_UTF8)
+            safe = not any(delim in text for delim in _URL_STRUCTURE_DELIMITERS)
+            parts.append(text if safe else OPAQUE_PLACEHOLDER)
     if not has_content:
         return DYNAMIC_TARGET
     return "".join(parts)
