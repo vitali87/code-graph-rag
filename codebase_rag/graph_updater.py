@@ -890,26 +890,35 @@ class GraphUpdater:
     ) -> dict[str, tuple[Node, cs.SupportedLanguage]]:
         dp = self.factory.definition_processor
         files: dict[str, Path] = dict(dp.module_qn_to_file_path)
-        if isinstance(self.ingestor, QueryProtocol):
-            params = {
-                cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                "extensions": list(ROUTE_MODULE_EXTENSIONS),
-            }
-            try:
-                rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
-            except Exception:
-                rows = []
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-                if isinstance(qn, str) and isinstance(rel_path, str):
-                    files.setdefault(qn, self.repo_path / rel_path)
+        for qn, path in self._graph_route_module_paths():
+            files.setdefault(qn, path)
         out: dict[str, tuple[Node, cs.SupportedLanguage]] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
             if entry is not None and entry[1] in ROUTE_CALL_LANGUAGES:
                 out[qn] = entry
+        return out
+
+    def _graph_route_module_paths(self) -> list[tuple[str, Path]]:
+        # Unchanged modules come back from the graph on an incremental run,
+        # already narrowed to route-capable extensions at the query.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {
+            cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+            "extensions": list(ROUTE_MODULE_EXTENSIONS),
+        }
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
+        except Exception:
+            return []
+        out: list[tuple[str, Path]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(rel_path, str):
+                out.append((qn, self.repo_path / rel_path))
         return out
 
     def _rehydrated_route_handlers(

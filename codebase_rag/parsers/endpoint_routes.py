@@ -247,35 +247,48 @@ def _js_registration(
     if method is None:
         return None
     args = _call_args(call)
-    direct_path = _literal_path(args[0] if args else None, _JS_PATH_LITERALS)
-    if direct_path is not None and direct_path.startswith("/"):
-        if not (
-            _receiver_is_framework(fn, evidence)
-            or _handler_evidence(
-                args[1:], evidence, _JS_INLINE_HANDLER_TYPES, cs.TS_PY_IDENTIFIER
-            )
-        ):
-            return None
-        handler = _handler_identifier(
-            args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
+    return _js_direct_registration(
+        fn, args, method, scope, evidence
+    ) or _js_chained_registration(fn, args, method, scope, evidence)
+
+
+def _js_direct_registration(
+    fn: Node, args: list[Node], method: str, scope: str, evidence: _ModuleEvidence
+) -> RouteRegistration | None:
+    path = _literal_path(args[0] if args else None, _JS_PATH_LITERALS)
+    if path is None or not path.startswith("/"):
+        return None
+    if not (
+        _receiver_is_framework(fn, evidence)
+        or _handler_evidence(
+            args[1:], evidence, _JS_INLINE_HANDLER_TYPES, cs.TS_PY_IDENTIFIER
         )
-        return RouteRegistration(method, direct_path, handler, scope)
+    ):
+        return None
+    handler = _handler_identifier(
+        args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
+    )
+    return RouteRegistration(method, path, handler, scope)
+
+
+def _js_chained_registration(
+    fn: Node, args: list[Node], method: str, scope: str, evidence: _ModuleEvidence
+) -> RouteRegistration | None:
     receiver = fn.child_by_field_name(cs.TS_FIELD_OBJECT)
-    if receiver is not None and receiver.type == cs.TS_CALL_EXPRESSION:
-        chain_path = _js_chain_path(receiver)
-        if chain_path is not None and chain_path.startswith("/"):
-            if not (
-                _js_chain_root_is_framework(receiver, evidence)
-                or _handler_evidence(
-                    args, evidence, _JS_INLINE_HANDLER_TYPES, cs.TS_PY_IDENTIFIER
-                )
-            ):
-                return None
-            handler = _handler_identifier(
-                args[0] if args else None, cs.TS_PY_IDENTIFIER
-            )
-            return RouteRegistration(method, chain_path, handler, scope)
-    return None
+    if receiver is None or receiver.type != cs.TS_CALL_EXPRESSION:
+        return None
+    path = _js_chain_path(receiver)
+    if path is None or not path.startswith("/"):
+        return None
+    if not (
+        _js_chain_root_is_framework(receiver, evidence)
+        or _handler_evidence(
+            args, evidence, _JS_INLINE_HANDLER_TYPES, cs.TS_PY_IDENTIFIER
+        )
+    ):
+        return None
+    handler = _handler_identifier(args[0] if args else None, cs.TS_PY_IDENTIFIER)
+    return RouteRegistration(method, path, handler, scope)
 
 
 def _go_server_evidence(
@@ -404,6 +417,13 @@ def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvid
     return _ModuleEvidence(frozenset(declared), frozenset(receivers), net_http)
 
 
+def _child_scope(scope: str, node: Node) -> str:
+    name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
+    if scope and name:
+        return f"{scope}{cs.SEPARATOR_DOT}{name}"
+    return name or scope
+
+
 def collect_route_registrations(
     root: Node, language: cs.SupportedLanguage
 ) -> list[RouteRegistration]:
@@ -422,12 +442,7 @@ def collect_route_registrations(
     while stack:
         node, scope = stack.pop()
         if node.type in scope_types:
-            name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME)) or ""
-            inner = (
-                f"{scope}{cs.SEPARATOR_DOT}{name}"
-                if scope and name
-                else (name or scope)
-            )
+            inner = _child_scope(scope, node)
             stack.extend((child, inner) for child in node.named_children)
             continue
         if node.type == call_type:
