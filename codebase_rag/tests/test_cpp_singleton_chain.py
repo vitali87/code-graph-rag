@@ -87,13 +87,20 @@ def test_new_in_inline_method_emits_ctor_call(
     cpp_singleton_project: Path, mock_ingestor: MagicMock
 ):
     # `new WindowClassRegistrar()` inside the INLINE in-class body of
-    # GetInstance must call the (private, defaulted) constructor.
+    # GetInstance must call the (private, defaulted) constructor, and the
+    # class-branch redirect must also revive the dtor (`~X` runs at end of
+    # lifetime with no call node of its own; Greptile round 1).
     run_updater(cpp_singleton_project, mock_ingestor)
     calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
     assert _has(
         calls,
         ".WindowClassRegistrar.GetInstance",
         ".WindowClassRegistrar.WindowClassRegistrar",
+    ), sorted(calls)
+    assert _has(
+        calls,
+        ".WindowClassRegistrar.GetInstance",
+        ".WindowClassRegistrar.~WindowClassRegistrar",
     ), sorted(calls)
 
 
@@ -105,3 +112,43 @@ def test_new_in_inline_method_emits_instantiates(
     assert _has(inst, ".WindowClassRegistrar.GetInstance", ".WindowClassRegistrar"), (
         sorted(inst)
     )
+
+
+NESTED_CPP = """
+template <typename T>
+class Outer {
+ public:
+  Outer() {}
+  class Inner {
+   public:
+    Inner() {}
+  };
+};
+
+void make() {
+  auto* p = new Outer<int>::Inner();
+}
+"""
+
+
+@pytest.fixture
+def cpp_nested_new_project(temp_repo: Path) -> Path:
+    root = temp_repo / "nested"
+    root.mkdir()
+    (root / "main.cpp").write_text(NESTED_CPP, encoding="utf-8")
+    return root
+
+
+def test_nested_templated_new_targets_inner_class(
+    cpp_nested_new_project: Path, mock_ingestor: MagicMock
+):
+    # `new Outer<int>::Inner()` names the NESTED class: cutting the type
+    # text at the first `<` would drop the `::Inner` suffix and bind the
+    # construction to Outer instead (Greptile round 1, T-Rex repro).
+    run_updater(cpp_nested_new_project, mock_ingestor)
+    calls = _rels(mock_ingestor, cs.RelationshipType.CALLS.value)
+    inst = _rels(mock_ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert _has(calls, ".make", ".Outer.Inner.Inner"), sorted(calls)
+    assert _has(inst, ".make", ".Outer.Inner"), sorted(inst)
+    assert not _has(calls, ".make", ".Outer.Outer"), sorted(calls)
+    assert not _has(inst, ".make", ".Outer"), sorted(inst)
