@@ -42,7 +42,10 @@ def temp_project_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def shell_commander(temp_project_root: Path) -> ShellCommander:
-    return ShellCommander(str(temp_project_root), timeout=5)
+    # Real-spawn tests share this budget; cold Windows CI runners can take
+    # seconds per process spawn, so keep it at the production default
+    # rather than a tight test-only value (issue #902).
+    return ShellCommander(str(temp_project_root), timeout=30)
 
 
 class TestShellCommanderInit:
@@ -136,14 +139,14 @@ class TestShellCommanderExecute:
         test_file = temp_project_root / "test.txt"
         test_file.write_text("content", encoding="utf-8")
         result = await shell_commander.execute("ls")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "test.txt" in result.stdout
 
     async def test_execute_pwd_command(
         self, shell_commander: ShellCommander, temp_project_root: Path
     ) -> None:
         result = await shell_commander.execute("pwd")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         bash_out = result.stdout.strip().replace("/c/", "C:/").replace("/d/", "D:/")
         if bash_out.startswith("/tmp/"):
             import tempfile
@@ -156,7 +159,7 @@ class TestShellCommanderExecute:
 
     async def test_execute_echo_command(self, shell_commander: ShellCommander) -> None:
         result = await shell_commander.execute("echo 'Hello World'")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "Hello World" in result.stdout
 
     async def test_execute_command_not_in_allowlist(
@@ -197,8 +200,18 @@ class TestShellCommanderExecute:
         test_file = temp_project_root / "cat_test.txt"
         test_file.write_text("File content here", encoding="utf-8")
         result = await shell_commander.execute("cat cat_test.txt")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "File content here" in result.stdout
+
+    async def test_timeout_reports_reason_in_stderr(
+        self, temp_project_root: Path
+    ) -> None:
+        # An exhausted budget must surface the timeout message, not a bare
+        # -1: that silence is what made issue #902 undiagnosable in CI.
+        commander = ShellCommander(str(temp_project_root), timeout=0)
+        result = await commander.execute("pwd")
+        assert result.return_code == -1
+        assert "timed out" in result.stderr
 
 
 class TestCreateShellCommandTool:
@@ -226,7 +239,7 @@ class TestToolApprovalBehavior:
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, "ls")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
 
     async def test_write_command_requires_approval(
         self, shell_commander: ShellCommander
@@ -246,7 +259,7 @@ class TestToolApprovalBehavior:
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = True
         result = await tool.function(mock_ctx, "rm to_delete.txt")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert not test_file.exists()
 
 
@@ -306,7 +319,7 @@ class TestYoloMode:
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, "rm yolo_target.txt")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert not test_file.exists()
 
     async def test_yolo_runs_non_allowlist_command(
@@ -444,7 +457,7 @@ class TestPipedCommandExecution:
         for i in range(5):
             (temp_project_root / f"file{i}.txt").write_text("content", encoding="utf-8")
         result = await shell_commander.execute("ls | wc -l")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "5" in result.stdout
 
     @pytest.mark.skipif(
@@ -456,7 +469,7 @@ class TestPipedCommandExecution:
         (temp_project_root / "test.py").write_text("print(1)", encoding="utf-8")
         (temp_project_root / "test.txt").write_text("text", encoding="utf-8")
         result = await shell_commander.execute("find . -name '*.py' | wc -l")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "1" in result.stdout
 
     async def test_rg_in_pipeline(
@@ -468,7 +481,7 @@ class TestPipedCommandExecution:
             pytest.skip("rg (ripgrep) not installed")
         (temp_project_root / "data.txt").write_text("foo\nbar\nbaz\n", encoding="utf-8")
         result = await shell_commander.execute("cat data.txt | rg bar")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "bar" in result.stdout
 
     async def test_pipe_with_disallowed_command(
@@ -520,7 +533,7 @@ class TestQuoteAwareSubshellDetection:
         self, shell_commander: ShellCommander
     ) -> None:
         result = await shell_commander.execute("echo 'a subshell is $(...)'")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "a subshell is $(...)" in result.stdout
 
     async def test_double_quoted_subshell_rejected(
@@ -537,7 +550,7 @@ class TestShellOperators:
     ) -> None:
         (temp_project_root / "test.txt").write_text("content", encoding="utf-8")
         result = await shell_commander.execute("ls && pwd")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "test.txt" in result.stdout
 
         def path_match(line, target):
@@ -576,7 +589,7 @@ class TestShellOperators:
     ) -> None:
         (temp_project_root / "test.txt").write_text("content", encoding="utf-8")
         result = await shell_commander.execute("ls || echo 'should not run'")
-        assert result.return_code == 0
+        assert result.return_code == 0, result.stderr
         assert "should not run" not in result.stdout
 
     async def test_semicolon_operator(
