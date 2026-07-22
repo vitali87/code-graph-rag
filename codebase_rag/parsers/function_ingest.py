@@ -339,8 +339,8 @@ class FunctionIngestMixin:
                 # function_declarator) may duplicate a bodied definition in
                 # another file; hold it back so resolve_deferred_cpp_prototypes
                 # can drop it when the definition registers (issue #893). A
-                # `static` prototype has INTERNAL linkage (each translation
-                # unit owns a separate function), so no cross-module
+                # prototype with INTERNAL linkage (`static`, or inside an
+                # anonymous namespace) is TU-local, so no cross-module
                 # definition can be its definition: it registers inline as
                 # before.
                 if (
@@ -349,7 +349,7 @@ class FunctionIngestMixin:
                         child.type == cs.CppNodeType.FUNCTION_DECLARATOR
                         for child in func_node.children
                     )
-                    and not cpp_utils.cpp_declaration_is_static(func_node)
+                    and not cpp_utils.cpp_declaration_has_internal_linkage(func_node)
                 ):
                     self._deferred_cpp_prototypes.append(
                         _DeferredCppPrototype(

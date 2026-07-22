@@ -540,11 +540,22 @@ def extract_class_name_from_out_of_class_method_qualified(
     return None
 
 
-def cpp_declaration_is_static(decl_node: Node) -> bool:
-    # `static int helper();` -- internal linkage marks a TU-local function.
-    return any(
+def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
+    # `static int helper();` or a declaration inside an anonymous
+    # namespace: internal linkage marks a TU-local function, so no
+    # cross-module definition can ever be its definition.
+    if any(
         child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
         and child.text is not None
         and safe_decode_text(child) == cs.CPP_KEYWORD_STATIC
         for child in decl_node.children
-    )
+    ):
+        return True
+    current = decl_node.parent
+    while current is not None:
+        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+            name_node = current.child_by_field_name(cs.KEY_NAME)
+            if name_node is None:
+                return True
+        current = current.parent
+    return False

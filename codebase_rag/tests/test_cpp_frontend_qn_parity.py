@@ -37,6 +37,10 @@ int free_proto(int n);
 static int static_proto(int n);
 
 }  // namespace geo
+
+namespace {
+int anon_proto(int n);
+}
 """
 
 SRC = """
@@ -56,6 +60,8 @@ int only_in_cpp(int a) { return a; }
 int static_proto(int n) { return n; }
 
 }  // namespace geo
+
+int anon_proto(int n) { return n; }
 """
 
 _LABELS = ("Class", "Function", "Method")
