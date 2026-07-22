@@ -427,11 +427,8 @@ class ClassIngestMixin:
         override detection walk the real hierarchy.
         """
         deferred = self._deferred_inherits
-        if not deferred:
-            return 0
         self._deferred_inherits = []
         emitted = 0
-        dart_external_children: set[str] = set()
         # `implements` targets never enter class_inheritance, so the override
         # ancestry walk needs the resolved first-party IMPLEMENTS parents
         # collected here or a registered interface's method is wrongly rooted.
@@ -443,14 +440,8 @@ class ClassIngestMixin:
             resolved = self._resolve_deferred_parent_qn(entry)
             is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None:
-                # Resolves nowhere = not first-party: for Dart that is still
-                # external-ancestry evidence for override rooting.
-                if is_dart:
-                    dart_external_children.add(entry.child_qn)
                 continue
             parent_qn, is_external = resolved
-            if is_dart and is_external:
-                dart_external_children.add(entry.child_qn)
             external_label: str | None = None
             if is_external:
                 # The import pass mints the same node for IMPORTS edges, so
@@ -492,24 +483,25 @@ class ClassIngestMixin:
                     parent_label=external_label,
                 )
             emitted += 1
-        self._flag_dart_external_overrides(dart_external_children, dart_implements)
+        self._flag_dart_external_overrides(dart_implements)
         return emitted
 
     def _flag_dart_external_overrides(
         self,
-        external_children: set[str],
         implements_map: dict[str, list[str]],
     ) -> None:
-        # A Dart @override on a class with external ancestry roots the
-        # dead-code walk (the framework invokes it), UNLESS a registered
-        # ancestor defines the name, in which case the override resolves via
-        # OVERRIDES edges and must stay an ordinary candidate. Runs here
-        # because externality is only known after every class is registered;
-        # the partial row MERGEs into the node ingested during Pass 2.
-        for child_qn in external_children:
-            for method_qn, method_name in self.dart_annotated_overrides.get(
-                child_qn, ()
-            ):
+        # Every Dart class ultimately extends Object, so an @override whose
+        # name NO registered ancestor defines can only target external code:
+        # a framework base (direct or through any chain of first-party
+        # classes), an implemented external interface, or Object itself
+        # (toString/hashCode/operator==, invoked by interpolation and
+        # collections). Those methods root the dead-code walk; a name a
+        # registered ancestor defines resolves via OVERRIDES edges and must
+        # stay an ordinary candidate. Runs here because ancestry is only
+        # known after every class is registered; the partial row MERGEs into
+        # the node ingested during Pass 2.
+        for child_qn, methods in self.dart_annotated_overrides.items():
+            for method_qn, method_name in methods:
                 if self._registered_ancestor_defines(
                     child_qn, method_name, implements_map
                 ):
