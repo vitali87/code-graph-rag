@@ -183,6 +183,62 @@ def test_closure_shadow_does_not_suppress_outer_read(tmp_path: Path) -> None:
     assert _has(rels, ".Cart.tally", REFERENCES, ".Cart.untouched"), rels
 
 
+def test_loop_catch_and_pattern_binders_shadow_bare_reads(tmp_path: Path) -> None:
+    # A loop variable, catch parameter, or pattern binding reusing a getter
+    # name declares a local like any other: reads of it must not fabricate
+    # liveness for the (otherwise unused) getter.
+    files = {
+        "app.dart": (
+            "class Bag {\n"
+            "  int get total => 1;\n"
+            "  int get errorCode => 2;\n"
+            "  int get alpha => 3;\n"
+            "  void churn(List<int> xs) {\n"
+            "    for (final total in xs) {\n"
+            "      print(total);\n"
+            "    }\n"
+            "    try {\n"
+            "      print(xs);\n"
+            "    } catch (errorCode) {\n"
+            "      print(errorCode);\n"
+            "    }\n"
+            "    var (alpha, beta) = (1, 2);\n"
+            "    print(alpha);\n"
+            "    print(beta);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".Bag.churn", REFERENCES, ".Bag.total"), rels
+    assert not _has(rels, ".Bag.churn", REFERENCES, ".Bag.errorCode"), rels
+    assert not _has(rels, ".Bag.churn", REFERENCES, ".Bag.alpha"), rels
+
+
+def test_call_result_cascade_read_is_referenced(tmp_path: Path) -> None:
+    # `getMarker()..startYr` reads the getter through a call-result cascade:
+    # the receiver chain carries a call hop the resolver types from the
+    # callee's declared return type.
+    files = {
+        "app.dart": (
+            "class Marker {\n"
+            "  int get startYr => 1900;\n"
+            "}\n"
+            "\n"
+            "class Board {\n"
+            "  Marker getMarker() {\n"
+            "    return Marker();\n"
+            "  }\n"
+            "  void ping() {\n"
+            "    getMarker()..startYr;\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".Board.ping", REFERENCES, ".Marker.startYr"), rels
+
+
 def test_getter_call_chain_is_not_double_counted(tmp_path: Path) -> None:
     # `other.total()` is an invocation the call pass already resolves; the
     # read pass must not add a REFERENCES edge for the same chain, or every
