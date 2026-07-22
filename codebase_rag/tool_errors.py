@@ -30,6 +30,7 @@ COMMAND_DANGEROUS_PATTERN = "Command matches dangerous pattern: {reason}"
 COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
 COMMAND_SUBSHELL_NOT_ALLOWED = "Subshell execution not allowed: {pattern}"
 COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
+COMMAND_SPAWN_FAILED = "Failed to spawn '{segment}' (executable: {executable}): {error}"
 
 # Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
