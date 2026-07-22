@@ -180,7 +180,10 @@ def _resolve_module(modules: set[str], importer_qn: str, dotted: str) -> str | N
         if qn.split(cs.SEPARATOR_DOT)[0] == project
         and qn.split(cs.SEPARATOR_DOT)[-len(segments) :] == segments
     ]
-    return sorted(candidates, key=len)[0] if candidates else None
+    if not candidates:
+        return None
+    candidates.sort(key=len)
+    return candidates[0]
 
 
 class RouterRegistry:
