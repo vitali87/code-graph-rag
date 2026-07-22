@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from .. import constants as cs
 from .endpoint_prefixes import UNKNOWN_LEAD_SEGMENT
+from .endpoint_routes import METHOD_ANY
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -101,7 +102,8 @@ def _direction_compatible(directions: frozenset[str], method: str) -> bool:
     An empty set means the graph predates the aggregated query (or a fake
     omitted it) and stays permissive.
     """
-    if not directions:
+    if not directions or method == METHOD_ANY:
+        # A method-agnostic route (net/http HandleFunc) serves every verb.
         return True
     required = (
         cs.RelationshipType.WRITES_TO.value
@@ -111,8 +113,9 @@ def _direction_compatible(directions: frozenset[str], method: str) -> bool:
     return required in directions
 
 
-# FastAPI-style {id} and Flask-style <user_id> / <int:user_id> variables.
-_TEMPLATE_PARAM_RE = re.compile(r"^(\{[^/]+\}|<[^/]+>)$")
+# FastAPI-style {id}, Flask-style <user_id> / <int:user_id>, and
+# Express/gin-style :id variables.
+_TEMPLATE_PARAM_RE = re.compile(r"^(\{[^/]+\}|<[^/]+>|:[^/]+)$")
 
 
 def url_matches_template(url: str, template: str) -> bool:
