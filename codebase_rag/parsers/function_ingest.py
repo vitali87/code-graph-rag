@@ -214,7 +214,8 @@ _GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFA
 
 
 class FunctionIngestMixin:
-    __slots__ = ()
+    # No __slots__: this mixin lazily creates _deferred_* registries on the
+    # host instance, which requires the host to provide a __dict__.
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
