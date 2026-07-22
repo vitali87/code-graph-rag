@@ -3602,15 +3602,9 @@ class CallProcessor:
             return
         if is_dtor:
             for base_qn in bases:
-                for dtor_type, dtor_qn in sorted(
-                    self._resolver.cpp_destructor_targets(base_qn)
-                ):
-                    for variant in registry.variants(dtor_qn):
-                        self.ingestor.ensure_relationship_batch(
-                            caller_spec,
-                            cs.RelationshipType.CALLS,
-                            (dtor_type, cs.KEY_QUALIFIED_NAME, variant),
-                        )
+                self._emit_cpp_lifecycle_targets(
+                    caller_spec, self._resolver.cpp_destructor_targets(base_qn)
+                )
             return
         named = self._cpp_member_init_class_qns(caller_node, module_qn)
         if class_qn in named:
@@ -3618,15 +3612,23 @@ class CallProcessor:
         for base_qn in bases:
             if base_qn in named:
                 continue
-            for ctor_type, ctor_qn in sorted(
-                self._resolver.java_constructor_targets(base_qn)
-            ):
-                for variant in registry.variants(ctor_qn):
-                    self.ingestor.ensure_relationship_batch(
-                        caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
-                    )
+            self._emit_cpp_lifecycle_targets(
+                caller_spec, self._resolver.java_constructor_targets(base_qn)
+            )
+
+    def _emit_cpp_lifecycle_targets(
+        self,
+        caller_spec: tuple[str, str, str],
+        targets: set[tuple[str, str]],
+    ) -> None:
+        registry = self._resolver.function_registry
+        for target_type, target_qn in sorted(targets):
+            for variant in registry.variants(target_qn):
+                self.ingestor.ensure_relationship_batch(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                )
 
     def _cpp_member_init_class_qns(self, caller_node: Node, module_qn: str) -> set[str]:
         # Class qns the ctor's member initializer list names explicitly;
