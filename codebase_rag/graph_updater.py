@@ -62,6 +62,7 @@ from .parsers.endpoints import (
 )
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
+from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
 from .services.resource_cleanup import prune_unanchored_resources
 from .types_defs import (
@@ -819,6 +820,15 @@ class GraphUpdater:
         )
         registry = build_router_registry(module_asts)
         for label, qn, decorators, module_qn in entries:
+            # Test modules stay in the stale-EXPOSES drop above (so a
+            # legacy graph sheds their endpoints) but emit nothing: a route
+            # spun up inside a test is not a production endpoint (#910).
+            if self._is_test_module(
+                self.factory.definition_processor.module_qn_to_file_path.get(
+                    module_qn or ""
+                )
+            ):
+                continue
             emit_endpoints(
                 self._sink,
                 label,
@@ -853,7 +863,10 @@ class GraphUpdater:
         # still sheds its old EXPOSES edges even though it contributes no new
         # registrations.
         self._drop_stale_module_exposes(sorted(modules))
-        for module_qn, (root, language) in modules.items():
+        for module_qn, (root, language, path) in modules.items():
+            # Kept in the cleanup above, skipped for emission (#910).
+            if self._is_test_module(path):
+                continue
             for registration in collect_route_registrations(root, language):
                 label, source_qn = self._route_source(module_qn, registration)
                 identity = f"{registration.method} {registration.path}"
@@ -898,17 +911,29 @@ class GraphUpdater:
 
     def _route_module_asts(
         self,
-    ) -> dict[str, tuple[Node, cs.SupportedLanguage]]:
+    ) -> dict[str, tuple[Node, cs.SupportedLanguage, Path]]:
         dp = self.factory.definition_processor
         files: dict[str, Path] = dict(dp.module_qn_to_file_path)
         for qn, path in self._graph_route_module_paths():
             files.setdefault(qn, path)
-        out: dict[str, tuple[Node, cs.SupportedLanguage]] = {}
+        out: dict[str, tuple[Node, cs.SupportedLanguage, Path]] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
             if entry is not None and entry[1] in ROUTE_CALL_LANGUAGES:
-                out[qn] = entry
+                out[qn] = (entry[0], entry[1], path)
         return out
+
+    def _is_test_module(self, path: Path | None) -> bool:
+        # Judged on the repo-relative POSIX path; an unknown path (a
+        # rehydrated legacy handler) stays permissive. The repo-relative cut
+        # keeps a `/tmp/pytest-*/` parent from classifying the whole run.
+        if path is None:
+            return False
+        try:
+            relative = path.relative_to(self.repo_path)
+        except ValueError:
+            relative = path
+        return matches_test_path(relative.as_posix())
 
     def _graph_route_module_paths(self) -> list[tuple[str, Path]]:
         # Unchanged modules come back from the graph on an incremental run,

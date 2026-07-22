@@ -373,9 +373,7 @@ class TestTestModulesEmitNoEndpoints:
         edges = _run(tmp_path, {"main_test.go": self._GO_SOURCE}, "go")
         assert not edges, edges
 
-    def test_same_go_registration_outside_tests_registers(
-        self, tmp_path: Path
-    ) -> None:
+    def test_same_go_registration_outside_tests_registers(self, tmp_path: Path) -> None:
         edges = _run(tmp_path, {"routes.go": self._GO_SOURCE}, "go")
         assert _endpoint(edges, "routes.serveCases", "GET /cases"), edges
 
@@ -391,10 +389,7 @@ class TestTestModulesEmitNoEndpoints:
         assert not edges, edges
 
     _PY_SOURCE = (
-        "app = object()\n\n\n"
-        '@app.get("/cases")\n'
-        "def list_cases():\n"
-        "    return []\n"
+        'app = object()\n\n\n@app.get("/cases")\ndef list_cases():\n    return []\n'
     )
 
     def test_python_decorator_in_tests_dir_registers_nothing(
