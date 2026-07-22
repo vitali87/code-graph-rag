@@ -357,3 +357,24 @@ def test_getter_call_chain_is_not_double_counted(tmp_path: Path) -> None:
     }
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".Engine.fire", REFERENCES, ".Engine.ignite"), rels
+
+
+def test_method_parameter_does_not_shadow_initializer_read(tmp_path: Path) -> None:
+    # A method parameter named like the getter scopes to ITS method body,
+    # which the initializer walk never enters: it must not suppress a field
+    # initializer's read of the getter.
+    files = {
+        "app.dart": (
+            "class Widgeta {\n"
+            "  int get tone => 1;\n"
+            "  late final int value = tone;\n"
+            "  void resize(int tone) {\n"
+            "    print(tone);\n"
+            "  }\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert any(r == REFERENCES and b.endswith("Widgeta.tone") for _a, r, b in rels), (
+        rels
+    )
