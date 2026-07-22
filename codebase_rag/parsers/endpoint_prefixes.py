@@ -273,9 +273,15 @@ class RouterRegistry:
         if scoped in self._routers:
             return scoped
         imported = self._imports.get(module_qn, {}).get(head)
-        if imported is None or imported[1]:
+        if imported is None:
             return None
-        key = (imported[0], "", rest)
+        imported_module, attr = imported
+        if attr:
+            # An imported (possibly aliased) class: the router lives in the
+            # class scope of its defining module.
+            key = (imported_module, attr, rest)
+        else:
+            key = (imported_module, "", rest)
         return key if key in self._routers else None
 
     def _resolve_bare(self, module_qn: str, text: str, scope: str) -> _RouterKey | None:
