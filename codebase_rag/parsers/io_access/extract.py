@@ -250,12 +250,45 @@ def format_call_target(
     )
 
 
+def _template_literal(arg: Node, content_type: str, substitution_type: str) -> str:
+    # A JS/TS template literal: fragments stay verbatim and each
+    # `${expr}` substitution renders as a `{expr}` placeholder, mirroring
+    # the Python f-string treatment (issue #884). All-substitution
+    # templates carry no identity and stay dynamic.
+    parts: list[str] = []
+    has_content = False
+    for child in arg.named_children:
+        if child.text is None:
+            continue
+        if child.type == content_type:
+            has_content = True
+            parts.append(child.text.decode(cs.ENCODING_UTF8))
+        elif child.type == substitution_type:
+            inner = child.text.decode(cs.ENCODING_UTF8)[2:-1]
+            safe = not any(delim in inner for delim in _URL_STRUCTURE_DELIMITERS)
+            parts.append(f"{{{inner}}}" if safe else OPAQUE_PLACEHOLDER)
+    if not has_content:
+        return DYNAMIC_TARGET
+    return "".join(parts)
+
+
 def string_literal(
     arg: Node | None,
     string_type: str = cs.TS_PY_STRING,
     content_type: str = cs.TS_PY_STRING_CONTENT,
+    *,
+    template_type: str | None = None,
+    substitution_type: str | None = None,
 ) -> str:
-    if arg is None or arg.type != string_type:
+    if arg is None:
+        return DYNAMIC_TARGET
+    if (
+        template_type is not None
+        and substitution_type is not None
+        and arg.type == template_type
+    ):
+        return _template_literal(arg, content_type, substitution_type)
+    if arg.type != string_type:
         return DYNAMIC_TARGET
     # An f-string is a `string` node whose content is split around
     # `interpolation` children; keep every fragment and render each
@@ -485,6 +518,8 @@ def literal_target(
     content_type: str = cs.TS_PY_STRING_CONTENT,
     keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT,
     wrapper_type: str | None = None,
+    template_type: str | None = None,
+    substitution_type: str | None = None,
 ) -> str:
     if arg_index is None and arg_keyword is None:
         return DYNAMIC_TARGET
@@ -496,7 +531,13 @@ def literal_target(
     if arg_keyword is not None and wrapper_type is not None:
         named = _wrapper_keyword_value(args, arg_keyword, wrapper_type)
         if named is not None:
-            return string_literal(named, string_type, content_type)
+            return string_literal(
+                named,
+                string_type,
+                content_type,
+                template_type=template_type,
+                substitution_type=substitution_type,
+            )
     # Exclude keyword args, comment nodes (tree-sitter keeps comments as named
     # children), and C# named-argument wrappers so the positional index maps to the
     # real positional argument.
@@ -511,9 +552,15 @@ def literal_target(
             unwrap_argument(positional[arg_index], wrapper_type),
             string_type,
             content_type,
+            template_type=template_type,
+            substitution_type=substitution_type,
         )
     if arg_keyword is not None:
         return string_literal(
-            keyword_value(args, arg_keyword), string_type, content_type
+            keyword_value(args, arg_keyword),
+            string_type,
+            content_type,
+            template_type=template_type,
+            substitution_type=substitution_type,
         )
     return DYNAMIC_TARGET

@@ -67,6 +67,8 @@ TS_CAST_WRAPPER_TYPES = frozenset(
 # JS/TS ingest node types
 TS_PAIR = "pair"
 TS_OBJECT = "object"
+TS_TEMPLATE_STRING = "template_string"
+TS_TEMPLATE_SUBSTITUTION = "template_substitution"
 TS_ARRAY = "array"
 
 # When a variable_declarator's value is one of these, the variable binds the
