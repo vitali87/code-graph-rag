@@ -80,3 +80,38 @@ class TestEndpointLinkingE2E:
         assert row["url"] == "http://user-service:8000/users/42"
         assert row["endpoint"] == "GET /users/{id}"
         assert row["handler"] == "user-service.handlers.get_user"
+
+
+_BROWSER_CLIENT_SOURCE = """export async function loadUser() {
+  const res = await fetch("/users/42")
+  return res.json()
+}
+"""
+
+
+class TestRootfulRelativeLinkingE2E:
+    def test_rootful_fetch_resolves_to_same_project_endpoint(
+        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ) -> None:
+        # Issue #908: a browser frontend fetches a rootful relative path;
+        # the decorated handler lives in the same project.
+        repo = tmp_path / "web-app"
+        repo.mkdir()
+        (repo / "client.js").write_text(_BROWSER_CLIENT_SOURCE, encoding="utf-8")
+        (repo / "handlers.py").write_text(_SERVER_SOURCE, encoding="utf-8")
+
+        _index(memgraph_ingestor, repo)
+
+        rows = memgraph_ingestor.fetch_all(
+            "MATCH (caller)-[:READS_FROM]->(url:Resource {kind: 'NETWORK'})"
+            "-[:RESOLVES_TO]->(ep:Resource {kind: 'ENDPOINT'})"
+            "<-[:EXPOSES]-(handler) "
+            "RETURN url.name AS url, ep.name AS endpoint, "
+            "handler.qualified_name AS handler"
+        )
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["url"] == "/users/42"
+        assert row["endpoint"] == "GET /users/{id}"
+        assert row["handler"] == "web-app.handlers.get_user"
