@@ -424,3 +424,21 @@ class TestClassScopedRouters:
         edges = _run(tmp_path, files)
         assert _endpoint(edges, "UsersApi.get_user", "GET /users/{user_id}"), edges
         assert _endpoint(edges, "OrdersApi.get_order", "GET /orders/{order_id}"), edges
+
+    def test_class_attribute_router_mount_resolves(self, tmp_path: Path) -> None:
+        # `app.include_router(UsersApi.router, prefix='/api')` addresses the
+        # class-scoped router through the class name.
+        files = {
+            "main.py": (
+                "from fastapi import APIRouter, FastAPI\n\n"
+                "app = FastAPI()\n\n\n"
+                "class UsersApi:\n"
+                "    router = APIRouter(prefix='/users')\n\n"
+                "    @router.get('/{user_id}')\n"
+                "    def get_user(self, user_id: int):\n"
+                "        return {}\n\n\n"
+                "app.include_router(UsersApi.router, prefix='/api')\n"
+            ),
+        }
+        edges = _run(tmp_path, files)
+        assert _endpoint(edges, "UsersApi.get_user", "GET /api/users/{user_id}"), edges
