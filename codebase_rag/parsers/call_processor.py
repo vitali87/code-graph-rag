@@ -3584,6 +3584,17 @@ class CallProcessor:
         # bases resolved to registered classes emit, and a delegating ctor
         # (`: Derived(0)`) emits nothing because the delegated-to ctor owns
         # the base call.
+        # Only a DEFINITION knows its member initializer list; the in-class
+        # prototype registers under the same qn and also runs a per-caller
+        # pass, and emitting from it would double every edge (and invent
+        # base calls a bodied definition's initializer list excludes). A
+        # `= default` member parses as function_definition, so the guard
+        # keeps it: its implicit base call is guaranteed by the standard.
+        if caller_node.type not in (
+            cs.CppNodeType.FUNCTION_DEFINITION,
+            cs.CppNodeType.INLINE_METHOD_DEFINITION,
+        ):
+            return
         registry = self._resolver.function_registry
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or registry.get(class_qn) != NodeType.CLASS:

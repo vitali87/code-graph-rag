@@ -106,9 +106,19 @@ def test_explicit_base_init_still_resolves(
 ):
     # Child names the base explicitly (`: Base()`), covered by the
     # member-init pass; the implicit path must not regress or double it.
+    # Raw call count (not the deduplicating set) proves single emission
+    # (CodeRabbit round 3).
     run_updater(cpp_base_chain_project, mock_ingestor)
     calls = _calls(mock_ingestor)
     assert _has(calls, ".Child.Child", ".Base.Base"), sorted(calls)
+    raw = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == cs.RelationshipType.CALLS.value
+        and str(c.args[0][2]).endswith(".Child.Child")
+        and str(c.args[2][2]).endswith(".Base.Base")
+    ]
+    assert len(raw) == 1, raw
 
 
 def test_declared_dtor_calls_base_dtor(
