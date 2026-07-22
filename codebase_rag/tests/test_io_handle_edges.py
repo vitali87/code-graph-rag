@@ -614,3 +614,76 @@ def test_python_cursor_execute_select_reads(tmp_path: Path) -> None:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestGoSprintfUrls:
+    """A Sprintf-built URL is the idiomatic Go way to add path parameters;
+    its format verbs must become placeholders instead of discarding the
+    whole URL (issue #885, the Go analogue of the f-string fix).
+    """
+
+    def test_http_get_sprintf_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchProduct(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(fmt.Sprintf("http://svc:8000/products/%d", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchProduct",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+    def test_double_percent_stays_literal(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchSale(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(fmt.Sprintf("http://svc:8000/sale100%%/%v", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchSale",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/sale100%/{*}",
+        ), rels
+
+    def test_dynamic_format_string_stays_dynamic(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchAny(tpl string, id int) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf(tpl, id))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "main.fetchAny", READS_FROM, "resource::NETWORK::<dynamic>"
+        ), rels
+
+    def test_unrelated_wrapping_call_stays_dynamic(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"net/http"\n\t"strings"\n)\n\n'
+                "func fetchTrim(raw string) (*http.Response, error) {\n"
+                "\treturn http.Get(strings.TrimSpace(raw))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "main.fetchTrim", READS_FROM, "resource::NETWORK::<dynamic>"
+        ), rels
