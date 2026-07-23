@@ -137,7 +137,7 @@ class GoRpcExposureProcessor:
         if impl_qn is None or connect_dir is None:
             return
         for method in self._contract_methods(connect_dir, wiring.stem):
-            if source_qn := self._method_source_qn(impl_qn, method, set()):
+            if source_qn := self._method_source_qn(impl_qn, method, {}):
                 self._emit_exposure(source_qn, wiring.stem, method)
 
     def _wiring_calls(self, caller_node: Node, module_qn: str) -> list[_Wiring]:
@@ -458,17 +458,20 @@ class GoRpcExposureProcessor:
         return []
 
     def _method_source_qn(
-        self, impl_qn: str, method: str, visited: set[str], depth: int = 0
+        self, impl_qn: str, method: str, visited: dict[str, int], depth: int = 0
     ) -> str | None:
         # The node serving a contract method: defined on the impl type
         # directly, or promoted from an embedded type (Go embedding is not
         # inheritance, so the graph has no parent edge to follow). Promoted
         # stubs from a generated `*connect` package (`Unimplemented<Stem>
-        # Handler`) are not served RPCs. `visited` guards cycles; the DEPTH
-        # cap bounds chains without counting sibling breadth against it.
-        if impl_qn in visited or depth > 4:
+        # Handler`) are not served RPCs. `visited` records the shallowest
+        # depth each type was traversed at: re-traversal at a strictly
+        # shallower depth stays allowed, so a depth-exhausted diamond branch
+        # cannot suppress a valid shallow one, while cycles and repeats
+        # still terminate.
+        if depth > 4 or visited.get(impl_qn, 5) <= depth:
             return None
-        visited.add(impl_qn)
+        visited[impl_qn] = depth
         method_qn = f"{impl_qn}{cs.SEPARATOR_DOT}{method}"
         if self._function_registry.get(method_qn) is NodeType.METHOD:
             return method_qn

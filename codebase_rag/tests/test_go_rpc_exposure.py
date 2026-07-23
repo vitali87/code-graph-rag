@@ -347,6 +347,38 @@ def test_many_embedded_siblings_do_not_exhaust_promotion(tmp_path: Path) -> None
     ) in rels, rels
 
 
+def test_diamond_embedding_finds_shallow_path(tmp_path: Path) -> None:
+    # A deep chain (Impl -> A1 -> A2 -> A3 -> A4 -> Base) exhausts the depth
+    # budget before reaching Base, while a direct embed of A4 reaches it two
+    # levels down. The exhausted branch must not poison the shallow one.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Base struct{}\n\n"
+            "func (b *Base) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "type A4 struct {\n\tBase\n}\n\n"
+            "type A3 struct {\n\tA4\n}\n\n"
+            "type A2 struct {\n\tA3\n}\n\n"
+            "type A1 struct {\n\tA2\n}\n\n"
+            "type Impl struct {\n\tA1\n\tA4\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Base.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
 def test_pointer_embedded_cross_package_base_exposes(tmp_path: Path) -> None:
     # `*base.Base` pointer embedding across packages still promotes.
     files = {
