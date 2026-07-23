@@ -353,9 +353,11 @@ def _object_entry(child: Node) -> tuple[str, Node] | None:
 
 def _object_entries(obj: Node) -> dict[str, Node]:
     # Key -> value node for an object literal.
-    return dict(
-        entry for child in obj.named_children if (entry := _object_entry(child))
-    )
+    return {
+        entry[0]: entry[1]
+        for child in obj.named_children
+        if (entry := _object_entry(child))
+    }
 
 
 def _options_methods(node: Node | None) -> list[str]:
