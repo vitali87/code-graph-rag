@@ -16,6 +16,7 @@ from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
     DYNAMIC_TARGET,
     HTTP_METHOD_OPTION_KEY,
+    HTTP_METHOD_OPTION_KEY_URL,
     HTTP_READ_VERBS,
     HTTP_WRITE_VERBS,
     KEY_KIND,
@@ -103,6 +104,18 @@ class _LeanHandles(NamedTuple):
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
 # package whose name ends in `connect`.
 _RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
+
+# HTTP verb methods of options-object clients (`client.get({url})`, the
+# HeyApi generated-SDK shape, issue #912): verb name -> edge direction.
+_HTTP_VERB_DIRECTIONS: dict[str, IODirection] = {
+    "get": IODirection.READ,
+    "head": IODirection.READ,
+    "post": IODirection.WRITE,
+    "put": IODirection.WRITE,
+    "patch": IODirection.WRITE,
+    "delete": IODirection.WRITE,
+}
+_CLIENT_RECEIVER_NAME = "client"
 _RPC_CLIENT_TYPE_RE = re.compile(r"^([A-Z]\w*)Client$")
 _RPC_PACKAGE_SUFFIX = "connect"
 
@@ -1196,6 +1209,10 @@ class IOAccessProcessor:
         local_names: frozenset[str],
         lean_handles: _LeanHandles | None,
     ) -> None:
+        if descriptor.object_url_client_calls and self._emit_object_url_client_call(
+            node, caller_spec, descriptor
+        ):
+            return
         raw = call_name(node)
         if raw is None:
             return
@@ -1246,6 +1263,76 @@ class IOAccessProcessor:
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
         self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _emit_object_url_client_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        descriptor: LanguageDescriptor,
+    ) -> bool:
+        # `(options?.client ?? this.client).get({ url: '/x', ...options })`:
+        # an HTTP verb on a client-shaped receiver with a literal `url` in the
+        # options object is a NETWORK sink attributed to the calling method.
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None or func.type != descriptor.member_expression_type:
+            return False
+        verb = safe_decode_text(func.child_by_field_name(descriptor.property_field))
+        direction = _HTTP_VERB_DIRECTIONS.get(verb or "")
+        receiver = func.child_by_field_name(descriptor.object_field)
+        if (
+            direction is None
+            or receiver is None
+            or not self._names_client(receiver, descriptor)
+        ):
+            return False
+        arguments = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        first = (
+            arguments.named_children[0]
+            if arguments is not None and arguments.named_children
+            else None
+        )
+        if first is None or first.type != descriptor.object_literal_type:
+            return False
+        url = self._object_pair_string(first, descriptor)
+        if url is None:
+            return False
+        self._emit(caller_spec, direction, ResourceKind.NETWORK, url)
+        return True
+
+    @staticmethod
+    def _names_client(receiver: Node, descriptor: LanguageDescriptor) -> bool:
+        # The receiver mentions a `client` binding somewhere (`this.client`,
+        # `options?.client ?? this.client`, bare `client`); a plain `map.get`
+        # does not.
+        stack = [receiver]
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if (
+                node.type in (descriptor.identifier_type, cs.TS_PROPERTY_IDENTIFIER)
+                and safe_decode_text(node) == _CLIENT_RECEIVER_NAME
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _object_pair_string(obj: Node, descriptor: LanguageDescriptor) -> str | None:
+        # The string value of the object's `url` property, if any.
+        for pair in obj.named_children:
+            if pair.type != descriptor.pair_type:
+                continue
+            key = safe_decode_text(pair.child_by_field_name(cs.FIELD_KEY))
+            if key != HTTP_METHOD_OPTION_KEY_URL:
+                continue
+            value = pair.child_by_field_name(cs.FIELD_VALUE)
+            if value is None or value.type != descriptor.string_type:
+                return None
+            return "".join(
+                safe_decode_text(c) or ""
+                for c in value.named_children
+                if c.type == descriptor.string_content_type
+            )
+        return None
 
     def _method_options_direction(
         self, call_node: Node, sink: IOSink, descriptor: LanguageDescriptor
