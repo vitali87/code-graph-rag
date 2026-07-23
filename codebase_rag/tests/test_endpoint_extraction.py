@@ -798,6 +798,78 @@ class TestMountPrefixLinking:
         assert kwargs.get("properties") == {"lead_prefix": "/api"}
 
 
+class TestSamePathInferredGroups:
+    """Issue #925: several methods on ONE template path are the same
+    resource, not an ambiguity; an inferred match links the whole group
+    exactly like an exact match would.
+    """
+
+    _ingestor = staticmethod(TestPrefixTolerantLinking._ingestor)
+    _endpoint = staticmethod(TestPrefixTolerantLinking._endpoint)
+
+    @staticmethod
+    def _network(url: str, directions: list[str]) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": directions,
+        }
+
+    def test_mount_group_on_one_path_links_every_method(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/enterprises", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint("GET /admin/enterprises", "gateway"),
+                self._endpoint("POST /admin/enterprises", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 2
+        for call in ingestor.ensure_relationship_batch.call_args_list:
+            assert call.kwargs.get("properties") == {"mount_prefix": "/admin"}
+
+    def test_suffix_group_on_one_path_links_every_method(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint("GET /cases", "backend"),
+                self._endpoint("POST /cases", "backend"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 2
+
+    def test_different_paths_still_drop(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/otp/verify", ["WRITES_TO"]),
+                self._endpoint("POST /admin/otp/verify", "service-a"),
+                self._endpoint("POST /auth/otp/verify", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_direction_filter_still_prunes_the_group(self) -> None:
+        # A read-only URL links only the GET half of the group.
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/enterprises", ["READS_FROM"]),
+                self._endpoint("GET /admin/enterprises", "gateway"),
+                self._endpoint("POST /admin/enterprises", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "GET /admin/enterprises" in args[2][2]
+
+
 class TestRootfulRelativeUrlMatch:
     """Issue #908: same-origin clients fetch rootful relative paths.
 

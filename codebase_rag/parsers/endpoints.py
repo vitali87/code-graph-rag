@@ -463,9 +463,9 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             _exact, suffix, mounts = _match_candidates(
                 url, directions, set(endpoints), endpoints
             )
-        match = _resolve_inferred_match(suffix, mounts, endpoints)
-        if match is not None:
-            endpoint_qn, key, lead = match
+        for endpoint_qn, key, lead in _resolve_inferred_matches(
+            suffix, mounts, endpoints
+        ):
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                 cs.RelationshipType.RESOLVES_TO,
@@ -539,38 +539,62 @@ def _match_candidates(
     return exact, suffix, mounts
 
 
-def _resolve_inferred_match(
+def _resolve_inferred_matches(
     suffix: dict[str, str],
     mounts: dict[str, str],
     endpoints: dict[str, tuple[str, str | None]],
-) -> tuple[str, str, str] | None:
+) -> list[tuple[str, str, str]]:
     # URL-side suffix inference outranks template-side mount inference: a
     # client-visible lead is stronger evidence than a mount the client
-    # never speaks. Mounts link only when unique; no tie-breaking.
-    match = _resolve_suffix_match(suffix, endpoints)
-    if match is not None:
-        return match[0], KEY_LEAD_PREFIX, match[1]
-    if len(mounts) == 1:
-        endpoint_qn, mount = next(iter(mounts.items()))
-        return endpoint_qn, KEY_MOUNT_PREFIX, mount
-    return None
+    # never speaks.
+    matches = _resolve_suffix_matches(suffix, endpoints)
+    if matches:
+        return [(qn, KEY_LEAD_PREFIX, lead) for qn, lead in matches]
+    return [
+        (qn, KEY_MOUNT_PREFIX, mount)
+        for qn, mount in _resolve_mount_matches(mounts, endpoints)
+    ]
 
 
-def _resolve_suffix_match(
+def _same_path_group(
+    matches: dict[str, str], endpoints: dict[str, tuple[str, str | None]]
+) -> list[tuple[str, str]]:
+    # Several methods on ONE template path in ONE project are the same
+    # resource, not an ambiguity; the group links exactly like an exact
+    # match would (#925). The same path exposed by two projects stays a
+    # genuine tie.
+    paths = {endpoints[qn][0].partition(" ")[2] for qn in matches}
+    projects = {endpoints[qn][1] for qn in matches}
+    if len(paths) == 1 and len(projects) == 1:
+        return list(matches.items())
+    return []
+
+
+def _resolve_suffix_matches(
     suffix: dict[str, str], endpoints: dict[str, tuple[str, str | None]]
-) -> tuple[str, str] | None:
-    # Suffix matches are an inference: a unique match links, and a tie is
-    # dropped instead of guessed unless the stripped lead itself names
-    # exactly one candidate's project (`/y/some-service/review`).
-    if len(suffix) == 1:
-        return next(iter(suffix.items()))
+) -> list[tuple[str, str]]:
+    # Suffix matches are an inference: a unique match or a same-path method
+    # group links; any other tie is dropped instead of guessed unless the
+    # stripped lead itself names exactly one candidate's project
+    # (`/y/some-service/review`).
+    group = _same_path_group(suffix, endpoints)
+    if group:
+        return group
     named = [
         (qn, lead)
         for qn, lead in suffix.items()
         if (project := endpoints[qn][1]) is not None
         and _project_stem(project) in _lead_stems(lead)
     ]
-    return named[0] if len(named) == 1 else None
+    return named if len(named) == 1 else []
+
+
+def _resolve_mount_matches(
+    mounts: dict[str, str], endpoints: dict[str, tuple[str, str | None]]
+) -> list[tuple[str, str]]:
+    # Mounts link only when unique or a same-path method group; no
+    # tie-breaking beyond that.
+    return _same_path_group(mounts, endpoints)
 
 
 def _lead_stems(lead: str) -> set[str]:
