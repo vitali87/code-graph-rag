@@ -92,12 +92,46 @@ class _LeanHandles(NamedTuple):
     # are recognised by shape, not by a registry entry (issue #912). Go only:
     # the `<pkg>connect.New<Stem>Client` convention is connect-go codegen.
     rpc_clients: bool
+    # Struct fields DECLARED with a generated client type in this module
+    # (`userClient userv1connect.UserServiceClient`): field name -> stem.
+    # Injected clients are called through these, not through a local binding.
+    rpc_fields: dict[str, str]
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
 # package whose name ends in `connect`.
 _RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
+_RPC_CLIENT_TYPE_RE = re.compile(r"^([A-Z]\w*)Client$")
 _RPC_PACKAGE_SUFFIX = "connect"
+
+
+def _rpc_qualifier_resolves(qualifier: str, import_map: dict[str, str]) -> bool:
+    resolved = import_map.get(qualifier)
+    return resolved is not None and resolved.rsplit("/", 1)[-1].endswith(
+        _RPC_PACKAGE_SUFFIX
+    )
+
+
+def _go_client_type_stem(
+    type_node: Node | None, import_map: dict[str, str]
+) -> str | None:
+    # `userv1connect.UserServiceClient` (pointer unwrapped): the declared
+    # generated client type; its stem is the service (issue #912).
+    if type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+        type_node = next(iter(type_node.named_children), None)
+    if (
+        type_node is None
+        or type_node.type != cs.TS_GO_QUALIFIED_TYPE
+        or type_node.text is None
+    ):
+        return None
+    qualifier, sep, name = (
+        type_node.text.decode(cs.ENCODING_UTF8).rpartition(cs.SEPARATOR_DOT)
+    )
+    if not sep or not _rpc_qualifier_resolves(qualifier, import_map):
+        return None
+    match = _RPC_CLIENT_TYPE_RE.match(name)
+    return match.group(1) if match else None
 
 
 def _rpc_client_binding(
@@ -110,10 +144,7 @@ def _rpc_client_binding(
     qualifier, sep, func = raw.rpartition(cs.SEPARATOR_DOT)
     if not sep or qualifier in in_scope:
         return None
-    resolved = import_map.get(qualifier)
-    if resolved is None or not resolved.rsplit("/", 1)[-1].endswith(
-        _RPC_PACKAGE_SUFFIX
-    ):
+    if not _rpc_qualifier_resolves(qualifier, import_map):
         return None
     match = _RPC_CLIENT_RE.match(func)
     if match is None:
@@ -139,6 +170,7 @@ def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
         arg_sinks=IO_ARG_HANDLE_SINKS.get(language, {}),
         bindings={},
         rpc_clients=language is cs.SupportedLanguage.GO,
+        rpc_fields={},
     )
 
 
@@ -159,6 +191,9 @@ class IOAccessProcessor:
         # When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
         self._enabled = selection.io_enabled
+        # module_qn -> {field name: service stem} for connect-client-typed
+        # struct fields (issue #912); the module walk runs once per module.
+        self._rpc_field_cache: dict[str, dict[str, str]] = {}
 
     def process_io_for_caller(
         self,
@@ -188,6 +223,11 @@ class IOAccessProcessor:
         if language != cs.SupportedLanguage.PYTHON:
             descriptor = LANGUAGE_DESCRIPTORS.get(language)
             if descriptor is not None:
+                lean_handles = _lean_handles_for(language)
+                if lean_handles is not None and lean_handles.rpc_clients:
+                    self._seed_go_rpc_evidence(
+                        caller_node, module_qn, import_map, lean_handles
+                    )
                 self._emit_direct_sinks(
                     caller_node,
                     caller_spec,
@@ -197,7 +237,7 @@ class IOAccessProcessor:
                     stream_sinks,
                     IO_MEMBER_READS.get(language, ()),
                     descriptor,
-                    _lean_handles_for(language),
+                    lean_handles,
                 )
             return
         ctor_by_name = {c.callee: c for c in constructors}
@@ -1212,6 +1252,84 @@ class IOAccessProcessor:
         self._emit(caller_spec, sink.direction, ResourceKind.FILE, DYNAMIC_TARGET)
         return True
 
+    def _seed_go_rpc_evidence(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # Parameters declared with a generated client type bind like a
+        # constructor would; struct fields go into the module-level field map
+        # consulted by the dotted-receiver fallback.
+        parameters = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        for parameter in parameters.named_children if parameters is not None else []:
+            stem = _go_client_type_stem(
+                parameter.child_by_field_name(cs.FIELD_TYPE), import_map
+            )
+            if stem is None:
+                continue
+            for child in parameter.named_children:
+                if child.type == cs.TS_GO_IDENTIFIER and child.text is not None:
+                    lean_handles.bindings[child.text.decode(cs.ENCODING_UTF8)] = (
+                        HandleBinding(kind=ResourceKind.RPC, identity=stem)
+                    )
+        lean_handles.rpc_fields.update(
+            self._go_rpc_fields(caller_node, module_qn, import_map)
+        )
+
+    def _go_rpc_fields(
+        self, caller_node: Node, module_qn: str, import_map: dict[str, str]
+    ) -> dict[str, str]:
+        cached = self._rpc_field_cache.get(module_qn)
+        if cached is not None:
+            return cached
+        root = caller_node
+        while root.parent is not None:
+            root = root.parent
+        fields: dict[str, str] = {}
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_GO_FIELD_DECLARATION:
+                stem = _go_client_type_stem(
+                    node.child_by_field_name(cs.FIELD_TYPE), import_map
+                )
+                if stem is not None:
+                    for child in node.named_children:
+                        if (
+                            child.type == cs.TS_GO_FIELD_IDENTIFIER
+                            and child.text is not None
+                        ):
+                            fields[child.text.decode(cs.ENCODING_UTF8)] = stem
+            stack.extend(node.named_children)
+        self._rpc_field_cache[module_qn] = fields
+        return fields
+
+    def _emit_rpc_field_method(
+        self,
+        receiver: str,
+        method: str,
+        caller_spec: tuple[str, str, str],
+        lean_handles: _LeanHandles,
+    ) -> bool:
+        # `a.userClient.GetUser(...)`: the receiver's LAST segment names a
+        # struct field declared with a generated client type in this module.
+        if cs.SEPARATOR_DOT not in receiver or not method[:1].isupper():
+            return False
+        stem = lean_handles.rpc_fields.get(
+            receiver.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        )
+        if stem is None:
+            return False
+        self._emit(
+            caller_spec,
+            IODirection.READ_WRITE,
+            ResourceKind.RPC,
+            f"{stem}{cs.SEPARATOR_DOT}{method}",
+        )
+        return True
+
     def _emit_lean_handle_method(
         self,
         call_node: Node,
@@ -1229,7 +1347,9 @@ class IOAccessProcessor:
             return False
         binding = lean_handles.bindings.get(receiver)
         if binding is None:
-            return False
+            return self._emit_rpc_field_method(
+                receiver, method, caller_spec, lean_handles
+            )
         if binding.kind == ResourceKind.RPC:
             # A generated client exposes exactly its RPC methods, all
             # exported; the operation is request AND response (issue #912).
