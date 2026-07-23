@@ -183,6 +183,20 @@ class TestWorkspaceDiscovery:
             "@acme/sdk",
         ]
 
+    def test_duplicate_names_order_by_directory(self, tmp_path: Path) -> None:
+        # Two copies of one package (a vendored fork, an example tree) must
+        # resolve the same way on every run and platform, not in whatever
+        # order the filesystem enumerated them.
+        for rel in ("apps/copyB", "apps/copyA"):
+            (tmp_path / rel).mkdir(parents=True)
+            (tmp_path / rel / "package.json").write_text(
+                _manifest("@acme/sdk"), encoding="utf-8"
+            )
+        assert [
+            str(d.relative_to(tmp_path))
+            for _n, d in discover_js_workspace_packages(tmp_path)
+        ] == ["apps/copyA", "apps/copyB"]
+
 
 class TestWorkspaceResolver:
     @staticmethod
@@ -246,6 +260,91 @@ class TestWorkspaceResolver:
         assert (
             resolve_js_workspace_import(packages, "@acme/sdk/missing", tmp_path) is None
         )
+
+    def test_parent_escaping_target_is_refused(self, tmp_path: Path) -> None:
+        # `../shared/index.js` leaves the package; treating the `..` as part
+        # of the name would bind the import to an unrelated file INSIDE it.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", main="../shared/index.js"),
+            {"shared/index.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert resolve_js_workspace_import(packages, "@acme/sdk", tmp_path) is None
+
+    def test_dot_prefixed_directory_survives(self, tmp_path: Path) -> None:
+        # `./.generated/index.js` names a hidden directory, not `generated`.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", main="./.generated/index.js"),
+            {".generated/index.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk", tmp_path)
+            == "packages/sdk/.generated/index"
+        )
+
+    def test_exact_key_beats_pattern_key(self, tmp_path: Path) -> None:
+        # Node resolves an exact `exports` key before any `*` pattern.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={"./a/b*": "./src/wrong.ts", "./a/b": "./src/right.ts"},
+            ),
+            {"src/wrong.ts": ADMIN_SOURCE, "src/right.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/a/b", tmp_path)
+            == "packages/sdk/src/right"
+        )
+
+    def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
+        # `null` is how a manifest forbids a subpath; guessing a source file
+        # for it would resolve an import the package refuses to serve.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={"./public": "./src/public.ts", "./internal/*": None},
+            ),
+            {"src/public.ts": ADMIN_SOURCE, "src/internal/secret.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/internal/secret", tmp_path)
+            is None
+        )
+
+    def test_matched_export_does_not_fall_back_to_a_guess(self, tmp_path: Path) -> None:
+        # The manifest says this subpath is built from src/generated; a
+        # same-named legacy file elsewhere must not stand in for it.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", exports={"./admin": "./dist/generated/admin.js"}),
+            {"src/generated/admin.ts": ADMIN_SOURCE, "src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            != "packages/sdk/src/admin"
+        )
+
+    def test_wrong_case_specifier_does_not_resolve(self, tmp_path: Path) -> None:
+        # On a case-insensitive filesystem the probe succeeds for the wrong
+        # spelling; returning it would name a module the graph never holds.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk"),
+            {"src/AdminClient.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        resolved = resolve_js_workspace_import(
+            packages, "@acme/sdk/adminclient", tmp_path
+        )
+        assert resolved in (None, "packages/sdk/src/AdminClient"), resolved
 
     def test_name_prefix_that_is_not_a_path_boundary_is_not_a_match(
         self, tmp_path: Path

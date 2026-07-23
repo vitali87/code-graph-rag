@@ -13,8 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_resolver import CallResolver
 
 TS_CLOSURE_HOLDER = (
     "export const createSseClient = () => {\n"
@@ -75,15 +77,55 @@ def test_python_call_does_not_bind_to_typescript_method(tmp_path: Path) -> None:
     assert "repo.web.src.utils.Interceptors.exists" not in calls, calls
 
 
-def test_call_does_not_bind_into_another_functions_closure(tmp_path: Path) -> None:
-    # Same language, but the only same-named candidate lives inside another
-    # function's body, where no other module can reach it by name.
+def test_module_level_candidate_beats_another_functions_closure(
+    tmp_path: Path,
+) -> None:
+    # Same language, two same-named candidates: one at module level, one
+    # scoped inside another function's body. The module-level definition is
+    # the one a caller elsewhere can name, so it wins.
     files = {
         "svc/worker.py": ("def run():\n    helper()\n"),
         "svc/other.py": ("def outer():\n    def helper():\n        return 1\n"),
+        "svc/shared.py": ("def helper():\n    return 2\n"),
     }
     calls = _calls(_run_rels(tmp_path, files), "worker.run")
+    assert "repo.svc.shared.helper" in calls, calls
     assert "repo.svc.other.outer.helper" not in calls, calls
+
+
+def test_exported_closure_still_binds(tmp_path: Path) -> None:
+    # A closure that ESCAPES its function is nameable elsewhere: the factory
+    # returns it and the module binds the result, so an importing module
+    # calls it by that name and the only candidate is the nested definition.
+    files = {
+        "svc/build.py": (
+            "def _make_logger():\n"
+            "    def log(msg):\n        return msg\n\n"
+            "    return log\n\n\n"
+            "log = _make_logger()\n"
+        ),
+        "svc/use.py": ("from .build import log\n\n\ndef go():\n    return log('hi')\n"),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "use.go")
+    assert "repo.svc.build._make_logger.log" in calls, calls
+
+
+def test_exported_js_closure_still_binds(tmp_path: Path) -> None:
+    files = {
+        "web/a.js": (
+            "function outer() {\n"
+            "  function helper() {\n    return 1;\n  }\n"
+            "  module.exports.helper = helper;\n"
+            "}\n"
+            "outer();\n"
+        ),
+        "web/b.js": (
+            "const { helper } = require('./a');\n\n"
+            "function run() {\n  return helper();\n}\n"
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "b.run")
+    assert "repo.web.a.outer.helper" in calls, calls
 
 
 def test_module_level_candidate_still_binds(tmp_path: Path) -> None:
@@ -119,3 +161,35 @@ def test_caller_own_nested_function_still_binds(tmp_path: Path) -> None:
     }
     calls = _calls(_run_rels(tmp_path, files), "worker.run")
     assert "repo.svc.worker.run.helper" in calls, calls
+
+
+class TestLanguageEvidenceOnIncrementalRuns:
+    """An incremental run re-parses only the changed files, so the language
+    of an UNCHANGED module comes from the path recorded on its graph node.
+    Without that second source the filter fails open and an incremental
+    update keeps a cross-language edge a full re-index removes."""
+
+    @staticmethod
+    def _resolver(
+        module_paths: dict[str, Path], rehydrated: dict[str, str]
+    ) -> CallResolver:
+        type_inference = MagicMock()
+        type_inference.module_qn_to_file_path = module_paths
+        return CallResolver(
+            function_registry=MagicMock(),
+            import_processor=MagicMock(),
+            type_inference=type_inference,
+            class_inheritance={},
+            rehydrated_definition_paths=rehydrated,
+        )
+
+    def test_language_comes_from_the_reparsed_map_first(self) -> None:
+        resolver = self._resolver({"proj.web.a": Path("web/a.ts")}, {})
+        assert resolver._module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
+
+    def test_language_falls_back_to_the_rehydrated_path(self) -> None:
+        resolver = self._resolver({}, {"proj.web.a.outer": "web/a.ts"})
+        assert resolver._module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
+
+    def test_unknown_module_has_no_language(self) -> None:
+        assert self._resolver({}, {})._module_language("proj.web.a") is None

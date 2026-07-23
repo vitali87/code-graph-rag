@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
+from pathlib import PurePath
 
 from loguru import logger
 from tree_sitter import Node
@@ -27,8 +28,8 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 _RS_TYPE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
-# A definition nested inside one of these is scoped to that body, so no other
-# module can name it and the simple-name fallback must not offer it (#945).
+# A definition nested inside one of these is scoped to that body, so the
+# simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
 # Sets of languages whose sources call each other directly, so a candidate
 # written in a sibling language is a legitimate target for the simple-name
@@ -83,6 +84,7 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
+        "rehydrated_definition_paths",
     )
 
     def __init__(
@@ -93,6 +95,7 @@ class CallResolver:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
+        rehydrated_definition_paths: dict[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -128,6 +131,13 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # {definition qn: recorded file path} for definitions an incremental
+        # run rehydrated from the graph instead of re-parsing (shared ref).
+        self.rehydrated_definition_paths = (
+            rehydrated_definition_paths
+            if rehydrated_definition_paths is not None
+            else {}
+        )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -1169,20 +1179,29 @@ class CallResolver:
 
     def _nameable_candidates(self, candidates: list[str], module_qn: str) -> list[str]:
         # The simple-name fallback matches on the last name segment alone, so
-        # it can offer a definition the caller could never name: one scoped
-        # inside another function's body, or one written in a language the
-        # caller's cannot call into (a Python `asyncio.sleep` binding to a
-        # `sleep` closure in a generated TypeScript client, issue #945). Drop
-        # both; a candidate whose language cannot be determined is kept, so
-        # the fallback still answers wherever this evidence is missing.
+        # it can offer a definition written in a language the caller's cannot
+        # call into (a Python `asyncio.sleep` binding to a `sleep` closure in
+        # a generated TypeScript client, issue #945). That one is impossible,
+        # so drop it; a candidate whose language cannot be determined is kept,
+        # so the fallback still answers wherever this evidence is missing.
         caller_language = self._module_language(module_qn)
-        return [
+        reachable = [
             qn
             for qn in candidates
+            if self._languages_can_call(caller_language, self._module_language(qn))
+        ]
+        # A definition scoped inside another function's body is named from
+        # elsewhere only when it escapes (a factory returns it, CommonJS
+        # exports it), which is real but rarer than the plain module-level
+        # definition it competes with. So prefer the unscoped candidates and
+        # fall back to the scoped ones only when they are all there is.
+        unscoped = [
+            qn
+            for qn in reachable
             if self.function_registry.get(self._parent_qn(qn))
             not in _SCOPING_PARENT_TYPES
-            and self._languages_can_call(caller_language, self._module_language(qn))
         ]
+        return unscoped or reachable
 
     @staticmethod
     def _parent_qn(qualified_name: str) -> str:
@@ -1212,6 +1231,12 @@ class CallResolver:
         while probe:
             if (path := modules.get(probe)) is not None:
                 language = get_language_for_extension(path.suffix)
+                break
+            # An incremental run only re-parses changed files, so an
+            # unchanged module is absent above; its definitions carry the
+            # file path recorded on their graph nodes instead.
+            if (rehydrated := self.rehydrated_definition_paths.get(probe)) is not None:
+                language = get_language_for_extension(PurePath(rehydrated).suffix)
                 break
             if cs.SEPARATOR_DOT not in probe:
                 break
