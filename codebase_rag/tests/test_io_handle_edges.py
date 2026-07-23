@@ -881,11 +881,12 @@ class TestGoRpcClientSinks:
         assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
 
     def test_unimported_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
-        # No import maps `fooconnect`, so the name alone is no evidence.
+        # No import maps `fooconnect`, so the name alone is no evidence
+        # (no parameter here: the missing-import guard must fail alone).
         files = {
             "main.go": (
                 "package main\n\n"
-                "func fetch(fooconnect Factory) {\n"
+                "func fetch() {\n"
                 "\tclient := fooconnect.NewBarClient()\n"
                 "\tclient.Do(nil)\n"
                 "}\n"
