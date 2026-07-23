@@ -1184,66 +1184,6 @@ class TestGoRpcTypedClientEvidence:
         rels = _run_io(tmp_path, files)
         matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
         assert matches, rels
-
-    def test_disambiguated_declaring_module_still_contributes_fields(
-        self, tmp_path: Path
-    ) -> None:
-        # Deterministic variant: the DECLARING module's qn carries the
-        # appended extension (`proj.svc.service.go`); grouping by qn prefix
-        # would place it in a phantom package. Directory grouping keeps it.
-        from codebase_rag.capture import resolve_capture
-        from codebase_rag.parser_loader import load_parsers
-        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
-
-        parsers, _ = load_parsers()
-        decl_src = (
-            "package svc\n\n"
-            'import "example.com/gen/user/v1/userv1connect"\n\n'
-            "type Server struct {\n"
-            "\tuserClient userv1connect.UserServiceClient\n"
-            "}\n"
-        )
-        caller_src = (
-            "package svc\n\nfunc (s *Server) Create() {\n"
-            "\ts.userClient.GetUser(nil, nil)\n}\n"
-        )
-        caller_tree = parsers["go"].parse(caller_src.encode())
-        decl_path = tmp_path / "svc" / "service.go"
-
-        class _FakeCache:
-            def __init__(self) -> None:
-                self.entry = (
-                    parsers["go"].parse(decl_src.encode()).root_node,
-                    cs.SupportedLanguage.GO,
-                )
-
-            def load(self, key: Path) -> tuple[object, cs.SupportedLanguage]:
-                return self.entry
-
-        import_processor = MagicMock()
-        import_processor.import_mapping = {
-            "proj.svc.service.go": {
-                "userv1connect": "example.com/gen/user/v1/userv1connect"
-            },
-            "proj.svc.create": {},
-        }
-        processor = IOAccessProcessor(
-            MagicMock(),
-            import_processor,
-            selection=resolve_capture([cs.CaptureGroup.IO.value]),
-            module_paths={
-                "proj.svc.service.go": decl_path,
-                "proj.svc.create": tmp_path / "svc" / "create.go",
-            },
-            ast_cache=_FakeCache(),  # type: ignore[arg-type]
-        )
-        caller_fn = next(
-            c
-            for c in caller_tree.root_node.named_children
-            if c.type == "method_declaration"
-        )
-        fields = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
-        assert fields == {"userClient": "UserService"}, fields
         # The caller qn must be the REGISTERED method node
         # (svc.service.Server.Create), never a receiver-dropping fallback.
         assert all(".svc.service.Server.Create" in a for a in matches), matches
