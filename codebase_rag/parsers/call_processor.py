@@ -16,6 +16,7 @@ from ..language_spec import LanguageSpec
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import (
+    ASTCacheProtocol,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
@@ -550,6 +551,7 @@ class CallProcessor:
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
+        ast_cache: ASTCacheProtocol | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -583,6 +585,8 @@ class CallProcessor:
             ingestor,
             import_processor,
             selection=selection,
+            module_paths=self.module_qn_to_file_path,
+            ast_cache=ast_cache,
         )
         self._flow_processor = FlowProcessor(
             ingestor,
