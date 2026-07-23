@@ -243,3 +243,56 @@ def test_local_import_edge_targets_project_qn(tmp_path: Path) -> None:
     import_targets = {b for a, r, b in rels if r == "IMPORTS" and a.endswith("main")}
     assert "mytool.util.util" in import_targets
     assert not any(t.startswith("github.com/") for t in import_targets)
+
+
+def test_duplicate_module_directive_resolves_to_dir_with_package(
+    tmp_path: Path,
+) -> None:
+    # Two go.mod files declare the SAME module path: a dependency-pinning
+    # stub (holding only a placeholder main.go) and the real code tree. The
+    # import must resolve into the tree that contains the imported package,
+    # regardless of discovery order.
+    files = {
+        "go.mod": GO_MOD,
+        "a_stub/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "a_stub/main.go": "package main\n\nfunc main() {}\n",
+        # An unrelated same-named package: if the import misresolves to the
+        # stub, the name fallback rebinds here instead of the imported one.
+        "alpha/util/util.go": GREET_ALPHA,
+        "gen/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "gen/util/util.go": GREET_BETA,
+        "main.go": (
+            "package main\n\n"
+            'import "github.com/acme/mytool/gen/util"\n\n'
+            "func main() {\n"
+            "    util.Greet()\n"
+            "}\n"
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "main.main")
+    assert "mytool.gen.util.util.Greet" in calls, calls
+    assert "mytool.alpha.util.util.Greet" not in calls, calls
+
+
+def test_duplicate_module_paths_resolver_prefers_existing_package_dir(
+    tmp_path: Path,
+) -> None:
+    # Unit-level determinism: the stub mapping sorts first, but only the real
+    # tree contains the imported package directory.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "real" / "util").mkdir(parents=True)
+    (tmp_path / "real" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "real" / "util" / "util.go").write_text(GREET_BETA, encoding="utf-8")
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen/util")
+    assert resolved == "real.util", (mappings, resolved)

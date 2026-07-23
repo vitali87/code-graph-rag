@@ -24,13 +24,15 @@ def _module_directive(gomod: Path) -> str | None:
     return None
 
 
-def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str]]:
+def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str, Path]]:
     # Go import paths are module-path-prefixed (github.com/acme/tool/pkg), so no
     # local import matches a repo-relative qn directly. Map every go.mod module
     # directive (root module plus nested workspace submodules) to the dotted
-    # directory that anchors it; longest module path first so a nested module
-    # shadows an enclosing one on shared prefixes.
-    mappings: list[tuple[str, str]] = []
+    # directory that anchors it, plus the anchoring directory itself (kept as a
+    # real Path so directory names containing dots stay unambiguous); longest
+    # module path first so a nested module shadows an enclosing one on shared
+    # prefixes.
+    mappings: list[tuple[str, str, Path]] = []
     for gomod in repo_path.rglob(cs.DEP_FILE_GOMOD):
         rel_dir = gomod.parent.relative_to(repo_path)
         if any(part in cs.IGNORE_PATTERNS for part in rel_dir.parts):
@@ -41,24 +43,42 @@ def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str]]:
                 if rel_dir == Path()
                 else str(rel_dir).replace(os.sep, cs.SEPARATOR_DOT)
             )
-            mappings.append((module_path, dotted))
+            mappings.append((module_path, dotted, gomod.parent))
             logger.debug(ls.IMP_GO_MODULE_PATH, module=module_path, path=dotted)
-    mappings.sort(key=lambda m: len(m[0]), reverse=True)
+    # Deterministic order: longest module path first, then lexicographic, so
+    # duplicate module directives resolve the same way on every run and
+    # platform.
+    mappings.sort(key=lambda m: (-len(m[0]), m[0], m[1]))
     return mappings
 
 
 def resolve_go_import_path(
-    module_paths: list[tuple[str, str]], import_path: str
+    module_paths: list[tuple[str, str, Path]], import_path: str
 ) -> str | None:
     # Longest module-path prefix wins; the remainder of the import path is the
-    # package directory under that module. Returns the repo-relative dotted dir
-    # ('' when the import IS a module root), or None for external imports.
-    for module_path, dotted_dir in module_paths:
+    # package directory under that module. A dependency-pinning stub go.mod can
+    # declare the SAME module directive as the real code tree, so among the
+    # longest-prefix matches prefer one whose directory actually contains the
+    # imported package on disk (issue #941). Returns the repo-relative dotted
+    # dir ('' when the import IS a module root), or None for external imports.
+    matches: list[tuple[str, str, bool]] = []
+    for module_path, dotted_dir, anchor in module_paths:
         if import_path == module_path:
-            return dotted_dir
-        if import_path.startswith(f"{module_path}{cs.SEPARATOR_SLASH}"):
-            rel = import_path[len(module_path) + 1 :].replace(
-                cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+            matches.append((module_path, dotted_dir, anchor.is_dir()))
+        elif import_path.startswith(f"{module_path}{cs.SEPARATOR_SLASH}"):
+            rel = import_path[len(module_path) + 1 :]
+            dotted_rel = rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            candidate = (
+                f"{dotted_dir}{cs.SEPARATOR_DOT}{dotted_rel}"
+                if dotted_dir
+                else dotted_rel
             )
-            return f"{dotted_dir}{cs.SEPARATOR_DOT}{rel}" if dotted_dir else rel
-    return None
+            matches.append((module_path, candidate, (anchor / rel).is_dir()))
+    if not matches:
+        return None
+    longest = max(len(m[0]) for m in matches)
+    top = [m for m in matches if len(m[0]) == longest]
+    for _module_path, candidate, exists in top:
+        if exists:
+            return candidate
+    return top[0][1]
