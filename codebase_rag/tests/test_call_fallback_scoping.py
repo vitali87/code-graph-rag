@@ -114,9 +114,7 @@ def test_caller_own_nested_function_still_binds(tmp_path: Path) -> None:
     # runs before the fallback and must be untouched by it.
     files = {
         "svc/worker.py": (
-            "def run():\n"
-            "    def helper():\n        return 1\n\n"
-            "    return helper()\n"
+            "def run():\n    def helper():\n        return 1\n\n    return helper()\n"
         ),
     }
     calls = _calls(_run_rels(tmp_path, files), "worker.run")

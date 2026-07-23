@@ -403,7 +403,12 @@ class CallResolver:
             return set()
         protocols = self._protocol_classes()
         targets: set[tuple[str, str]] = set()
-        for qn in self.function_registry.find_ending_with(method_name):
+        # Conformers are found by method name, so the same reachability bound
+        # the simple-name fallback uses applies: nothing written in a language
+        # the Protocol's own cannot call into conforms to it (issue #945).
+        for qn in self._nameable_candidates(
+            self.function_registry.find_ending_with(method_name), class_qn
+        ):
             definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if dot and name == method_name and definer not in protocols:
                 targets.add((self.function_registry[qn], qn))
