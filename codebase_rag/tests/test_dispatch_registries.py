@@ -11,9 +11,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.capture import resolve_capture
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import _audit_recorded_graph
 
 EXPOSES = cs.RelationshipType.EXPOSES.value
 WRITES_TO = cs.RelationshipType.WRITES_TO.value
@@ -21,7 +22,11 @@ RESOLVES_TO = cs.RelationshipType.RESOLVES_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
-def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
+def _run(
+    tmp_path: Path,
+    files: dict[str, str],
+    capture: CaptureSelection = _CAPTURE_IO,
+) -> set[tuple[str, str, str]]:
     parsers, queries = load_parsers()
     for rel, content in files.items():
         p = tmp_path / rel
@@ -33,8 +38,11 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
         repo_path=tmp_path,
         parsers=parsers,
         queries=queries,
-        capture=_CAPTURE_IO,
+        capture=capture,
     ).run()
+    # Every fixture run must survive the structural audit: a dangling edge
+    # is a defect even when no assertion looks at it (issue #652 gate).
+    _audit_recorded_graph(mock)
     return {
         (c.args[0][2], str(c.args[1]), c.args[2][2])
         for c in mock.ensure_relationship_batch.call_args_list
@@ -124,9 +132,7 @@ def test_bare_flow_decorator_uses_hyphenated_function_name(tmp_path: Path) -> No
     # underscores.
     files = {
         "flows.py": (
-            "from prefect import flow\n\n"
-            "@flow\n"
-            "def my_debug_flow():\n    return 1\n"
+            "from prefect import flow\n\n@flow\ndef my_debug_flow():\n    return 1\n"
         ),
     }
     rels = _run(tmp_path, files)
@@ -153,8 +159,7 @@ def test_unrelated_decorator_is_not_a_registrar(tmp_path: Path) -> None:
 def test_producer_keyword_literal_emits_sink(tmp_path: Path) -> None:
     files = {
         "producer.py": (
-            "def schedule(client):\n"
-            '    client.deploy(workflow_name="run-things/dev")\n'
+            'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -194,8 +199,7 @@ def test_deployment_suffix_resolves_to_bare_registration(tmp_path: Path) -> None
             "def run_things():\n    return 1\n"
         ),
         "producer.py": (
-            "def schedule(client):\n"
-            '    client.deploy(workflow_name="run-things/dev")\n'
+            'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -210,7 +214,7 @@ def test_dynamic_producer_value_stays_out(tmp_path: Path) -> None:
     files = {
         "producer.py": (
             "def schedule(client, workflow):\n"
-            "    client.deploy(workflow_name=f\"{workflow}/dev\")\n"
+            '    client.deploy(workflow_name=f"{workflow}/dev")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -238,3 +242,21 @@ def test_imported_handler_values_expose(tmp_path: Path) -> None:
         EXPOSES,
         "resource::DISPATCH::execute_turn",
     ) in rels, rels
+
+
+def test_partial_capture_selections_never_dangle(tmp_path: Path) -> None:
+    # Dropping either side's relationship must not leave the suffix
+    # resolution with a dangling endpoint (the structural audit inside _run
+    # is the assertion).
+    files = {
+        "flows.py": (
+            "from prefect import flow\n\n"
+            '@flow(name="run-things")\n'
+            "def run_things():\n    return 1\n"
+        ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+        ),
+    }
+    for i, tokens in enumerate((["io", "-writes_to"], ["io", "-exposes"])):
+        _run(tmp_path / f"case{i}", files, capture=resolve_capture(tokens))

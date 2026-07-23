@@ -108,6 +108,11 @@ class DispatchRegistryProcessor:
                 continue
             head = key.split(DISPATCH_DEPLOYMENT_SEPARATOR, 1)[0]
             if head in self._registered_keys:
+                # A partial capture can drop the side that would otherwise
+                # create an endpoint node; ensure BOTH here so the edge never
+                # dangles (issue #652 defect class).
+                self._ensure_resource(key)
+                self._ensure_resource(head)
                 self._ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, _resource_qn(key)),
                     cs.RelationshipType.RESOLVES_TO,
@@ -276,7 +281,9 @@ class DispatchRegistryProcessor:
             if current.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,
                 cs.TS_PY_CLASS_DEFINITION,
-            ) and (name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))):
+            ) and (
+                name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            ):
                 names.append(name)
             current = current.parent
         if names:
