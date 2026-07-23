@@ -88,3 +88,37 @@ class TestModuleExposesCleanupOwnership:
         )
 
         assert _exposing_qns(memgraph_ingestor) == []
+
+
+class TestResolvesToCleanupOwnership:
+    def test_dispatch_resolution_survives_endpoint_relink(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # The endpoint relink sweeps its own stale URL resolutions before
+        # recomputing; RESOLVES_TO edges owned by OTHER kinds (a DISPATCH
+        # deployment-suffix link, issue #913) must survive the sweep.
+        from codebase_rag.parsers.endpoints import CYPHER_DELETE_RESOLVES_TO
+
+        memgraph_ingestor.execute_write(
+            "CREATE (u:Resource {qualified_name: 'resource::NETWORK::/x', "
+            "kind: 'NETWORK', name: '/x'}), "
+            "(ep:Resource {qualified_name: 'resource::ENDPOINT::p::GET /x', "
+            "kind: 'ENDPOINT', name: 'GET /x'}), "
+            "(u)-[:RESOLVES_TO]->(ep), "
+            "(d:Resource {qualified_name: 'resource::DISPATCH::k/dev', "
+            "kind: 'DISPATCH', name: 'k/dev'}), "
+            "(h:Resource {qualified_name: 'resource::DISPATCH::k', "
+            "kind: 'DISPATCH', name: 'k'}), "
+            "(d)-[:RESOLVES_TO]->(h)"
+        )
+        memgraph_ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
+        survivors = memgraph_ingestor.fetch_all(
+            "MATCH (a)-[:RESOLVES_TO]->(b) "
+            "RETURN a.qualified_name AS a, b.qualified_name AS b"
+        )
+        pairs = {(str(r["a"]), str(r["b"])) for r in survivors}
+        assert ("resource::DISPATCH::k/dev", "resource::DISPATCH::k") in pairs, pairs
+        assert (
+            "resource::NETWORK::/x",
+            "resource::ENDPOINT::p::GET /x",
+        ) not in pairs, pairs

@@ -42,7 +42,11 @@ CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "RETURN DISTINCT r.qualified_name AS qualified_name, "
     "r.name AS name, r.kind AS kind, r.project AS project"
 )
-CYPHER_DELETE_RESOLVES_TO = "MATCH ()-[r:RESOLVES_TO]->() DELETE r"
+# Scoped to URL resolutions: RESOLVES_TO has other owners (a DISPATCH
+# deployment-suffix link, issue #913) whose edges must survive the relink.
+CYPHER_DELETE_RESOLVES_TO = (
+    "MATCH (:Resource {kind: 'NETWORK'})-[r:RESOLVES_TO]->() DELETE r"
+)
 
 KEY_PROJECT = "project"
 _PROJECT_HASH_SEPARATOR = "__"
