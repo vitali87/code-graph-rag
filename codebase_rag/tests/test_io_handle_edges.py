@@ -1334,3 +1334,175 @@ class TestGoRpcTypedClientEvidence:
         )
         fields = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
         assert fields == {"userClient": "UserService"}, fields
+
+
+class TestTsGeneratedClientSinks:
+    """Issue #912 slice 3: HeyApi-style generated TS SDK methods call
+    `(options?.client ?? this.client).get({ url: '/x', ...options })`. The
+    verb plus an object argument carrying a literal `url` on a client-shaped
+    receiver is a NETWORK sink attributed to the generated method."""
+
+    def test_generated_get_emits_network_read(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  getRequestingUser(options?: any) {\n"
+                "    return (options?.client ?? this.client).get({ "
+                "url: '/auth/users/requesting', ...options });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.getRequestingUser",
+            READS_FROM,
+            "resource::NETWORK::/auth/users/requesting",
+        ), rels
+
+    def test_generated_post_emits_network_write(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  createUser(options?: any) {\n"
+                "    return (options?.client ?? this.client).post({ "
+                "url: '/auth/users', ...options });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.createUser",
+            WRITES_TO,
+            "resource::NETWORK::/auth/users",
+        ), rels
+
+    def test_plain_this_client_receiver_binds(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  del(options?: any) {\n"
+                "    return this.client.delete({ url: '/auth/users/1' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.del",
+            WRITES_TO,
+            "resource::NETWORK::/auth/users/1",
+        ), rels
+
+    def test_non_client_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
+        # `map.get({url})` is a lookup, not an HTTP request.
+        files = {
+            "app.ts": (
+                "export function lookup(map: Map<any, any>) {\n"
+                "  return map.get({ url: '/not-a-request' });\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_object_without_url_is_not_a_sink(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  misc(options?: any) {\n"
+                "    return this.client.get({ path: '/auth/users' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_quoted_url_key_binds(self, tmp_path: Path) -> None:
+        # Object keys may be string literals: `{ "url": '/q' }`.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  q(options?: any) {\n"
+                "    return this.client.get({ \"url\": '/q' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "sdk.AuthClient.q", READS_FROM, "resource::NETWORK::/q"), rels
+
+    def test_template_literal_url_binds(self, tmp_path: Path) -> None:
+        # A template-literal url keeps fragments and renders substitutions as
+        # placeholders, like every other sink identity (issue #884).
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  t(id: string, options?: any) {\n"
+                "    return this.client.get({ url: `/users/${id}` });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "sdk.AuthClient.t", READS_FROM, "resource::NETWORK::/users/{id}"
+        ), rels
+
+    def test_empty_url_does_not_emit_degenerate_resource(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  e(options?: any) {\n"
+                "    return this.client.get({ url: '' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any(b == "resource::NETWORK::" for _a, _r, b in rels), rels
+
+    def test_nested_member_below_client_is_not_a_sink(self, tmp_path: Path) -> None:
+        # `this.client.cache.get({url})` calls the CACHE, not the client: the
+        # verb's immediate receiver must itself be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  c(options?: any) {\n"
+                "    return this.client.cache.get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_mixed_alternative_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
+        # A wrapper that may select a NON-client at runtime is not client
+        # evidence: every alternative must be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  cache: any;\n"
+                "  m(flag: boolean, options?: any) {\n"
+                "    return (flag ? this.client : this.cache).get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels

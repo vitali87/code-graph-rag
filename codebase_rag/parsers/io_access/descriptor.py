@@ -126,6 +126,13 @@ class LanguageDescriptor:
     # render as placeholders in captured resource identities (issue #884).
     template_string_type: str | None = None
     template_substitution_type: str | None = None
+    # Generated HTTP-client calls that carry the target in an options object
+    # (`client.get({ url: '/x' })`, the HeyApi SDK shape, issue #912): a verb
+    # method on a client-shaped receiver whose first argument is an object
+    # literal with a string `url` property. Off where the idiom does not exist.
+    object_url_client_calls: bool = False
+    object_literal_type: str | None = None
+    pair_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -134,6 +141,9 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     string_content_type=cs.TS_STRING_FRAGMENT,
     template_string_type=cs.TS_TEMPLATE_STRING,
     template_substitution_type=cs.TS_TEMPLATE_SUBSTITUTION,
+    object_url_client_calls=True,
+    object_literal_type=cs.TS_OBJECT,
+    pair_type=cs.TS_PAIR,
     keyword_arg_type=None,
     nested_scope_types=frozenset(
         {

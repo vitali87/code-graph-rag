@@ -16,6 +16,7 @@ from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
     DYNAMIC_TARGET,
     HTTP_METHOD_OPTION_KEY,
+    HTTP_METHOD_OPTION_KEY_URL,
     HTTP_READ_VERBS,
     HTTP_WRITE_VERBS,
     KEY_KIND,
@@ -103,6 +104,18 @@ class _LeanHandles(NamedTuple):
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
 # package whose name ends in `connect`.
 _RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
+
+# HTTP verb methods of options-object clients (`client.get({url})`, the
+# HeyApi generated-SDK shape, issue #912): verb name -> edge direction.
+_HTTP_VERB_DIRECTIONS: dict[str, IODirection] = {
+    "get": IODirection.READ,
+    "head": IODirection.READ,
+    "post": IODirection.WRITE,
+    "put": IODirection.WRITE,
+    "patch": IODirection.WRITE,
+    "delete": IODirection.WRITE,
+}
+_CLIENT_RECEIVER_NAME = "client"
 _RPC_CLIENT_TYPE_RE = re.compile(r"^([A-Z]\w*)Client$")
 _RPC_PACKAGE_SUFFIX = "connect"
 
@@ -1196,6 +1209,10 @@ class IOAccessProcessor:
         local_names: frozenset[str],
         lean_handles: _LeanHandles | None,
     ) -> None:
+        if descriptor.object_url_client_calls and self._emit_object_url_client_call(
+            node, caller_spec, descriptor
+        ):
+            return
         raw = call_name(node)
         if raw is None:
             return
@@ -1246,6 +1263,93 @@ class IOAccessProcessor:
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
         self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _emit_object_url_client_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        descriptor: LanguageDescriptor,
+    ) -> bool:
+        # `(options?.client ?? this.client).get({ url: '/x', ...options })`:
+        # an HTTP verb on a client-shaped receiver with a literal `url` in the
+        # options object is a NETWORK sink attributed to the calling method.
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None or func.type != descriptor.member_expression_type:
+            return False
+        verb = safe_decode_text(func.child_by_field_name(descriptor.property_field))
+        direction = _HTTP_VERB_DIRECTIONS.get(verb or "")
+        receiver = func.child_by_field_name(descriptor.object_field)
+        if (
+            direction is None
+            or receiver is None
+            or not self._names_client(receiver, descriptor)
+        ):
+            return False
+        arguments = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        first = (
+            arguments.named_children[0]
+            if arguments is not None and arguments.named_children
+            else None
+        )
+        if first is None or first.type != descriptor.object_literal_type:
+            return False
+        url = self._object_pair_string(first, descriptor)
+        if url is None:
+            return False
+        self._emit(caller_spec, direction, ResourceKind.NETWORK, url)
+        return True
+
+    @classmethod
+    def _names_client(cls, receiver: Node, descriptor: LanguageDescriptor) -> bool:
+        # The verb's IMMEDIATE receiver must itself be client-shaped: a bare
+        # `client`, a member whose TAIL property is `client` (`this.client`,
+        # `options?.client`), or wrappers/alternatives thereof
+        # (`(options?.client ?? this.client)`, `client!`). An ancestor
+        # mention is not enough: `this.client.cache.get(...)` calls the
+        # cache, not the client.
+        if receiver.type == descriptor.identifier_type:
+            return safe_decode_text(receiver) == _CLIENT_RECEIVER_NAME
+        if receiver.type == descriptor.member_expression_type:
+            prop = receiver.child_by_field_name(descriptor.property_field)
+            return safe_decode_text(prop) == _CLIENT_RECEIVER_NAME
+        if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children:
+            return cls._names_client(receiver.named_children[0], descriptor)
+        if receiver.type == cs.TS_BINARY_EXPRESSION:
+            # `a ?? b` / `a || b` yields ONE operand at runtime, so EVERY
+            # operand must be client-shaped; a mixed pair may select the
+            # non-client.
+            children = receiver.named_children
+            return bool(children) and all(
+                cls._names_client(child, descriptor) for child in children
+            )
+        if receiver.type == cs.TS_JS_TERNARY_EXPRESSION:
+            branches = receiver.named_children[1:]
+            return bool(branches) and all(
+                cls._names_client(child, descriptor) for child in branches
+            )
+        if receiver.type == cs.TS_NON_NULL_EXPRESSION and receiver.named_children:
+            return cls._names_client(receiver.named_children[0], descriptor)
+        return False
+
+    @staticmethod
+    def _object_pair_string(obj: Node, descriptor: LanguageDescriptor) -> str | None:
+        # The identity of the object's `url` property, if any: plain and
+        # template-literal urls render exactly like every other sink target
+        # (issue #884); a quoted key (`{ "url": ... }`) counts too.
+        for pair in obj.named_children:
+            if pair.type != descriptor.pair_type:
+                continue
+            key = safe_decode_text(pair.child_by_field_name(cs.FIELD_KEY))
+            if key is None or key.strip("'\"") != HTTP_METHOD_OPTION_KEY_URL:
+                continue
+            return string_literal(
+                pair.child_by_field_name(cs.FIELD_VALUE),
+                descriptor.string_type,
+                descriptor.string_content_type,
+                template_type=descriptor.template_string_type,
+                substitution_type=descriptor.template_substitution_type,
+            )
+        return None
 
     def _method_options_direction(
         self, call_node: Node, sink: IOSink, descriptor: LanguageDescriptor

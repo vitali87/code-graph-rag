@@ -53,6 +53,7 @@ MODE_UPDATE_CHAR = "+"
 # fetch-style options objects carry the HTTP verb under this key; the verb
 # refines the sink's declared direction (an unlisted verb is unknown).
 HTTP_METHOD_OPTION_KEY = "method"
+HTTP_METHOD_OPTION_KEY_URL = "url"
 HTTP_READ_VERBS = frozenset({"GET", "HEAD", "OPTIONS"})
 HTTP_WRITE_VERBS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
