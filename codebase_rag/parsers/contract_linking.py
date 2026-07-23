@@ -21,7 +21,7 @@ from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_resolve_posix
 from .contracts import ContractOperation, discover_contract_operations
-from .endpoints import url_matches_template
+from .endpoints import _has_literal_segment, url_matches_template
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 
 CYPHER_LIVE_RPC_RESOURCES = (
@@ -30,6 +30,7 @@ CYPHER_LIVE_RPC_RESOURCES = (
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
+    "WHERE r.project = $project "
     "RETURN DISTINCT r.qualified_name AS qualified_name, r.name AS name"
 )
 # Scoped to contract targets: RESOLVES_TO has other owners (client URL to
@@ -39,29 +40,60 @@ CYPHER_INDEXED_CONTRACT_FILES = (
     "MATCH (f:File) WHERE f.absolute_path IN $paths "
     "RETURN f.absolute_path AS absolute_path"
 )
+# Scoped to the contracts THIS run declares: another project's contracts in
+# the shared graph keep their links (issue #897's lesson), and the artefacts
+# of other kinds keep theirs (issue #947's).
 CYPHER_DELETE_CONTRACT_RESOLVES_TO = (
-    "MATCH ()-[r:RESOLVES_TO]->(:Resource {kind: 'CONTRACT'}) DELETE r"
+    "MATCH ()-[r:RESOLVES_TO]->(c:Resource {kind: 'CONTRACT'}) "
+    "WHERE c.qualified_name IN $contract_qns DELETE r"
+)
+# A renamed operation leaves a node whose declaring file still anchors it,
+# so the file's own declarations are cleared before it re-declares them and
+# whatever it no longer declares is pruned as unanchored.
+CYPHER_DELETE_FILE_CONTRACTS = (
+    "MATCH (f:File)-[e:EXPOSES]->(:Resource {kind: 'CONTRACT'}) "
+    "WHERE f.absolute_path IN $paths DELETE e"
 )
 
 _IDENTITY_SEPARATOR = "."
 _METHOD_ANY = "ANY"
 
 
-def link_contracts(ingestor: IngestorProtocol, repo_path: Path) -> int:
+def link_contracts(
+    ingestor: IngestorProtocol,
+    repo_path: Path,
+    project_name: str,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> int:
     """Emit CONTRACT resources and resolve live artefacts into them.
 
     Returns the number of RESOLVES_TO edges emitted.
     """
-    operations = discover_contract_operations(repo_path)
+    operations = discover_contract_operations(repo_path, exclude_paths, unignore_paths)
     if not operations or not isinstance(ingestor, QueryProtocol):
+        return 0
+    # A filtering sink that would drop the EXPOSES edge must not receive the
+    # Resource node either, or selective capture leaves an orphaned contract.
+    rel_gate = getattr(ingestor, "rel_enabled", None)
+    if callable(rel_gate) and not rel_gate(cs.RelationshipType.EXPOSES):
         return 0
     operations = _indexed_only(ingestor, operations)
     if not operations:
         return 0
-    ingestor.execute_write(CYPHER_DELETE_CONTRACT_RESOLVES_TO)
+    ingestor.execute_write(
+        CYPHER_DELETE_CONTRACT_RESOLVES_TO,
+        {"contract_qns": sorted({_contract_qn(op) for op in operations})},
+    )
+    ingestor.execute_write(
+        CYPHER_DELETE_FILE_CONTRACTS,
+        {"paths": sorted({cached_resolve_posix(op.source) for op in operations})},
+    )
     for operation in operations:
         _emit_contract(ingestor, operation)
-    created = _link_rpcs(ingestor, operations) + _link_endpoints(ingestor, operations)
+    created = _link_rpcs(ingestor, ingestor, operations) + _link_endpoints(
+        ingestor, ingestor, operations, project_name
+    )
     logger.debug(ls.CONTRACT_OPERATIONS, count=len(operations), created=created)
     return created
 
@@ -121,7 +153,11 @@ def _resolve(ingestor: IngestorProtocol, source_qn: str, target_qn: str) -> None
     )
 
 
-def _link_rpcs(ingestor: QueryProtocol, operations: list[ContractOperation]) -> int:
+def _link_rpcs(
+    ingestor: IngestorProtocol,
+    reader: QueryProtocol,
+    operations: list[ContractOperation],
+) -> int:
     # An RPC resource is keyed `<Service>.<Method>`, which is exactly the
     # identity the proto declares, so this is a name match, not a heuristic.
     by_identity = {
@@ -130,7 +166,7 @@ def _link_rpcs(ingestor: QueryProtocol, operations: list[ContractOperation]) -> 
         if operation.method is None
     }
     created = 0
-    for row in ingestor.fetch_all(CYPHER_LIVE_RPC_RESOURCES):
+    for row in reader.fetch_all(CYPHER_LIVE_RPC_RESOURCES):
         name = str(row.get(cs.KEY_NAME) or "")
         operation = by_identity.get(name)
         if operation is None:
@@ -141,21 +177,31 @@ def _link_rpcs(ingestor: QueryProtocol, operations: list[ContractOperation]) -> 
 
 
 def _link_endpoints(
-    ingestor: QueryProtocol, operations: list[ContractOperation]
+    ingestor: IngestorProtocol,
+    reader: QueryProtocol,
+    operations: list[ContractOperation],
+    project_name: str,
 ) -> int:
     http = [operation for operation in operations if operation.method is not None]
     if not http:
         return 0
     created = 0
-    for row in ingestor.fetch_all(CYPHER_LIVE_ENDPOINT_RESOURCES):
+    rows = reader.fetch_all(CYPHER_LIVE_ENDPOINT_RESOURCES, {"project": project_name})
+    for row in rows:
         method, _, path = str(row.get(cs.KEY_NAME) or "").partition(" ")
-        if not path:
+        # A template with no literal segment of its own (`/**`, `/:id`) says
+        # nothing about WHICH operation it serves, and a parameter segment
+        # swallows its literal siblings, so a template matching more than one
+        # operation names none of them.
+        if not path or not _has_literal_segment(path):
             continue
-        endpoint_qn = str(row.get(cs.KEY_QUALIFIED_NAME))
-        for operation in http:
-            if _serves(method, path, operation):
-                _resolve(ingestor, endpoint_qn, _contract_qn(operation))
-                created += 1
+        matches = [operation for operation in http if _serves(method, path, operation)]
+        if len(matches) != 1:
+            continue
+        _resolve(
+            ingestor, str(row.get(cs.KEY_QUALIFIED_NAME)), _contract_qn(matches[0])
+        )
+        created += 1
     return created
 
 

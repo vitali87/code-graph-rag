@@ -6,8 +6,11 @@
 # graph resolve into it.
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
+
+import pytest
 
 from codebase_rag.parsers.contracts import (
     ContractOperation,
@@ -30,7 +33,7 @@ _OPENAPI = {
 }
 
 _PROTO = (
-    "syntax = \"proto3\";\n\n"
+    'syntax = "proto3";\n\n'
     "package things.v1;\n\n"
     "// Interface exported by the server.\n"
     "service ThingService {\n"
@@ -54,17 +57,21 @@ class TestOpenApiDiscovery:
         _write(tmp_path, {"schemas/things.json": json.dumps(_OPENAPI)})
         spec = tmp_path / "schemas/things.json"
         assert set(discover_contract_operations(tmp_path)) == {
-            ContractOperation("things", "createThing", "POST", "/v2/things", spec),
-            ContractOperation("things", "listThings", "GET", "/v2/things", spec),
             ContractOperation(
-                "things", "getThing", "GET", "/v2/things/{thingId}", spec
+                "schemas/things", "createThing", "POST", "/v2/things", spec
+            ),
+            ContractOperation(
+                "schemas/things", "listThings", "GET", "/v2/things", spec
+            ),
+            ContractOperation(
+                "schemas/things", "getThing", "GET", "/v2/things/{thingId}", spec
             ),
         }
 
     def test_yaml_spec_is_read_when_yaml_is_available(self, tmp_path: Path) -> None:
-        yaml = __import__("importlib").util.find_spec("yaml")
-        if yaml is None:
-            return
+        # A silent `return` here would make a missing PyYAML look green.
+        if importlib.util.find_spec("yaml") is None:
+            pytest.skip("PyYAML is not installed")
         _write(
             tmp_path,
             {
@@ -79,7 +86,7 @@ class TestOpenApiDiscovery:
         )
         assert discover_contract_operations(tmp_path) == [
             ContractOperation(
-                "things",
+                "schemas/things",
                 "createThing",
                 "POST",
                 "/v2/things",
@@ -107,6 +114,145 @@ class TestOpenApiDiscovery:
     def test_ignored_directories_are_not_scanned(self, tmp_path: Path) -> None:
         _write(tmp_path, {"node_modules/pkg/openapi.json": json.dumps(_OPENAPI)})
         assert discover_contract_operations(tmp_path) == []
+
+
+class TestDiscoveryRobustness:
+    def test_an_rpc_and_an_operation_of_the_same_name_do_not_crash(
+        self, tmp_path: Path
+    ) -> None:
+        # Sorting tuples whose method/path are None for rpcs and strings for
+        # HTTP compares None with str the moment two identities collide, and
+        # this pass runs at the very end of an index run.
+        _write(
+            tmp_path,
+            {
+                "Foo.proto": "service Foo {\n    rpc Bar(A) returns (B);\n}\n",
+                "Foo.json": json.dumps(
+                    {
+                        "openapi": "3.0.0",
+                        "paths": {"/bar": {"get": {"operationId": "Bar"}}},
+                    }
+                ),
+            },
+        )
+        assert len(discover_contract_operations(tmp_path)) == 2
+
+    def test_same_spec_filename_in_two_directories_stays_distinct(
+        self, tmp_path: Path
+    ) -> None:
+        # `openapi.json` is the conventional name, so the stem is not a
+        # namespace: two versions of one API would become one operation.
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {"/things": {"get": {"operationId": "listThings"}}},
+        }
+        _write(
+            tmp_path,
+            {
+                "v1/openapi.json": json.dumps(spec),
+                "v2/openapi.json": json.dumps(spec),
+            },
+        )
+        contracts = {op.contract for op in discover_contract_operations(tmp_path)}
+        assert len(contracts) == 2, contracts
+
+    def test_base_path_is_part_of_the_operation_path(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            {
+                "swagger.json": json.dumps(
+                    {
+                        "swagger": "2.0",
+                        "basePath": "/api/v2",
+                        "paths": {"/things": {"get": {"operationId": "listThings"}}},
+                    }
+                )
+            },
+        )
+        assert [op.path for op in discover_contract_operations(tmp_path)] == [
+            "/api/v2/things"
+        ]
+
+    def test_server_path_prefix_is_part_of_the_operation_path(
+        self, tmp_path: Path
+    ) -> None:
+        _write(
+            tmp_path,
+            {
+                "openapi.json": json.dumps(
+                    {
+                        "openapi": "3.0.0",
+                        "servers": [
+                            {"url": "https://a.example.com/api/v2"},
+                            {"url": "https://b.example.com/api/v2"},
+                        ],
+                        "paths": {"/things": {"get": {"operationId": "listThings"}}},
+                    }
+                )
+            },
+        )
+        assert [op.path for op in discover_contract_operations(tmp_path)] == [
+            "/api/v2/things"
+        ]
+
+    def test_servers_that_disagree_contribute_no_prefix(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            {
+                "openapi.json": json.dumps(
+                    {
+                        "openapi": "3.0.0",
+                        "servers": [
+                            {"url": "https://a.example.com/api/v2"},
+                            {"url": "https://b.example.com/"},
+                        ],
+                        "paths": {"/things": {"get": {"operationId": "listThings"}}},
+                    }
+                )
+            },
+        )
+        assert [op.path for op in discover_contract_operations(tmp_path)] == ["/things"]
+
+
+class TestProtoRobustness:
+    def test_commented_out_service_declares_nothing(self, tmp_path: Path) -> None:
+        source = (
+            'syntax = "proto3";\n\n'
+            "/* service GhostService {\n"
+            "    rpc Ghost(A) returns (B);\n"
+            "} */\n"
+        )
+        _write(tmp_path, {"a.proto": source})
+        assert discover_contract_operations(tmp_path) == []
+
+    def test_rpc_inside_a_string_literal_is_not_an_operation(
+        self, tmp_path: Path
+    ) -> None:
+        source = (
+            "service S {\n"
+            '    option (foo) = "rpc Fake(X) returns (Y)";\n'
+            "    rpc Real(A) returns (B);\n"
+            "}\n"
+        )
+        _write(tmp_path, {"a.proto": source})
+        assert [op.operation for op in discover_contract_operations(tmp_path)] == [
+            "Real"
+        ]
+
+    def test_a_brace_inside_a_string_does_not_skew_the_block(
+        self, tmp_path: Path
+    ) -> None:
+        source = (
+            "service S {\n"
+            '    option (x) = "{";\n'
+            "    rpc Inside(A) returns (B);\n"
+            "}\n"
+            "rpc Outside(A) returns (B);\n"
+        )
+        _write(tmp_path, {"a.proto": source})
+        assert [op.operation for op in discover_contract_operations(tmp_path)] == [
+            "Inside"
+        ]
 
 
 class TestProtoDiscovery:

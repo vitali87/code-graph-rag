@@ -165,6 +165,11 @@ CONTRACT_OPERATION_METHODS: frozenset[str] = frozenset(
     {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
 )
 CONTRACT_OPERATION_ID_KEY = "operationId"
+# The mount a spec states its paths are relative to: `basePath` in Swagger 2,
+# the path component of each server URL in OpenAPI 3.
+CONTRACT_BASE_PATH_KEY = "basePath"
+CONTRACT_SERVERS_KEY = "servers"
+CONTRACT_SERVER_URL_KEY = "url"
 # A spec is a document, not a data dump; anything larger is not one, and the
 # cap keeps the walk from parsing a huge generated file.
 CONTRACT_MAX_FILE_BYTES = 8 * 1024 * 1024

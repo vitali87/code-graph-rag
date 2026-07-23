@@ -45,6 +45,8 @@ class _FakeIngestor:
     ) -> list[ResultRow]:
         for marker, rows in self._rows.items():
             if marker in query:
+                if "$project" in query and params is not None:
+                    return [r for r in rows if r.get("project") == params["project"]]
                 return rows
         if "(f:File)" in query and params is not None:
             # Default: every contract file this repo declares is indexed.
@@ -70,9 +72,21 @@ class _FakeIngestor:
         return None
 
 
-def _repo(tmp_path: Path) -> Path:
+_SPEC_WITH_SIBLINGS = json.dumps(
+    {
+        "openapi": "3.0.0",
+        "paths": {
+            "/v2/things/{thingId}": {"get": {"operationId": "getThing"}},
+            "/v2/things/count": {"get": {"operationId": "countThings"}},
+        },
+    }
+)
+
+
+def _repo(tmp_path: Path, extra_paths: bool = False) -> Path:
     (tmp_path / "schemas").mkdir()
-    (tmp_path / "schemas/things.json").write_text(_SPEC, encoding="utf-8")
+    spec = _SPEC_WITH_SIBLINGS if extra_paths else _SPEC
+    (tmp_path / "schemas/things.json").write_text(spec, encoding="utf-8")
     (tmp_path / "schemas/things.proto").write_text(_PROTO, encoding="utf-8")
     return tmp_path
 
@@ -87,7 +101,11 @@ def _ingestor(**rows: list[dict[str, Any]]) -> _FakeIngestor:
 
 
 def _endpoint_row(name: str) -> dict[str, Any]:
-    return {"qualified_name": f"resource::ENDPOINT::proj::{name}", "name": name}
+    return {
+        "qualified_name": f"resource::ENDPOINT::proj::{name}",
+        "name": name,
+        "project": "proj",
+    }
 
 
 def _rpc_row(name: str) -> dict[str, Any]:
@@ -101,25 +119,25 @@ def _links(ingestor: _FakeIngestor) -> set[tuple[PropertyValue, PropertyValue]]:
 class TestContractNodes:
     def test_every_operation_becomes_a_resource(self, tmp_path: Path) -> None:
         ingestor = _ingestor()
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         names = {str(props["name"]) for _label, props in ingestor.nodes}
         assert names == {
-            "things.createThing",
-            "things.getThing",
-            "things.unservedThing",
+            "schemas/things.createThing",
+            "schemas/things.getThing",
+            "schemas/things.unservedThing",
             "ThingService.CreateThing",
         }
 
     def test_nodes_carry_the_contract_kind(self, tmp_path: Path) -> None:
         ingestor = _ingestor()
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert {str(props["kind"]) for _label, props in ingestor.nodes} == {"CONTRACT"}
 
 
 class TestRpcAnchoring:
     def test_rpc_resource_resolves_to_its_contract(self, tmp_path: Path) -> None:
         ingestor = _ingestor(rpcs=[_rpc_row("ThingService.CreateThing")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::RPC::ThingService.CreateThing",
             "resource::CONTRACT::ThingService.CreateThing",
@@ -127,48 +145,46 @@ class TestRpcAnchoring:
 
     def test_undeclared_rpc_resource_stays_unlinked(self, tmp_path: Path) -> None:
         ingestor = _ingestor(rpcs=[_rpc_row("OtherService.Ping")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert not _links(ingestor)
 
 
 class TestEndpointAnchoring:
-    def test_endpoint_resolves_to_the_operation_it_serves(
-        self, tmp_path: Path
-    ) -> None:
+    def test_endpoint_resolves_to_the_operation_it_serves(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /v2/things")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::POST /v2/things",
-            "resource::CONTRACT::things.createThing",
+            "resource::CONTRACT::schemas/things.createThing",
         ) in _links(ingestor)
 
     def test_path_parameter_spelling_does_not_matter(self, tmp_path: Path) -> None:
         # The server registers `:thingId`, the spec declares `{thingId}`.
         ingestor = _ingestor(endpoints=[_endpoint_row("GET /v2/things/:thingId")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::GET /v2/things/:thingId",
-            "resource::CONTRACT::things.getThing",
+            "resource::CONTRACT::schemas/things.getThing",
         ) in _links(ingestor)
 
     def test_unknown_mount_lead_still_anchors(self, tmp_path: Path) -> None:
         # A generated registration whose mount prefix could not be resolved
         # carries the unknown lead; the operation it serves is still known.
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /**/v2/things")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::POST /**/v2/things",
-            "resource::CONTRACT::things.createThing",
+            "resource::CONTRACT::schemas/things.createThing",
         ) in _links(ingestor)
 
     def test_method_must_match(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("DELETE /v2/things")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert not _links(ingestor)
 
     def test_unrelated_path_does_not_anchor(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /v2/other")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert not _links(ingestor)
 
     def test_method_agnostic_endpoint_anchors_every_method_of_its_path(
@@ -177,11 +193,58 @@ class TestEndpointAnchoring:
         # `http.HandleFunc("/v2/things", h)` registers ANY; it serves whatever
         # the contract declares at that path.
         ingestor = _ingestor(endpoints=[_endpoint_row("ANY /v2/things")])
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::ANY /v2/things",
-            "resource::CONTRACT::things.createThing",
+            "resource::CONTRACT::schemas/things.createThing",
         ) in _links(ingestor)
+
+
+class TestLinkBounds:
+    def test_only_this_projects_endpoints_anchor(self, tmp_path: Path) -> None:
+        # ENDPOINT nodes are project-scoped on purpose; another service in
+        # the shared graph registering the same verb and path is not an
+        # implementation of THIS repo's contract.
+        ingestor = _ingestor(
+            endpoints=[
+                {
+                    "qualified_name": "resource::ENDPOINT::other::POST /v2/things",
+                    "name": "POST /v2/things",
+                    "project": "other",
+                }
+            ]
+        )
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        assert not _links(ingestor)
+
+    def test_an_endpoint_matching_several_operations_anchors_none(
+        self, tmp_path: Path
+    ) -> None:
+        # A parameter segment swallows its literal siblings, so `GET /v2/x/:id`
+        # matches every operation under that path; picking one would be a
+        # guess and linking all of them is noise.
+        ingestor = _ingestor(endpoints=[_endpoint_row("GET /v2/things/:id")])
+        link_contracts(ingestor, _repo(tmp_path, extra_paths=True), project_name="proj")
+        assert not _links(ingestor)
+
+    def test_a_lead_only_template_anchors_nothing(self, tmp_path: Path) -> None:
+        # `/**` alone is a route whose whole path is unknown; it would match
+        # every operation in the spec.
+        ingestor = _ingestor(endpoints=[_endpoint_row("GET /**")])
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        assert not _links(ingestor)
+
+
+class TestCaptureGate:
+    def test_a_sink_that_drops_exposes_receives_no_contract_nodes(
+        self, tmp_path: Path
+    ) -> None:
+        # Selective capture must not leave a Resource whose anchoring edge
+        # was filtered out.
+        ingestor = _ingestor()
+        ingestor.rel_enabled = lambda rel: str(rel) != "EXPOSES"  # type: ignore[attr-defined]
+        assert link_contracts(ingestor, _repo(tmp_path), project_name="proj") == 0
+        assert not ingestor.nodes
 
 
 class TestSweepOwnership:
@@ -189,7 +252,7 @@ class TestSweepOwnership:
         # RESOLVES_TO has other owners (URL to endpoint, dispatch suffix);
         # relinking contracts must not touch them.
         ingestor = _ingestor()
-        link_contracts(ingestor, _repo(tmp_path))
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert ingestor.writes
         assert all("'CONTRACT'" in query for query in ingestor.writes), ingestor.writes
 
@@ -198,10 +261,10 @@ class TestSweepOwnership:
         # and claiming otherwise would hang them off a File node that does
         # not exist.
         ingestor = _FakeIngestor({"'ENDPOINT'": [], "'RPC'": [], "(f:File)": []})
-        assert link_contracts(ingestor, _repo(tmp_path)) == 0
+        assert link_contracts(ingestor, _repo(tmp_path), project_name="proj") == 0
         assert not ingestor.nodes
 
     def test_no_contract_files_writes_nothing(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /v2/things")])
-        assert link_contracts(ingestor, tmp_path) == 0
+        assert link_contracts(ingestor, tmp_path, project_name="proj") == 0
         assert not ingestor.nodes

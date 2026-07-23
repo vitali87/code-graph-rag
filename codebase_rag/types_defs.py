@@ -23,7 +23,9 @@ PropertyDict = dict[str, PropertyValue]
 
 # Any value a parsed JSON document can hold (a package.json manifest, a
 # tsconfig, an OpenAPI spec): recursive, so nested mappings stay typed.
-type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+type JsonValue = (
+    str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+)
 
 type ResultScalar = str | int | float | bool | None
 type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]

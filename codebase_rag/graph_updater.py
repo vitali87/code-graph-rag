@@ -1038,7 +1038,13 @@ class GraphUpdater:
             self.ingestor.flush_all()
         # Contract files name the operations the generated artefacts on both
         # sides implement, so they anchor after the artefacts exist.
-        anchored = link_contracts(self.ingestor, self.repo_path)
+        anchored = link_contracts(
+            self.ingestor,
+            self.repo_path,
+            self.project_name,
+            self.exclude_paths,
+            self.unignore_paths,
+        )
         if anchored:
             logger.info("Anchored {} artefacts to contract operations", anchored)
             self.ingestor.flush_all()

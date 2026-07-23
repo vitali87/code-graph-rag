@@ -19,12 +19,14 @@ import os
 import re
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import JsonValue
+from ..utils.path_utils import should_skip_path
 
 
 class ContractOperation(NamedTuple):
@@ -40,19 +42,52 @@ class ContractOperation(NamedTuple):
     source: Path
 
 
-def discover_contract_operations(repo_path: Path) -> list[ContractOperation]:
+def discover_contract_operations(
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> list[ContractOperation]:
+    # The same path filters the file walk applies, so a user exclusion is
+    # never read from disk and an un-ignored tree (a checked-in generated
+    # `dist/` the user rescued) is not skipped here while being indexed.
     operations: list[ContractOperation] = []
     for directory, subdirs, filenames in os.walk(repo_path):
-        subdirs[:] = [d for d in subdirs if d not in cs.IGNORE_PATTERNS]
+        subdirs[:] = [
+            d
+            for d in subdirs
+            if not should_skip_path(
+                Path(directory) / d,
+                repo_path,
+                exclude_paths,
+                unignore_paths,
+                is_file=False,
+            )
+        ]
         for filename in filenames:
             path = Path(directory) / filename
+            if should_skip_path(
+                path, repo_path, exclude_paths, unignore_paths, is_file=True
+            ):
+                continue
             suffix = path.suffix.lower()
             if suffix == cs.CONTRACT_PROTO_EXTENSION:
                 operations.extend(_proto_operations(path))
             elif suffix in cs.CONTRACT_SPEC_EXTENSIONS:
-                operations.extend(_openapi_operations(path))
-    operations.sort()
+                operations.extend(_openapi_operations(path, repo_path))
+    # Sorted by an explicit key: the tuple's own order would compare a
+    # method string against an rpc's None the moment two identities collide.
+    operations.sort(key=_sort_key)
     return operations
+
+
+def _sort_key(operation: ContractOperation) -> tuple[str, str, str, str, str]:
+    return (
+        operation.contract,
+        operation.operation,
+        operation.method or "",
+        operation.path or "",
+        operation.source.as_posix(),
+    )
 
 
 def _read_text(path: Path) -> str | None:
@@ -64,7 +99,7 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _openapi_operations(path: Path) -> list[ContractOperation]:
+def _openapi_operations(path: Path, repo_path: Path) -> list[ContractOperation]:
     text = _read_text(path)
     # Cheap gate before parsing: a spec always names its version key, and
     # most JSON/YAML in a repo is not a spec at all.
@@ -78,7 +113,11 @@ def _openapi_operations(path: Path) -> list[ContractOperation]:
     paths = document.get(cs.CONTRACT_PATHS_KEY)
     if not isinstance(paths, dict):
         return []
-    contract = path.stem
+    # The declaring FILE names the contract: `openapi.json` is the
+    # conventional filename, so a stem alone would fold two versions of one
+    # API, or two unrelated services, into a single operation.
+    contract = _contract_name(path, repo_path)
+    prefix = _base_path(document)
     operations: list[ContractOperation] = []
     for template, methods in paths.items():
         if not isinstance(template, str) or not isinstance(methods, dict):
@@ -95,10 +134,46 @@ def _openapi_operations(path: Path) -> list[ContractOperation]:
             if isinstance(operation_id, str) and operation_id:
                 operations.append(
                     ContractOperation(
-                        contract, operation_id, method.upper(), template, path
+                        contract,
+                        operation_id,
+                        method.upper(),
+                        f"{prefix}{template}",
+                        path,
                     )
                 )
     return operations
+
+
+def _contract_name(path: Path, repo_path: Path) -> str:
+    try:
+        relative = path.relative_to(repo_path)
+    except ValueError:
+        return path.stem
+    return relative.with_suffix("").as_posix()
+
+
+def _base_path(document: dict[str, JsonValue]) -> str:
+    # Swagger 2 states the mount as `basePath`; OpenAPI 3 states it in each
+    # server URL, and only a prefix EVERY server agrees on is part of the
+    # operation's path (one server rooted differently means there is none).
+    base = document.get(cs.CONTRACT_BASE_PATH_KEY)
+    if isinstance(base, str) and base.startswith(cs.SEPARATOR_SLASH):
+        return base.rstrip(cs.SEPARATOR_SLASH)
+    servers = document.get(cs.CONTRACT_SERVERS_KEY)
+    if not isinstance(servers, list) or not servers:
+        return ""
+    prefixes = set()
+    for server in servers:
+        if not isinstance(server, dict):
+            return ""
+        url = server.get(cs.CONTRACT_SERVER_URL_KEY)
+        if not isinstance(url, str):
+            return ""
+        prefixes.add(urlparse(url).path.rstrip(cs.SEPARATOR_SLASH))
+    if len(prefixes) != 1:
+        return ""
+    only = prefixes.pop()
+    return only if only.startswith(cs.SEPARATOR_SLASH) else ""
 
 
 def _parse_document(path: Path, text: str) -> JsonValue:
@@ -121,38 +196,73 @@ def _parse_document(path: Path, text: str) -> JsonValue:
 # `service Name {` opens a block; `rpc Name(` is an operation inside one.
 _PROTO_SERVICE_RE = re.compile(r"\bservice\s+(\w+)\s*\{")
 _PROTO_RPC_RE = re.compile(r"\brpc\s+(\w+)\s*\(")
-_PROTO_LINE_COMMENT = "//"
+
+
+def _proto_code(text: str) -> str:
+    # Comments and string literals are not code: a commented-out service
+    # declares nothing, an `option = "rpc Fake(X)"` is not an operation, and
+    # a brace inside a string must not open or close a block.
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "/" and text.startswith("//", index):
+            index = text.find("\n", index)
+            if index == -1:
+                break
+        elif char == "/" and text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            # An unterminated block comment runs to the end of the file.
+            index = length if end == -1 else end + 2
+            out.append(" ")
+        elif char in ("'", '"'):
+            index = _skip_string(text, index)
+            out.append(" ")
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+def _skip_string(text: str, index: int) -> int:
+    quote = text[index]
+    index += 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == quote:
+            return index + 1
+        index += 1
+    return index
 
 
 def _proto_operations(path: Path) -> list[ContractOperation]:
     text = _read_text(path)
     if text is None:
         return []
+    code = _proto_code(text)
     operations: list[ContractOperation] = []
-    service: str | None = None
-    depth = 0
-    for raw_line in text.splitlines():
-        line = raw_line.split(_PROTO_LINE_COMMENT, 1)[0]
-        if service is None:
-            if match := _PROTO_SERVICE_RE.search(line):
-                service = match.group(1)
-                depth = line.count("{") - line.count("}")
-                if depth <= 0:
-                    operations.extend(
-                        ContractOperation(service, name, None, None, path)
-                        for name in _PROTO_RPC_RE.findall(line)
-                    )
-                    service = None
-                    continue
-                line = line.split("{", 1)[1]
-            else:
-                continue
-        else:
-            depth += line.count("{") - line.count("}")
+    for match in _PROTO_SERVICE_RE.finditer(code):
+        service = match.group(1)
+        body = _block_body(code, match.end() - 1)
         operations.extend(
             ContractOperation(service, name, None, None, path)
-            for name in _PROTO_RPC_RE.findall(line)
+            for name in _PROTO_RPC_RE.findall(body)
         )
-        if depth <= 0:
-            service = None
     return operations
+
+
+def _block_body(code: str, brace_index: int) -> str:
+    # The text between the service's braces, so an rpc declared after the
+    # block (or in a later one) is never attributed to this service.
+    depth = 0
+    for index in range(brace_index, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[brace_index + 1 : index]
+    return code[brace_index + 1 :]
