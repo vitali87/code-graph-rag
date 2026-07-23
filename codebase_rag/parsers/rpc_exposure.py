@@ -465,11 +465,12 @@ class GoRpcExposureProcessor:
         # inheritance, so the graph has no parent edge to follow). Promoted
         # stubs from a generated `*connect` package (`Unimplemented<Stem>
         # Handler`) are not served RPCs. `visited` records the shallowest
-        # depth each type was traversed at: re-traversal at a strictly
-        # shallower depth stays allowed, so a depth-exhausted diamond branch
-        # cannot suppress a valid shallow one, while cycles and repeats
-        # still terminate.
-        if depth > 4 or visited.get(impl_qn, 5) <= depth:
+        # depth each type was traversed at: re-traversal is allowed only at
+        # a strictly shallower depth, which blocks path cycles and diamond
+        # repeats while never cutting off a genuinely deep chain (Go puts no
+        # limit on promotion depth, so neither do we). Recorded depths only
+        # ever decrease, so the walk terminates without an arbitrary cap.
+        if visited.get(impl_qn, depth + 1) <= depth:
             return None
         visited[impl_qn] = depth
         method_qn = f"{impl_qn}{cs.SEPARATOR_DOT}{method}"
