@@ -301,6 +301,56 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/right"
         )
 
+    def test_root_condition_map_resolves_the_package_root(self, tmp_path: Path) -> None:
+        # `{"import": .., "require": ..}` with no "." key is a CONDITION map
+        # declaring the package root, not a set of subpaths.
+        # The entry is NOT at a conventional index path, so only reading the
+        # condition map can resolve it.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={"import": "./dist/entry.js", "require": "./dist/entry.cjs"},
+            ),
+            {"src/entry.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk", tmp_path)
+            == "packages/sdk/src/entry"
+        )
+
+    def test_root_condition_map_claims_no_subpath(self, tmp_path: Path) -> None:
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", exports={"import": "./dist/index.js"}),
+            {"src/index.ts": ADMIN_SOURCE, "src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            == "packages/sdk/src/admin"
+        )
+
+    def test_unresolvable_exact_key_does_not_fall_through_to_a_pattern(
+        self, tmp_path: Path
+    ) -> None:
+        # An exact key wins exclusively: when it names a file this repo does
+        # not hold, the subpath is unresolved rather than rebound to the
+        # module a lower-precedence wildcard names.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={"./admin": "./src/missing.ts", "./*": "./src/wildcard.ts"},
+            ),
+            {"src/wildcard.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.

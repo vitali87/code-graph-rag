@@ -21,6 +21,12 @@ type LanguageLoader = Callable[[], Language] | None
 PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
 
+# Any value a parsed JSON document can hold (a package.json manifest, a
+# tsconfig): recursive, so a nested condition map or array stays typed.
+type JsonValue = (
+    str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+)
+
 type ResultScalar = str | int | float | bool | None
 type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
 type ResultRow = dict[str, ResultValue]

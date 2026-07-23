@@ -4,12 +4,13 @@ import json
 import os
 import posixpath
 from pathlib import Path, PurePosixPath
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...types_defs import JsonValue
 
 
 class _ManifestTargets(NamedTuple):
@@ -100,7 +101,7 @@ def _package_module(package_dir: Path, subpath: str, repo_path: Path) -> str | N
     return None
 
 
-def _read_manifest(package_dir: Path) -> dict[str, Any]:
+def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
     try:
         data = json.loads(
             (package_dir / cs.DEP_FILE_PACKAGE_JSON).read_text(
@@ -112,7 +113,7 @@ def _read_manifest(package_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _manifest_targets(manifest: dict[str, Any], subpath: str) -> _ManifestTargets:
+def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _ManifestTargets:
     # Every file the manifest says this subpath names, most specific first.
     # A conditions object (`{"import": .., "require": .., "types": ..}`) points
     # at one artefact family, so each leaf is tried until a source is found.
@@ -126,14 +127,22 @@ def _manifest_targets(manifest: dict[str, Any], subpath: str) -> _ManifestTarget
     return targets
 
 
-def _exports_matches(exports: object | None, subpath: str) -> _ManifestTargets:
+def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
     if isinstance(exports, str):
         # The shorthand form declares the package root only.
         root = subpath == cs.PATH_CURRENT_DIR
         return _ManifestTargets(_leaf_targets(exports) if root else [], root)
     if not isinstance(exports, dict):
         return _ManifestTargets([], False)
-    matched: list[tuple[int, int, object]] = []
+    # An exports object whose keys are all CONDITIONS (`{"import": ..,
+    # "require": ..}`) rather than subpaths declares the package root, so it
+    # applies whole to `.` and matches no other subpath.
+    if not any(
+        isinstance(key, str) and key.startswith(cs.PATH_CURRENT_DIR) for key in exports
+    ):
+        root = subpath == cs.PATH_CURRENT_DIR
+        return _ManifestTargets(_leaf_targets(exports) if root else [], root)
+    matched: list[tuple[int, int, JsonValue]] = []
     for key, value in exports.items():
         if not isinstance(key, str):
             continue
@@ -153,6 +162,11 @@ def _exports_matches(exports: object | None, subpath: str) -> _ManifestTargets:
     if not matched:
         return _ManifestTargets([], False)
     matched.sort(key=lambda m: (-m[0], -m[1]))
+    # An exact key wins EXCLUSIVELY: when it names a file this repo does not
+    # hold, the subpath is unresolved, never handed to a pattern that would
+    # bind the import to a different module.
+    if matched[0][0]:
+        matched = [matched[0]]
     # A null target is how a manifest forbids a subpath, so the match stands
     # (nothing else may resolve it) while contributing no path.
     return _ManifestTargets(
@@ -165,7 +179,7 @@ def _exports_matches(exports: object | None, subpath: str) -> _ManifestTargets:
     )
 
 
-def _substitute(value: object, star: str) -> object:
+def _substitute(value: JsonValue, star: str) -> JsonValue:
     if isinstance(value, str):
         return value.replace(cs.JS_EXPORTS_WILDCARD, star)
     if isinstance(value, dict):
@@ -175,7 +189,7 @@ def _substitute(value: object, star: str) -> object:
     return value
 
 
-def _leaf_targets(value: object) -> list[str]:
+def _leaf_targets(value: JsonValue) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
@@ -196,11 +210,10 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
     while relative.startswith(f"{cs.PATH_CURRENT_DIR}{cs.SEPARATOR_SLASH}"):
         relative = relative[2:]
     relative = posixpath.normpath(relative)
-    if (
-        relative == cs.PATH_CURRENT_DIR
-        or relative == cs.PATH_PARENT_DIR
-        or relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}")
-    ):
+    if relative in (
+        cs.PATH_CURRENT_DIR,
+        cs.PATH_PARENT_DIR,
+    ) or relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"):
         return None
     for ext in cs.JS_TS_MODULE_EXTENSIONS:
         if relative.endswith(ext):
