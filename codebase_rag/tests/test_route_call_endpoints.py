@@ -509,7 +509,7 @@ class TestGoGeneratedRoutes:
                 "package main\n\n"
                 'const baseURL = "/api/v1"\n\n'
                 "type Options struct{}\n\n"
-                "func (o Options) Header(timeout int) string { return \"\" }\n\n"
+                'func (o Options) Header(timeout int) string { return "" }\n\n'
                 "func fetchMe(client HTTPClient) {\n"
                 "\topts := Options{}\n"
                 '\tclient.Get(baseURL + "/me", opts.Header)\n'
