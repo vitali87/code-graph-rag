@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import posixpath
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from loguru import logger
@@ -173,6 +173,11 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
     if head in cs.JS_BUILD_OUTPUT_DIRS and tail:
         candidates.append(tail)
     for candidate in candidates:
+        # A checked-in build output is never indexed, so resolving to one
+        # would mint a module qn the graph does not hold and drop the call
+        # exactly as an unresolved specifier does.
+        if any(part in cs.IGNORE_PATTERNS for part in PurePosixPath(candidate).parts):
+            continue
         base = package_dir / candidate
         if any(
             base.with_name(f"{base.name}{ext}").is_file()

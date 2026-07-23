@@ -219,6 +219,23 @@ class TestWorkspaceResolver:
             == "packages/sdk/gen/openapi/admin/index"
         )
 
+    def test_built_artefact_never_wins_over_the_source(self, tmp_path: Path) -> None:
+        # A checked-in build output is not indexed (dist is an ignored
+        # directory), so resolving to it would mint a module qn the graph
+        # never holds and drop the call all over again.
+        pkg = self._package(
+            tmp_path,
+            _manifest("@acme/sdk", exports={"./*": "./dist/*.js"}),
+            {"src/admin.ts": ADMIN_SOURCE},
+        )
+        (pkg / "dist").mkdir()
+        (pkg / "dist/admin.js").write_text("module.exports = {};\n", encoding="utf-8")
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            == "packages/sdk/src/admin"
+        )
+
     def test_unmatched_subpath_resolves_to_nothing(self, tmp_path: Path) -> None:
         self._package(
             tmp_path,
