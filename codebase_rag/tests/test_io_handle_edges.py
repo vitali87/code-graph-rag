@@ -1072,3 +1072,85 @@ class TestGoRpcTypedClientEvidence:
         }
         rels = _run_io(tmp_path, files)
         assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_requesting_test_file_own_field_is_ignored(self, tmp_path: Path) -> None:
+        # A `_test.go` file declaring its own fake connect-typed struct must
+        # not bind its own calls either.
+        files = {
+            "svc/service_test.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type fakeServer struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (s *fakeServer) run() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_sibling_reparse_refreshes_the_field_map(self, tmp_path: Path) -> None:
+        # A long-lived processor (realtime updater) must not serve a stale
+        # package aggregate when a SIBLING re-parses while the requesting
+        # file's tree is unchanged: the cache key fingerprints every
+        # participating root id.
+        from codebase_rag.capture import resolve_capture
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+
+        parsers, _ = load_parsers()
+        caller_src = (
+            "package svc\n\nfunc (s *Server) Create() {\n"
+            "\ts.userClient.GetUser(nil, nil)\n}\n"
+        )
+        decl_v1 = "package svc\n\ntype Server struct{}\n"
+        decl_v2 = (
+            "package svc\n\n"
+            'import "example.com/gen/user/v1/userv1connect"\n\n'
+            "type Server struct {\n"
+            "\tuserClient userv1connect.UserServiceClient\n"
+            "}\n"
+        )
+        caller_tree = parsers["go"].parse(caller_src.encode())
+        decl_path = tmp_path / "svc" / "service.go"
+
+        class _FakeCache:
+            def __init__(self) -> None:
+                self.entry = (
+                    parsers["go"].parse(decl_v1.encode()).root_node,
+                    cs.SupportedLanguage.GO,
+                )
+
+            def load(self, key: Path) -> tuple[object, cs.SupportedLanguage]:
+                return self.entry
+
+        cache = _FakeCache()
+        import_processor = MagicMock()
+        import_processor.import_mapping = {
+            "proj.svc.service": {
+                "userv1connect": "example.com/gen/user/v1/userv1connect"
+            },
+            "proj.svc.create": {},
+        }
+        processor = IOAccessProcessor(
+            MagicMock(),
+            import_processor,
+            selection=resolve_capture([cs.CaptureGroup.IO.value]),
+            module_paths={"proj.svc.service": decl_path},
+            ast_cache=cache,  # type: ignore[arg-type]
+        )
+        caller_fn = next(
+            c
+            for c in caller_tree.root_node.named_children
+            if c.type == "method_declaration"
+        )
+        before = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert before == {}
+        cache.entry = (
+            parsers["go"].parse(decl_v2.encode()).root_node,
+            cs.SupportedLanguage.GO,
+        )
+        after = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert after == {"userClient": "UserService"}, after

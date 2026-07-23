@@ -252,11 +252,12 @@ class IOAccessProcessor:
         # struct declaration and its method files across one directory.
         self._module_paths = module_paths or {}
         self._ast_cache = ast_cache
-        # (package_qn, requesting file's parse-tree root id) -> {field name:
-        # service stem} for connect-client-typed struct fields (issue #912).
-        # The root id keys out stale entries when a long-lived processor
-        # (realtime updater) re-parses a file: a new tree gets a new root id.
-        self._rpc_field_cache: dict[tuple[str, int], dict[str, str]] = {}
+        # (package_qn, sorted root ids of every participating file) ->
+        # {field name: service stem} for connect-client-typed struct fields
+        # (issue #912). Fingerprinting EVERY root id keys out stale entries
+        # when a long-lived processor (realtime updater) re-parses ANY file
+        # of the package: a re-parsed file gets a new root id.
+        self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
 
     def process_io_for_caller(
         self,
@@ -1362,16 +1363,14 @@ class IOAccessProcessor:
         while root.parent is not None:
             root = root.parent
         package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        key = (package_qn, root.id)
-        cached = self._rpc_field_cache.get(key)
-        if cached is not None:
-            return cached
-        fields: dict[str, str] = {}
-        conflicted: set[str] = set()
-        _collect_go_file_fields(root, import_map, fields, conflicted)
         # Go splits a package across files: the struct (and its typed field)
-        # may live in a sibling of the calling file. `_test.go` siblings
-        # compile only under `go test` and stay out.
+        # may live in a sibling of the calling file. `_test.go` files,
+        # including the REQUESTING one, compile only under `go test` and
+        # contribute no fields.
+        requester = self._module_paths.get(module_qn)
+        sources: list[tuple[Node, dict[str, str]]] = []
+        if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+            sources.append((root, import_map))
         for sibling_qn, path in self._module_paths.items():
             if (
                 sibling_qn == module_qn
@@ -1382,8 +1381,17 @@ class IOAccessProcessor:
             entry = self._ast_cache.load(path) if self._ast_cache else None
             if entry is None or entry[1] is not cs.SupportedLanguage.GO:
                 continue
-            sibling_imports = self._import_processor.import_mapping.get(sibling_qn, {})
-            _collect_go_file_fields(entry[0], sibling_imports, fields, conflicted)
+            sources.append(
+                (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
+            )
+        key = (package_qn, tuple(sorted(node.id for node, _imports in sources)))
+        cached = self._rpc_field_cache.get(key)
+        if cached is not None:
+            return cached
+        fields: dict[str, str] = {}
+        conflicted: set[str] = set()
+        for source_root, source_imports in sources:
+            _collect_go_file_fields(source_root, source_imports, fields, conflicted)
         # A name typed to DIFFERENT services in this package cannot be told
         # apart by the flat receiver-tail lookup: drop it rather than guess.
         for name in conflicted:
