@@ -155,11 +155,15 @@ class _ModuleEvidence:
     net_http_imported: bool
     module_consts: Mapping[str, str]
     # Names bound to a composite literal of a module-declared type
-    # (`wrapper := ServerInterfaceWrapper{...}`), each with the byte span of
-    # its enclosing function (None at file scope): the generated wiring shape
+    # (`wrapper := ServerInterfaceWrapper{...}`) as (name, type, enclosing
+    # function byte span; span None at file scope): the generated wiring shape
     # that legitimises selector handlers, but only for calls inside the same
-    # function as the binding (issue #909).
-    wrapper_bindings: frozenset[tuple[str, tuple[int, int] | None]]
+    # function as the binding AND selector fields that name a method declared
+    # on the bound type in this module (issue #909) — `opts.Header` on an
+    # options struct is a field access, not a wrapper method, and stays out.
+    wrapper_bindings: frozenset[tuple[str, str, tuple[int, int] | None]]
+    # (receiver type name, method name) for every module method declaration.
+    module_methods: frozenset[tuple[str, str]]
 
 
 def _decode(node: Node | None) -> str | None:
@@ -421,12 +425,17 @@ def _go_registrations(
     return [] if single is None else [single]
 
 
-def _wrapper_in_scope(name: str, position: int, evidence: _ModuleEvidence) -> bool:
+def _wrapper_in_scope(
+    name: str, field: str, position: int, evidence: _ModuleEvidence
+) -> bool:
     # A file-scope binding (span None) is visible everywhere; a function-local
-    # one only legitimises calls inside that function's byte span.
+    # one only legitimises calls inside that function's byte span. The field
+    # must be a method declared on the bound type in this module.
     return any(
-        bound == name and (span is None or span[0] <= position < span[1])
-        for bound, span in evidence.wrapper_bindings
+        bound == name
+        and (span is None or span[0] <= position < span[1])
+        and (type_name, field) in evidence.module_methods
+        for bound, type_name, span in evidence.wrapper_bindings
     )
 
 
@@ -459,6 +468,7 @@ def _go_server_evidence(
             arg.type == cs.TS_GO_SELECTOR_EXPRESSION
             and _wrapper_in_scope(
                 _decode(arg.child_by_field_name(cs.FIELD_OPERAND)) or "",
+                _decode(arg.child_by_field_name(cs.FIELD_FIELD)) or "",
                 fn.start_byte,
                 evidence,
             )
@@ -637,6 +647,26 @@ def _go_composite_binding(names: list[str], value: Node) -> tuple[str, str] | No
     return names[0], type_name
 
 
+def _go_method_pair(node: Node) -> tuple[str, str] | None:
+    # `func (siw *ServerInterfaceWrapper) GetMe(...)`: (receiver type, name),
+    # unwrapping a pointer receiver.
+    if node.type != cs.TS_GO_METHOD_DECLARATION:
+        return None
+    name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
+    receiver = node.child_by_field_name(cs.FIELD_RECEIVER)
+    if not name or receiver is None:
+        return None
+    for parameter in receiver.named_children:
+        type_node = parameter.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+            type_node = next(iter(type_node.named_children), None)
+        if type_node is not None and type_node.type == cs.TS_GO_TYPE_IDENTIFIER:
+            type_name = _decode(type_node)
+            if type_name:
+                return type_name, name
+    return None
+
+
 def _go_binding_evidence(
     node: Node,
     receivers: set[str],
@@ -660,12 +690,17 @@ def _go_evidence(
     consts: dict[str, str],
     types: set[str],
     composites: list[tuple[str, str, tuple[int, int] | None]],
+    methods: set[tuple[str, str]],
 ) -> bool:
     # Returns True when the node imports net/http.
     if node.type == cs.TS_GO_FUNCTION_DECLARATION:
         name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
         if name:
             declared.add(name)
+        return False
+    method = _go_method_pair(node)
+    if method is not None:
+        methods.add(method)
         return False
     if node.type == cs.TS_GO_TYPE_SPEC:
         type_name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
@@ -688,6 +723,7 @@ def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvid
     consts: dict[str, str] = {}
     types: set[str] = set()
     composites: list[tuple[str, str, tuple[int, int] | None]] = []
+    methods: set[tuple[str, str]] = set()
     net_http = False
     stack = [root]
     is_go = language is cs.SupportedLanguage.GO
@@ -695,7 +731,9 @@ def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvid
         node = stack.pop()
         if is_go:
             net_http = (
-                _go_evidence(node, declared, receivers, consts, types, composites)
+                _go_evidence(
+                    node, declared, receivers, consts, types, composites, methods
+                )
                 or net_http
             )
         else:
@@ -704,10 +742,17 @@ def _collect_evidence(root: Node, language: cs.SupportedLanguage) -> _ModuleEvid
     # The type set only completes after the walk, so wrapper bindings are
     # judged here rather than in-flight.
     wrappers = frozenset(
-        (name, span) for name, type_name, span in composites if type_name in types
+        (name, type_name, span)
+        for name, type_name, span in composites
+        if type_name in types
     )
     return _ModuleEvidence(
-        frozenset(declared), frozenset(receivers), net_http, consts, wrappers
+        frozenset(declared),
+        frozenset(receivers),
+        net_http,
+        consts,
+        wrappers,
+        frozenset(methods),
     )
 
 

@@ -367,6 +367,8 @@ class TestGoGeneratedRoutes:
         "type ServerInterfaceWrapper struct {\n"
         "\tHandler ServerInterface\n"
         "}\n\n"
+        "func (siw *ServerInterfaceWrapper) GetMe(w ResponseWriter, r *Request) {}\n\n"
+        "func (siw *ServerInterfaceWrapper) PostLogout(w ResponseWriter, r *Request) {}\n\n"
         "func HandlerFromMux(si ServerInterface, router chi.Router) {\n"
         "\twrapper := ServerInterfaceWrapper{Handler: si}\n"
         '\trouter.Get(BaseURL+"/me", wrapper.GetMe)\n'
@@ -389,6 +391,7 @@ class TestGoGeneratedRoutes:
                 '\tprefix = "/internal"\n'
                 ")\n\n"
                 "type healthWrapper struct{}\n\n"
+                "func (h healthWrapper) Health(w ResponseWriter, r *Request) {}\n\n"
                 "func mount(router Router) {\n"
                 "\twrapper := healthWrapper{}\n"
                 '\trouter.Get(prefix+"/health", wrapper.Health)\n'
@@ -477,6 +480,24 @@ class TestGoGeneratedRoutes:
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
 
+    def test_same_function_options_struct_is_ignored(self, tmp_path: Path) -> None:
+        # `opts := Options{}` right next to the call still is not wrapper
+        # evidence: `Header` is a field access, not a method declared on
+        # `Options` in this module.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                "func fetchMe(client HTTPClient) {\n"
+                "\topts := Options{}\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
     def test_wrapper_binding_in_another_function_is_ignored(
         self, tmp_path: Path
     ) -> None:
@@ -507,6 +528,7 @@ class TestGoGeneratedRoutes:
                 "package main\n\n"
                 'const prefix = "/internal"\n\n'
                 "type healthWrapper struct{}\n\n"
+                "func (h healthWrapper) Health(w ResponseWriter, r *Request) {}\n\n"
                 "var wrapper = healthWrapper{}\n\n"
                 "func mount(router Router) {\n"
                 '\trouter.Get(prefix+"/health", wrapper.Health)\n'
