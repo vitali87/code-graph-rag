@@ -26,7 +26,7 @@ jobs:
     name: Auto Version Bump
     if: "!contains(github.event.head_commit.message, 'chore: bump version')"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     permissions:
       contents: write
     steps:
@@ -173,7 +173,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d @/tmp/req.json \
             "${HIGHLIGHTS_API_URL}/v1/chat/completions" \
-          | jq -r '.choices[0].message.content' \
+          | jq -er '.choices[0].message.content // empty' \
           | sed -e '/<think>/,/<\/think>/d' > /tmp/highlights.md
 
       - name: Create release
