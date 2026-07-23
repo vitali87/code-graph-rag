@@ -94,24 +94,30 @@ class TestResolvesToCleanupOwnership:
     def test_dispatch_resolution_survives_endpoint_relink(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        # The endpoint relink sweeps its own stale URL resolutions before
-        # recomputing; RESOLVES_TO edges owned by OTHER kinds (a DISPATCH
-        # deployment-suffix link, issue #913) must survive the sweep.
-        from codebase_rag.parsers.endpoints import CYPHER_DELETE_RESOLVES_TO
+        # The PRODUCTION relink (link_endpoints) sweeps its own stale URL
+        # resolutions before recomputing; RESOLVES_TO edges owned by OTHER
+        # kinds (a DISPATCH deployment-suffix link, issue #913) must survive
+        # the sweep, while the URL edge is recomputed from live sinks.
+        from codebase_rag.parsers.endpoints import link_endpoints
 
         memgraph_ingestor.execute_write(
-            "CREATE (u:Resource {qualified_name: 'resource::NETWORK::/x', "
-            "kind: 'NETWORK', name: '/x'}), "
-            "(ep:Resource {qualified_name: 'resource::ENDPOINT::p::GET /x', "
-            "kind: 'ENDPOINT', name: 'GET /x'}), "
-            "(u)-[:RESOLVES_TO]->(ep), "
+            "CREATE (f:Function {qualified_name: 'project.app.fetch'}), "
+            "(u:Resource {qualified_name: 'resource::NETWORK::/items/detail', "
+            "kind: 'NETWORK', name: '/items/detail'}), "
+            "(f)-[:READS_FROM]->(u), "
+            "(h:Function {qualified_name: 'project.api.get_detail'}), "
+            "(ep:Resource "
+            "{qualified_name: 'resource::ENDPOINT::project::GET /items/detail', "
+            "kind: 'ENDPOINT', name: 'GET /items/detail'}), "
+            "(h)-[:EXPOSES]->(ep), "
             "(d:Resource {qualified_name: 'resource::DISPATCH::k/dev', "
             "kind: 'DISPATCH', name: 'k/dev'}), "
-            "(h:Resource {qualified_name: 'resource::DISPATCH::k', "
+            "(dh:Resource {qualified_name: 'resource::DISPATCH::k', "
             "kind: 'DISPATCH', name: 'k'}), "
-            "(d)-[:RESOLVES_TO]->(h)"
+            "(d)-[:RESOLVES_TO]->(dh)"
         )
-        memgraph_ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
+        link_endpoints(memgraph_ingestor)
+        memgraph_ingestor.flush_all()
         survivors = memgraph_ingestor.fetch_all(
             "MATCH (a)-[:RESOLVES_TO]->(b) "
             "RETURN a.qualified_name AS a, b.qualified_name AS b"
@@ -119,6 +125,6 @@ class TestResolvesToCleanupOwnership:
         pairs = {(str(r["a"]), str(r["b"])) for r in survivors}
         assert ("resource::DISPATCH::k/dev", "resource::DISPATCH::k") in pairs, pairs
         assert (
-            "resource::NETWORK::/x",
-            "resource::ENDPOINT::p::GET /x",
-        ) not in pairs, pairs
+            "resource::NETWORK::/items/detail",
+            "resource::ENDPOINT::project::GET /items/detail",
+        ) in pairs, pairs
