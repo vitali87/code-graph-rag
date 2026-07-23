@@ -685,6 +685,119 @@ class TestPrefixTolerantLinking:
         assert link_endpoints(ingestor) == 0
 
 
+class TestMountPrefixLinking:
+    """Issue #923: routers mounted under an infrastructure prefix register
+    templates like ``/admin/api/v1/cases/:caseUid`` while clients speak
+    ``/api/v1/cases/{caseUid}``. The mirror of the #911 suffix mode: a
+    bounded, all-literal template-side lead, unique matches only.
+    """
+
+    _ingestor = staticmethod(TestPrefixTolerantLinking._ingestor)
+    _network = staticmethod(TestPrefixTolerantLinking._network)
+    _endpoint = staticmethod(TestPrefixTolerantLinking._endpoint)
+
+    def test_template_mount_prefix_links_with_mount_recorded(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/v1/otp/verify", "WRITES_TO"),
+                self._endpoint("POST /admin/api/v1/otp/verify", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert kwargs.get("properties") == {"mount_prefix": "/admin"}
+
+    def test_absolute_url_with_mounted_template_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://gateway/api/v1/cases", "READS_FROM"),
+                self._endpoint("GET /admin/api/v1/cases", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_param_mount_prefix_is_not_evidence(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/users", "READS_FROM"),
+                self._endpoint("GET /:tenant/users", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_all_param_tail_is_not_evidence(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/42", "READS_FROM"),
+                self._endpoint("GET /admin/:id", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_mount_ambiguity_is_dropped(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/otp/verify", "WRITES_TO"),
+                self._endpoint("POST /admin/otp/verify", "service-a"),
+                self._endpoint("POST /auth/otp/verify", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_mount_is_bounded_at_two_segments(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/users", "READS_FROM"),
+                self._endpoint("GET /a/b/c/users", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_exact_match_suppresses_mount_candidates(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://svc/api/users", "READS_FROM"),
+                self._endpoint("GET /api/users", "svc"),
+                self._endpoint("GET /admin/api/users", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /api/users" in _args[2]
+        assert not kwargs
+
+    def test_url_suffix_wins_over_template_mount(self) -> None:
+        # `/api/cases` strips its own lead to `GET /cases` before any
+        # template-side mount is considered.
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "svc"),
+                self._endpoint("GET /admin/api/cases", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /cases" in args[2]
+        assert kwargs.get("properties") == {"lead_prefix": "/api"}
+
+
 class TestRootfulRelativeUrlMatch:
     """Issue #908: same-origin clients fetch rootful relative paths.
 
