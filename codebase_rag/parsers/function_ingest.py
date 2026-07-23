@@ -1004,10 +1004,23 @@ class FunctionIngestMixin:
         if self.function_registry.get(same_file) is not None:
             return same_file
         package = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        method_file = self.module_qn_to_file_path.get(module_qn)
+        method_is_test = method_file is not None and method_file.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
         for qn in self.simple_name_lookup.get(receiver_type, set()):
             if self.function_registry.get(qn) not in _GO_TYPE_NODE_TYPES:
                 continue
             type_module = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if not method_is_test:
+                # A `_test.go` sibling may declare a same-named type in an
+                # external `package foo_test`; production files can never see
+                # it, so it must not steal the binding.
+                type_file = self.module_qn_to_file_path.get(type_module)
+                if type_file is not None and type_file.stem.endswith(
+                    cs.GO_TEST_FILE_SUFFIX
+                ):
+                    continue
             if type_module.rsplit(cs.SEPARATOR_DOT, 1)[0] == package:
                 return qn
         return same_file

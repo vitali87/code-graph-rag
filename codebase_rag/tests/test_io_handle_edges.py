@@ -1188,6 +1188,38 @@ class TestGoRpcTypedClientEvidence:
         # (svc.service.Server.Create), never a receiver-dropping fallback.
         assert all(".svc.service.Server.Create" in a for a in matches), matches
 
+    def test_external_test_package_sibling_does_not_block_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        # An external `package svc_test` sibling can declare its own `Server`
+        # with the same method name, but production files can never see a
+        # type from a `_test.go` file, so it must not force the ambiguity
+        # fallback that dangles the production method's edges.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+            "svc/helpers_test.go": (
+                "package svc_test\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Create() {}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
+
     def test_extension_disambiguated_module_keeps_its_package(
         self, tmp_path: Path
     ) -> None:

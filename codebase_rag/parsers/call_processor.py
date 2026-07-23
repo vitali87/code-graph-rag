@@ -1431,9 +1431,20 @@ class CallProcessor:
         self, receiver_type: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         # A unique registered `<package sibling>.<ReceiverType>.<method>` is
-        # the definition pass's own binding; ambiguity falls back.
+        # the definition pass's own binding; ambiguity falls back. A `_test.go`
+        # sibling may belong to an external `package foo_test`; production
+        # files can never see its types, so it only counts for test requesters.
+        requester = self.module_qn_to_file_path.get(module_qn)
+        requester_is_test = requester is not None and requester.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
         hits: list[tuple[str, str]] = []
         for sibling_qn in self._package_modules(module_qn):
+            sibling_path = self.module_qn_to_file_path[sibling_qn]
+            if not requester_is_test and sibling_path.stem.endswith(
+                cs.GO_TEST_FILE_SUFFIX
+            ):
+                continue
             container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"
             caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
             if caller_qn in self._resolver.function_registry:
