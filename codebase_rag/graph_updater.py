@@ -1919,6 +1919,7 @@ class GraphUpdater:
             )
         self.factory.call_processor.finalize_callable_param_flow()
         self.factory.call_processor.finalize_flow()
+        self.factory.call_processor.finalize_dispatch()
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
