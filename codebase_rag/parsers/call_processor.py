@@ -523,6 +523,8 @@ class CallProcessor:
         "project_name",
         "module_qn_to_file_path",
         "_path_to_module_qn",
+        "_package_index",
+        "_package_index_size",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -558,6 +560,10 @@ class CallProcessor:
         self.project_name = project_name
         self.module_qn_to_file_path = module_qn_to_file_path or {}
         self._path_to_module_qn: dict[Path, str] | None = None
+        # Package-prefix index over module_qn_to_file_path (issue #930),
+        # rebuilt lazily whenever the underlying map grows.
+        self._package_index: dict[str, list[str]] = {}
+        self._package_index_size = -1
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -1404,6 +1410,15 @@ class CallProcessor:
         receiver_type = go_utils.extract_receiver_type_name(func_node)
         if not receiver_type:
             return None
+        # The receiver struct is by Go definition in the METHOD'S OWN
+        # package; same-package siblings outrank the global class-name
+        # resolver, whose leaf lookup collides across packages on common
+        # names like `Server` and dangles every edge (issue #930).
+        package_hit = self._go_package_receiver_qn(
+            receiver_type, method_name, module_qn
+        )
+        if package_hit is not None:
+            return package_hit
         container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
             f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
         )
@@ -1411,6 +1426,32 @@ class CallProcessor:
         if caller_qn in self._resolver.function_registry:
             return caller_qn, container_qn
         return None
+
+    def _go_package_receiver_qn(
+        self, receiver_type: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # A unique registered `<package sibling>.<ReceiverType>.<method>` is
+        # the definition pass's own binding; ambiguity falls back.
+        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        hits: list[tuple[str, str]] = []
+        for sibling_qn in self._package_modules(package_prefix):
+            container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"
+            caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+            if caller_qn in self._resolver.function_registry:
+                hits.append((caller_qn, container_qn))
+        return hits[0] if len(hits) == 1 else None
+
+    def _package_modules(self, package_prefix: str) -> list[str]:
+        # Lazily indexed from module_qn_to_file_path; rebuilt when the map
+        # grew (incremental runs register modules as they parse).
+        size = len(self.module_qn_to_file_path)
+        if self._package_index_size != size:
+            index: dict[str, list[str]] = {}
+            for qn in self.module_qn_to_file_path:
+                index.setdefault(qn.rsplit(cs.SEPARATOR_DOT, 1)[0], []).append(qn)
+            self._package_index = index
+            self._package_index_size = size
+        return self._package_index.get(package_prefix, [])
 
     def _recorded_caller(
         self, func_node: Node, module_qn: str

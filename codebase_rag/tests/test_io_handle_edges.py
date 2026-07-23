@@ -1154,3 +1154,39 @@ class TestGoRpcTypedClientEvidence:
         )
         after = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
         assert after == {"userClient": "UserService"}, after
+
+    def test_receiver_collision_across_packages_attributes_correctly(
+        self, tmp_path: Path
+    ) -> None:
+        # Issue #930: `Server` recurs across packages. The receiver struct is
+        # by Go definition in the METHOD'S OWN package; a same-named struct
+        # elsewhere must not steal the attribution and dangle the edge.
+        files = {
+            "aaa/server.go": (
+                "package aaa\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Unrelated() {}\n"
+            ),
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [
+            a for a, r, b in rels
+            if b == self._RPC and r == READS_FROM
+        ]
+        assert matches, rels
+        # The caller qn must be the REGISTERED method node
+        # (svc.service.Server.Create), never a receiver-dropping fallback.
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
