@@ -834,9 +834,7 @@ class TestGoRpcClientSinks:
         rels = _run_io(tmp_path, files)
         assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
 
-    def test_bare_new_client_without_package_is_not_rpc(
-        self, tmp_path: Path
-    ) -> None:
+    def test_bare_new_client_without_package_is_not_rpc(self, tmp_path: Path) -> None:
         # A local helper `NewFooClient()` has no connect package qualifier.
         files = {
             "main.go": (
