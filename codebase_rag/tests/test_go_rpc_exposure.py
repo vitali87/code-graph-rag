@@ -172,6 +172,151 @@ def test_multi_return_ctor_binding_exposes(tmp_path: Path) -> None:
     ) in rels, rels
 
 
+def test_promoted_method_from_embedded_base_exposes(tmp_path: Path) -> None:
+    # The impl satisfies part of the contract through a method promoted from
+    # an embedded type; the edge anchors on the promoted method's own node.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Base struct{}\n\n"
+            "func (b *Base) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "type Impl struct {\n\tBase\n}\n\n"
+            "func (i *Impl) PutUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Impl.PutUser",
+        "resource::RPC::UserService.PutUser",
+    ) in rels, rels
+    assert (
+        f"{project}.main.Base.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
+def test_unimplemented_embed_does_not_expose_stubs(tmp_path: Path) -> None:
+    # connect-go servers embed the generated `Unimplemented<Stem>Handler` for
+    # forward compatibility; its promoted stubs are NOT served RPCs.
+    gen = _CONNECT_GEN + (
+        "\ntype UnimplementedUserServiceHandler struct{}\n\n"
+        "func (UnimplementedUserServiceHandler) GetUser(id string) error {\n"
+        "\treturn nil\n"
+        "}\n\n"
+        "func (UnimplementedUserServiceHandler) PutUser(id string) error {\n"
+        "\treturn nil\n"
+        "}\n"
+    )
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": gen,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Impl struct {\n"
+            "\tuserv1connect.UnimplementedUserServiceHandler\n"
+            "}\n\n"
+            "func (i *Impl) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Impl.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+    # PutUser exists only as the generated stub: not a served RPC.
+    assert not any(res.endswith("PutUser") for _s, res in rels), rels
+
+
+def test_earlier_nested_decoy_binding_does_not_win(tmp_path: Path) -> None:
+    # A nested block binds the same name to a decoy BEFORE the real binding;
+    # resolution must use the last binding preceding the wiring call, not the
+    # first one found in a flat body scan.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "svc/server.go": (
+            "package server\n\n"
+            "type Server struct{}\n\n"
+            "func New() *Server {\n\treturn &Server{}\n}\n\n"
+            "func (s *Server) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "decoy/decoy.go": (
+            "package decoy\n\n"
+            "type Decoy struct{}\n\n"
+            "func New() *Decoy {\n\treturn &Decoy{}\n}\n\n"
+            "func (d *Decoy) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n'
+            'import "example.com/app/svc"\n'
+            'import "example.com/app/decoy"\n\n'
+            "func main() {\n"
+            "\t{\n"
+            "\t\tuSrv := decoy.New()\n"
+            "\t\t_ = uSrv\n"
+            "\t}\n"
+            "\tuSrv := server.New()\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(uSrv)\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.svc.server.Server.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+    assert not any("Decoy" in src for src, _r in rels), rels
+
+
+def test_shadow_after_wiring_does_not_suppress(tmp_path: Path) -> None:
+    # A local shadowing the package name AFTER the wiring call is out of
+    # scope at the call: the wiring is genuine and must still emit.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Faker struct{}\n\n"
+            "type Impl struct{}\n\n"
+            "func (i *Impl) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "\tuserv1connect := Faker{}\n"
+            "\t_ = userv1connect\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Impl.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
 def test_shadowed_qualifier_is_not_a_wiring(tmp_path: Path) -> None:
     # A local shadowing the imported package name makes the call a method on
     # the LOCAL value, not connect-go wiring (mirrors the client-side guard).

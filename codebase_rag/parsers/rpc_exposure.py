@@ -16,16 +16,21 @@ from .. import constants as cs
 from ..capture import CaptureSelection
 from ..services import IngestorProtocol
 from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol, NodeType
+from .go import utils as go_utils
 from .go.type_inference import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
-from .io_access.processor import _rpc_qualifier_resolves
+from .io_access.processor import _RPC_PACKAGE_SUFFIX, _rpc_qualifier_resolves
 from .utils import safe_decode_text
 
 # The connect-go handler constructor: `New<Stem>Handler`, qualified by a
 # generated package whose name ends in `connect` (the client-side mirror is
 # `New<Stem>Client` in io_access).
 _RPC_HANDLER_RE = re.compile(r"^New([A-Z]\w*)Handler$")
+
+# (position, name, kind, data): kind is "type" (bare type name), "call"
+# (callee segments), or None for an opaque binding that only shadows.
+_Binding = tuple[int, str, str | None, "list[str] | str | None"]
 
 
 class GoRpcExposureProcessor:
@@ -44,6 +49,7 @@ class GoRpcExposureProcessor:
         "_ast_cache",
         "_go_engine",
         "_dir_members_cache",
+        "_embedded_cache",
     )
 
     def __init__(
@@ -71,6 +77,7 @@ class GoRpcExposureProcessor:
         # Package membership is stable by the call pass (the definition pass
         # has completed), so member lists memoise safely.
         self._dir_members_cache: dict[str, list[str]] = {}
+        self._embedded_cache: dict[str, list[str]] = {}
 
     def process_caller(
         self,
@@ -84,31 +91,36 @@ class GoRpcExposureProcessor:
         if not wirings:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
-        var_types = self._go_engine.build_local_variable_type_map(
-            caller_node, module_qn
-        )
-        call_bindings = self._go_engine.collect_call_var_bindings(caller_node)
-        # A local shadowing the imported package name makes the call a method
-        # on the local value, not codegen wiring (mirrors the client guard).
-        shadowed = set(var_types) | {name for name, _segments in call_bindings}
-        for qualifier, stem, arg in wirings:
-            if qualifier in shadowed:
+        param_types = self._param_types(caller_node)
+        bindings = self._body_bindings(caller_node)
+        for qualifier, stem, arg, position in wirings:
+            # A local shadowing the imported package name in scope AT the call
+            # makes it a method on the local value, not codegen wiring
+            # (mirrors the client guard); a binding after the call is out of
+            # scope there.
+            if qualifier in param_types or any(
+                b[1] == qualifier and b[0] < position for b in bindings
+            ):
                 continue
-            impl_qn = self._resolve_impl_qn(module_qn, arg, var_types, call_bindings)
+            impl_qn = self._resolve_impl_qn(
+                module_qn, arg, position, param_types, bindings
+            )
             if impl_qn is None:
                 continue
             connect_dir = import_map.get(qualifier)
             if connect_dir is None:
                 continue
             for method in self._contract_methods(connect_dir, stem):
-                self._emit_exposure(impl_qn, stem, method)
+                if source_qn := self._method_source_qn(impl_qn, method, set()):
+                    self._emit_exposure(source_qn, stem, method)
 
     def _wiring_calls(
         self, caller_node: Node, module_qn: str
-    ) -> list[tuple[str, str, Node]]:
-        # (qualifier, stem, first-argument node) per handler wiring call.
+    ) -> list[tuple[str, str, Node, int]]:
+        # (qualifier, stem, first-argument node, call position) per handler
+        # wiring call.
         import_map = self._import_processor.import_mapping.get(module_qn, {})
-        found: list[tuple[str, str, Node]] = []
+        found: list[tuple[str, str, Node, int]] = []
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         stack = [body] if body is not None else []
         while stack:
@@ -130,15 +142,104 @@ class GoRpcExposureProcessor:
                 continue
             arguments = node.child_by_field_name(cs.FIELD_ARGUMENTS)
             if arguments is not None and arguments.named_children:
-                found.append((qualifier, match.group(1), arguments.named_children[0]))
+                found.append(
+                    (
+                        qualifier,
+                        match.group(1),
+                        arguments.named_children[0],
+                        node.start_byte,
+                    )
+                )
         return found
+
+    def _param_types(self, caller_node: Node) -> dict[str, str]:
+        # Receiver and parameter names with their bare type names; in scope
+        # for the whole body.
+        types: dict[str, str] = {}
+        for field in (cs.FIELD_RECEIVER, cs.FIELD_PARAMETERS):
+            params = caller_node.child_by_field_name(field)
+            for param in params.named_children if params is not None else []:
+                if param.type != cs.TS_GO_PARAMETER_DECLARATION:
+                    continue
+                type_node = param.child_by_field_name(cs.FIELD_TYPE)
+                type_name = (
+                    go_utils.type_identifier_text(type_node) if type_node else None
+                )
+                if type_name is None:
+                    continue
+                for child in param.named_children:
+                    if child.type == cs.TS_GO_IDENTIFIER and (
+                        name := safe_decode_text(child)
+                    ):
+                        types[name] = type_name
+        return types
+
+    def _body_bindings(self, caller_node: Node) -> list[_Binding]:
+        # Every `:=` / `var` binding in the body with its position, so each
+        # wiring call resolves against the bindings in scope AT the call, not
+        # a flat whole-body snapshot. A value neither literal-typed nor a
+        # clean constructor call still shadows its name (kind None).
+        bindings: list[_Binding] = []
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        stack = [body] if body is not None else []
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if node.type == cs.TS_GO_SHORT_VAR_DECLARATION:
+                self._collect_value_bindings(node, bindings)
+            elif node.type == cs.TS_GO_VAR_DECLARATION:
+                self._collect_var_spec_bindings(node, bindings)
+        bindings.sort(key=lambda binding: binding[0])
+        return bindings
+
+    def _collect_value_bindings(self, node: Node, bindings: list[_Binding]) -> None:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        right = node.child_by_field_name(cs.FIELD_RIGHT)
+        if left is None or right is None:
+            return
+        names = [
+            safe_decode_text(c)
+            for c in left.named_children
+            if c.type == cs.TS_GO_IDENTIFIER
+        ]
+        values = list(right.named_children)
+        for name, value in zip(names, values, strict=False):
+            if name:
+                bindings.append((node.start_byte, name, *self._value_kind(value)))
+        for name in names[len(values) :]:
+            # Extra names of a multi-return call (`srv, err := New()`) bind
+            # opaquely from the same call.
+            if name:
+                bindings.append((node.start_byte, name, None, None))
+
+    def _collect_var_spec_bindings(self, node: Node, bindings: list[_Binding]) -> None:
+        for spec in node.named_children:
+            if spec.type != cs.TS_GO_VAR_SPEC:
+                continue
+            type_node = spec.child_by_field_name(cs.FIELD_TYPE)
+            type_name = go_utils.type_identifier_text(type_node) if type_node else None
+            for child in spec.named_children:
+                if child.type == cs.TS_GO_IDENTIFIER and (
+                    name := safe_decode_text(child)
+                ):
+                    kind = ("type", type_name) if type_name else (None, None)
+                    bindings.append((node.start_byte, name, *kind))
+
+    def _value_kind(self, value: Node) -> tuple[str | None, list[str] | str | None]:
+        if value.type == cs.TS_GO_CALL_EXPRESSION:
+            segments = self._go_engine.callee_segments(value)
+            return ("call", segments) if segments else (None, None)
+        if type_name := self._go_engine.infer_value_type(value):
+            return ("type", type_name)
+        return (None, None)
 
     def _resolve_impl_qn(
         self,
         module_qn: str,
         arg: Node,
-        var_types: Mapping[str, str],
-        call_bindings: list[tuple[str, list[str]]],
+        position: int,
+        param_types: Mapping[str, str],
+        bindings: list[_Binding],
     ) -> str | None:
         # A literal-typed local (`impl := &Impl{}`, typed parameter) names the
         # type directly; a constructor binding (`uSrv := server.New(...)`)
@@ -148,13 +249,23 @@ class GoRpcExposureProcessor:
             arg_name = safe_decode_text(arg)
             if arg_name is None:
                 return None
-            if type_name := var_types.get(arg_name):
+            last = None
+            for binding in bindings:
+                if binding[0] < position and binding[1] == arg_name:
+                    last = binding
+            if last is not None:
+                _pos, _name, kind, data = last
+                if kind == "type" and isinstance(data, str):
+                    return self._resolve_type_in_package(
+                        data, self._package_members(module_qn)
+                    )
+                if kind == "call" and isinstance(data, list):
+                    return self._ctor_return_impl(module_qn, data)
+                return None
+            if type_name := param_types.get(arg_name):
                 return self._resolve_type_in_package(
                     type_name, self._package_members(module_qn)
                 )
-            for name, segments in call_bindings:
-                if name == arg_name:
-                    return self._ctor_return_impl(module_qn, segments)
             return None
         if arg.type == cs.TS_GO_CALL_EXPRESSION:
             segments = self._go_engine.callee_segments(arg)
@@ -292,10 +403,110 @@ class GoRpcExposureProcessor:
                 ]
         return []
 
-    def _emit_exposure(self, impl_qn: str, stem: str, method: str) -> None:
+    def _method_source_qn(
+        self, impl_qn: str, method: str, visited: set[str]
+    ) -> str | None:
+        # The node serving a contract method: defined on the impl type
+        # directly, or promoted from an embedded type (Go embedding is not
+        # inheritance, so the graph has no parent edge to follow). Promoted
+        # stubs from a generated `*connect` package (`Unimplemented<Stem>
+        # Handler`) are not served RPCs.
+        if impl_qn in visited or len(visited) > 8:
+            return None
+        visited.add(impl_qn)
         method_qn = f"{impl_qn}{cs.SEPARATOR_DOT}{method}"
-        if self._function_registry.get(method_qn) is not NodeType.METHOD:
-            return
+        if self._function_registry.get(method_qn) is NodeType.METHOD:
+            return method_qn
+        for embedded_qn in self._embedded_type_qns(impl_qn):
+            if source := self._method_source_qn(embedded_qn, method, visited):
+                return source
+        return None
+
+    def _embedded_type_qns(self, impl_qn: str) -> list[str]:
+        if (cached := self._embedded_cache.get(impl_qn)) is not None:
+            return cached
+        module_qn, _, type_name = impl_qn.rpartition(cs.SEPARATOR_DOT)
+        path = self._module_paths.get(module_qn)
+        entry = (
+            self._ast_cache.load(path)
+            if self._ast_cache is not None and path is not None
+            else None
+        )
+        resolved: list[str] = []
+        if entry is not None and entry[1] is cs.SupportedLanguage.GO:
+            for qualifier, name in self._embedded_fields(entry[0], type_name):
+                members = (
+                    self._package_members(module_qn)
+                    if qualifier is None
+                    else self._imported_package_members(module_qn, qualifier)
+                )
+                embedded = self._resolve_type_in_package(name, members)
+                if embedded is None:
+                    continue
+                declaring_module = embedded.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                clause = self._go_package_names.get(declaring_module)
+                if clause is not None and clause.endswith(_RPC_PACKAGE_SUFFIX):
+                    continue
+                resolved.append(embedded)
+        self._embedded_cache[impl_qn] = resolved
+        return resolved
+
+    @staticmethod
+    def _embedded_fields(root: Node, type_name: str) -> list[tuple[str | None, str]]:
+        # (package qualifier or None, type name) per embedded field of the
+        # named struct: a field_declaration with no field_identifier.
+        for node in root.named_children:
+            if node.type != cs.TS_GO_TYPE_DECLARATION:
+                continue
+            for spec in node.named_children:
+                if spec.type != cs.TS_GO_TYPE_SPEC:
+                    continue
+                struct = spec.child_by_field_name(cs.FIELD_TYPE)
+                if (
+                    struct is None
+                    or struct.type != cs.TS_GO_STRUCT_TYPE
+                    or safe_decode_text(spec.child_by_field_name(cs.FIELD_NAME))
+                    != type_name
+                ):
+                    continue
+                return GoRpcExposureProcessor._struct_embedded_entries(struct)
+        return []
+
+    @staticmethod
+    def _struct_embedded_entries(struct: Node) -> list[tuple[str | None, str]]:
+        entries: list[tuple[str | None, str]] = []
+        field_list = next(
+            (
+                c
+                for c in struct.named_children
+                if c.type == cs.TS_GO_FIELD_DECLARATION_LIST
+            ),
+            None,
+        )
+        for decl in field_list.named_children if field_list is not None else []:
+            if decl.type != cs.TS_GO_FIELD_DECLARATION or any(
+                c.type == cs.TS_GO_FIELD_IDENTIFIER for c in decl.named_children
+            ):
+                continue
+            for child in decl.named_children:
+                if child.type == cs.TS_GO_QUALIFIED_TYPE:
+                    qualifier = next(
+                        (
+                            safe_decode_text(c)
+                            for c in child.named_children
+                            if c.type == cs.TS_GO_PACKAGE_IDENTIFIER
+                        ),
+                        None,
+                    )
+                    if name := go_utils.type_identifier_text(child):
+                        entries.append((qualifier, name))
+                    break
+                if name := go_utils.type_identifier_text(child):
+                    entries.append((None, name))
+                    break
+        return entries
+
+    def _emit_exposure(self, method_qn: str, stem: str, method: str) -> None:
         identity = f"{stem}{cs.SEPARATOR_DOT}{method}"
         resource_qn = RESOURCE_QN_FORMAT.format(
             kind=ResourceKind.RPC.value, identity=identity
