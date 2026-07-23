@@ -517,6 +517,13 @@ def _go_path_value(
         )
         if left is not None and right is not None:
             return left + right
+        # The generated mount prefix is often a STRUCT FIELD
+        # (`options.BaseURL+"/v2/things"`), which no module-const lookup can
+        # resolve. The rooted literal suffix is still the route; an unknown
+        # mount prefix is what prefix-tolerant linking already handles, so
+        # keeping the suffix beats dropping the registration entirely.
+        if left is None and right is not None and right.startswith("/"):
+            return right
     return None
 
 
