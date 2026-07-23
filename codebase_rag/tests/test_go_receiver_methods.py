@@ -151,3 +151,100 @@ def test_go_crossfile_method_binds_to_declaring_type(
     )
     pairs = {(call[0][0][2], call[0][2][2]) for call in defines_method}
     assert (f"{project}.types.Point", f"{project}.types.Point.Scale") in pairs
+
+
+@pytest.fixture
+def go_external_test_type_project(temp_repo: Path) -> Path:
+    # The only same-named type in the directory lives in an external
+    # `package shapes_test` file. An internal test file (`package shapes`)
+    # cannot see it, so its method must not bind there.
+    project_path = temp_repo / "go_extpkg_test"
+    project_path.mkdir()
+    (project_path / "go.mod").write_text(
+        encoding="utf-8", data="module go_extpkg_test\n\ngo 1.22\n"
+    )
+    (project_path / "types_test.go").write_text(
+        encoding="utf-8",
+        data="package shapes_test\n\ntype Point struct {\n\tX int\n}\n",
+    )
+    (project_path / "ops_test.go").write_text(
+        encoding="utf-8",
+        data="package shapes\n\nfunc (p Point) Scale(k int) int {\n\treturn k\n}\n",
+    )
+    return project_path
+
+
+def test_internal_test_method_does_not_bind_to_external_test_type(
+    go_external_test_type_project: Path, mock_ingestor: MagicMock
+) -> None:
+    create_and_run_updater(
+        go_external_test_type_project, mock_ingestor, skip_if_missing="go"
+    )
+    project = go_external_test_type_project.name
+    qns = _method_qns(mock_ingestor)
+    assert f"{project}.types_test.Point.Scale" not in qns, qns
+    # With no visible declaration the binding stays on the method's own
+    # module, mirroring the same-file fallback.
+    assert f"{project}.ops_test.Point.Scale" in qns, qns
+
+
+@pytest.fixture
+def go_test_decoy_project(temp_repo: Path) -> Path:
+    # Production declares Point; an external `package shapes_test` decoy
+    # declares another Point. The internal test method sees only the
+    # production one.
+    project_path = temp_repo / "go_decoy_test"
+    project_path.mkdir()
+    (project_path / "go.mod").write_text(
+        encoding="utf-8", data="module go_decoy_test\n\ngo 1.22\n"
+    )
+    (project_path / "types.go").write_text(
+        encoding="utf-8",
+        data="package shapes\n\ntype Point struct {\n\tX int\n}\n",
+    )
+    (project_path / "decoy_test.go").write_text(
+        encoding="utf-8",
+        data="package shapes_test\n\ntype Point struct{}\n",
+    )
+    (project_path / "ops_test.go").write_text(
+        encoding="utf-8",
+        data="package shapes\n\nfunc (p Point) Scale(k int) int {\n\treturn p.X * k\n}\n",
+    )
+    return project_path
+
+
+def test_internal_test_method_binds_to_production_type_past_decoy(
+    go_test_decoy_project: Path, mock_ingestor: MagicMock
+) -> None:
+    create_and_run_updater(go_test_decoy_project, mock_ingestor, skip_if_missing="go")
+    project = go_test_decoy_project.name
+    qns = _method_qns(mock_ingestor)
+    assert f"{project}.types.Point.Scale" in qns, qns
+    assert f"{project}.decoy_test.Point.Scale" not in qns, qns
+
+
+def test_container_resolution_uses_directory_for_disambiguated_modules() -> None:
+    # The declaring module's qn carries an appended extension
+    # (`proj.svc.types.go` beside a same-stem file of another language), so
+    # qn-prefix package comparison places it in a phantom package. Directory
+    # grouping must still bind the method to the real type node.
+    from codebase_rag.parsers.function_ingest import FunctionIngestMixin
+    from codebase_rag.types_defs import NodeType
+
+    class _Stub(FunctionIngestMixin):
+        function_registry = {"proj.svc.types.go.Point": NodeType.CLASS}  # type: ignore[assignment]
+        simple_name_lookup = {"Point": {"proj.svc.types.go.Point"}}
+        module_qn_to_file_path = {
+            "proj.svc.ops": Path("/repo/svc/ops.go"),
+            "proj.svc.types.go": Path("/repo/svc/types.go"),
+        }
+        go_package_names = {
+            "proj.svc.ops": "shapes",
+            "proj.svc.types.go": "shapes",
+        }
+
+        def _get_docstring(self, node: object) -> str | None:
+            return None
+
+    resolved = _Stub()._resolve_go_container_qn("proj.svc.ops", "Point")
+    assert resolved == "proj.svc.types.go.Point", resolved

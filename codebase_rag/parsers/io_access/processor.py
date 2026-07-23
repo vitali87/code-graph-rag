@@ -131,6 +131,14 @@ def _collect_go_param_bindings(
             )
 
 
+def _same_go_package(
+    sibling_qn: str, path: Path, requester_dir: Path | None, package_qn: str
+) -> bool:
+    if requester_dir is not None:
+        return path.parent == requester_dir
+    return sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] == package_qn
+
+
 def _collect_go_file_fields(
     root: Node,
     import_map: dict[str, str],
@@ -240,6 +248,7 @@ class IOAccessProcessor:
         selection: CaptureSelection,
         module_paths: Mapping[str, Path] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
+        go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # import_processor owns import_mapping[module_qn][local] = full_name, used to
@@ -252,6 +261,10 @@ class IOAccessProcessor:
         # struct declaration and its method files across one directory.
         self._module_paths = module_paths or {}
         self._ast_cache = ast_cache
+        # Go module qn -> `package` clause; membership is (directory, clause),
+        # so an external `package svc_test` file shares a directory with
+        # `package svc` production files without sharing their fields.
+        self._go_package_names: Mapping[str, str] = go_package_names or {}
         # (package_qn, sorted root ids of every participating file) ->
         # {field name: service stem} for connect-client-typed struct fields
         # (issue #912). Fingerprinting EVERY root id keys out stale entries
@@ -1364,26 +1377,8 @@ class IOAccessProcessor:
             root = root.parent
         package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         # Go splits a package across files: the struct (and its typed field)
-        # may live in a sibling of the calling file. `_test.go` files,
-        # including the REQUESTING one, compile only under `go test` and
-        # contribute no fields.
-        requester = self._module_paths.get(module_qn)
-        sources: list[tuple[Node, dict[str, str]]] = []
-        if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
-            sources.append((root, import_map))
-        for sibling_qn, path in self._module_paths.items():
-            if (
-                sibling_qn == module_qn
-                or sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] != package_qn
-                or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX)
-            ):
-                continue
-            entry = self._ast_cache.load(path) if self._ast_cache else None
-            if entry is None or entry[1] is not cs.SupportedLanguage.GO:
-                continue
-            sources.append(
-                (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
-            )
+        # may live in a sibling of the calling file.
+        sources = self._go_rpc_field_sources(root, module_qn, import_map)
         key = (package_qn, tuple(sorted(node.id for node, _imports in sources)))
         cached = self._rpc_field_cache.get(key)
         if cached is not None:
@@ -1398,6 +1393,56 @@ class IOAccessProcessor:
             fields.pop(name, None)
         self._rpc_field_cache[key] = fields
         return fields
+
+    def _go_rpc_field_sources(
+        self, root: Node, module_qn: str, import_map: dict[str, str]
+    ) -> list[tuple[Node, dict[str, str]]]:
+        # Package membership groups by the file's PARENT DIRECTORY when the
+        # requester's path is known: extension disambiguation (`service.go`
+        # next to `service.ts` -> qn `pkg.service.go`) would split a file
+        # from its Go package under qn-prefix grouping (issue #930 review).
+        # `_test.go` files, including the requesting one, contribute nothing.
+        requester = self._module_paths.get(module_qn)
+        requester_dir = requester.parent if requester is not None else None
+        package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        requester_package = self._go_package_names.get(module_qn)
+        sources: list[tuple[Node, dict[str, str]]] = []
+        if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+            sources.append((root, import_map))
+        for sibling_qn, path in self._module_paths.items():
+            if sibling_qn == module_qn or not self._go_sibling_contributes(
+                sibling_qn, path, requester_dir, package_qn, requester_package
+            ):
+                continue
+            entry = self._ast_cache.load(path) if self._ast_cache else None
+            if entry is None or entry[1] is not cs.SupportedLanguage.GO:
+                continue
+            sources.append(
+                (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
+            )
+        return sources
+
+    def _go_sibling_contributes(
+        self,
+        sibling_qn: str,
+        path: Path,
+        requester_dir: Path | None,
+        package_qn: str,
+        requester_package: str | None,
+    ) -> bool:
+        # Membership is (directory, `package` clause): an external
+        # `package svc_test` requester shares a directory with `package svc`
+        # production files without sharing their fields.
+        if path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+            return False
+        if not _same_go_package(sibling_qn, path, requester_dir, package_qn):
+            return False
+        sibling_package = self._go_package_names.get(sibling_qn)
+        return (
+            requester_package is None
+            or sibling_package is None
+            or sibling_package == requester_package
+        )
 
     def _emit_rpc_field_method(
         self,

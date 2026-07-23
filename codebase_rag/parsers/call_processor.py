@@ -523,6 +523,9 @@ class CallProcessor:
         "project_name",
         "module_qn_to_file_path",
         "_path_to_module_qn",
+        "_package_index",
+        "_package_index_size",
+        "_go_package_names",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -552,12 +555,18 @@ class CallProcessor:
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
+        go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
         self.module_qn_to_file_path = module_qn_to_file_path or {}
         self._path_to_module_qn: dict[Path, str] | None = None
+        # Package-prefix index over module_qn_to_file_path (issue #930),
+        # rebuilt lazily whenever the underlying map grows.
+        self._package_index: dict[Path, list[str]] = {}
+        self._package_index_size = -1
+        self._go_package_names: Mapping[str, str] = go_package_names or {}
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -587,6 +596,7 @@ class CallProcessor:
             selection=selection,
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
+            go_package_names=self._go_package_names,
         )
         self._flow_processor = FlowProcessor(
             ingestor,
@@ -1404,6 +1414,15 @@ class CallProcessor:
         receiver_type = go_utils.extract_receiver_type_name(func_node)
         if not receiver_type:
             return None
+        # The receiver struct is by Go definition in the METHOD'S OWN
+        # package; same-package siblings outrank the global class-name
+        # resolver, whose leaf lookup collides across packages on common
+        # names like `Server` and dangles every edge (issue #930).
+        package_hit = self._go_package_receiver_qn(
+            receiver_type, method_name, module_qn
+        )
+        if package_hit is not None:
+            return package_hit
         container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
             f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
         )
@@ -1411,6 +1430,54 @@ class CallProcessor:
         if caller_qn in self._resolver.function_registry:
             return caller_qn, container_qn
         return None
+
+    def _go_package_receiver_qn(
+        self, receiver_type: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # A unique registered `<package sibling>.<ReceiverType>.<method>` is
+        # the definition pass's own binding; ambiguity falls back. Go package
+        # membership is (directory, `package` clause), and a `_test.go`
+        # sibling is additionally compiled only under `go test`, so it only
+        # counts for test requesters.
+        requester = self.module_qn_to_file_path.get(module_qn)
+        requester_is_test = requester is not None and requester.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
+        requester_package = self._go_package_names.get(module_qn)
+        hits: list[tuple[str, str]] = []
+        for sibling_qn in self._package_modules(module_qn):
+            sibling_path = self.module_qn_to_file_path[sibling_qn]
+            if not requester_is_test and sibling_path.stem.endswith(
+                cs.GO_TEST_FILE_SUFFIX
+            ):
+                continue
+            if (
+                requester_package is not None
+                and self._go_package_names.get(sibling_qn) != requester_package
+            ):
+                continue
+            container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"
+            caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+            if caller_qn in self._resolver.function_registry:
+                hits.append((caller_qn, container_qn))
+        return hits[0] if len(hits) == 1 else None
+
+    def _package_modules(self, module_qn: str) -> list[str]:
+        # Lazily indexed from module_qn_to_file_path by the file's PARENT
+        # DIRECTORY (extension disambiguation makes qn-prefix grouping split
+        # `pkg.service.go` from its package); rebuilt when the map grew
+        # (incremental runs register modules as they parse).
+        requester = self.module_qn_to_file_path.get(module_qn)
+        if requester is None:
+            return []
+        size = len(self.module_qn_to_file_path)
+        if self._package_index_size != size:
+            index: dict[Path, list[str]] = {}
+            for qn, path in self.module_qn_to_file_path.items():
+                index.setdefault(path.parent, []).append(qn)
+            self._package_index = index
+            self._package_index_size = size
+        return self._package_index.get(requester.parent, [])
 
     def _recorded_caller(
         self, func_node: Node, module_qn: str

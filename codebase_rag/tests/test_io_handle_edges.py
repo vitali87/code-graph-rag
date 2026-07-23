@@ -1154,3 +1154,183 @@ class TestGoRpcTypedClientEvidence:
         )
         after = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
         assert after == {"userClient": "UserService"}, after
+
+    def test_receiver_collision_across_packages_attributes_correctly(
+        self, tmp_path: Path
+    ) -> None:
+        # Issue #930: `Server` recurs across packages. The receiver struct is
+        # by Go definition in the METHOD'S OWN package; a same-named struct
+        # elsewhere must not steal the attribution and dangle the edge.
+        files = {
+            "aaa/server.go": (
+                "package aaa\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Unrelated() {}\n"
+            ),
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+        # The caller qn must be the REGISTERED method node
+        # (svc.service.Server.Create), never a receiver-dropping fallback.
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
+
+    def test_external_test_package_sibling_does_not_block_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        # An external `package svc_test` sibling can declare its own `Server`
+        # with the same method name, but production files can never see a
+        # type from a `_test.go` file, so it must not force the ambiguity
+        # fallback that dangles the production method's edges.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+            "svc/helpers_test.go": (
+                "package svc_test\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Create() {}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
+
+    def test_external_test_method_does_not_consume_production_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # The reverse direction: an external `package svc_test` file cannot
+        # reference unexported members of `package svc`, so a same-named
+        # field on its own harness type must not pick up the production
+        # file's typed-client evidence.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/harness_test.go": (
+                "package svc_test\n\n"
+                "type harness struct {\n"
+                "\tuserClient fakeClient\n"
+                "}\n\n"
+                "func (h *harness) run() {\n"
+                "\th.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_extension_disambiguated_module_keeps_its_package(
+        self, tmp_path: Path
+    ) -> None:
+        # `service.ts` shares the stem with `service.go`, so the Go module
+        # qn gets the extension appended (`svc.service.go`). Package
+        # membership must group by DIRECTORY, not qn prefix, or the struct
+        # file splits away from its siblings and attribution dangles.
+        files = {
+            "svc/service.ts": "export const unrelated = 1\n",
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+
+    def test_disambiguated_declaring_module_still_contributes_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # Deterministic variant: the DECLARING module's qn carries the
+        # appended extension (`proj.svc.service.go`); grouping by qn prefix
+        # would place it in a phantom package. Directory grouping keeps it.
+        from codebase_rag.capture import resolve_capture
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+
+        parsers, _ = load_parsers()
+        decl_src = (
+            "package svc\n\n"
+            'import "example.com/gen/user/v1/userv1connect"\n\n'
+            "type Server struct {\n"
+            "\tuserClient userv1connect.UserServiceClient\n"
+            "}\n"
+        )
+        caller_src = (
+            "package svc\n\nfunc (s *Server) Create() {\n"
+            "\ts.userClient.GetUser(nil, nil)\n}\n"
+        )
+        caller_tree = parsers["go"].parse(caller_src.encode())
+        decl_path = tmp_path / "svc" / "service.go"
+
+        class _FakeCache:
+            def __init__(self) -> None:
+                self.entry = (
+                    parsers["go"].parse(decl_src.encode()).root_node,
+                    cs.SupportedLanguage.GO,
+                )
+
+            def load(self, key: Path) -> tuple[object, cs.SupportedLanguage]:
+                return self.entry
+
+        import_processor = MagicMock()
+        import_processor.import_mapping = {
+            "proj.svc.service.go": {
+                "userv1connect": "example.com/gen/user/v1/userv1connect"
+            },
+            "proj.svc.create": {},
+        }
+        processor = IOAccessProcessor(
+            MagicMock(),
+            import_processor,
+            selection=resolve_capture([cs.CaptureGroup.IO.value]),
+            module_paths={
+                "proj.svc.service.go": decl_path,
+                "proj.svc.create": tmp_path / "svc" / "create.go",
+            },
+            ast_cache=_FakeCache(),  # type: ignore[arg-type]
+        )
+        caller_fn = next(
+            c
+            for c in caller_tree.root_node.named_children
+            if c.type == "method_declaration"
+        )
+        fields = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert fields == {"userClient": "UserService"}, fields
