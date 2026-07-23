@@ -14,6 +14,7 @@ Point it at a repository and it reads every source file, extracts functions, cla
 - Optimise code against language best practices or your own coding standards.
 - Find dead code by walking call and reference edges from entry points.
 - Group several repositories into a named workspace and query them as one graph.
+- Trace calls between microservices: route decorators become endpoint templates, and HTTP client URLs resolve to the handlers that serve them, linking services across project boundaries.
 
 ## Supported Languages
 
