@@ -108,6 +108,8 @@ jobs:
 
       - name: Create git tag
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git tag "v${{ steps.bump_version.outputs.new }}"
-          git push origin "v${{ steps.bump_version.outputs.new }}"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${{ steps.bump_version.outputs.new }}"
