@@ -905,9 +905,7 @@ class TestGoRpcTypedClientEvidence:
 
     _RPC = "resource::RPC::UserService.GetUser"
 
-    def test_struct_field_typed_client_call_emits_sink(
-        self, tmp_path: Path
-    ) -> None:
+    def test_struct_field_typed_client_call_emits_sink(self, tmp_path: Path) -> None:
         files = {
             "auth.go": (
                 "package auth\n\n"

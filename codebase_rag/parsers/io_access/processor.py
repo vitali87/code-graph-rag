@@ -125,8 +125,8 @@ def _go_client_type_stem(
         or type_node.text is None
     ):
         return None
-    qualifier, sep, name = (
-        type_node.text.decode(cs.ENCODING_UTF8).rpartition(cs.SEPARATOR_DOT)
+    qualifier, sep, name = type_node.text.decode(cs.ENCODING_UTF8).rpartition(
+        cs.SEPARATOR_DOT
     )
     if not sep or not _rpc_qualifier_resolves(qualifier, import_map):
         return None
@@ -1317,9 +1317,7 @@ class IOAccessProcessor:
         # struct field declared with a generated client type in this module.
         if cs.SEPARATOR_DOT not in receiver or not method[:1].isupper():
             return False
-        stem = lean_handles.rpc_fields.get(
-            receiver.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        )
+        stem = lean_handles.rpc_fields.get(receiver.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         if stem is None:
             return False
         self._emit(
