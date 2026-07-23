@@ -130,16 +130,23 @@ def _collect_go_param_bindings(
 
 
 def _collect_go_field_stems(
-    node: Node, import_map: dict[str, str], fields: dict[str, str]
+    node: Node,
+    import_map: dict[str, str],
+    fields: dict[str, str],
+    conflicted: set[str],
 ) -> None:
     # One struct field declaration: every named field of a connect-client
-    # type maps to the service stem (several names may share one type).
+    # type maps to the service stem (several names may share one type). A
+    # name already mapped to a DIFFERENT stem is marked conflicted.
     stem = _go_client_type_stem(node.child_by_field_name(cs.FIELD_TYPE), import_map)
     if stem is None:
         return
     for child in node.named_children:
         if child.type == cs.TS_GO_FIELD_IDENTIFIER and child.text is not None:
-            fields[child.text.decode(cs.ENCODING_UTF8)] = stem
+            name = child.text.decode(cs.ENCODING_UTF8)
+            if fields.get(name, stem) != stem:
+                conflicted.add(name)
+            fields[name] = stem
 
 
 def _go_client_type_stem(
@@ -1335,12 +1342,17 @@ class IOAccessProcessor:
         if cached is not None:
             return cached
         fields: dict[str, str] = {}
+        conflicted: set[str] = set()
         stack = [root]
         while stack:
             node = stack.pop()
             if node.type == cs.TS_GO_FIELD_DECLARATION:
-                _collect_go_field_stems(node, import_map, fields)
+                _collect_go_field_stems(node, import_map, fields, conflicted)
             stack.extend(node.named_children)
+        # A name typed to DIFFERENT services in this module cannot be told
+        # apart by the flat receiver-tail lookup: drop it rather than guess.
+        for name in conflicted:
+            fields.pop(name, None)
         self._rpc_field_cache[key] = fields
         return fields
 
