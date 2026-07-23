@@ -27,6 +27,7 @@ from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey, CSharpCallSite
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
+from .go import utils as go_utils
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback, sorted_captures
@@ -64,6 +65,9 @@ class DefinitionProcessor(
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
+        # {go module qn: its `package` clause name}; Go package membership is
+        # (directory, clause), so receiver binding needs both.
+        self.go_package_names: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
         # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
         # whether they override an EXTERNAL base is only decidable once every
@@ -295,6 +299,10 @@ class DefinitionProcessor(
                 )
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
             self.module_qn_to_file_path[module_qn] = file_path
+            if language == cs.SupportedLanguage.GO and (
+                package_name := go_utils.extract_package_name(root_node)
+            ):
+                self.go_package_names[module_qn] = package_name
 
             self.ingestor.ensure_node_batch(
                 cs.NodeLabel.MODULE,

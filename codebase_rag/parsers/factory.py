@@ -159,5 +159,6 @@ class ProcessorFactory:
                 function_locations=self.definition_processor.function_locations,
                 macro_qns=self.definition_processor.macro_qns,
                 ast_cache=self.ast_cache,
+                go_package_names=self.definition_processor.go_package_names,
             )
         return self._call_processor

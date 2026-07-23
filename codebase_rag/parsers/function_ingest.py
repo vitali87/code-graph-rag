@@ -222,6 +222,7 @@ class FunctionIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    go_package_names: dict[str, str]
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     _handler: LanguageHandler
@@ -1003,27 +1004,47 @@ class FunctionIngestMixin:
         same_file = f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
         if self.function_registry.get(same_file) is not None:
             return same_file
-        package = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         method_file = self.module_qn_to_file_path.get(module_qn)
-        method_is_test = method_file is not None and method_file.stem.endswith(
-            cs.GO_TEST_FILE_SUFFIX
-        )
         for qn in self.simple_name_lookup.get(receiver_type, set()):
             if self.function_registry.get(qn) not in _GO_TYPE_NODE_TYPES:
                 continue
             type_module = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if not method_is_test:
-                # A `_test.go` sibling may declare a same-named type in an
-                # external `package foo_test`; production files can never see
-                # it, so it must not steal the binding.
-                type_file = self.module_qn_to_file_path.get(type_module)
-                if type_file is not None and type_file.stem.endswith(
-                    cs.GO_TEST_FILE_SUFFIX
-                ):
-                    continue
-            if type_module.rsplit(cs.SEPARATOR_DOT, 1)[0] == package:
+            if self._go_type_visible_from(type_module, module_qn, method_file):
                 return qn
         return same_file
+
+    def _go_type_visible_from(
+        self, type_module: str, method_module: str, method_file: Path | None
+    ) -> bool:
+        # Go package membership is (directory, `package` clause). A `_test.go`
+        # declaration is additionally compiled only under `go test`, so it is
+        # invisible to non-test files even inside the same package.
+        type_file = self.module_qn_to_file_path.get(type_module)
+        method_is_test = method_file is not None and method_file.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
+        if (
+            not method_is_test
+            and type_file is not None
+            and type_file.stem.endswith(cs.GO_TEST_FILE_SUFFIX)
+        ):
+            return False
+        method_package = self.go_package_names.get(method_module)
+        type_package = self.go_package_names.get(type_module)
+        if (
+            method_package is not None
+            and type_package is not None
+            and method_package != type_package
+        ):
+            return False
+        if type_file is not None and method_file is not None:
+            return type_file.parent == method_file.parent
+        # Path-less registrations (mock harnesses) fall back to qn-prefix
+        # grouping.
+        return (
+            type_module.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            == method_module.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        )
 
     def resolve_deferred_go_methods(self) -> int:
         """Ingest Go receiver methods now that every receiver type is registered.
@@ -1059,6 +1080,11 @@ class FunctionIngestMixin:
                 language=cs.SupportedLanguage.GO,
                 file_path=entry.file_path,
                 repo_path=self.repo_path,
+                # An undeclared receiver keeps the same-file fallback qn; the
+                # deferred link verifies the container and anchors to the
+                # module instead of a phantom the database would drop.
+                defer_containment=self._deferred_parent_links,
+                module_qn=entry.module_qn,
             )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.

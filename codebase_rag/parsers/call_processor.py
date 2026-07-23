@@ -525,6 +525,7 @@ class CallProcessor:
         "_path_to_module_qn",
         "_package_index",
         "_package_index_size",
+        "_go_package_names",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -554,6 +555,7 @@ class CallProcessor:
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
+        go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -564,6 +566,7 @@ class CallProcessor:
         # rebuilt lazily whenever the underlying map grows.
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
+        self._go_package_names: Mapping[str, str] = go_package_names or {}
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -1431,18 +1434,25 @@ class CallProcessor:
         self, receiver_type: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         # A unique registered `<package sibling>.<ReceiverType>.<method>` is
-        # the definition pass's own binding; ambiguity falls back. A `_test.go`
-        # sibling may belong to an external `package foo_test`; production
-        # files can never see its types, so it only counts for test requesters.
+        # the definition pass's own binding; ambiguity falls back. Go package
+        # membership is (directory, `package` clause), and a `_test.go`
+        # sibling is additionally compiled only under `go test`, so it only
+        # counts for test requesters.
         requester = self.module_qn_to_file_path.get(module_qn)
         requester_is_test = requester is not None and requester.stem.endswith(
             cs.GO_TEST_FILE_SUFFIX
         )
+        requester_package = self._go_package_names.get(module_qn)
         hits: list[tuple[str, str]] = []
         for sibling_qn in self._package_modules(module_qn):
             sibling_path = self.module_qn_to_file_path[sibling_qn]
             if not requester_is_test and sibling_path.stem.endswith(
                 cs.GO_TEST_FILE_SUFFIX
+            ):
+                continue
+            if (
+                requester_package is not None
+                and self._go_package_names.get(sibling_qn) != requester_package
             ):
                 continue
             container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"

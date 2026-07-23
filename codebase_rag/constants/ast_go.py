@@ -1,5 +1,7 @@
 # Go tree-sitter node types.
 
+TS_GO_PACKAGE_CLAUSE = "package_clause"
+TS_GO_PACKAGE_IDENTIFIER = "package_identifier"
 TS_GO_TYPE_DECLARATION = "type_declaration"
 TS_GO_TYPE_SPEC = "type_spec"
 TS_GO_TYPE_ALIAS = "type_alias"

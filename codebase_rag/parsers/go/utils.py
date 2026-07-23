@@ -6,6 +6,18 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def extract_package_name(root: Node) -> str | None:
+    # The `package foo` clause names the Go package a file belongs to;
+    # membership is (directory, package name), not directory alone.
+    for child in root.named_children:
+        if child.type != cs.TS_GO_PACKAGE_CLAUSE:
+            continue
+        for ident in child.named_children:
+            if ident.type == cs.TS_GO_PACKAGE_IDENTIFIER:
+                return safe_decode_text(ident)
+    return None
+
+
 def is_receiver_method(node: Node) -> bool:
     return (
         node.type == cs.TS_GO_METHOD_DECLARATION
