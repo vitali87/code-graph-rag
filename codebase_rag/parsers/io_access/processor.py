@@ -1368,15 +1368,21 @@ class IOAccessProcessor:
         # including the REQUESTING one, compile only under `go test` and
         # contribute no fields.
         requester = self._module_paths.get(module_qn)
+        # Package membership groups by the file's PARENT DIRECTORY when the
+        # requester's path is known: extension disambiguation (`service.go`
+        # next to `service.ts` -> qn `pkg.service.go`) would split a file
+        # from its Go package under qn-prefix grouping (issue #930 review).
+        requester_dir = requester.parent if requester is not None else None
         sources: list[tuple[Node, dict[str, str]]] = []
         if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
             sources.append((root, import_map))
         for sibling_qn, path in self._module_paths.items():
-            if (
-                sibling_qn == module_qn
-                or sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] != package_qn
-                or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX)
-            ):
+            if sibling_qn == module_qn or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+                continue
+            if requester_dir is not None:
+                if path.parent != requester_dir:
+                    continue
+            elif sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] != package_qn:
                 continue
             entry = self._ast_cache.load(path) if self._ast_cache else None
             if entry is None or entry[1] is not cs.SupportedLanguage.GO:

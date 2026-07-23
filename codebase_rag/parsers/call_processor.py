@@ -562,7 +562,7 @@ class CallProcessor:
         self._path_to_module_qn: dict[Path, str] | None = None
         # Package-prefix index over module_qn_to_file_path (issue #930),
         # rebuilt lazily whenever the underlying map grows.
-        self._package_index: dict[str, list[str]] = {}
+        self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
@@ -1432,26 +1432,30 @@ class CallProcessor:
     ) -> tuple[str, str] | None:
         # A unique registered `<package sibling>.<ReceiverType>.<method>` is
         # the definition pass's own binding; ambiguity falls back.
-        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         hits: list[tuple[str, str]] = []
-        for sibling_qn in self._package_modules(package_prefix):
+        for sibling_qn in self._package_modules(module_qn):
             container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"
             caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
             if caller_qn in self._resolver.function_registry:
                 hits.append((caller_qn, container_qn))
         return hits[0] if len(hits) == 1 else None
 
-    def _package_modules(self, package_prefix: str) -> list[str]:
-        # Lazily indexed from module_qn_to_file_path; rebuilt when the map
-        # grew (incremental runs register modules as they parse).
+    def _package_modules(self, module_qn: str) -> list[str]:
+        # Lazily indexed from module_qn_to_file_path by the file's PARENT
+        # DIRECTORY (extension disambiguation makes qn-prefix grouping split
+        # `pkg.service.go` from its package); rebuilt when the map grew
+        # (incremental runs register modules as they parse).
+        requester = self.module_qn_to_file_path.get(module_qn)
+        if requester is None:
+            return []
         size = len(self.module_qn_to_file_path)
         if self._package_index_size != size:
-            index: dict[str, list[str]] = {}
-            for qn in self.module_qn_to_file_path:
-                index.setdefault(qn.rsplit(cs.SEPARATOR_DOT, 1)[0], []).append(qn)
+            index: dict[Path, list[str]] = {}
+            for qn, path in self.module_qn_to_file_path.items():
+                index.setdefault(path.parent, []).append(qn)
             self._package_index = index
             self._package_index_size = size
-        return self._package_index.get(package_prefix, [])
+        return self._package_index.get(requester.parent, [])
 
     def _recorded_caller(
         self, func_node: Node, module_qn: str
