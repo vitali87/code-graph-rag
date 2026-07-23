@@ -260,3 +260,145 @@ def test_partial_capture_selections_never_dangle(tmp_path: Path) -> None:
     }
     for i, tokens in enumerate((["io", "-writes_to"], ["io", "-exposes"])):
         _run(tmp_path / f"case{i}", files, capture=resolve_capture(tokens))
+
+
+def test_escaped_key_joins_plain_spelling(tmp_path: Path) -> None:
+    # `"run-things\x2fdev"` and `"run-things/dev"` are the same runtime
+    # string; the resource identity must use the decoded value.
+    files = {
+        "producer.py": (
+            "def schedule(client):\n"
+            '    client.deploy(workflow_name="run-things\\x2fdev")\n'
+        ),
+    }
+    rels = _run(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.producer.schedule",
+        WRITES_TO,
+        "resource::DISPATCH::run-things/dev",
+    ) in rels, rels
+
+
+def test_reprocessed_module_drops_stale_facts(tmp_path: Path) -> None:
+    # Watch-mode re-parse of a module must replace its recorded facts: a
+    # removed registration may not replay from stale state at finalize.
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+
+    parsers, _ = load_parsers()
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            from codebase_rag.types_defs import NodeType
+
+            return NodeType.FUNCTION if qn.endswith(".run_things") else None
+
+    class _Imports:
+        import_mapping: dict = {}
+
+    ingestor = MagicMock()
+    processor = DispatchRegistryProcessor(
+        ingestor=ingestor,
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+        import_processor=_Imports(),
+    )
+    with_flow = parsers["python"].parse(
+        b'from prefect import flow\n\n@flow(name="run-things")\ndef run_things():\n    return 1\n'
+    )
+    without_flow = parsers["python"].parse(b"def run_things():\n    return 1\n")
+    processor.process_file(
+        with_flow.root_node, "proj.flows", cs2.SupportedLanguage.PYTHON
+    )
+    processor.process_file(
+        without_flow.root_node, "proj.flows", cs2.SupportedLanguage.PYTHON
+    )
+    ingestor.reset_mock()
+    producer = parsers["python"].parse(
+        b'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+    )
+    processor.process_file(
+        producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()
+    resolves = [
+        c
+        for c in ingestor.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == RESOLVES_TO
+    ]
+    assert not resolves, resolves
+
+
+def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
+    # Incremental runs reprocess only changed files: a registration living in
+    # an unchanged file must still anchor suffix resolution, seeded from the
+    # live graph.
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+
+    parsers, _ = load_parsers()
+
+    class _QueryIngestor(MagicMock):
+        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+            return [{"name": "run-things"}]
+
+        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+            return None
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            from codebase_rag.types_defs import NodeType
+
+            return NodeType.FUNCTION if qn.endswith(".schedule") else None
+
+    class _Imports:
+        import_mapping: dict = {}
+
+    ingestor = _QueryIngestor()
+    processor = DispatchRegistryProcessor(
+        ingestor=ingestor,
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+        import_processor=_Imports(),
+    )
+    producer = parsers["python"].parse(
+        b'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+    )
+    processor.process_file(
+        producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()
+    resolves = [
+        c
+        for c in ingestor.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == RESOLVES_TO
+    ]
+    assert resolves, ingestor.ensure_relationship_batch.call_args_list
+
+
+def test_resolves_only_capture_still_links_suffix(tmp_path: Path) -> None:
+    # With only RESOLVES_TO enabled, the suffix link (and its endpoint
+    # nodes) must still emit; the audit inside _run guards the structure.
+    files = {
+        "flows.py": (
+            "from prefect import flow\n\n"
+            '@flow(name="run-things")\n'
+            "def run_things():\n    return 1\n"
+        ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+        ),
+    }
+    rels = _run(
+        tmp_path,
+        files,
+        capture=resolve_capture(["io", "-exposes", "-writes_to"]),
+    )
+    assert (
+        "resource::DISPATCH::run-things/dev",
+        RESOLVES_TO,
+        "resource::DISPATCH::run-things",
+    ) in rels, rels

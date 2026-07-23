@@ -9,13 +9,14 @@
 # Dynamic keys stay out: a ceiling yields nothing, never a wrong link.
 from __future__ import annotations
 
+import ast
 from typing import NamedTuple
 
 from tree_sitter import Node
 
 from .. import constants as cs
 from ..capture import CaptureSelection
-from ..services import IngestorProtocol
+from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .io_access.constants import (
@@ -56,10 +57,10 @@ class DispatchRegistryProcessor:
         "_exposes_enabled",
         "_writes_enabled",
         "_resolves_enabled",
-        "_registered_keys",
-        "_produced_keys",
+        "_module_registrations",
+        "_module_producers",
         "_module_constants",
-        "_deferred_producers",
+        "_module_deferred",
     )
 
     def __init__(
@@ -75,10 +76,12 @@ class DispatchRegistryProcessor:
         self._exposes_enabled = selection.rel_enabled(cs.RelationshipType.EXPOSES)
         self._writes_enabled = selection.rel_enabled(cs.RelationshipType.WRITES_TO)
         self._resolves_enabled = selection.rel_enabled(cs.RelationshipType.RESOLVES_TO)
-        self._registered_keys: set[str] = set()
-        self._produced_keys: set[str] = set()
+        # All bookkeeping is PER MODULE and replaced wholesale on re-process,
+        # so a watch-mode re-parse cannot replay facts removed from source.
+        self._module_registrations: dict[str, list[tuple[str, NodeType, str]]] = {}
+        self._module_producers: dict[str, list[tuple[tuple[str, str, str], str]]] = {}
         self._module_constants: dict[str, dict[str, str]] = {}
-        self._deferred_producers: list[_DeferredProducer] = []
+        self._module_deferred: dict[str, list[_DeferredProducer]] = {}
 
     def process_file(
         self,
@@ -87,27 +90,44 @@ class DispatchRegistryProcessor:
         language: cs.SupportedLanguage,
     ) -> None:
         if language is not cs.SupportedLanguage.PYTHON or not (
-            self._exposes_enabled or self._writes_enabled
+            self._exposes_enabled or self._writes_enabled or self._resolves_enabled
         ):
             return
+        self._module_registrations[module_qn] = []
+        self._module_producers[module_qn] = []
+        self._module_constants[module_qn] = {}
+        self._module_deferred[module_qn] = []
         self._process_module_scope(root_node, module_qn)
         self._process_producers(root_node, module_qn)
 
     def finalize(self) -> None:
         # Producers that passed a module-level string constant by name, then
         # the bounded deployment-suffix resolution: `x/dev` resolves onto a
-        # registered `x` only when `x/dev` itself is unregistered.
-        for deferred in self._deferred_producers:
-            constants = self._module_constants.get(deferred.module_qn, {})
-            if key := constants.get(deferred.identifier):
-                self._emit_produced(deferred.caller_spec, key)
+        # registered `x` only when `x/dev` itself is unregistered. Registered
+        # keys from files an incremental run did not reprocess are seeded
+        # from the live graph.
+        resolved_deferred: set[str] = set()
+        for deferred_list in self._module_deferred.values():
+            for deferred in deferred_list:
+                constants = self._module_constants.get(deferred.module_qn, {})
+                if key := constants.get(deferred.identifier):
+                    self._emit_produced_edge(deferred.caller_spec, key)
+                    resolved_deferred.add(key)
         if not self._resolves_enabled:
             return
-        for key in sorted(self._produced_keys):
-            if DISPATCH_DEPLOYMENT_SEPARATOR not in key or key in self._registered_keys:
+        registered = {
+            key
+            for entries in self._module_registrations.values()
+            for _qn, _type, key in entries
+        } | self._db_registered_keys()
+        produced = {
+            key for entries in self._module_producers.values() for _spec, key in entries
+        } | resolved_deferred
+        for key in sorted(produced):
+            if DISPATCH_DEPLOYMENT_SEPARATOR not in key or key in registered:
                 continue
             head = key.split(DISPATCH_DEPLOYMENT_SEPARATOR, 1)[0]
-            if head in self._registered_keys:
+            if head in registered:
                 # A partial capture can drop the side that would otherwise
                 # create an endpoint node; ensure BOTH here so the edge never
                 # dangles (issue #652 defect class).
@@ -118,6 +138,17 @@ class DispatchRegistryProcessor:
                     cs.RelationshipType.RESOLVES_TO,
                     (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, _resource_qn(head)),
                 )
+
+    def _db_registered_keys(self) -> set[str]:
+        # An incremental run reprocesses only changed files; registrations in
+        # untouched files exist solely in the database.
+        if not isinstance(self._ingestor, QueryProtocol):
+            return set()
+        rows = self._ingestor.fetch_all(
+            "MATCH (h:Resource {kind: 'DISPATCH'})<-[:EXPOSES]-() "
+            "RETURN DISTINCT h.name AS name"
+        )
+        return {name for row in rows if isinstance(name := row.get("name"), str)}
 
     def _process_module_scope(self, root: Node, module_qn: str) -> None:
         constants = self._module_constants.setdefault(module_qn, {})
@@ -167,7 +198,7 @@ class DispatchRegistryProcessor:
                 return
             entries.append((key, *resolved))
         for key, handler_qn, node_type in entries:
-            self._emit_registration(handler_qn, node_type, key)
+            self._emit_registration(module_qn, handler_qn, node_type, key)
 
     def _resolve_handler(
         self, module_qn: str, handler: str
@@ -203,7 +234,7 @@ class DispatchRegistryProcessor:
             handler_qn = f"{module_qn}{cs.SEPARATOR_DOT}{func_name}"
             node_type = self._function_registry.get(handler_qn)
             if node_type in _HANDLER_NODE_LABELS:
-                self._emit_registration(handler_qn, node_type, key)
+                self._emit_registration(module_qn, handler_qn, node_type, key)
 
     def _registrar_key(
         self, decorator: Node, module_qn: str, func_name: str
@@ -216,28 +247,22 @@ class DispatchRegistryProcessor:
             return None
         if inner.type == cs.TS_PY_CALL:
             callee = inner.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            registrar = _tail_name(callee)
-            if registrar not in DISPATCH_REGISTRARS or self._locally_defined(
-                module_qn, registrar
-            ):
+            if not self._is_registrar(callee, module_qn):
                 return None
-            arguments = inner.child_by_field_name(cs.FIELD_ARGUMENTS)
-            for arg in arguments.named_children if arguments is not None else []:
-                if arg.type != cs.TS_PY_KEYWORD_ARGUMENT:
-                    continue
-                if (
-                    safe_decode_text(arg.child_by_field_name(cs.FIELD_NAME))
-                    == DISPATCH_NAME_KEYWORD
-                ):
-                    value = arg.child_by_field_name(cs.FIELD_VALUE)
-                    return _plain_string(value) if value is not None else None
+            named, explicit = _name_keyword_value(inner)
+            if named:
+                # An explicit but non-literal name is unknowable: no key.
+                return explicit
             return func_name.replace("_", "-")
-        registrar = _tail_name(inner)
-        if registrar in DISPATCH_REGISTRARS and not self._locally_defined(
-            module_qn, registrar
-        ):
+        if self._is_registrar(inner, module_qn):
             return func_name.replace("_", "-")
         return None
+
+    def _is_registrar(self, node: Node | None, module_qn: str) -> bool:
+        registrar = _tail_name(node)
+        return registrar in DISPATCH_REGISTRARS and not self._locally_defined(
+            module_qn, registrar
+        )
 
     def _locally_defined(self, module_qn: str, name: str) -> bool:
         return (
@@ -261,11 +286,12 @@ class DispatchRegistryProcessor:
             caller_spec = self._enclosing_caller_spec(node, module_qn)
             if value.type == cs.TS_PY_STRING:
                 if (key := _plain_string(value)) is not None:
-                    self._emit_produced(caller_spec, key)
+                    self._module_producers[module_qn].append((caller_spec, key))
+                    self._emit_produced_edge(caller_spec, key)
             elif value.type == cs.TS_PY_IDENTIFIER and (
                 identifier := safe_decode_text(value)
             ):
-                self._deferred_producers.append(
+                self._module_deferred[module_qn].append(
                     _DeferredProducer(caller_spec, module_qn, identifier)
                 )
 
@@ -294,9 +320,9 @@ class DispatchRegistryProcessor:
         return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def _emit_registration(
-        self, handler_qn: str, node_type: NodeType, key: str
+        self, module_qn: str, handler_qn: str, node_type: NodeType, key: str
     ) -> None:
-        self._registered_keys.add(key)
+        self._module_registrations[module_qn].append((handler_qn, node_type, key))
         if not self._exposes_enabled:
             return
         self._ensure_resource(key)
@@ -306,8 +332,7 @@ class DispatchRegistryProcessor:
             (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, _resource_qn(key)),
         )
 
-    def _emit_produced(self, caller_spec: tuple[str, str, str], key: str) -> None:
-        self._produced_keys.add(key)
+    def _emit_produced_edge(self, caller_spec: tuple[str, str, str], key: str) -> None:
         if not self._writes_enabled:
             return
         self._ensure_resource(key)
@@ -332,6 +357,21 @@ def _resource_qn(key: str) -> str:
     return RESOURCE_QN_FORMAT.format(kind=ResourceKind.DISPATCH.value, identity=key)
 
 
+def _name_keyword_value(call: Node) -> tuple[bool, str | None]:
+    # (name keyword present, its literal value or None when non-literal).
+    arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    for arg in arguments.named_children if arguments is not None else []:
+        if arg.type != cs.TS_PY_KEYWORD_ARGUMENT:
+            continue
+        if (
+            safe_decode_text(arg.child_by_field_name(cs.FIELD_NAME))
+            == DISPATCH_NAME_KEYWORD
+        ):
+            value = arg.child_by_field_name(cs.FIELD_VALUE)
+            return True, _plain_string(value) if value is not None else None
+    return False, None
+
+
 def _tail_name(node: Node | None) -> str | None:
     # `flow` or `prefect.flow`: the trailing identifier names the registrar.
     if node is None:
@@ -345,13 +385,17 @@ def _tail_name(node: Node | None) -> str | None:
 
 def _plain_string(node: Node) -> str | None:
     # A plain string literal only: any interpolation (f-string) is dynamic
-    # and yields nothing. Escape sequences keep their source text.
+    # and yields nothing. The literal is evaluated exactly as Python would,
+    # so escape spellings of the same runtime string share one key.
     if node.type != cs.TS_PY_STRING:
         return None
-    parts: list[str] = []
-    for child in node.named_children:
-        if child.type == cs.TS_PY_INTERPOLATION:
-            return None
-        if child.type in (cs.TS_PY_STRING_CONTENT, cs.TS_PY_ESCAPE_SEQUENCE):
-            parts.append(safe_decode_text(child) or "")
-    return "".join(parts)
+    if any(c.type == cs.TS_PY_INTERPOLATION for c in node.named_children):
+        return None
+    source = safe_decode_text(node)
+    if source is None:
+        return None
+    try:
+        value = ast.literal_eval(source)
+    except (ValueError, SyntaxError):
+        return None
+    return value if isinstance(value, str) else None
