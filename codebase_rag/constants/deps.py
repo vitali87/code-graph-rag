@@ -45,6 +45,8 @@ DEP_FILE_GOMOD = "go.mod"
 # the module's packages; a same-line comment (incl. `// Deprecated:`) may
 # trail it.
 GO_KEYWORD_MODULE = "module"
+GO_KEYWORD_PACKAGE = "package"
+GO_PACKAGE_MAIN = "main"
 GO_MOD_COMMENT_PREFIX = "//"
 DEP_FILE_GEMFILE = "gemfile"
 DEP_FILE_COMPOSER = "composer.json"

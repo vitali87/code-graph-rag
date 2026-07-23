@@ -243,3 +243,193 @@ def test_local_import_edge_targets_project_qn(tmp_path: Path) -> None:
     import_targets = {b for a, r, b in rels if r == "IMPORTS" and a.endswith("main")}
     assert "mytool.util.util" in import_targets
     assert not any(t.startswith("github.com/") for t in import_targets)
+
+
+def test_duplicate_module_directive_resolves_to_dir_with_package(
+    tmp_path: Path,
+) -> None:
+    # Two go.mod files declare the SAME module path: a dependency-pinning
+    # stub (holding only a placeholder main.go) and the real code tree. The
+    # import must resolve into the tree that contains the imported package,
+    # regardless of discovery order.
+    files = {
+        "go.mod": GO_MOD,
+        "a_stub/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "a_stub/main.go": "package main\n\nfunc main() {}\n",
+        # An unrelated same-named package: if the import misresolves to the
+        # stub, the name fallback rebinds here instead of the imported one.
+        "alpha/util/util.go": GREET_ALPHA,
+        "gen/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "gen/util/util.go": GREET_BETA,
+        "main.go": (
+            "package main\n\n"
+            'import "github.com/acme/mytool/gen/util"\n\n'
+            "func main() {\n"
+            "    util.Greet()\n"
+            "}\n"
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "main.main")
+    assert "mytool.gen.util.util.Greet" in calls, calls
+    assert "mytool.alpha.util.util.Greet" not in calls, calls
+
+
+def test_duplicate_module_paths_resolver_prefers_existing_package_dir(
+    tmp_path: Path,
+) -> None:
+    # Unit-level determinism: the stub mapping sorts first, but only the real
+    # tree contains the imported package directory.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "real" / "util").mkdir(parents=True)
+    (tmp_path / "real" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "real" / "util" / "util.go").write_text(GREET_BETA, encoding="utf-8")
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen/util")
+    assert resolved == "real.util", (mappings, resolved)
+
+
+def test_duplicate_module_root_import_resolver_unit(tmp_path: Path) -> None:
+    # The import names the module PATH itself. Both duplicate anchors exist
+    # on disk, so directory existence cannot discriminate; the stub holds
+    # only `package main`, which cannot be imported, and must lose to the
+    # anchor with an importable root package.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(
+        "package main\n\nfunc main() {}\n", encoding="utf-8"
+    )
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        encoding="utf-8",
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
+
+
+def test_duplicate_module_root_import_prefers_importable_package(
+    tmp_path: Path,
+) -> None:
+    # Pipeline-level regression of the same shape.
+    files = {
+        "go.mod": GO_MOD,
+        "a_stub/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "a_stub/main.go": "package main\n\nfunc main() {}\n",
+        "gen/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "gen/gen.go": 'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        # Decoy for the name fallback if the import misresolves.
+        "meta/meta.go": 'package meta\n\nfunc Version() string {\n\treturn "x"\n}\n',
+        "main.go": (
+            "package main\n\n"
+            'import gen "github.com/acme/mytool/gen"\n\n'
+            "func main() {\n"
+            "    gen.Version()\n"
+            "}\n"
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "main.main")
+    assert "mytool.gen.gen.Version" in calls, calls
+    assert "mytool.meta.meta.Version" not in calls, calls
+
+
+def test_block_comment_package_text_does_not_qualify_stub(tmp_path: Path) -> None:
+    # The stub's only file is `package main` preceded by a block comment
+    # containing the words `package docs`; comment text is not a clause.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(
+        "/*\npackage docs describes why this stub exists.\n*/\n"
+        "package main\n\nfunc main() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        encoding="utf-8",
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
+
+
+def _write_duplicate_module_pair(
+    tmp_path: Path, stub_main_go: str, real_gen_go: str
+) -> None:
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(stub_main_go, encoding="utf-8")
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(real_gen_go, encoding="utf-8")
+
+
+def test_semicolon_package_clause_still_counts_as_main(tmp_path: Path) -> None:
+    # `package main;` is a valid clause form; the trailing semicolon must not
+    # make the stub look importable.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    _write_duplicate_module_pair(
+        tmp_path,
+        "package main;\n\nfunc main() {}\n",
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
+
+
+def test_inline_block_comment_keeps_clause_tokens_apart(tmp_path: Path) -> None:
+    # `package/*doc*/gen` must still read as a `gen` clause: removing the
+    # comment may not glue the tokens together, or the real tree looks
+    # unimportable and the stub wins.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    _write_duplicate_module_pair(
+        tmp_path,
+        "package main\n\nfunc main() {}\n",
+        'package/*doc*/gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
