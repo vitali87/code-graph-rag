@@ -894,3 +894,118 @@ class TestGoRpcClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+
+class TestGoRpcTypedClientEvidence:
+    """Issue #912 slice 1b: production code constructs the client once and
+    injects it; calls happen on struct fields or parameters DECLARED with the
+    generated client type (`userv1connect.UserServiceClient`). The declared
+    type carries the same evidence as the constructor.
+    """
+
+    _RPC = "resource::RPC::UserService.GetUser"
+
+    def test_struct_field_typed_client_call_emits_sink(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+        assert _has(rels, "auth.Auth.Lookup", WRITES_TO, self._RPC), rels
+
+    def test_parameter_typed_client_call_emits_sink(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(cl userv1connect.UserServiceClient) {\n"
+                "\tcl.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_non_connect_field_type_is_not_rpc(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/api"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient api.HTTPClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_pointer_typed_field_binds_too(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient *userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+
+    def test_colliding_field_names_yield_nothing(self, tmp_path: Path) -> None:
+        # Two structs share a field name with DIFFERENT client types; the
+        # flat name lookup cannot tell the receivers apart, so the field
+        # drops out entirely rather than guess (never a wrong edge).
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n'
+                'import "example.com/gen/billing/v1/billingv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "type Billing struct {\n"
+                "\tuserClient billingv1connect.BillingServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_same_stem_duplicate_fields_still_bind(self, tmp_path: Path) -> None:
+        # The same field name with the SAME client type is no conflict.
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "type Admin struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
