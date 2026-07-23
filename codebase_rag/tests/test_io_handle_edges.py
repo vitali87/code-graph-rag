@@ -764,3 +764,133 @@ class TestGoSprintfUrls:
             READS_FROM,
             "resource::NETWORK::http://svc:8000/products/{*}",
         ), rels
+
+
+class TestGoRpcClientSinks:
+    """Issue #912 slice 1: a connect-go generated client binding
+    (`c := userv1connect.NewUserServiceClient(...)`) makes every exported
+    method call on it an RPC sink on `resource::RPC::<Stem>.<Method>`, so
+    interior service-mesh traffic becomes visible without URL literals.
+    """
+
+    _RPC = "resource::RPC::UserService.GetUser"
+
+    def test_connect_client_call_emits_rpc_sink(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+        assert _has(rels, "main.fetch", WRITES_TO, self._RPC), rels
+
+    def test_alias_tracks_the_rpc_binding(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tc := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tg := c\n"
+                "\tg.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_non_connect_package_is_not_rpc(self, tmp_path: Path) -> None:
+        # `api.NewHTTPClient` lacks the connect-go package marker.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/api"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := api.NewHTTPClient(base)\n"
+                "\tclient.Get(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_unexported_method_is_ignored(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tclient.close()\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_bare_new_client_without_package_is_not_rpc(self, tmp_path: Path) -> None:
+        # A local helper `NewFooClient()` has no connect package qualifier.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func fetch() {\n"
+                "\tclient := NewFooClient()\n"
+                "\tclient.Call(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_aliased_connect_import_binds(self, tmp_path: Path) -> None:
+        # A Go import alias hides the package name; the import map still
+        # records the real path, and that is what carries the evidence.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import userv1 "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1.NewUserServiceClient(nil, base)\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_shadowed_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # A parameter shadowing the imported package name is a value, not
+        # the generated package.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(userv1connect FakeFactory) {\n"
+                '\tclient := userv1connect.NewUserServiceClient(nil, "")\n'
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_unimported_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # No import maps `fooconnect`, so the name alone is no evidence
+        # (no parameter here: the missing-import guard must fail alone).
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func fetch() {\n"
+                "\tclient := fooconnect.NewBarClient()\n"
+                "\tclient.Do(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
