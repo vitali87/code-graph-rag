@@ -116,12 +116,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo "")
-          NEW_PATCH="${{ steps.bump_version.outputs.new }}"
-          NEW_PATCH="${NEW_PATCH##*.}"
-          LATEST_PATCH="${LATEST##*.}"
           RELEASE=false
-          if [ -n "$LATEST" ] && [ $((NEW_PATCH - LATEST_PATCH)) -ge "$RELEASE_EVERY" ]; then
-            RELEASE=true
+          if [ -n "$LATEST" ]; then
+            TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \
+              | awk -F'refs/tags/' '{print $2}' \
+              | grep -v '\^{}' \
+              | sort -V \
+              | awk -v latest="$LATEST" 'seen {count++} $0 == latest {seen=1} END {print count + 0}')
+            if [ $((TAGS_SINCE + 1)) -ge "$RELEASE_EVERY" ]; then
+              RELEASE=true
+            fi
           fi
           echo "release=$RELEASE" >> $GITHUB_OUTPUT
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
