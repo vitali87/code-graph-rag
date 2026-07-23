@@ -260,7 +260,7 @@ def _template_literal(arg: Node, content_type: str, substitution_type: str) -> s
     for child in arg.named_children:
         if child.text is None:
             continue
-        if child.type == content_type:
+        if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
             has_content = True
             parts.append(child.text.decode(cs.ENCODING_UTF8))
         elif child.type == substitution_type:
@@ -302,7 +302,7 @@ def string_literal(
     for child in arg.named_children:
         if child.text is None:
             continue
-        if child.type == content_type:
+        if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
             has_content = True
             parts.append(child.text.decode(cs.ENCODING_UTF8))
         elif child.type == cs.TS_PY_INTERPOLATION:

@@ -186,10 +186,14 @@ def _literal_path(
             child.type == cs.TS_TEMPLATE_SUBSTITUTION for child in node.named_children
         ):
             return None
+        # Escapes split the content into fragments either side of them, so
+        # they are joined back in verbatim: the client sink reading the same
+        # literal renders it the same way, and dropping them here would both
+        # fabricate a fused path and break the link (issue #944).
         value = "".join(
             _decode(child) or ""
             for child in node.named_children
-            if child.type == content_type
+            if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE)
         )
         return value if value else None
     return None
