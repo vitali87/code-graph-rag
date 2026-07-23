@@ -63,13 +63,53 @@ def _has_importable_root_package(anchor: Path) -> bool:
             text = path.read_text(encoding=cs.ENCODING_UTF8)
         except (OSError, ValueError):
             continue
-        for line in text.splitlines():
-            parts = line.split(cs.GO_MOD_COMMENT_PREFIX, 1)[0].split()
-            if len(parts) >= 2 and parts[0] == cs.GO_KEYWORD_PACKAGE:
-                if parts[1] != cs.GO_PACKAGE_MAIN:
-                    return True
-                break
+        clause = _root_package_clause(text)
+        if clause is not None and clause != cs.GO_PACKAGE_MAIN:
+            return True
     return False
+
+
+def _root_package_clause(text: str) -> str | None:
+    # The package clause is the first code in a valid .go file, so only
+    # comments can precede it; strip line and block comments (which do not
+    # nest, and no string literal can appear before the clause) and read the
+    # first code line. Anything other than a package clause there means a
+    # malformed file: bail rather than guess.
+    in_block = False
+    for line in text.splitlines():
+        code, in_block = _strip_go_comments(line, in_block)
+        parts = code.split()
+        if not parts:
+            continue
+        if parts[0] == cs.GO_KEYWORD_PACKAGE and len(parts) >= 2:
+            return parts[1]
+        return None
+    return None
+
+
+def _strip_go_comments(line: str, in_block: bool) -> tuple[str, bool]:
+    code: list[str] = []
+    i = 0
+    while i < len(line):
+        if in_block:
+            end = line.find("*/", i)
+            if end == -1:
+                return "".join(code), True
+            in_block = False
+            i = end + 2
+            continue
+        block = line.find("/*", i)
+        line_comment = line.find(cs.GO_MOD_COMMENT_PREFIX, i)
+        if line_comment != -1 and (block == -1 or line_comment < block):
+            code.append(line[i:line_comment])
+            break
+        if block == -1:
+            code.append(line[i:])
+            break
+        code.append(line[i:block])
+        in_block = True
+        i = block + 2
+    return "".join(code), in_block
 
 
 def resolve_go_import_path(

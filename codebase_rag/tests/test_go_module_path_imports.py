@@ -351,3 +351,33 @@ def test_duplicate_module_root_import_prefers_importable_package(
     calls = _calls(_run_rels(tmp_path, files), "main.main")
     assert "mytool.gen.gen.Version" in calls, calls
     assert "mytool.meta.meta.Version" not in calls, calls
+
+
+def test_block_comment_package_text_does_not_qualify_stub(tmp_path: Path) -> None:
+    # The stub's only file is `package main` preceded by a block comment
+    # containing the words `package docs`; comment text is not a clause.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(
+        "/*\npackage docs describes why this stub exists.\n*/\n"
+        "package main\n\nfunc main() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        encoding="utf-8",
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
