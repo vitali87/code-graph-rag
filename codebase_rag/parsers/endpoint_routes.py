@@ -327,30 +327,37 @@ def _js_chained_registration(
     return RouteRegistration(method, path, handler, scope)
 
 
+def _object_entry(child: Node) -> tuple[str, Node] | None:
+    # A shorthand property maps the name to its own identifier node; an
+    # object method (`async handler(ctx) {...}`, issue #920) maps its name
+    # to the method_definition itself.
+    if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+        name = _decode(child)
+        return (name, child) if name else None
+    if child.type == cs.TS_METHOD_DEFINITION:
+        name = _decode(child.child_by_field_name(cs.TS_FIELD_NAME))
+        return (name, child) if name else None
+    if child.type != cs.TS_PAIR:
+        return None
+    key = child.child_by_field_name(cs.FIELD_KEY)
+    value = child.child_by_field_name(cs.FIELD_VALUE)
+    if key is None or value is None:
+        return None
+    name = (
+        _decode(key)
+        if key.type == cs.TS_PROPERTY_IDENTIFIER
+        else _literal_path(key, _JS_PATH_LITERALS)
+    )
+    return (name, value) if name else None
+
+
 def _object_entries(obj: Node) -> dict[str, Node]:
-    # Key -> value node for an object literal; a shorthand property maps the
-    # name to its own identifier node.
-    entries: dict[str, Node] = {}
-    for child in obj.named_children:
-        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
-            name = _decode(child)
-            if name:
-                entries[name] = child
-            continue
-        if child.type != cs.TS_PAIR:
-            continue
-        key = child.child_by_field_name(cs.FIELD_KEY)
-        value = child.child_by_field_name(cs.FIELD_VALUE)
-        if key is None or value is None:
-            continue
-        name = (
-            _decode(key)
-            if key.type == cs.TS_PROPERTY_IDENTIFIER
-            else _literal_path(key, _JS_PATH_LITERALS)
-        )
-        if name:
-            entries[name] = value
-    return entries
+    # Key -> value node for an object literal.
+    return {
+        entry[0]: entry[1]
+        for child in obj.named_children
+        if (entry := _object_entry(child))
+    }
 
 
 def _options_methods(node: Node | None) -> list[str]:
@@ -401,8 +408,9 @@ def _js_options_registrations(
         and handler.type in (cs.TS_PY_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
         else None
     )
+    inline_types = _JS_INLINE_HANDLER_TYPES | {cs.TS_METHOD_DEFINITION}
     if not (
-        (handler is not None and handler.type in _JS_INLINE_HANDLER_TYPES)
+        (handler is not None and handler.type in inline_types)
         or (handler_name is not None and handler_name in evidence.declared_functions)
     ):
         return []
