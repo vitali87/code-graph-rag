@@ -1182,10 +1182,7 @@ class TestGoRpcTypedClientEvidence:
             ),
         }
         rels = _run_io(tmp_path, files)
-        matches = [
-            a for a, r, b in rels
-            if b == self._RPC and r == READS_FROM
-        ]
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
         assert matches, rels
         # The caller qn must be the REGISTERED method node
         # (svc.service.Server.Create), never a receiver-dropping fallback.
