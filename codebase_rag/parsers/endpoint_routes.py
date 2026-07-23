@@ -647,14 +647,33 @@ def _go_composite_binding(names: list[str], value: Node) -> tuple[str, str] | No
     return names[0], type_name
 
 
+_GO_HANDLER_PARAM_SUFFIXES = frozenset({"ResponseWriter", "Request", "Context", "Ctx"})
+
+
+def _go_handler_signature(node: Node) -> bool:
+    # Generated wrapper methods take http handler parameters
+    # (`w http.ResponseWriter, r *http.Request`) or a framework context
+    # (`ctx echo.Context`); an option method like `Header(timeout int)`
+    # does not (issue #909 review).
+    parameters = node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if parameters is None or not parameters.named_children:
+        return False
+    for parameter in parameters.named_children:
+        type_node = parameter.child_by_field_name(cs.FIELD_TYPE)
+        type_text = (_decode(type_node) or "").lstrip("*")
+        if type_text.rsplit(cs.SEPARATOR_DOT, 1)[-1] not in _GO_HANDLER_PARAM_SUFFIXES:
+            return False
+    return True
+
+
 def _go_method_pair(node: Node) -> tuple[str, str] | None:
-    # `func (siw *ServerInterfaceWrapper) GetMe(...)`: (receiver type, name),
-    # unwrapping a pointer receiver.
+    # `func (siw *ServerInterfaceWrapper) GetMe(...)` with a handler-shaped
+    # parameter list: (receiver type, name), unwrapping a pointer receiver.
     if node.type != cs.TS_GO_METHOD_DECLARATION:
         return None
     name = _decode(node.child_by_field_name(cs.TS_FIELD_NAME))
     receiver = node.child_by_field_name(cs.FIELD_RECEIVER)
-    if not name or receiver is None:
+    if not name or receiver is None or not _go_handler_signature(node):
         return None
     for parameter in receiver.named_children:
         type_node = parameter.child_by_field_name(cs.FIELD_TYPE)

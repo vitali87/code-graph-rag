@@ -498,6 +498,45 @@ class TestGoGeneratedRoutes:
         edges = _run(tmp_path, files, "go")
         assert not edges, edges
 
+    def test_non_handler_method_on_options_struct_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # Even a genuine method on the bound type is not wrapper evidence
+        # unless its signature is a handler's; `Header(timeout int)` is an
+        # outbound request option, not generated wiring.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                "func (o Options) Header(timeout int) string { return \"\" }\n\n"
+                "func fetchMe(client HTTPClient) {\n"
+                "\topts := Options{}\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_context_style_wrapper_method_registers(self, tmp_path: Path) -> None:
+        # Echo-style codegen hands the wrapper a single Context parameter.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                'const base = "/api"\n\n'
+                "type ServerInterfaceWrapper struct{}\n\n"
+                "func (w *ServerInterfaceWrapper) GetMe(ctx echo.Context) error"
+                " { return nil }\n\n"
+                "func register(router Router) {\n"
+                "\twrapper := ServerInterfaceWrapper{}\n"
+                '\trouter.Get(base+"/me", wrapper.GetMe)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.register", "GET /api/me"), edges
+
     def test_wrapper_binding_in_another_function_is_ignored(
         self, tmp_path: Path
     ) -> None:
