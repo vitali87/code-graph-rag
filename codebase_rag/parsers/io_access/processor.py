@@ -248,6 +248,7 @@ class IOAccessProcessor:
         selection: CaptureSelection,
         module_paths: Mapping[str, Path] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
+        go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # import_processor owns import_mapping[module_qn][local] = full_name, used to
@@ -260,6 +261,10 @@ class IOAccessProcessor:
         # struct declaration and its method files across one directory.
         self._module_paths = module_paths or {}
         self._ast_cache = ast_cache
+        # Go module qn -> `package` clause; membership is (directory, clause),
+        # so an external `package svc_test` file shares a directory with
+        # `package svc` production files without sharing their fields.
+        self._go_package_names: Mapping[str, str] = go_package_names or {}
         # (package_qn, sorted root ids of every participating file) ->
         # {field name: service stem} for connect-client-typed struct fields
         # (issue #912). Fingerprinting EVERY root id keys out stale entries
@@ -1400,6 +1405,7 @@ class IOAccessProcessor:
         requester = self._module_paths.get(module_qn)
         requester_dir = requester.parent if requester is not None else None
         package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        requester_package = self._go_package_names.get(module_qn)
         sources: list[tuple[Node, dict[str, str]]] = []
         if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
             sources.append((root, import_map))
@@ -1407,6 +1413,13 @@ class IOAccessProcessor:
             if sibling_qn == module_qn or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
                 continue
             if not _same_go_package(sibling_qn, path, requester_dir, package_qn):
+                continue
+            sibling_package = self._go_package_names.get(sibling_qn)
+            if (
+                requester_package is not None
+                and sibling_package is not None
+                and sibling_package != requester_package
+            ):
                 continue
             entry = self._ast_cache.load(path) if self._ast_cache else None
             if entry is None or entry[1] is not cs.SupportedLanguage.GO:

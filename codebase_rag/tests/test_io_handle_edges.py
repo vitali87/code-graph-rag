@@ -1220,6 +1220,34 @@ class TestGoRpcTypedClientEvidence:
         assert matches, rels
         assert all(".svc.service.Server.Create" in a for a in matches), matches
 
+    def test_external_test_method_does_not_consume_production_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # The reverse direction: an external `package svc_test` file cannot
+        # reference unexported members of `package svc`, so a same-named
+        # field on its own harness type must not pick up the production
+        # file's typed-client evidence.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/harness_test.go": (
+                "package svc_test\n\n"
+                "type harness struct {\n"
+                "\tuserClient fakeClient\n"
+                "}\n\n"
+                "func (h *harness) run() {\n"
+                "\th.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
     def test_extension_disambiguated_module_keeps_its_package(
         self, tmp_path: Path
     ) -> None:

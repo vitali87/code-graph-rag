@@ -596,6 +596,7 @@ class CallProcessor:
             selection=selection,
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
+            go_package_names=self._go_package_names,
         )
         self._flow_processor = FlowProcessor(
             ingestor,
