@@ -1,6 +1,24 @@
 # Code-Graph-RAG
 
-A graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs in Memgraph, and enables natural language querying, editing, and optimisation.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+
+## What It Does
+
+Point it at a repository and it reads every source file, extracts functions, classes, methods, and modules along with the relationships between them, and stores the result as an interconnected graph. Once the graph exists you can:
+
+- Ask questions about the codebase in natural language and get answers grounded in the real structure.
+- Retrieve the actual source of any function, class, or method by name or by intent.
+- Edit code through the agent with AST-based surgical patching and a diff preview before anything changes.
+- Search and rewrite code structurally by AST pattern with ast-grep, instead of text or regex.
+- Trace data flow through assignments, calls, and I/O sinks via `FLOWS_TO` taint edges.
+- Optimise code against language best practices or your own coding standards.
+- Find dead code by walking call and reference edges from entry points.
+- Group several repositories into a named workspace and query them as one graph.
+- Trace calls between microservices: route decorators become endpoint templates, and HTTP client URLs resolve to the handlers that serve them, linking services across project boundaries.
+
+## Supported Languages
+
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby has structural support (modules, functions, classes, and imports) through the pluggable ast-grep tier, which requires the `ast-grep` extra (`pip install 'code-graph-rag[ast-grep]'`).
 
 ## Install
 
@@ -78,17 +96,30 @@ cgr dead-code --format json --fail-on-found     # CI-friendly report
 Results are candidates for review, not a guaranteed delete list. See the
 [Dead Code Detection guide](https://docs.code-graph-rag.com/guide/dead-code/).
 
-**Run as an MCP server (for Claude Code):**
+**Group repositories into a workspace and query them together:**
 
 ```bash
-cgr mcp-server
+cgr workspace create my-platform
+cgr workspace add-repo my-platform ./service-a
+cgr workspace add-repo my-platform ./service-b
+cgr start --workspace my-platform
 ```
 
-**Check your setup:**
+**Inspect the graph and the stack:**
 
 ```bash
-cgr doctor
+cgr stats                                  # node and relationship counts
+cgr status                                 # stack state and last sync per project
+cgr doctor                                 # check dependencies and configuration
 ```
+
+## MCP Server
+
+Run `cgr mcp-server` to serve the tools over stdio or HTTP for Claude Code and other MCP clients. The MCP surface registers:
+
+- **Ask and retrieve:** `ask_agent`, `query_code_graph`, `get_code_snippet`, and `semantic_search` (needs the `semantic` extra)
+- **Structural editing:** `surgical_replace_code`, plus `structural_search` and `structural_replace` (need the `ast-grep` extra)
+- **Files and projects:** `read_file`, `write_file`, `list_directory`, `list_projects`, `index_repository`, `update_repository`, `delete_project`, `wipe_database`
 
 ## Python SDK
 
