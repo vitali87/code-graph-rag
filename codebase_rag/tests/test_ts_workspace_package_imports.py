@@ -351,6 +351,37 @@ class TestWorkspaceResolver:
             resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
         )
 
+    def test_exports_map_supersedes_the_legacy_entry_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # A package that declares `exports` is described by it alone; Node
+        # ignores `main`/`module`/`types` entirely, so a root export naming a
+        # file this repo does not hold must not fall back to them.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={".": "./src/missing.ts"},
+                main="./src/legacy.ts",
+            ),
+            {"src/legacy.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert resolve_js_workspace_import(packages, "@acme/sdk", tmp_path) is None
+
+    def test_absolute_target_is_refused(self, tmp_path: Path) -> None:
+        # An absolute target escapes the package the same way `../` does.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", main="/etc/passwd.ts"),
+            {"src/index.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk", tmp_path)
+            == "packages/sdk/src/index"
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.

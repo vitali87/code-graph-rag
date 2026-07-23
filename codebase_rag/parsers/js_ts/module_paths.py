@@ -118,7 +118,10 @@ def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _Manifest
     # A conditions object (`{"import": .., "require": .., "types": ..}`) points
     # at one artefact family, so each leaf is tried until a source is found.
     targets = _exports_matches(manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath)
-    if subpath == cs.PATH_CURRENT_DIR:
+    # `exports` describes the package alone: Node ignores the legacy entry
+    # fields wherever it applies, so they are only consulted when no export
+    # claimed this subpath.
+    if not targets.claimed and subpath == cs.PATH_CURRENT_DIR:
         targets.paths.extend(
             value
             for key in cs.JS_PACKAGE_ENTRY_KEYS
@@ -210,10 +213,15 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
     while relative.startswith(f"{cs.PATH_CURRENT_DIR}{cs.SEPARATOR_SLASH}"):
         relative = relative[2:]
     relative = posixpath.normpath(relative)
-    if relative in (
-        cs.PATH_CURRENT_DIR,
-        cs.PATH_PARENT_DIR,
-    ) or relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"):
+    if (
+        PurePosixPath(relative).is_absolute()
+        or relative
+        in (
+            cs.PATH_CURRENT_DIR,
+            cs.PATH_PARENT_DIR,
+        )
+        or relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}")
+    ):
         return None
     for ext in cs.JS_TS_MODULE_EXTENSIONS:
         if relative.endswith(ext):
