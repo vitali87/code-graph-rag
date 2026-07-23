@@ -1317,20 +1317,21 @@ class IOAccessProcessor:
 
     @staticmethod
     def _object_pair_string(obj: Node, descriptor: LanguageDescriptor) -> str | None:
-        # The string value of the object's `url` property, if any.
+        # The identity of the object's `url` property, if any: plain and
+        # template-literal urls render exactly like every other sink target
+        # (issue #884); a quoted key (`{ "url": ... }`) counts too.
         for pair in obj.named_children:
             if pair.type != descriptor.pair_type:
                 continue
             key = safe_decode_text(pair.child_by_field_name(cs.FIELD_KEY))
-            if key != HTTP_METHOD_OPTION_KEY_URL:
+            if key is None or key.strip("'\"") != HTTP_METHOD_OPTION_KEY_URL:
                 continue
-            value = pair.child_by_field_name(cs.FIELD_VALUE)
-            if value is None or value.type != descriptor.string_type:
-                return None
-            return "".join(
-                safe_decode_text(c) or ""
-                for c in value.named_children
-                if c.type == descriptor.string_content_type
+            return string_literal(
+                pair.child_by_field_name(cs.FIELD_VALUE),
+                descriptor.string_type,
+                descriptor.string_content_type,
+                template_type=descriptor.template_string_type,
+                substitution_type=descriptor.template_substitution_type,
             )
         return None
 

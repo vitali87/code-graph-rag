@@ -1426,3 +1426,50 @@ class TestTsGeneratedClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_quoted_url_key_binds(self, tmp_path: Path) -> None:
+        # Object keys may be string literals: `{ "url": '/q' }`.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  q(options?: any) {\n"
+                "    return this.client.get({ \"url\": '/q' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "sdk.AuthClient.q", READS_FROM, "resource::NETWORK::/q"), rels
+
+    def test_template_literal_url_binds(self, tmp_path: Path) -> None:
+        # A template-literal url keeps fragments and renders substitutions as
+        # placeholders, like every other sink identity (issue #884).
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  t(id: string, options?: any) {\n"
+                "    return this.client.get({ url: `/users/${id}` });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "sdk.AuthClient.t", READS_FROM, "resource::NETWORK::/users/{id}"
+        ), rels
+
+    def test_empty_url_does_not_emit_degenerate_resource(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  e(options?: any) {\n"
+                "    return this.client.get({ url: '' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any(b == "resource::NETWORK::" for _a, _r, b in rels), rels
