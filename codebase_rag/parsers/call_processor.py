@@ -30,6 +30,7 @@ from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
 from .dart import utils as dart_utils
+from .dispatch_registry import DispatchRegistryProcessor
 from .flow_access import FlowProcessor
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -538,6 +539,7 @@ class CallProcessor:
         "_io_processor",
         "_flow_processor",
         "_rpc_exposure",
+        "_dispatch_registry",
     )
 
     def __init__(
@@ -599,6 +601,12 @@ class CallProcessor:
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
             go_package_names=self._go_package_names,
+        )
+        self._dispatch_registry = DispatchRegistryProcessor(
+            ingestor=ingestor,
+            selection=selection,
+            function_registry=function_registry,
+            import_processor=import_processor,
         )
         self._rpc_exposure = GoRpcExposureProcessor(
             ingestor=ingestor,
@@ -1022,6 +1030,8 @@ class CallProcessor:
 
         try:
             module_qn = self._module_qn(file_path, relative_path)
+
+            self._dispatch_registry.process_file(root_node, module_qn, language)
 
             call_name_cache: dict[int, str | None] = {}
 
@@ -4675,6 +4685,9 @@ class CallProcessor:
                         callee_qn, position, keyword_name, resolved[1], "", ""
                     )
                 )
+
+    def finalize_dispatch(self) -> None:
+        self._dispatch_registry.finalize()
 
     def finalize_flow(self) -> None:
         # Resolve deferred FLOWS_TO return-taint once every function body has

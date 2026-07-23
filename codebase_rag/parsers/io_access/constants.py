@@ -29,6 +29,18 @@ class ResourceKind(StrEnum):
     # implementations of the same contract meet at one shared node keyed
     # `<ServiceStem>.<Method>`, no URL literal involved.
     RPC = "RPC"
+    # A string-keyed dispatch registration (issue #913): task-queue and
+    # workflow handlers registered under a string key meet their producers
+    # at one shared node keyed by that string.
+    DISPATCH = "DISPATCH"
+
+
+# Dispatch registrar decorators (`@flow(name=...)`, `@task`) and the producer
+# keywords whose literal value names the dispatched key (issue #913).
+DISPATCH_REGISTRARS = frozenset({"flow", "task"})
+DISPATCH_PRODUCER_KEYWORDS = frozenset({"workflow_name"})
+DISPATCH_NAME_KEYWORD = "name"
+DISPATCH_DEPLOYMENT_SEPARATOR = "/"
 
 
 class IODirection(StrEnum):
