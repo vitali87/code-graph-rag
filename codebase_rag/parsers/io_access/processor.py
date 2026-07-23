@@ -1410,15 +1410,8 @@ class IOAccessProcessor:
         if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
             sources.append((root, import_map))
         for sibling_qn, path in self._module_paths.items():
-            if sibling_qn == module_qn or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
-                continue
-            if not _same_go_package(sibling_qn, path, requester_dir, package_qn):
-                continue
-            sibling_package = self._go_package_names.get(sibling_qn)
-            if (
-                requester_package is not None
-                and sibling_package is not None
-                and sibling_package != requester_package
+            if sibling_qn == module_qn or not self._go_sibling_contributes(
+                sibling_qn, path, requester_dir, package_qn, requester_package
             ):
                 continue
             entry = self._ast_cache.load(path) if self._ast_cache else None
@@ -1428,6 +1421,28 @@ class IOAccessProcessor:
                 (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
             )
         return sources
+
+    def _go_sibling_contributes(
+        self,
+        sibling_qn: str,
+        path: Path,
+        requester_dir: Path | None,
+        package_qn: str,
+        requester_package: str | None,
+    ) -> bool:
+        # Membership is (directory, `package` clause): an external
+        # `package svc_test` requester shares a directory with `package svc`
+        # production files without sharing their fields.
+        if path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+            return False
+        if not _same_go_package(sibling_qn, path, requester_dir, package_qn):
+            return False
+        sibling_package = self._go_package_names.get(sibling_qn)
+        return (
+            requester_package is None
+            or sibling_package is None
+            or sibling_package == requester_package
+        )
 
     def _emit_rpc_field_method(
         self,
