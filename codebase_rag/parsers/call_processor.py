@@ -36,6 +36,7 @@ from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import utils as java_utils
 from .lua import utils as lua_utils
+from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -536,6 +537,7 @@ class CallProcessor:
         "_factory_calls",
         "_io_processor",
         "_flow_processor",
+        "_rpc_exposure",
     )
 
     def __init__(
@@ -597,6 +599,17 @@ class CallProcessor:
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
             go_package_names=self._go_package_names,
+        )
+        self._rpc_exposure = GoRpcExposureProcessor(
+            ingestor=ingestor,
+            import_processor=import_processor,
+            selection=selection,
+            function_registry=function_registry,
+            simple_name_lookup=type_inference.simple_name_lookup,
+            module_paths=self.module_qn_to_file_path,
+            go_package_names=self._go_package_names,
+            go_function_return_types=type_inference.go_function_return_types,
+            ast_cache=ast_cache,
         )
         self._flow_processor = FlowProcessor(
             ingestor,
@@ -2195,6 +2208,7 @@ class CallProcessor:
         self._io_processor.process_io_for_caller(
             caller_node, caller_spec, module_qn, language
         )
+        self._rpc_exposure.process_caller(caller_node, module_qn, language)
         self._flow_processor.process_flow_for_caller(
             caller_node,
             caller_spec,
