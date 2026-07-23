@@ -150,6 +150,25 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
 TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
     {"node_modules", "dist", "build", "out", ".git"}
 )
+# Contract files that declare service operations (issue #912): OpenAPI specs
+# in JSON or YAML, and protobuf service definitions. The markers gate parsing
+# so the JSON and YAML a repo is otherwise full of is never read as a spec.
+CONTRACT_JSON_EXTENSION = ".json"
+CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({".json", ".yaml", ".yml"})
+CONTRACT_PROTO_EXTENSION = ".proto"
+CONTRACT_SPEC_VERSION_KEYS: tuple[str, ...] = ("openapi", "swagger")
+CONTRACT_SPEC_MARKERS: tuple[str, ...] = ("openapi", "swagger")
+CONTRACT_PATHS_KEY = "paths"
+# The keys under an OpenAPI path item that name an operation; every other key
+# there (parameters, servers, summary) describes the path, not an operation.
+CONTRACT_OPERATION_METHODS: frozenset[str] = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+)
+CONTRACT_OPERATION_ID_KEY = "operationId"
+# A spec is a document, not a data dump; anything larger is not one, and the
+# cap keeps the walk from parsing a huge generated file.
+CONTRACT_MAX_FILE_BYTES = 8 * 1024 * 1024
+
 JS_INDEX_STEM = "index"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"

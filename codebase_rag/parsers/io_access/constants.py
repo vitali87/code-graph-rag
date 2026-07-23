@@ -33,6 +33,10 @@ class ResourceKind(StrEnum):
     # workflow handlers registered under a string key meet their producers
     # at one shared node keyed by that string.
     DISPATCH = "DISPATCH"
+    # An operation a contract file declares (issue #912, phase 2): the
+    # canonical node every generated artefact of that operation resolves to,
+    # keyed `<contract>.<operation>`.
+    CONTRACT = "CONTRACT"
 
 
 # Dispatch registrar decorators (`@flow(name=...)`, `@task`) and the producer
