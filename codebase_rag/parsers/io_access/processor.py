@@ -1299,20 +1299,31 @@ class IOAccessProcessor:
         self._emit(caller_spec, direction, ResourceKind.NETWORK, url)
         return True
 
-    @staticmethod
-    def _names_client(receiver: Node, descriptor: LanguageDescriptor) -> bool:
-        # The receiver mentions a `client` binding somewhere (`this.client`,
-        # `options?.client ?? this.client`, bare `client`); a plain `map.get`
-        # does not.
-        stack = [receiver]
-        while stack:
-            node = stack.pop()
-            stack.extend(node.named_children)
-            if (
-                node.type in (descriptor.identifier_type, cs.TS_PROPERTY_IDENTIFIER)
-                and safe_decode_text(node) == _CLIENT_RECEIVER_NAME
-            ):
-                return True
+    @classmethod
+    def _names_client(cls, receiver: Node, descriptor: LanguageDescriptor) -> bool:
+        # The verb's IMMEDIATE receiver must itself be client-shaped: a bare
+        # `client`, a member whose TAIL property is `client` (`this.client`,
+        # `options?.client`), or wrappers/alternatives thereof
+        # (`(options?.client ?? this.client)`, `client!`). An ancestor
+        # mention is not enough: `this.client.cache.get(...)` calls the
+        # cache, not the client.
+        if receiver.type == descriptor.identifier_type:
+            return safe_decode_text(receiver) == _CLIENT_RECEIVER_NAME
+        if receiver.type == descriptor.member_expression_type:
+            prop = receiver.child_by_field_name(descriptor.property_field)
+            return safe_decode_text(prop) == _CLIENT_RECEIVER_NAME
+        if receiver.type in (cs.TS_PARENTHESIZED_EXPRESSION, cs.TS_BINARY_EXPRESSION):
+            return any(
+                cls._names_client(child, descriptor)
+                for child in receiver.named_children
+            )
+        if receiver.type == cs.TS_JS_TERNARY_EXPRESSION:
+            return any(
+                cls._names_client(child, descriptor)
+                for child in receiver.named_children[1:]
+            )
+        if receiver.type == cs.TS_NON_NULL_EXPRESSION and receiver.named_children:
+            return cls._names_client(receiver.named_children[0], descriptor)
         return False
 
     @staticmethod

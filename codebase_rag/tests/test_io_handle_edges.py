@@ -1473,3 +1473,19 @@ class TestTsGeneratedClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert not any(b == "resource::NETWORK::" for _a, _r, b in rels), rels
+
+    def test_nested_member_below_client_is_not_a_sink(self, tmp_path: Path) -> None:
+        # `this.client.cache.get({url})` calls the CACHE, not the client: the
+        # verb's immediate receiver must itself be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  c(options?: any) {\n"
+                "    return this.client.cache.get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
