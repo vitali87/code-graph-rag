@@ -166,7 +166,7 @@ jobs:
           sed -E 's| by @[^ ]+ in https://[^ ]+||' /tmp/notes.md > /tmp/titles.md
           jq -n --rawfile notes /tmp/titles.md \
             '{model: "default", temperature: 0.3, max_tokens: 900, messages: [
-              {role: "user", content: ("Write a \"## Highlights\" section for a software release: 3 to 7 bullets, each starting with a short bold theme followed by a colon, grouping the most important changes. Use British English. Never use em-dashes or en-dashes. Ground every claim strictly in the pull request titles below; do not invent anything. Output only the markdown section, starting with the line \"## Highlights\".\n\n" + $notes)}
+              {role: "user", content: ("Write a \"## Highlights\" section for a software release: a markdown bullet list of 3 to 7 items, each line starting with \"* \" then a short bold theme followed by a colon, grouping the most important changes. Use British English. Never use em-dashes or en-dashes. Ground every claim strictly in the pull request titles below; do not invent anything. Output only the markdown section, starting with the line \"## Highlights\".\n\n" + $notes)}
             ]}' > /tmp/req.json
           curl -sf --max-time 1500 "${RESOLVE_ARGS[@]}" \
             -H "Authorization: Bearer ${HIGHLIGHTS_API_TOKEN}" \
