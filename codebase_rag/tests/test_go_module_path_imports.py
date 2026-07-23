@@ -296,3 +296,58 @@ def test_duplicate_module_paths_resolver_prefers_existing_package_dir(
     mappings = discover_go_module_paths(tmp_path)
     resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen/util")
     assert resolved == "real.util", (mappings, resolved)
+
+
+def test_duplicate_module_root_import_resolver_unit(tmp_path: Path) -> None:
+    # The import names the module PATH itself. Both duplicate anchors exist
+    # on disk, so directory existence cannot discriminate; the stub holds
+    # only `package main`, which cannot be imported, and must lose to the
+    # anchor with an importable root package.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(
+        "package main\n\nfunc main() {}\n", encoding="utf-8"
+    )
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        encoding="utf-8",
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
+
+
+def test_duplicate_module_root_import_prefers_importable_package(
+    tmp_path: Path,
+) -> None:
+    # Pipeline-level regression of the same shape.
+    files = {
+        "go.mod": GO_MOD,
+        "a_stub/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "a_stub/main.go": "package main\n\nfunc main() {}\n",
+        "gen/go.mod": "module github.com/acme/mytool/gen\n\ngo 1.22\n",
+        "gen/gen.go": 'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+        # Decoy for the name fallback if the import misresolves.
+        "meta/meta.go": 'package meta\n\nfunc Version() string {\n\treturn "x"\n}\n',
+        "main.go": (
+            "package main\n\n"
+            'import gen "github.com/acme/mytool/gen"\n\n'
+            "func main() {\n"
+            "    gen.Version()\n"
+            "}\n"
+        ),
+    }
+    calls = _calls(_run_rels(tmp_path, files), "main.main")
+    assert "mytool.gen.gen.Version" in calls, calls
+    assert "mytool.meta.meta.Version" not in calls, calls

@@ -52,6 +52,26 @@ def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str, Path]]:
     return mappings
 
 
+def _has_importable_root_package(anchor: Path) -> bool:
+    # True when a .go file directly in `anchor` declares a non-main package.
+    try:
+        go_files = [p for p in anchor.iterdir() if p.suffix == cs.EXT_GO]
+    except OSError:
+        return False
+    for path in go_files:
+        try:
+            text = path.read_text(encoding=cs.ENCODING_UTF8)
+        except (OSError, ValueError):
+            continue
+        for line in text.splitlines():
+            parts = line.split(cs.GO_MOD_COMMENT_PREFIX, 1)[0].split()
+            if len(parts) >= 2 and parts[0] == cs.GO_KEYWORD_PACKAGE:
+                if parts[1] != cs.GO_PACKAGE_MAIN:
+                    return True
+                break
+    return False
+
+
 def resolve_go_import_path(
     module_paths: list[tuple[str, str, Path]], import_path: str
 ) -> str | None:
@@ -64,7 +84,12 @@ def resolve_go_import_path(
     matches: list[tuple[str, str, bool]] = []
     for module_path, dotted_dir, anchor in module_paths:
         if import_path == module_path:
-            matches.append((module_path, dotted_dir, anchor.is_dir()))
+            # Every discovered anchor exists, so for a module-ROOT import the
+            # discriminator is whether the root holds an importable package:
+            # a stub's `package main` cannot be imported.
+            matches.append(
+                (module_path, dotted_dir, _has_importable_root_package(anchor))
+            )
         elif import_path.startswith(f"{module_path}{cs.SEPARATOR_SLASH}"):
             rel = import_path[len(module_path) + 1 :]
             dotted_rel = rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
