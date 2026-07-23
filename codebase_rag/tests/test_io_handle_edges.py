@@ -1009,3 +1009,66 @@ class TestGoRpcTypedClientEvidence:
         }
         rels = _run_io(tmp_path, files)
         assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+
+    def test_field_declared_in_sibling_file_binds(self, tmp_path: Path) -> None:
+        # Go packages split declaration and use across files: the struct
+        # (and its connect-typed field) lives in service.go, the handler
+        # calling it in create.go. The field map is package-level.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "Server.Create", READS_FROM, self._RPC), rels
+
+    def test_field_in_other_directory_does_not_leak(self, tmp_path: Path) -> None:
+        # A connect-typed field in a DIFFERENT package is not evidence here.
+        files = {
+            "other/service.go": (
+                "package other\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_sibling_test_file_field_is_ignored(self, tmp_path: Path) -> None:
+        # A `_test.go` sibling compiles only under `go test`; its fake
+        # struct fields are not production evidence.
+        files = {
+            "svc/service_test.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type fakeServer struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
