@@ -12,7 +12,7 @@ permissions:
 jobs:
   sonarcloud:
     name: SonarCloud Analysis
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    if: github.actor != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
