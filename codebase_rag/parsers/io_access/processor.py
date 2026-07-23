@@ -1382,9 +1382,7 @@ class IOAccessProcessor:
             entry = self._ast_cache.load(path) if self._ast_cache else None
             if entry is None or entry[1] is not cs.SupportedLanguage.GO:
                 continue
-            sibling_imports = self._import_processor.import_mapping.get(
-                sibling_qn, {}
-            )
+            sibling_imports = self._import_processor.import_mapping.get(sibling_qn, {})
             _collect_go_file_fields(entry[0], sibling_imports, fields, conflicted)
         # A name typed to DIFFERENT services in this package cannot be told
         # apart by the flat receiver-tail lookup: drop it rather than guess.
