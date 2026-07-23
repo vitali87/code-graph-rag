@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import NamedTuple
 
@@ -87,6 +88,28 @@ class _LeanHandles(NamedTuple):
     identity_new_types: dict[str, ResourceKind]
     arg_sinks: dict[str, ArgHandleSink]
     bindings: dict[str, HandleBinding]
+    # connect-go generated client bindings (`userv1connect.NewUserServiceClient`)
+    # are recognised by shape, not by a registry entry (issue #912). Go only:
+    # the `<pkg>connect.New<Stem>Client` convention is connect-go codegen.
+    rpc_clients: bool
+
+
+# The connect-go constructor: `New<Stem>Client`, qualified by a generated
+# package whose name ends in `connect`.
+_RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
+_RPC_PACKAGE_SUFFIX = "connect"
+
+
+def _rpc_client_binding(raw: str) -> HandleBinding | None:
+    qualifier, sep, func = raw.rpartition(cs.SEPARATOR_DOT)
+    if not sep or not qualifier.rsplit(cs.SEPARATOR_DOT, 1)[-1].endswith(
+        _RPC_PACKAGE_SUFFIX
+    ):
+        return None
+    match = _RPC_CLIENT_RE.match(func)
+    if match is None:
+        return None
+    return HandleBinding(kind=ResourceKind.RPC, identity=match.group(1))
 
 
 def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
@@ -106,6 +129,7 @@ def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
         identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(language, {}),
         arg_sinks=IO_ARG_HANDLE_SINKS.get(language, {}),
         bindings={},
+        rpc_clients=language is cs.SupportedLanguage.GO,
     )
 
 
@@ -1197,6 +1221,18 @@ class IOAccessProcessor:
         binding = lean_handles.bindings.get(receiver)
         if binding is None:
             return False
+        if binding.kind == ResourceKind.RPC:
+            # A generated client exposes exactly its RPC methods, all
+            # exported; the operation is request AND response (issue #912).
+            if not method[:1].isupper():
+                return False
+            self._emit(
+                caller_spec,
+                IODirection.READ_WRITE,
+                ResourceKind.RPC,
+                f"{binding.identity}{cs.SEPARATOR_DOT}{method}",
+            )
+            return True
         direction = lean_handles.methods.get(binding.kind, {}).get(method)
         if direction is None:
             return False
@@ -1375,6 +1411,10 @@ class IOAccessProcessor:
                 parent.kind, frozenset()
             ):
                 return parent
+        if lean_handles.rpc_clients:
+            rpc = _rpc_client_binding(raw)
+            if rpc is not None:
+                return rpc
         ctor = self._resolve_sink(
             raw,
             import_map,

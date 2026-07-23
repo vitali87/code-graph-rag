@@ -25,6 +25,10 @@ class ResourceKind(StrEnum):
     ENV = "ENV"
     SOCKET = "SOCKET"
     ENDPOINT = "ENDPOINT"
+    # A codegen contract operation (issue #912): client stubs and server
+    # implementations of the same contract meet at one shared node keyed
+    # `<ServiceStem>.<Method>`, no URL literal involved.
+    RPC = "RPC"
 
 
 class IODirection(StrEnum):
