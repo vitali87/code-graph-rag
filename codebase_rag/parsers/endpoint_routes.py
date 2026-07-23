@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from .endpoint_prefixes import UNKNOWN_LEAD
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -457,7 +458,14 @@ def _go_server_evidence(
     args: list[Node],
     evidence: _ModuleEvidence,
     concat_path: bool,
+    unknown_lead: bool = False,
 ) -> bool:
+    if unknown_lead:
+        # Nothing resolved the lead, so the generated wiring shape below is
+        # the ONLY evidence that this is a route rather than a client
+        # request: a callback argument alone would make an assertion helper
+        # passed to `client.Get(base+"/x", check)` look like a server.
+        return _go_wrapper_selector_evidence(fn, field, args, evidence, concat_path)
     if _receiver_is_framework(fn, evidence):
         return True
     if (
@@ -473,7 +481,21 @@ def _go_server_evidence(
     # (`wrapper := ServerInterfaceWrapper{...}`) in the SAME function (or at
     # file scope). A client passing `opts.Header` after a concat path has no
     # in-scope binding and stays out.
-    if (
+    if _go_wrapper_selector_evidence(fn, field, args, evidence, concat_path):
+        return True
+    return _handler_evidence(
+        args[1:], evidence, frozenset({cs.TS_GO_FUNC_LITERAL}), cs.TS_GO_IDENTIFIER
+    )
+
+
+def _go_wrapper_selector_evidence(
+    fn: Node,
+    field: str,
+    args: list[Node],
+    evidence: _ModuleEvidence,
+    concat_path: bool,
+) -> bool:
+    return (
         concat_path
         and field in _GO_VERB_METHODS
         and any(
@@ -486,10 +508,6 @@ def _go_server_evidence(
             )
             for arg in args[1:]
         )
-    ):
-        return True
-    return _handler_evidence(
-        args[1:], evidence, frozenset({cs.TS_GO_FUNC_LITERAL}), cs.TS_GO_IDENTIFIER
     )
 
 
@@ -517,13 +535,23 @@ def _go_path_value(
         )
         if left is not None and right is not None:
             return left + right
-        # The generated mount prefix is often a STRUCT FIELD
-        # (`options.BaseURL+"/v2/things"`), which no module-const lookup can
-        # resolve. The rooted literal suffix is still the route; an unknown
-        # mount prefix is what prefix-tolerant linking already handles, so
-        # keeping the suffix beats dropping the registration entirely.
-        if left is None and right is not None and right.startswith("/"):
-            return right
+        # The generated mount prefix is a STRUCT FIELD
+        # (`options.BaseURL+"/v2/things"`), which no const lookup can resolve.
+        # The suffix is a real route under an unknown lead, and `/**` is what
+        # the template vocabulary already spells for that, so the
+        # registration keeps its full meaning instead of claiming a lead it
+        # does not have. Restricted to a field access: any other unresolvable
+        # left operand may be knowable (a function-local literal) or
+        # truncated (the depth valve), and a wrong template is worse than none.
+        left_node = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        if (
+            left is None
+            and right is not None
+            and right.startswith(cs.SEPARATOR_SLASH)
+            and left_node is not None
+            and left_node.type == cs.TS_GO_SELECTOR_EXPRESSION
+        ):
+            return f"{UNKNOWN_LEAD}{right}"
     return None
 
 
@@ -542,7 +570,8 @@ def _go_registration(
     # Only a CONCATENATION is the generated registration shape; a bare
     # const identifier can just as well hold a client's URL.
     concat_path = path_node is not None and path_node.type == cs.TS_BINARY_EXPRESSION
-    if not _go_server_evidence(fn, field, args, evidence, concat_path):
+    unknown_lead = path.startswith(UNKNOWN_LEAD)
+    if not _go_server_evidence(fn, field, args, evidence, concat_path, unknown_lead):
         return None
     handler = _handler_identifier(
         args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER

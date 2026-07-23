@@ -418,33 +418,87 @@ class TestGoGeneratedRoutes:
         "}\n"
     )
 
-    def test_unresolvable_prefix_keeps_the_literal_suffix(self, tmp_path: Path) -> None:
-        # The codegen mount prefix is a STRUCT FIELD, not a module const, so
-        # nothing can resolve it; the literal suffix is still the route, and
-        # prefix-tolerant linking already handles an unknown mount (#911).
-        edges = _run(tmp_path, {"gen.go": self._FIBER_SOURCE}, "go")
-        assert _endpoint(edges, "gen.RegisterHandlersWithOptions", "POST /v2/things"), (
-            edges
-        )
-        assert _endpoint(
-            edges, "gen.RegisterHandlersWithOptions", "GET /v2/things/:id"
-        ), edges
-
-    def test_unresolvable_prefix_without_handler_is_ignored(
+    def test_unresolvable_prefix_keeps_the_suffix_under_an_unknown_lead(
         self, tmp_path: Path
     ) -> None:
-        # The same shape on the CLIENT side registers nothing: no handler
-        # argument, no wrapper binding, so no server evidence.
+        # The codegen mount prefix is a STRUCT FIELD, so nothing can resolve
+        # it. The suffix is a real route under an unknown lead, which is what
+        # `/**` means to the template matcher; asserting the bare suffix would
+        # claim a lead this registration does not have.
+        edges = _run(tmp_path, {"gen.go": self._FIBER_SOURCE}, "go")
+        assert _endpoint(
+            edges, "gen.RegisterHandlersWithOptions", "POST /**/v2/things"
+        ), edges
+        assert _endpoint(
+            edges, "gen.RegisterHandlersWithOptions", "GET /**/v2/things/:id"
+        ), edges
+
+    def test_unresolvable_prefix_with_a_callback_argument_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # A client request built the same way hands a DECLARED FUNCTION to the
+        # call as its response callback. With no resolved lead the generated
+        # wiring shape is the only thing that tells the two apart, so an
+        # assertion helper must not become the server for that route.
         files = {
-            "client.go": (
+            "clienthelper.go": (
                 "package main\n\n"
                 "type Options struct {\n\tBaseURL string\n}\n\n"
-                "func fetchThing(c HTTPClient, options Options) {\n"
-                '\tc.Get(options.BaseURL + "/v2/things")\n'
+                "func assertBody(resp *Response) {}\n\n"
+                "func checkThings(c HTTPClient, options Options) {\n"
+                '\tc.Get(options.BaseURL+"/v2/things", assertBody)\n'
                 "}\n"
             ),
         }
         assert not _run(tmp_path, files, "go")
+
+    def test_unresolvable_prefix_with_an_inline_callback_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "client2.go": (
+                "package main\n\n"
+                "type Options struct {\n\tBaseURL string\n}\n\n"
+                "func checkThings(c HTTPClient, options Options) {\n"
+                '\tc.Get(options.BaseURL+"/v2/things", func(b []byte) {})\n'
+                "}\n"
+            ),
+        }
+        assert not _run(tmp_path, files, "go")
+
+    def test_resolvable_local_prefix_is_never_truncated(self, tmp_path: Path) -> None:
+        # A function-scoped literal prefix is knowable, just not by the
+        # module-const map. Dropping it and keeping `/things` would assert a
+        # route that does not exist.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                "func getThings(c Ctx) error { return nil }\n\n"
+                "func mount(r Router) {\n"
+                '\tbase := "/api/v1"\n'
+                '\tr.Get(base+"/things", getThings)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not _endpoint(edges, "routes.getThings", "GET /things"), edges
+
+    def test_unknown_lead_needs_a_rooted_suffix(self, tmp_path: Path) -> None:
+        # `Handle`/`HandleFunc` read a `VERB /path` pattern, so an unrooted
+        # suffix would otherwise slip through as a pattern string.
+        files = {
+            "mux.go": (
+                "package main\n\n"
+                'import "net/http"\n\n'
+                "type Opts struct {\n\tPrefix string\n}\n\n"
+                "func h(w http.ResponseWriter, r *http.Request) {}\n\n"
+                "func mount(mux *http.ServeMux, o Opts) {\n"
+                '\tmux.Handle(o.Prefix+"GET /things", h)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not any("things" in identity for _l, _q, identity in edges), edges
 
     def test_unresolvable_prefix_with_relative_suffix_is_ignored(
         self, tmp_path: Path
