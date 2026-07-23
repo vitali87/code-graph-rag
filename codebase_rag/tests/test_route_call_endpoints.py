@@ -356,6 +356,228 @@ class TestStaleRouteCleanup:
         ), cleanups
 
 
+class TestGoGeneratedRoutes:
+    # Issue #909: oapi-codegen emits `router.Get(BaseURL+"/x", wrapper.H)`;
+    # the path is a module-const concatenation and the handler an attribute.
+
+    _GEN_SOURCE = (
+        "package main\n\n"
+        'import "github.com/go-chi/chi/v5"\n\n'
+        'const BaseURL = "/api/v1"\n\n'
+        "type ServerInterfaceWrapper struct {\n"
+        "\tHandler ServerInterface\n"
+        "}\n\n"
+        "func (siw *ServerInterfaceWrapper) GetMe(w ResponseWriter, r *Request) {}\n\n"
+        "func (siw *ServerInterfaceWrapper) PostLogout(w ResponseWriter, r *Request) {}\n\n"
+        "func HandlerFromMux(si ServerInterface, router chi.Router) {\n"
+        "\twrapper := ServerInterfaceWrapper{Handler: si}\n"
+        '\trouter.Get(BaseURL+"/me", wrapper.GetMe)\n'
+        '\trouter.Post(BaseURL+"/logout", wrapper.PostLogout)\n'
+        "}\n"
+    )
+
+    def test_const_concat_with_attribute_handler_registers(
+        self, tmp_path: Path
+    ) -> None:
+        edges = _run(tmp_path, {"gen.go": self._GEN_SOURCE}, "go")
+        assert _endpoint(edges, "gen.HandlerFromMux", "GET /api/v1/me"), edges
+        assert _endpoint(edges, "gen.HandlerFromMux", "POST /api/v1/logout"), edges
+
+    def test_const_block_resolves_too(self, tmp_path: Path) -> None:
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                "const (\n"
+                '\tprefix = "/internal"\n'
+                ")\n\n"
+                "type healthWrapper struct{}\n\n"
+                "func (h healthWrapper) Health(w ResponseWriter, r *Request) {}\n\n"
+                "func mount(router Router) {\n"
+                "\twrapper := healthWrapper{}\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.mount", "GET /internal/health"), edges
+
+    def test_client_const_concat_without_handler_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "func fetchMe(c HTTPClient) {\n"
+                '\tc.Get(baseURL + "/me")\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_function_local_strings_do_not_resolve(self, tmp_path: Path) -> None:
+        # A flat name map would let one function's local leak into another
+        # and mint a WRONG template; only module-level consts resolve.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                "func other() {\n"
+                '\tprefix := "/wrong"\n'
+                "\t_ = prefix\n"
+                "}\n\n"
+                "func mount(router Router) {\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_plain_literal_with_selector_arg_is_ignored(self, tmp_path: Path) -> None:
+        # An outbound client call can pass a selector too
+        # (`client.Get("/users", opts.Header)`); selector-handler evidence
+        # only counts on a const-derived path, the generated shape.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                "func fetchUsers(client HTTPClient, opts Options) {\n"
+                '\tclient.Get("/users", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_concat_path_with_option_selector_is_ignored(self, tmp_path: Path) -> None:
+        # `client.Get(baseURL + "/me", opts.Header)` concatenates a const
+        # AND passes a selector, but `opts` is a parameter, not a wrapper
+        # bound to a module-declared type: no registration.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "func fetchMe(client HTTPClient, opts Options) {\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_bare_const_path_with_selector_arg_is_ignored(self, tmp_path: Path) -> None:
+        # A client can hold its URL in a module const too; only a
+        # concatenation is the generated registration shape.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/users"\n\n'
+                "func fetchUsers(client HTTPClient, opts Options) {\n"
+                "\tclient.Get(baseURL, opts.Header)\n"
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_same_function_options_struct_is_ignored(self, tmp_path: Path) -> None:
+        # `opts := Options{}` right next to the call still is not wrapper
+        # evidence: `Header` is a field access, not a method declared on
+        # `Options` in this module.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                "func fetchMe(client HTTPClient) {\n"
+                "\topts := Options{}\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_non_handler_method_on_options_struct_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # Even a genuine method on the bound type is not wrapper evidence
+        # unless its signature is a handler's; `Header(timeout int)` is an
+        # outbound request option, not generated wiring.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                'func (o Options) Header(timeout int) string { return "" }\n\n'
+                "func fetchMe(client HTTPClient) {\n"
+                "\topts := Options{}\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_context_style_wrapper_method_registers(self, tmp_path: Path) -> None:
+        # Echo-style codegen hands the wrapper a single Context parameter.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                'const base = "/api"\n\n'
+                "type ServerInterfaceWrapper struct{}\n\n"
+                "func (w *ServerInterfaceWrapper) GetMe(ctx echo.Context) error"
+                " { return nil }\n\n"
+                "func register(router Router) {\n"
+                "\twrapper := ServerInterfaceWrapper{}\n"
+                '\trouter.Get(base+"/me", wrapper.GetMe)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.register", "GET /api/me"), edges
+
+    def test_wrapper_binding_in_another_function_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # A composite-literal binding legitimises selector handlers only
+        # inside its own function; one in `setup` must not turn a client
+        # call in `fetchMe` into a registration.
+        files = {
+            "client.go": (
+                "package main\n\n"
+                'const baseURL = "/api/v1"\n\n'
+                "type Options struct{}\n\n"
+                "func setup() {\n"
+                "\topts := Options{}\n"
+                "\t_ = opts\n"
+                "}\n\n"
+                "func fetchMe(client HTTPClient, opts Options) {\n"
+                '\tclient.Get(baseURL + "/me", opts.Header)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert not edges, edges
+
+    def test_module_level_wrapper_binding_registers(self, tmp_path: Path) -> None:
+        # A wrapper bound at FILE scope is visible in every function.
+        files = {
+            "routes.go": (
+                "package main\n\n"
+                'const prefix = "/internal"\n\n'
+                "type healthWrapper struct{}\n\n"
+                "func (h healthWrapper) Health(w ResponseWriter, r *Request) {}\n\n"
+                "var wrapper = healthWrapper{}\n\n"
+                "func mount(router Router) {\n"
+                '\trouter.Get(prefix+"/health", wrapper.Health)\n'
+                "}\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "go")
+        assert _endpoint(edges, "routes.mount", "GET /internal/health"), edges
+
+
 class TestOptionsObjectRoutes:
     # Issue #907: one call, one object literal carrying method/path/handler.
 
