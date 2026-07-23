@@ -253,8 +253,10 @@ def format_call_target(
 def _template_literal(arg: Node, content_type: str, substitution_type: str) -> str:
     # A JS/TS template literal: fragments stay verbatim and each
     # `${expr}` substitution renders as a `{expr}` placeholder, mirroring
-    # the Python f-string treatment (issue #884). All-substitution
-    # templates carry no identity and stay dynamic.
+    # the Python f-string treatment (issue #884). An escape sequence is
+    # literal text like any fragment, so it both survives into the identity
+    # and counts as identity (issue #944); a template with NO literal text at
+    # all carries no identity and stays dynamic.
     parts: list[str] = []
     has_content = False
     for child in arg.named_children:
@@ -294,8 +296,12 @@ def string_literal(
     # `interpolation` children; keep every fragment and render each
     # interpolation as its literal `{expr}` source so the identity stays a
     # placeholder-marked whole rather than a truncated prefix (issue #876).
-    # Placeholders alone carry no identity, so all-interpolation strings
-    # stay dynamic. An expression containing a path or URL-parse delimiter
+    # Placeholders alone carry no identity, so a string with no literal text
+    # stays dynamic; an escape sequence IS literal text (issue #944), and in
+    # the grammars that expose it as a sibling of the fragments it is joined
+    # back in as written, so raw and interpreted spellings of one path render
+    # alike (as they already did in Python). An expression containing a path
+    # or URL-parse delimiter
     # would fabricate segment structure, so it collapses to `{*}`.
     parts: list[str] = []
     has_content = False

@@ -162,11 +162,15 @@ TS_STRING = "string"
 # JS/TS string literals hold their text in a string_fragment child (like
 # Python's string_content), used for I/O target extraction.
 TS_STRING_FRAGMENT = "string_fragment"
-# Every grammar names an escaped char `escape_sequence`. Most (JS/TS, Go, Rust,
-# C/C++, C#, Java) make it a SIBLING that splits the surrounding content into
-# separate fragments, so a reader joining content children alone drops it and
-# fuses the fragments either side (issue #944); Python nests it inside
-# string_content instead, where it needs no special handling.
+# The node type for an escaped char, spelled the same in every grammar we load
+# but placed differently, so check the shape before reusing this anywhere new:
+# JS/TS, Go, Rust, C/C++, C# and Java make it a SIBLING that splits the
+# surrounding content into separate fragments, and a reader joining content
+# children alone drops it and fuses the fragments either side (issue #944);
+# Python and Lua nest it inside their content node, which needs no handling;
+# Dart and Scala expose the escape as the only named child, with the plain
+# text in hidden tokens, so a content-plus-escape join would return the escape
+# ALONE (neither has an io_access descriptor today).
 TS_ESCAPE_SEQUENCE = "escape_sequence"
 # Modern Node builtin imports carry a node: scheme (`import fs from 'node:fs'`);
 # stripped when checking whether an imported name is the builtin module.
