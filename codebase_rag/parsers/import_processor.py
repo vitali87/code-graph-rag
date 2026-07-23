@@ -21,6 +21,10 @@ from ..types_defs import (
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
 from .go import discover_go_module_paths, resolve_go_import_path
+from .js_ts.module_paths import (
+    discover_js_workspace_packages,
+    resolve_js_workspace_import,
+)
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
@@ -221,6 +225,7 @@ class ImportProcessor:
         "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
+        "_map_js_workspace_import",
         "_cpp_module_qn_map",
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
@@ -316,6 +321,20 @@ class ImportProcessor:
             return resolve_go_import_path(go_module_paths, import_path)
 
         self._map_go_import_path = _map_go_import_path_cached
+
+        # A JS/TS monorepo imports its own packages by manifest NAME
+        # (`@acme/sdk/admin`), which no relative-path arithmetic resolves, so
+        # map every first-party package.json name to its directory once, the
+        # same way go.mod module directives are mapped above (issue #945).
+        js_workspace_packages = discover_js_workspace_packages(repo_path)
+
+        @lru_cache(maxsize=4096)
+        def _map_js_workspace_import_cached(import_path: str) -> str | None:
+            return resolve_js_workspace_import(
+                js_workspace_packages, import_path, repo_path
+            )
+
+        self._map_js_workspace_import = _map_js_workspace_import_cached
 
         @lru_cache(maxsize=4096)
         def _is_local_module_cached(module_name: str) -> bool:
@@ -1019,6 +1038,9 @@ class ImportProcessor:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return aliased
+            if workspace := self._map_js_workspace_import(import_path):
+                dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+                return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
         import_path = self._strip_js_extension(import_path)
 

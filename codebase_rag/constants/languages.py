@@ -151,6 +151,19 @@ TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
     {"node_modules", "dist", "build", "out", ".git"}
 )
 JS_INDEX_STEM = "index"
+# package.json fields read when mapping a workspace package name to the source
+# file a specifier names (issue #945). `exports` is the modern declaration and
+# may nest condition objects and `*` patterns; the entry keys are the legacy
+# root-only fallbacks.
+JS_PACKAGE_NAME_KEY = "name"
+JS_PACKAGE_EXPORTS_KEY = "exports"
+JS_PACKAGE_ENTRY_KEYS: tuple[str, ...] = ("main", "module", "types")
+JS_EXPORTS_WILDCARD = "*"
+# A manifest points at the PUBLISHED build, which is never indexed; dropping
+# one of these leading directories reaches the source it was built from
+# (`./dist/src/a.js` -> `src/a.ts`).
+JS_BUILD_OUTPUT_DIRS: frozenset[str] = frozenset({"dist", "build", "out", "lib"})
+JS_SOURCE_DIR = "src"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"

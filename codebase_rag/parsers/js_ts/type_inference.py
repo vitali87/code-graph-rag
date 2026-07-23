@@ -9,12 +9,12 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from . import utils as ut
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
+    from ..import_processor import ImportProcessor
 
 _JS_DECLARATOR_QUERY = "(variable_declarator) @declarator"
 

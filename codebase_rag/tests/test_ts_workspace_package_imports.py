@@ -1,0 +1,253 @@
+# A monorepo application imports its first-party TypeScript packages by the
+# NAME in their package manifest (`@acme/sdk/admin`), never by a relative path,
+# so no path arithmetic can resolve them and every call through such an import
+# was dropped (issue #945). The manifest name maps to the package directory the
+# same way a go.mod module directive maps to its anchor (issue #941), and the
+# `exports` map (or `main`) says which file a subpath names; when that target is
+# a build artefact the indexed source beside it is what the graph holds.
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.js_ts.module_paths import (
+    discover_js_workspace_packages,
+    resolve_js_workspace_import,
+)
+
+ADMIN_SOURCE = "export class AdminClient {\n  getUsers() {\n    return [];\n  }\n}\n"
+CALLER_SOURCE = (
+    "import {{ AdminClient }} from '{specifier}';\n\n"
+    "export function listUsers() {{\n"
+    "  const api = new AdminClient();\n"
+    "  return api.getUsers();\n"
+    "}}\n"
+)
+
+
+def _manifest(name: str, **fields: object) -> str:
+    return json.dumps({"name": name, "version": "0.0.0", **fields})
+
+
+def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
+    parsers, queries = load_parsers()
+    if "typescript" not in parsers:
+        pytest.skip("typescript parser not available")
+    root = tmp_path / "repo"
+    root.mkdir()
+    for rel, content in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
+    return {
+        (c.args[0][2], str(c.args[1]), c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+    }
+
+
+def _calls(rels: set[tuple[str, str, str]], caller_suffix: str) -> set[str]:
+    return {b for a, r, b in rels if r == "CALLS" and a.endswith(caller_suffix)}
+
+
+class TestWorkspaceImportResolution:
+    def test_exports_wildcard_through_build_output(self, tmp_path: Path) -> None:
+        # The generated-SDK shape: `exports` points at the compiled `dist/`
+        # tree, while the file the graph indexed is the TypeScript source it
+        # was built from.
+        files = {
+            "packages/sdk/package.json": _manifest(
+                "@acme/sdk", exports={"./*": {"import": "./dist/src/*.js"}}
+            ),
+            "packages/sdk/src/admin.ts": ADMIN_SOURCE,
+            "app/web/src/main.ts": CALLER_SOURCE.format(specifier="@acme/sdk/admin"),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert "repo.packages.sdk.src.admin.AdminClient.getUsers" in calls, calls
+
+    def test_package_root_import_through_main_field(self, tmp_path: Path) -> None:
+        # No exports map: the root specifier names the package itself, whose
+        # entry point is the `main` build artefact over its indexed source.
+        files = {
+            "packages/sdk/package.json": _manifest(
+                "@acme/sdk", main="./dist/src/index.js"
+            ),
+            "packages/sdk/src/index.ts": ADMIN_SOURCE,
+            "app/web/src/main.ts": CALLER_SOURCE.format(specifier="@acme/sdk"),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert "repo.packages.sdk.src.index.AdminClient.getUsers" in calls, calls
+
+    def test_subpath_without_exports_map(self, tmp_path: Path) -> None:
+        files = {
+            "packages/sdk/package.json": _manifest("@acme/sdk"),
+            "packages/sdk/src/admin.ts": ADMIN_SOURCE,
+            "app/web/src/main.ts": CALLER_SOURCE.format(specifier="@acme/sdk/admin"),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert "repo.packages.sdk.src.admin.AdminClient.getUsers" in calls, calls
+
+    def test_import_through_reexporting_index(self, tmp_path: Path) -> None:
+        # The generated packages export their symbols from an index barrel, so
+        # the mapping has to land on the barrel and then follow its re-export.
+        files = {
+            "packages/sdk/package.json": _manifest(
+                "@acme/sdk", exports={"./*": "./dist/*.js"}
+            ),
+            "packages/sdk/openapi/admin/sdk.gen.ts": ADMIN_SOURCE,
+            "packages/sdk/openapi/admin/index.ts": (
+                "export { AdminClient } from './sdk.gen.ts';\n"
+            ),
+            "app/web/src/main.ts": CALLER_SOURCE.format(
+                specifier="@acme/sdk/openapi/admin"
+            ),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert (
+            "repo.packages.sdk.openapi.admin.sdk.gen.AdminClient.getUsers" in calls
+        ), calls
+
+    def test_nested_package_shadows_enclosing_one(self, tmp_path: Path) -> None:
+        # Two manifests whose names share a prefix: the longer name owns the
+        # import, exactly as the longest go.mod module path does.
+        files = {
+            "packages/sdk/package.json": _manifest("@acme/sdk"),
+            "packages/sdk/src/admin.ts": (
+                "export class AdminClient {\n"
+                "  getUsers() {\n    return ['outer'];\n  }\n"
+                "}\n"
+            ),
+            "packages/sdk/inner/package.json": _manifest("@acme/sdk-inner"),
+            "packages/sdk/inner/src/admin.ts": ADMIN_SOURCE,
+            "app/web/src/main.ts": CALLER_SOURCE.format(
+                specifier="@acme/sdk-inner/admin"
+            ),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert (
+            "repo.packages.sdk.inner.src.admin.AdminClient.getUsers" in calls
+        ), calls
+        assert "repo.packages.sdk.src.admin.AdminClient.getUsers" not in calls, calls
+
+    def test_third_party_package_stays_external(self, tmp_path: Path) -> None:
+        # No first-party manifest claims this name, so it must stay external
+        # rather than be rebound to a same-named local symbol.
+        files = {
+            "packages/sdk/package.json": _manifest("@acme/sdk"),
+            "packages/sdk/src/admin.ts": ADMIN_SOURCE,
+            "app/web/src/other.ts": (
+                "export class AdminClient {\n"
+                "  getUsers() {\n    return ['local'];\n  }\n"
+                "}\n"
+            ),
+            "app/web/src/main.ts": CALLER_SOURCE.format(specifier="third-party-sdk"),
+        }
+        calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
+        assert "repo.packages.sdk.src.admin.AdminClient.getUsers" not in calls, calls
+
+
+class TestWorkspaceDiscovery:
+    def test_node_modules_manifests_are_ignored(self, tmp_path: Path) -> None:
+        # An installed copy of a workspace package carries the SAME name; the
+        # first-party source tree must win, never the dependency snapshot.
+        (tmp_path / "packages/sdk").mkdir(parents=True)
+        (tmp_path / "packages/sdk/package.json").write_text(
+            _manifest("@acme/sdk"), encoding="utf-8"
+        )
+        (tmp_path / "node_modules/@acme/sdk").mkdir(parents=True)
+        (tmp_path / "node_modules/@acme/sdk/package.json").write_text(
+            _manifest("@acme/sdk"), encoding="utf-8"
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert [str(d.relative_to(tmp_path)) for _n, d in packages] == [
+            "packages/sdk"
+        ]
+
+    def test_unnamed_and_unreadable_manifests_are_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a/package.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "b").mkdir()
+        (tmp_path / "b/package.json").write_text("{not json", encoding="utf-8")
+        assert discover_js_workspace_packages(tmp_path) == []
+
+    def test_longest_name_first(self, tmp_path: Path) -> None:
+        for rel, name in (("a", "@acme/sdk"), ("b", "@acme/sdk-inner")):
+            (tmp_path / rel).mkdir()
+            (tmp_path / rel / "package.json").write_text(
+                _manifest(name), encoding="utf-8"
+            )
+        assert [n for n, _d in discover_js_workspace_packages(tmp_path)] == [
+            "@acme/sdk-inner",
+            "@acme/sdk",
+        ]
+
+
+class TestWorkspaceResolver:
+    @staticmethod
+    def _package(tmp_path: Path, manifest: str, sources: dict[str, str]) -> Path:
+        pkg = tmp_path / "packages/sdk"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text(manifest, encoding="utf-8")
+        for rel, content in sources.items():
+            p = pkg / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        return pkg
+
+    def test_exports_pattern_prefers_longest_static_prefix(
+        self, tmp_path: Path
+    ) -> None:
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./*": "./dist/*.js",
+                    "./openapi/*": "./dist/gen/openapi/*/index.js",
+                },
+            ),
+            {
+                "gen/openapi/admin/index.ts": ADMIN_SOURCE,
+                "openapi/admin.ts": ADMIN_SOURCE,
+            },
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/openapi/admin", tmp_path)
+            == "packages/sdk/gen/openapi/admin/index"
+        )
+
+    def test_unmatched_subpath_resolves_to_nothing(self, tmp_path: Path) -> None:
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", exports={"./*": "./dist/*.js"}),
+            {"src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/missing", tmp_path) is None
+        )
+
+    def test_name_prefix_that_is_not_a_path_boundary_is_not_a_match(
+        self, tmp_path: Path
+    ) -> None:
+        # `@acme/sdk-extras` is a different package from `@acme/sdk`; matching
+        # on the bare string prefix would steal its imports.
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk"),
+            {"src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk-extras/admin", tmp_path)
+            is None
+        )
