@@ -12,15 +12,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from codebase_rag.config import settings
 
 
-def test_qdrant_url_is_neutralised_for_unit_tests() -> None:
+def test_qdrant_url_is_neutralised_for_unit_tests(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
     # URL mode bypasses QDRANT_DB_PATH entirely, so isolation must force the
     # embedded per-test store even when the environment points at a live
     # server. On a box with no .env this holds by default; the subprocess
     # guard below is what gives it teeth.
     assert settings.QDRANT_URL is None
+    # Config-value checks alone would still pass if the fixture pointed the
+    # embedded store at a developer path; the effective location must live
+    # under pytest's own temp area.
+    assert Path(settings.QDRANT_DB_PATH).is_relative_to(tmp_path_factory.getbasetemp())
 
 
 def test_isolation_fixture_neutralises_env_qdrant_url() -> None:
@@ -50,8 +58,10 @@ def test_isolation_fixture_neutralises_env_qdrant_url() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_milvus_uri_is_isolated_for_unit_tests() -> None:
+def test_milvus_uri_is_isolated_for_unit_tests(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
     # The shipped default is a CWD-relative file, which in a checkout is the
-    # developer's real embeddings database.
-    assert settings.MILVUS_URI != "./.milvus_code_embeddings.db"
-    assert Path(settings.MILVUS_URI).is_absolute()
+    # developer's real embeddings database; the isolated file must live under
+    # pytest's own temp area, not merely be absolute.
+    assert Path(settings.MILVUS_URI).is_relative_to(tmp_path_factory.getbasetemp())
