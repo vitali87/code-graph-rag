@@ -100,9 +100,18 @@ _RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
 _RPC_PACKAGE_SUFFIX = "connect"
 
 
-def _rpc_client_binding(raw: str) -> HandleBinding | None:
+def _rpc_client_binding(
+    raw: str, import_map: dict[str, str], in_scope: frozenset[str]
+) -> HandleBinding | None:
+    # The qualifier must be an IMPORTED package (aliases resolve through the
+    # import map) that is not shadowed by an in-scope local, and the resolved
+    # import path's last segment must carry the connect-go marker. A bare or
+    # locally-shadowed name is a value, not the generated package.
     qualifier, sep, func = raw.rpartition(cs.SEPARATOR_DOT)
-    if not sep or not qualifier.rsplit(cs.SEPARATOR_DOT, 1)[-1].endswith(
+    if not sep or qualifier in in_scope:
+        return None
+    resolved = import_map.get(qualifier)
+    if resolved is None or not resolved.rsplit("/", 1)[-1].endswith(
         _RPC_PACKAGE_SUFFIX
     ):
         return None
@@ -1412,7 +1421,7 @@ class IOAccessProcessor:
             ):
                 return parent
         if lean_handles.rpc_clients:
-            rpc = _rpc_client_binding(raw)
+            rpc = _rpc_client_binding(raw, import_map, in_scope)
             if rpc is not None:
                 return rpc
         ctor = self._resolve_sink(

@@ -847,3 +847,49 @@ class TestGoRpcClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_aliased_connect_import_binds(self, tmp_path: Path) -> None:
+        # A Go import alias hides the package name; the import map still
+        # records the real path, and that is what carries the evidence.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import userv1 "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1.NewUserServiceClient(nil, base)\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_shadowed_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # A parameter shadowing the imported package name is a value, not
+        # the generated package.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(userv1connect FakeFactory) {\n"
+                "\tclient := userv1connect.NewUserServiceClient(nil, \"\")\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_unimported_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # No import maps `fooconnect`, so the name alone is no evidence.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func fetch(fooconnect Factory) {\n"
+                "\tclient := fooconnect.NewBarClient()\n"
+                "\tclient.Do(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
