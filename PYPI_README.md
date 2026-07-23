@@ -18,7 +18,7 @@ Point it at a repository and it reads every source file, extracts functions, cla
 
 ## Supported Languages
 
-Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby has structural support (modules, functions, classes, and imports) through the pluggable ast-grep tier.
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby has structural support (modules, functions, classes, and imports) through the pluggable ast-grep tier, which requires the `ast-grep` extra (`pip install 'code-graph-rag[ast-grep]'`).
 
 ## Install
 
@@ -115,11 +115,11 @@ cgr doctor                                 # check dependencies and configuratio
 
 ## MCP Server
 
-Run `cgr mcp-server` to serve the tools over stdio or HTTP for Claude Code and other MCP clients. The server exposes the full toolbox:
+Run `cgr mcp-server` to serve the tools over stdio or HTTP for Claude Code and other MCP clients. The MCP surface registers:
 
-- **Ask and retrieve:** `ask_agent`, `query_code_graph`, `semantic_search`, `get_code_snippet`
-- **Structural editing:** `structural_search`, `structural_replace`, `surgical_replace_code`
-- **Files and projects:** `read_file`, `write_file`, `list_directory`, `list_projects`, `index_repository`, `update_repository`, `delete_project`
+- **Ask and retrieve:** `ask_agent`, `query_code_graph`, `get_code_snippet`, and `semantic_search` (needs the `semantic` extra)
+- **Structural editing:** `surgical_replace_code`, plus `structural_search` and `structural_replace` (need the `ast-grep` extra)
+- **Files and projects:** `read_file`, `write_file`, `list_directory`, `list_projects`, `index_repository`, `update_repository`, `delete_project`, `wipe_database`
 
 ## Python SDK
 
