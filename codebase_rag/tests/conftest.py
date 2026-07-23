@@ -113,13 +113,21 @@ def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
 def _isolate_vector_store(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Tests must never touch the developer's real local vector store: a
-    # clean-path test would purge it for real, and parallel xdist workers
-    # would collide on its file lock.
+    # Tests must never touch the developer's real vector store: a clean-path
+    # test would purge it for real, and parallel xdist workers would collide
+    # on its file lock. A developer .env sets QDRANT_URL to the live daemon
+    # stack, and URL mode never reads QDRANT_DB_PATH, so the URL must be
+    # cleared too or the purge lands on the live server.
     from codebase_rag.config import settings
 
+    monkeypatch.setattr(settings, "QDRANT_URL", None)
     monkeypatch.setattr(
         settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
+    )
+    monkeypatch.setattr(
+        settings,
+        "MILVUS_URI",
+        str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
     )
 
 
