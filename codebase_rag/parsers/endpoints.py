@@ -190,6 +190,47 @@ def url_suffix_match_lead(url: str, template: str) -> str | None:
     return "/" + "/".join(url_segments[:lead]) if matches else None
 
 
+KEY_MOUNT_PREFIX = "mount_prefix"
+
+
+def template_mount_lead(url: str, template: str) -> str | None:
+    """The template's mount prefix when the URL matches its proper tail.
+
+    ``/api/v1/otp/verify`` against ``/admin/api/v1/otp/verify`` yields
+    ``/admin`` (issue #923): routers mounted under an infrastructure prefix
+    register a template the client never speaks. The mirror of
+    :func:`url_suffix_match_lead`, gated the same way: one or two stripped
+    template segments, every one of them literal (a parameter mount would
+    match anything), and a matched tail that keeps at least one literal
+    segment as evidence.
+    """
+    parsed = urlparse(url)
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
+        return None
+    url_segments = [s for s in parsed.path.split("/") if s]
+    template_segments = [s for s in template.split("/") if s]
+    if not url_segments or (
+        template_segments and template_segments[0] == UNKNOWN_LEAD_SEGMENT
+    ):
+        return None
+    lead = len(template_segments) - len(url_segments)
+    if not 1 <= lead <= _MAX_SUFFIX_LEAD_SEGMENTS:
+        return None
+    mount = template_segments[:lead]
+    tail = template_segments[lead:]
+    if any(_TEMPLATE_PARAM_RE.match(segment) for segment in mount):
+        return None
+    if all(_TEMPLATE_PARAM_RE.match(segment) for segment in tail):
+        return None
+    matches = all(
+        _TEMPLATE_PARAM_RE.match(expected) or expected == actual
+        for actual, expected in zip(url_segments, tail, strict=True)
+    )
+    return "/" + "/".join(mount) if matches else None
+
+
 def _has_literal_segment(template: str) -> bool:
     """True when at least one path segment is not a template parameter.
 
@@ -403,7 +444,7 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     for network_qn, (url, directions, caller_projects) in networks.items():
         rootful = not urlparse(url).netloc and url.startswith("/")
         candidates = _candidate_endpoints(url, rootful, caller_projects, endpoints)
-        exact, suffix = _match_candidates(url, directions, candidates, endpoints)
+        exact, suffix, mounts = _match_candidates(url, directions, candidates, endpoints)
         for endpoint_qn in exact:
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
@@ -413,21 +454,21 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             created += 1
         if exact:
             continue
-        if rootful and not suffix:
+        if rootful and not (suffix or mounts):
             # An ingress-prefixed rootful call (`/y/<service>/review`)
             # crosses projects by design, so the suffix search widens
             # beyond the same-origin scope; the tie gate still applies.
-            _exact, suffix = _match_candidates(
+            _exact, suffix, mounts = _match_candidates(
                 url, directions, set(endpoints), endpoints
             )
-        match = _resolve_suffix_match(suffix, endpoints)
+        match = _resolve_inferred_match(suffix, mounts, endpoints)
         if match is not None:
-            endpoint_qn, lead = match
+            endpoint_qn, key, lead = match
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                 cs.RelationshipType.RESOLVES_TO,
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                properties={KEY_LEAD_PREFIX: lead},
+                properties={key: lead},
             )
             created += 1
     return created
@@ -468,10 +509,12 @@ def _match_candidates(
     directions: frozenset[str],
     candidates: set[str],
     endpoints: dict[str, tuple[str, str | None]],
-) -> tuple[list[str], dict[str, str]]:
-    # Exact template matches, plus suffix matches keyed by stripped lead.
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    # Exact template matches, suffix matches keyed by stripped URL lead,
+    # and mount matches keyed by stripped template lead (#923).
     exact: list[str] = []
     suffix: dict[str, str] = {}
+    mounts: dict[str, str] = {}
     for endpoint_qn in candidates:
         identity, _project = endpoints[endpoint_qn]
         method, _, template = identity.partition(" ")
@@ -487,7 +530,28 @@ def _match_candidates(
         lead = url_suffix_match_lead(url, template)
         if lead is not None:
             suffix[endpoint_qn] = lead
-    return exact, suffix
+            continue
+        mount = template_mount_lead(url, template)
+        if mount is not None:
+            mounts[endpoint_qn] = mount
+    return exact, suffix, mounts
+
+
+def _resolve_inferred_match(
+    suffix: dict[str, str],
+    mounts: dict[str, str],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> tuple[str, str, str] | None:
+    # URL-side suffix inference outranks template-side mount inference: a
+    # client-visible lead is stronger evidence than a mount the client
+    # never speaks. Mounts link only when unique; no tie-breaking.
+    match = _resolve_suffix_match(suffix, endpoints)
+    if match is not None:
+        return match[0], KEY_LEAD_PREFIX, match[1]
+    if len(mounts) == 1:
+        endpoint_qn, mount = next(iter(mounts.items()))
+        return endpoint_qn, KEY_MOUNT_PREFIX, mount
+    return None
 
 
 def _resolve_suffix_match(
