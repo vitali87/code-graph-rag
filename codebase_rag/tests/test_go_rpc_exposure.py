@@ -317,6 +317,36 @@ def test_shadow_after_wiring_does_not_suppress(tmp_path: Path) -> None:
     ) in rels, rels
 
 
+def test_many_embedded_siblings_do_not_exhaust_promotion(tmp_path: Path) -> None:
+    # Nine unrelated embedded types precede the one defining the contract
+    # method: breadth must not count against the traversal's cycle budget.
+    fillers = "".join(f"type Filler{i} struct{{}}\n\n" for i in range(9))
+    embeds = "".join(f"\tFiller{i}\n" for i in range(9))
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            + fillers
+            + "type Base struct{}\n\n"
+            "func (b *Base) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "type Impl struct {\n" + embeds + "\tBase\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Base.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
 def test_pointer_embedded_cross_package_base_exposes(tmp_path: Path) -> None:
     # `*base.Base` pointer embedding across packages still promotes.
     files = {

@@ -458,21 +458,24 @@ class GoRpcExposureProcessor:
         return []
 
     def _method_source_qn(
-        self, impl_qn: str, method: str, visited: set[str]
+        self, impl_qn: str, method: str, visited: set[str], depth: int = 0
     ) -> str | None:
         # The node serving a contract method: defined on the impl type
         # directly, or promoted from an embedded type (Go embedding is not
         # inheritance, so the graph has no parent edge to follow). Promoted
         # stubs from a generated `*connect` package (`Unimplemented<Stem>
-        # Handler`) are not served RPCs.
-        if impl_qn in visited or len(visited) > 8:
+        # Handler`) are not served RPCs. `visited` guards cycles; the DEPTH
+        # cap bounds chains without counting sibling breadth against it.
+        if impl_qn in visited or depth > 4:
             return None
         visited.add(impl_qn)
         method_qn = f"{impl_qn}{cs.SEPARATOR_DOT}{method}"
         if self._function_registry.get(method_qn) is NodeType.METHOD:
             return method_qn
         for embedded_qn in self._embedded_type_qns(impl_qn):
-            if source := self._method_source_qn(embedded_qn, method, visited):
+            if source := self._method_source_qn(
+                embedded_qn, method, visited, depth + 1
+            ):
                 return source
         return None
 
