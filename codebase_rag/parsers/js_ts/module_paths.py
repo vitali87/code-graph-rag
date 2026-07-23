@@ -165,11 +165,11 @@ def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
     if not matched:
         return _ManifestTargets([], False)
     matched.sort(key=lambda m: (-m[0], -m[1]))
-    # An exact key wins EXCLUSIVELY: when it names a file this repo does not
-    # hold, the subpath is unresolved, never handed to a pattern that would
-    # bind the import to a different module.
-    if matched[0][0]:
-        matched = [matched[0]]
+    # The best match wins EXCLUSIVELY, as it does in Node: when it names a
+    # file this repo does not hold, the subpath is unresolved rather than
+    # handed to a lower-precedence key that maps somewhere else entirely.
+    best = (matched[0][0], matched[0][1])
+    matched = [entry for entry in matched if (entry[0], entry[1]) == best]
     # A null target is how a manifest forbids a subpath, so the match stands
     # (nothing else may resolve it) while contributing no path.
     return _ManifestTargets(
@@ -196,7 +196,13 @@ def _leaf_targets(value: JsonValue) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [t for inner in value.values() for t in _leaf_targets(inner)]
+        # A conditions object maps one subpath to several builds. The graph
+        # holds sources, not builds, so any of them may lead back to the same
+        # file; where they lead to DIFFERENT ones, the order decides, and it
+        # follows how the code under analysis is written (ESM first).
+        ordered = [key for key in cs.JS_EXPORT_CONDITION_ORDER if key in value]
+        ordered += [key for key in value if key not in cs.JS_EXPORT_CONDITION_ORDER]
+        return [t for key in ordered for t in _leaf_targets(value[key])]
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner)]
     return []

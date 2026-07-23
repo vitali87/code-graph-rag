@@ -159,6 +159,16 @@ JS_PACKAGE_NAME_KEY = "name"
 JS_PACKAGE_EXPORTS_KEY = "exports"
 JS_PACKAGE_ENTRY_KEYS: tuple[str, ...] = ("main", "module", "types")
 JS_EXPORTS_WILDCARD = "*"
+# Order the conditions of an `exports` entry are tried in. The graph holds
+# sources, so these usually lead back to one file; when they lead to
+# different ones the first wins, and modern first-party code is ESM.
+JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = (
+    "types",
+    "import",
+    "module",
+    "default",
+    "require",
+)
 # A manifest points at the PUBLISHED build, which is never indexed; dropping
 # one of these leading directories reaches the source it was built from
 # (`./dist/src/a.js` -> `src/a.ts`).

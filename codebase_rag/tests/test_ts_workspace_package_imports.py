@@ -382,6 +382,49 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/index"
         )
 
+    def test_most_specific_wildcard_wins_exclusively(self, tmp_path: Path) -> None:
+        # Node picks the single best-matching pattern; trying a broader one
+        # after it would bind the import to a module the package maps
+        # elsewhere.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./openapi/*": "./src/generated/*.ts",
+                    "./*": "./src/legacy/*.ts",
+                },
+            ),
+            {"src/legacy/openapi/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/openapi/admin", tmp_path)
+            is None
+        )
+
+    def test_import_condition_wins_over_require(self, tmp_path: Path) -> None:
+        # Both condition targets exist as sources here, so the choice must be
+        # the ESM one rather than whichever the mapping happened to list.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "require": "./src/cjs/admin.ts",
+                        "import": "./src/esm/admin.ts",
+                    }
+                },
+            ),
+            {"src/cjs/admin.ts": ADMIN_SOURCE, "src/esm/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            == "packages/sdk/src/esm/admin"
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.
