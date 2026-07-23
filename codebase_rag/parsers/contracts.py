@@ -31,11 +31,13 @@ class ContractOperation(NamedTuple):
     # `contract` names the declaring unit (an OpenAPI spec stem, a protobuf
     # service) and `operation` the operation within it. An HTTP operation
     # also carries the method and path template it is served at; an rpc has
-    # neither, since it is addressed by name.
+    # neither, since it is addressed by name. `source` is the contract file
+    # that declares it, which is what anchors the operation to the repo.
     contract: str
     operation: str
     method: str | None
     path: str | None
+    source: Path
 
 
 def discover_contract_operations(repo_path: Path) -> list[ContractOperation]:
@@ -66,9 +68,7 @@ def _openapi_operations(path: Path) -> list[ContractOperation]:
     text = _read_text(path)
     # Cheap gate before parsing: a spec always names its version key, and
     # most JSON/YAML in a repo is not a spec at all.
-    if text is None or not any(
-        marker in text for marker in cs.CONTRACT_SPEC_MARKERS
-    ):
+    if text is None or not any(marker in text for marker in cs.CONTRACT_SPEC_MARKERS):
         return []
     document = _parse_document(path, text)
     if not isinstance(document, dict):
@@ -84,7 +84,10 @@ def _openapi_operations(path: Path) -> list[ContractOperation]:
         if not isinstance(template, str) or not isinstance(methods, dict):
             continue
         for method, operation in methods.items():
-            if not isinstance(method, str) or method.lower() not in cs.CONTRACT_OPERATION_METHODS:
+            if (
+                not isinstance(method, str)
+                or method.lower() not in cs.CONTRACT_OPERATION_METHODS
+            ):
                 continue
             if not isinstance(operation, dict):
                 continue
@@ -92,7 +95,7 @@ def _openapi_operations(path: Path) -> list[ContractOperation]:
             if isinstance(operation_id, str) and operation_id:
                 operations.append(
                     ContractOperation(
-                        contract, operation_id, method.upper(), template
+                        contract, operation_id, method.upper(), template, path
                     )
                 )
     return operations
@@ -136,7 +139,7 @@ def _proto_operations(path: Path) -> list[ContractOperation]:
                 depth = line.count("{") - line.count("}")
                 if depth <= 0:
                     operations.extend(
-                        ContractOperation(service, name, None, None)
+                        ContractOperation(service, name, None, None, path)
                         for name in _PROTO_RPC_RE.findall(line)
                     )
                     service = None
@@ -147,7 +150,7 @@ def _proto_operations(path: Path) -> list[ContractOperation]:
         else:
             depth += line.count("{") - line.count("}")
         operations.extend(
-            ContractOperation(service, name, None, None)
+            ContractOperation(service, name, None, None, path)
             for name in _PROTO_RPC_RE.findall(line)
         )
         if depth <= 0:

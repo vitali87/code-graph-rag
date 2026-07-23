@@ -52,10 +52,13 @@ def _write(tmp_path: Path, files: dict[str, str]) -> Path:
 class TestOpenApiDiscovery:
     def test_json_spec_yields_one_operation_per_method(self, tmp_path: Path) -> None:
         _write(tmp_path, {"schemas/things.json": json.dumps(_OPENAPI)})
+        spec = tmp_path / "schemas/things.json"
         assert set(discover_contract_operations(tmp_path)) == {
-            ContractOperation("things", "createThing", "POST", "/v2/things"),
-            ContractOperation("things", "listThings", "GET", "/v2/things"),
-            ContractOperation("things", "getThing", "GET", "/v2/things/{thingId}"),
+            ContractOperation("things", "createThing", "POST", "/v2/things", spec),
+            ContractOperation("things", "listThings", "GET", "/v2/things", spec),
+            ContractOperation(
+                "things", "getThing", "GET", "/v2/things/{thingId}", spec
+            ),
         }
 
     def test_yaml_spec_is_read_when_yaml_is_available(self, tmp_path: Path) -> None:
@@ -75,7 +78,13 @@ class TestOpenApiDiscovery:
             },
         )
         assert discover_contract_operations(tmp_path) == [
-            ContractOperation("things", "createThing", "POST", "/v2/things")
+            ContractOperation(
+                "things",
+                "createThing",
+                "POST",
+                "/v2/things",
+                tmp_path / "schemas/things.yaml",
+            )
         ]
 
     def test_operation_without_an_id_is_skipped(self, tmp_path: Path) -> None:
@@ -103,9 +112,10 @@ class TestOpenApiDiscovery:
 class TestProtoDiscovery:
     def test_service_rpcs_become_operations(self, tmp_path: Path) -> None:
         _write(tmp_path, {"schemas/proto/things/v1/things.proto": _PROTO})
+        proto = tmp_path / "schemas/proto/things/v1/things.proto"
         assert set(discover_contract_operations(tmp_path)) == {
-            ContractOperation("ThingService", "CreateThing", None, None),
-            ContractOperation("ThingService", "GetThing", None, None),
+            ContractOperation("ThingService", "CreateThing", None, None, proto),
+            ContractOperation("ThingService", "GetThing", None, None, proto),
         }
 
     def test_rpcs_outside_a_service_are_not_operations(self, tmp_path: Path) -> None:
@@ -129,8 +139,8 @@ class TestProtoDiscovery:
         )
         _write(tmp_path, {"a.proto": source})
         assert set(discover_contract_operations(tmp_path)) == {
-            ContractOperation("A", "Ping", None, None),
-            ContractOperation("B", "Ping", None, None),
+            ContractOperation("A", "Ping", None, None, tmp_path / "a.proto"),
+            ContractOperation("B", "Ping", None, None, tmp_path / "a.proto"),
         }
 
     def test_single_line_service_is_read(self, tmp_path: Path) -> None:
@@ -139,5 +149,5 @@ class TestProtoDiscovery:
             {"a.proto": "service S { rpc Do(D) returns (D); }\n"},
         )
         assert discover_contract_operations(tmp_path) == [
-            ContractOperation("S", "Do", None, None)
+            ContractOperation("S", "Do", None, None, tmp_path / "a.proto")
         ]

@@ -27,6 +27,7 @@ from .language_spec import (
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.ast_grep_tier import AstGrepTier
+from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
@@ -1034,6 +1035,12 @@ class GraphUpdater:
         created = link_endpoints(self.ingestor)
         if created:
             logger.info("Resolved {} client request URLs to endpoints", created)
+            self.ingestor.flush_all()
+        # Contract files name the operations the generated artefacts on both
+        # sides implement, so they anchor after the artefacts exist.
+        anchored = link_contracts(self.ingestor, self.repo_path)
+        if anchored:
+            logger.info("Anchored {} artefacts to contract operations", anchored)
             self.ingestor.flush_all()
 
     def _rehydrate_registry_from_graph(self) -> None:

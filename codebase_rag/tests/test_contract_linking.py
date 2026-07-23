@@ -46,6 +46,9 @@ class _FakeIngestor:
         for marker, rows in self._rows.items():
             if marker in query:
                 return rows
+        if "(f:File)" in query and params is not None:
+            # Default: every contract file this repo declares is indexed.
+            return [{"absolute_path": path} for path in params["paths"]]
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -189,6 +192,14 @@ class TestSweepOwnership:
         link_contracts(ingestor, _repo(tmp_path))
         assert ingestor.writes
         assert all("'CONTRACT'" in query for query in ingestor.writes), ingestor.writes
+
+    def test_unindexed_contract_file_declares_nothing(self, tmp_path: Path) -> None:
+        # A contract the graph does not hold cannot anchor its operations,
+        # and claiming otherwise would hang them off a File node that does
+        # not exist.
+        ingestor = _FakeIngestor({"'ENDPOINT'": [], "'RPC'": [], "(f:File)": []})
+        assert link_contracts(ingestor, _repo(tmp_path)) == 0
+        assert not ingestor.nodes
 
     def test_no_contract_files_writes_nothing(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /v2/things")])

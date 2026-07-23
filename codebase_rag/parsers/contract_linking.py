@@ -19,6 +19,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import PropertyDict
+from ..utils.path_utils import cached_resolve_posix
 from .contracts import ContractOperation, discover_contract_operations
 from .endpoints import url_matches_template
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
@@ -34,6 +35,10 @@ CYPHER_LIVE_ENDPOINT_RESOURCES = (
 # Scoped to contract targets: RESOLVES_TO has other owners (client URL to
 # endpoint, a dispatch deployment suffix) whose edges must survive a relink
 # (issue #947).
+CYPHER_INDEXED_CONTRACT_FILES = (
+    "MATCH (f:File) WHERE f.absolute_path IN $paths "
+    "RETURN f.absolute_path AS absolute_path"
+)
 CYPHER_DELETE_CONTRACT_RESOLVES_TO = (
     "MATCH ()-[r:RESOLVES_TO]->(:Resource {kind: 'CONTRACT'}) DELETE r"
 )
@@ -48,17 +53,33 @@ def link_contracts(ingestor: IngestorProtocol, repo_path: Path) -> int:
     Returns the number of RESOLVES_TO edges emitted.
     """
     operations = discover_contract_operations(repo_path)
+    if not operations or not isinstance(ingestor, QueryProtocol):
+        return 0
+    operations = _indexed_only(ingestor, operations)
     if not operations:
         return 0
-    if isinstance(ingestor, QueryProtocol):
-        ingestor.execute_write(CYPHER_DELETE_CONTRACT_RESOLVES_TO)
+    ingestor.execute_write(CYPHER_DELETE_CONTRACT_RESOLVES_TO)
     for operation in operations:
         _emit_contract(ingestor, operation)
-    if not isinstance(ingestor, QueryProtocol):
-        return 0
     created = _link_rpcs(ingestor, operations) + _link_endpoints(ingestor, operations)
     logger.debug(ls.CONTRACT_OPERATIONS, count=len(operations), created=created)
     return created
+
+
+def _indexed_only(
+    ingestor: QueryProtocol, operations: list[ContractOperation]
+) -> list[ContractOperation]:
+    # Only a contract file the graph holds can anchor its operations; a file
+    # the walk skipped has no File node to hang them off, and a Resource that
+    # reaches nothing but Resources is pruned as unanchored anyway.
+    paths = sorted({cached_resolve_posix(op.source) for op in operations})
+    rows = ingestor.fetch_all(CYPHER_INDEXED_CONTRACT_FILES, {"paths": paths})
+    indexed = {str(row.get(cs.KEY_ABSOLUTE_PATH)) for row in rows}
+    return [
+        operation
+        for operation in operations
+        if cached_resolve_posix(operation.source) in indexed
+    ]
 
 
 def _identity(operation: ContractOperation) -> str:
@@ -78,6 +99,18 @@ def _emit_contract(ingestor: IngestorProtocol, operation: ContractOperation) -> 
         KEY_KIND: ResourceKind.CONTRACT.value,
     }
     ingestor.ensure_node_batch(cs.NodeLabel.RESOURCE, properties)
+    # The declaring file anchors the operation: a Resource whose only edges
+    # reach other Resources is pruned as unanchored (services/resource_cleanup),
+    # and a contract with no file is genuinely gone.
+    ingestor.ensure_relationship_batch(
+        (
+            cs.NodeLabel.FILE,
+            cs.KEY_ABSOLUTE_PATH,
+            cached_resolve_posix(operation.source),
+        ),
+        cs.RelationshipType.EXPOSES,
+        (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, _contract_qn(operation)),
+    )
 
 
 def _resolve(ingestor: IngestorProtocol, source_qn: str, target_qn: str) -> None:
@@ -88,9 +121,7 @@ def _resolve(ingestor: IngestorProtocol, source_qn: str, target_qn: str) -> None
     )
 
 
-def _link_rpcs(
-    ingestor: QueryProtocol, operations: list[ContractOperation]
-) -> int:
+def _link_rpcs(ingestor: QueryProtocol, operations: list[ContractOperation]) -> int:
     # An RPC resource is keyed `<Service>.<Method>`, which is exactly the
     # identity the proto declares, so this is a name match, not a heuristic.
     by_identity = {
@@ -104,9 +135,7 @@ def _link_rpcs(
         operation = by_identity.get(name)
         if operation is None:
             continue
-        _resolve(
-            ingestor, str(row.get(cs.KEY_QUALIFIED_NAME)), _contract_qn(operation)
-        )
+        _resolve(ingestor, str(row.get(cs.KEY_QUALIFIED_NAME)), _contract_qn(operation))
         created += 1
     return created
 
