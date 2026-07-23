@@ -7,6 +7,7 @@ TS_GO_TYPE_SPEC = "type_spec"
 TS_GO_TYPE_ALIAS = "type_alias"
 TS_GO_STRUCT_TYPE = "struct_type"
 TS_GO_METHOD_ELEM = "method_elem"
+TS_GO_BLOCK = "block"
 TS_GO_SELECTOR_EXPRESSION = "selector_expression"
 TS_GO_TYPE_ASSERTION_EXPRESSION = "type_assertion_expression"
 # A Go source file ending in `_test.go` is compiled only under `go test`; its

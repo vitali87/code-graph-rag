@@ -317,6 +317,68 @@ def test_shadow_after_wiring_does_not_suppress(tmp_path: Path) -> None:
     ) in rels, rels
 
 
+def test_pointer_embedded_cross_package_base_exposes(tmp_path: Path) -> None:
+    # `*base.Base` pointer embedding across packages still promotes.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "base/base.go": (
+            "package base\n\n"
+            "type Base struct{}\n\n"
+            "func (b *Base) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n'
+            'import "example.com/app/base"\n\n'
+            "type Impl struct {\n\t*base.Base\n}\n\n"
+            "func (i *Impl) PutUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.base.base.Base.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
+def test_shadow_in_closed_block_does_not_suppress(tmp_path: Path) -> None:
+    # A shadow inside an earlier, already-closed block is out of scope at
+    # the wiring call: the wiring is genuine.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Faker struct{}\n\n"
+            "type Impl struct{}\n\n"
+            "func (i *Impl) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\t{\n"
+            "\t\tuserv1connect := Faker{}\n"
+            "\t\t_ = userv1connect\n"
+            "\t}\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Impl.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
 def test_shadowed_qualifier_is_not_a_wiring(tmp_path: Path) -> None:
     # A local shadowing the imported package name makes the call a method on
     # the LOCAL value, not connect-go wiring (mirrors the client-side guard).
