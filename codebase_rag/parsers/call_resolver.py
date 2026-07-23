@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
+from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
@@ -25,6 +26,18 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 # `dyn`/`impl` trait or a trait-returning factory); all can carry methods.
 _RS_TYPE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
+# A definition nested inside one of these is scoped to that body, so no other
+# module can name it and the simple-name fallback must not offer it (#945).
+_SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
+# Sets of languages whose sources call each other directly, so a candidate
+# written in a sibling language is a legitimate target for the simple-name
+# fallback: the JS family compiles to one runtime, C++ calls C, and Scala
+# calls Java on the JVM. Any language absent here calls only its own.
+_CALLABLE_LANGUAGE_FAMILIES: tuple[frozenset[cs.SupportedLanguage], ...] = (
+    cs.JS_TS_LANGUAGES,
+    frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP}),
+    frozenset({cs.SupportedLanguage.JAVA, cs.SupportedLanguage.SCALA}),
 )
 
 
@@ -69,6 +82,7 @@ class CallResolver:
         "_ctor_params",
         "_ctor_param_attrs",
         "_pending_field_bindings",
+        "_module_language_cache",
     )
 
     def __init__(
@@ -113,6 +127,7 @@ class CallResolver:
         self._ctor_params: dict[str, tuple[str, ...]] = {}
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
+        self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -1147,6 +1162,58 @@ class CallResolver:
             return self.function_registry[same_module_func_qn], same_module_func_qn
         return None
 
+    def _nameable_candidates(self, candidates: list[str], module_qn: str) -> list[str]:
+        # The simple-name fallback matches on the last name segment alone, so
+        # it can offer a definition the caller could never name: one scoped
+        # inside another function's body, or one written in a language the
+        # caller's cannot call into (a Python `asyncio.sleep` binding to a
+        # `sleep` closure in a generated TypeScript client, issue #945). Drop
+        # both; a candidate whose language cannot be determined is kept, so
+        # the fallback still answers wherever this evidence is missing.
+        caller_language = self._module_language(module_qn)
+        return [
+            qn
+            for qn in candidates
+            if self.function_registry.get(self._parent_qn(qn))
+            not in _SCOPING_PARENT_TYPES
+            and self._languages_can_call(caller_language, self._module_language(qn))
+        ]
+
+    @staticmethod
+    def _parent_qn(qualified_name: str) -> str:
+        return qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+
+    @staticmethod
+    def _languages_can_call(
+        caller: cs.SupportedLanguage | None, candidate: cs.SupportedLanguage | None
+    ) -> bool:
+        if caller is None or candidate is None or caller == candidate:
+            return True
+        return any(
+            caller in family and candidate in family
+            for family in _CALLABLE_LANGUAGE_FAMILIES
+        )
+
+    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
+        # The language of the module a qn lives in, found by walking off its
+        # trailing segments until one names an ingested module (a caller's own
+        # module qn hits on the first probe). Cached per qn: the fallback asks
+        # for the same candidates repeatedly.
+        if qualified_name in self._module_language_cache:
+            return self._module_language_cache[qualified_name]
+        modules = self.type_inference.module_qn_to_file_path
+        probe = qualified_name
+        language: cs.SupportedLanguage | None = None
+        while probe:
+            if (path := modules.get(probe)) is not None:
+                language = get_language_for_extension(path.suffix)
+                break
+            if cs.SEPARATOR_DOT not in probe:
+                break
+            probe = self._parent_qn(probe)
+        self._module_language_cache[qualified_name] = language
+        return language
+
     def _try_resolve_via_trie(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -1154,7 +1221,9 @@ class CallResolver:
         if search_name is None:
             search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
             _SEARCH_NAME_CACHE[call_name] = search_name
-        possible_matches = self.function_registry.find_ending_with(search_name)
+        possible_matches = self._nameable_candidates(
+            self.function_registry.find_ending_with(search_name), module_qn
+        )
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None

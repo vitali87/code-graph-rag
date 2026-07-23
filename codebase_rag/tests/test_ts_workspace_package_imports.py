@@ -130,9 +130,7 @@ class TestWorkspaceImportResolution:
             ),
         }
         calls = _calls(_run_rels(tmp_path, files), "main.listUsers")
-        assert (
-            "repo.packages.sdk.inner.src.admin.AdminClient.getUsers" in calls
-        ), calls
+        assert "repo.packages.sdk.inner.src.admin.AdminClient.getUsers" in calls, calls
         assert "repo.packages.sdk.src.admin.AdminClient.getUsers" not in calls, calls
 
     def test_third_party_package_stays_external(self, tmp_path: Path) -> None:
@@ -165,13 +163,9 @@ class TestWorkspaceDiscovery:
             _manifest("@acme/sdk"), encoding="utf-8"
         )
         packages = discover_js_workspace_packages(tmp_path)
-        assert [str(d.relative_to(tmp_path)) for _n, d in packages] == [
-            "packages/sdk"
-        ]
+        assert [str(d.relative_to(tmp_path)) for _n, d in packages] == ["packages/sdk"]
 
-    def test_unnamed_and_unreadable_manifests_are_skipped(
-        self, tmp_path: Path
-    ) -> None:
+    def test_unnamed_and_unreadable_manifests_are_skipped(self, tmp_path: Path) -> None:
         (tmp_path / "a").mkdir()
         (tmp_path / "a/package.json").write_text("{}", encoding="utf-8")
         (tmp_path / "b").mkdir()
