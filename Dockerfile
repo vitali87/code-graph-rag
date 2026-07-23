@@ -6,7 +6,7 @@ COPY --from=uv /uv /uvx /bin/
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cmake build-essential libssl-dev zlib1g-dev libzstd-dev && \
+        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
