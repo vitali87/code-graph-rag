@@ -163,7 +163,9 @@ class TestWorkspaceDiscovery:
             _manifest("@acme/sdk"), encoding="utf-8"
         )
         packages = discover_js_workspace_packages(tmp_path)
-        assert [str(d.relative_to(tmp_path)) for _n, d in packages] == ["packages/sdk"]
+        assert [d.relative_to(tmp_path).as_posix() for _n, d in packages] == [
+            "packages/sdk"
+        ]
 
     def test_unnamed_and_unreadable_manifests_are_skipped(self, tmp_path: Path) -> None:
         (tmp_path / "a").mkdir()
@@ -193,7 +195,7 @@ class TestWorkspaceDiscovery:
                 _manifest("@acme/sdk"), encoding="utf-8"
             )
         assert [
-            str(d.relative_to(tmp_path))
+            d.relative_to(tmp_path).as_posix()
             for _n, d in discover_js_workspace_packages(tmp_path)
         ] == ["apps/copyA", "apps/copyB"]
 
