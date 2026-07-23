@@ -872,7 +872,7 @@ class TestGoRpcClientSinks:
                 "package main\n\n"
                 'import "example.com/gen/user/v1/userv1connect"\n\n'
                 "func fetch(userv1connect FakeFactory) {\n"
-                "\tclient := userv1connect.NewUserServiceClient(nil, \"\")\n"
+                '\tclient := userv1connect.NewUserServiceClient(nil, "")\n'
                 "\tclient.GetUser(nil, nil)\n"
                 "}\n"
             ),
