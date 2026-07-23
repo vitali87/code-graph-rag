@@ -112,6 +112,36 @@ def _rpc_qualifier_resolves(qualifier: str, import_map: dict[str, str]) -> bool:
     )
 
 
+def _collect_go_param_bindings(
+    parameter: Node, import_map: dict[str, str], bindings: dict[str, HandleBinding]
+) -> None:
+    # One parameter declaration: every name of a connect-client type binds
+    # like a constructor result would (issue #912).
+    stem = _go_client_type_stem(
+        parameter.child_by_field_name(cs.FIELD_TYPE), import_map
+    )
+    if stem is None:
+        return
+    for child in parameter.named_children:
+        if child.type == cs.TS_GO_IDENTIFIER and child.text is not None:
+            bindings[child.text.decode(cs.ENCODING_UTF8)] = HandleBinding(
+                kind=ResourceKind.RPC, identity=stem
+            )
+
+
+def _collect_go_field_stems(
+    node: Node, import_map: dict[str, str], fields: dict[str, str]
+) -> None:
+    # One struct field declaration: every named field of a connect-client
+    # type maps to the service stem (several names may share one type).
+    stem = _go_client_type_stem(node.child_by_field_name(cs.FIELD_TYPE), import_map)
+    if stem is None:
+        return
+    for child in node.named_children:
+        if child.type == cs.TS_GO_FIELD_IDENTIFIER and child.text is not None:
+            fields[child.text.decode(cs.ENCODING_UTF8)] = stem
+
+
 def _go_client_type_stem(
     type_node: Node | None, import_map: dict[str, str]
 ) -> str | None:
@@ -191,9 +221,11 @@ class IOAccessProcessor:
         # When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
         self._enabled = selection.io_enabled
-        # module_qn -> {field name: service stem} for connect-client-typed
-        # struct fields (issue #912); the module walk runs once per module.
-        self._rpc_field_cache: dict[str, dict[str, str]] = {}
+        # (module_qn, parse-tree root id) -> {field name: service stem} for
+        # connect-client-typed struct fields (issue #912). The root id keys
+        # out stale entries when a long-lived processor (realtime updater)
+        # re-parses a file: a new tree gets a new root id.
+        self._rpc_field_cache: dict[tuple[str, int], dict[str, str]] = {}
 
     def process_io_for_caller(
         self,
@@ -221,24 +253,16 @@ class IOAccessProcessor:
         # call sinks and emit, without Python's handle/scope machinery (streams
         # and data-flow are a follow-up). Python keeps the full handle-aware walk.
         if language != cs.SupportedLanguage.PYTHON:
-            descriptor = LANGUAGE_DESCRIPTORS.get(language)
-            if descriptor is not None:
-                lean_handles = _lean_handles_for(language)
-                if lean_handles is not None and lean_handles.rpc_clients:
-                    self._seed_go_rpc_evidence(
-                        caller_node, module_qn, import_map, lean_handles
-                    )
-                self._emit_direct_sinks(
-                    caller_node,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    IO_MEMBER_READS.get(language, ()),
-                    descriptor,
-                    lean_handles,
-                )
+            self._process_lean_caller(
+                caller_node,
+                caller_spec,
+                module_qn,
+                language,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+            )
             return
         ctor_by_name = {c.callee: c for c in constructors}
 
@@ -1252,6 +1276,37 @@ class IOAccessProcessor:
         self._emit(caller_spec, sink.direction, ResourceKind.FILE, DYNAMIC_TARGET)
         return True
 
+    def _process_lean_caller(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        macro_sinks: dict[str, IOSink],
+        stream_sinks: dict[str, IOSink],
+    ) -> None:
+        # Non-Python languages take a lean direct-sink walk (issue #714),
+        # seeded with connect-client evidence for Go (issue #912).
+        descriptor = LANGUAGE_DESCRIPTORS.get(language)
+        if descriptor is None:
+            return
+        lean_handles = _lean_handles_for(language)
+        if lean_handles is not None and lean_handles.rpc_clients:
+            self._seed_go_rpc_evidence(caller_node, module_qn, import_map, lean_handles)
+        self._emit_direct_sinks(
+            caller_node,
+            caller_spec,
+            import_map,
+            sink_by_name,
+            macro_sinks,
+            stream_sinks,
+            IO_MEMBER_READS.get(language, ()),
+            descriptor,
+            lean_handles,
+        )
+
     def _seed_go_rpc_evidence(
         self,
         caller_node: Node,
@@ -1264,16 +1319,7 @@ class IOAccessProcessor:
         # consulted by the dotted-receiver fallback.
         parameters = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
         for parameter in parameters.named_children if parameters is not None else []:
-            stem = _go_client_type_stem(
-                parameter.child_by_field_name(cs.FIELD_TYPE), import_map
-            )
-            if stem is None:
-                continue
-            for child in parameter.named_children:
-                if child.type == cs.TS_GO_IDENTIFIER and child.text is not None:
-                    lean_handles.bindings[child.text.decode(cs.ENCODING_UTF8)] = (
-                        HandleBinding(kind=ResourceKind.RPC, identity=stem)
-                    )
+            _collect_go_param_bindings(parameter, import_map, lean_handles.bindings)
         lean_handles.rpc_fields.update(
             self._go_rpc_fields(caller_node, module_qn, import_map)
         )
@@ -1281,29 +1327,21 @@ class IOAccessProcessor:
     def _go_rpc_fields(
         self, caller_node: Node, module_qn: str, import_map: dict[str, str]
     ) -> dict[str, str]:
-        cached = self._rpc_field_cache.get(module_qn)
-        if cached is not None:
-            return cached
         root = caller_node
         while root.parent is not None:
             root = root.parent
+        key = (module_qn, root.id)
+        cached = self._rpc_field_cache.get(key)
+        if cached is not None:
+            return cached
         fields: dict[str, str] = {}
         stack = [root]
         while stack:
             node = stack.pop()
             if node.type == cs.TS_GO_FIELD_DECLARATION:
-                stem = _go_client_type_stem(
-                    node.child_by_field_name(cs.FIELD_TYPE), import_map
-                )
-                if stem is not None:
-                    for child in node.named_children:
-                        if (
-                            child.type == cs.TS_GO_FIELD_IDENTIFIER
-                            and child.text is not None
-                        ):
-                            fields[child.text.decode(cs.ENCODING_UTF8)] = stem
+                _collect_go_field_stems(node, import_map, fields)
             stack.extend(node.named_children)
-        self._rpc_field_cache[module_qn] = fields
+        self._rpc_field_cache[key] = fields
         return fields
 
     def _emit_rpc_field_method(
