@@ -337,6 +337,13 @@ def _object_entries(obj: Node) -> dict[str, Node]:
             if name:
                 entries[name] = child
             continue
+        if child.type == cs.TS_METHOD_DEFINITION:
+            # `async handler(ctx) {...}`: an object method maps to itself
+            # (issue #920).
+            name = _decode(child.child_by_field_name(cs.TS_FIELD_NAME))
+            if name:
+                entries[name] = child
+            continue
         if child.type != cs.TS_PAIR:
             continue
         key = child.child_by_field_name(cs.FIELD_KEY)
@@ -401,8 +408,9 @@ def _js_options_registrations(
         and handler.type in (cs.TS_PY_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
         else None
     )
+    inline_types = _JS_INLINE_HANDLER_TYPES | {cs.TS_METHOD_DEFINITION}
     if not (
-        (handler is not None and handler.type in _JS_INLINE_HANDLER_TYPES)
+        (handler is not None and handler.type in inline_types)
         or (handler_name is not None and handler_name in evidence.declared_functions)
     ):
         return []

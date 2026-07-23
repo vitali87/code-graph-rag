@@ -595,6 +595,46 @@ class TestOptionsObjectRoutes:
         edges = _run(tmp_path, files, "typescript")
         assert _endpoint(edges, "gateway", "GET /stems/:stemId/artifacts"), edges
 
+    def test_endpoint_options_object_with_method_shorthand_handler(
+        self, tmp_path: Path
+    ) -> None:
+        # Issue #920: `async handler(ctx) {}` is a method_definition child of
+        # the object literal, not a pair, and is inline handler evidence.
+        files = {
+            "gateway.ts": (
+                "const app = createApp()\n\n"
+                "app.endpoint({\n"
+                '  method: "GET",\n'
+                '  route: "/users",\n'
+                "  async handler(ctx) {\n"
+                "    return ctx.json([])\n"
+                "  },\n"
+                "})\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "typescript")
+        assert _endpoint(edges, "gateway", "GET /users"), edges
+
+    def test_client_method_shorthand_without_route_member_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # The member-name gate still applies: `request({...})` with a method
+        # shorthand is not a registration.
+        files = {
+            "client.ts": (
+                "const client = getClient()\n\n"
+                "client.request({\n"
+                '  method: "GET",\n'
+                '  url: "/users",\n'
+                "  async transform(res) {\n"
+                "    return res\n"
+                "  },\n"
+                "})\n"
+            ),
+        }
+        edges = _run(tmp_path, files, "typescript")
+        assert not edges, edges
+
     def test_fastify_route_with_shorthand_handler(self, tmp_path: Path) -> None:
         files = {
             "server.js": (
