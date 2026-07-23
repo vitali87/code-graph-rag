@@ -172,6 +172,125 @@ def test_multi_return_ctor_binding_exposes(tmp_path: Path) -> None:
     ) in rels, rels
 
 
+def test_shadowed_qualifier_is_not_a_wiring(tmp_path: Path) -> None:
+    # A local shadowing the imported package name makes the call a method on
+    # the LOCAL value, not connect-go wiring (mirrors the client-side guard).
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Faker struct{}\n\n"
+            "func (f Faker) NewUserServiceHandler(v any) (string, int) {\n"
+            '\treturn "", 0\n'
+            "}\n\n"
+            "type Impl struct{}\n\n"
+            "func (i *Impl) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\timpl := &Impl{}\n"
+            "\tuserv1connect := Faker{}\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(impl)\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    assert not any("resource::RPC::" in res for _s, res in rels), rels
+
+
+def test_inline_composite_literal_arg_exposes(tmp_path: Path) -> None:
+    # The impl passed inline: `NewUserServiceHandler(&Impl{})`.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n\n'
+            "type Impl struct{}\n\n"
+            "func (i *Impl) GetUser(id string) error {\n\treturn nil\n}\n\n"
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(&Impl{})\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.main.Impl.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
+def test_inline_ctor_call_arg_exposes(tmp_path: Path) -> None:
+    # The impl constructed inline: `NewUserServiceHandler(server.New())`.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "svc/server.go": (
+            "package server\n\n"
+            "type Server struct{}\n\n"
+            "func New() *Server {\n\treturn &Server{}\n}\n\n"
+            "func (s *Server) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n'
+            'import "example.com/app/svc"\n\n'
+            "func main() {\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(server.New())\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.svc.server.Server.GetUser",
+        "resource::RPC::UserService.GetUser",
+    ) in rels, rels
+
+
+def test_ambiguous_clause_fallback_stays_silent(tmp_path: Path) -> None:
+    # TWO imported directories both declare `package server`; the unaliased
+    # qualifier cannot be attributed, so no edge is emitted rather than a
+    # guess against whichever import iterates first.
+    files = {
+        "go.mod": "module example.com/app\n\ngo 1.22\n",
+        "gen/userv1connect/user.connect.go": _CONNECT_GEN,
+        "svca/impl.go": (
+            "package server\n\n"
+            "type Server struct{}\n\n"
+            "func New() *Server {\n\treturn &Server{}\n}\n\n"
+            "func (s *Server) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "svcb/impl.go": (
+            "package server\n\n"
+            "type Server struct{}\n\n"
+            "func New() *Server {\n\treturn &Server{}\n}\n\n"
+            "func (s *Server) GetUser(id string) error {\n\treturn nil\n}\n"
+        ),
+        "main.go": (
+            "package main\n\n"
+            'import "example.com/app/gen/userv1connect"\n'
+            'import "example.com/app/svca"\n'
+            'import "example.com/app/svcb"\n\n'
+            "func main() {\n"
+            "\tuSrv := server.New()\n"
+            "\tpath, handler := userv1connect.NewUserServiceHandler(uSrv)\n"
+            "\t_ = path\n"
+            "\t_ = handler\n"
+            "}\n"
+        ),
+    }
+    rels = _run_exposes(tmp_path, files)
+    assert not any("resource::RPC::" in res for _s, res in rels), rels
+
+
 def test_clause_named_package_ctor_resolves(tmp_path: Path) -> None:
     # An unaliased import's qualifier is the target's `package` clause, which
     # may differ from the directory name (`svc/` declaring `package server`):

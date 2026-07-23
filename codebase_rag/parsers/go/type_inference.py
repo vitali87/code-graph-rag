@@ -118,7 +118,7 @@ class GoTypeInferenceEngine:
         ]
         values = [c for c in right.children if c.is_named]
         for name, value in zip(names, values, strict=False):
-            if name and (type_name := self._infer_value_type(value)):
+            if name and (type_name := self.infer_value_type(value)):
                 var_types[name] = type_name
 
     def collect_call_var_bindings(
@@ -158,10 +158,10 @@ class GoTypeInferenceEngine:
         for name, value in zip(names, values, strict=False):
             if not name or value.type != cs.TS_GO_CALL_EXPRESSION:
                 continue
-            if segments := self._callee_segments(value):
+            if segments := self.callee_segments(value):
                 bindings.append((name, segments))
 
-    def _callee_segments(self, call: Node) -> list[str] | None:
+    def callee_segments(self, call: Node) -> list[str] | None:
         # The callee selector of a call, split into identifier segments. A plain
         # function is one segment; `e.trees.get` is three. Returns None for any
         # non-identifier part (index/paren/generic) so callers stay unresolved.
@@ -187,14 +187,14 @@ class GoTypeInferenceEngine:
         segments.reverse()
         return segments if all(segments) else None
 
-    def _infer_value_type(self, value: Node) -> str | None:
+    def infer_value_type(self, value: Node) -> str | None:
         if value.type == cs.TS_GO_COMPOSITE_LITERAL:
             type_node = value.child_by_field_name(cs.FIELD_TYPE)
             return type_identifier_text(type_node) if type_node else None
         if value.type == cs.TS_GO_UNARY_EXPRESSION:
             # `&T{}` wraps the composite literal in its operand.
             operand = value.child_by_field_name(cs.FIELD_OPERAND)
-            return self._infer_value_type(operand) if operand else None
+            return self.infer_value_type(operand) if operand else None
         if value.type == cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
             # `x := y.(T)` / `y.(*T)` (gin's `c := pool.Get().(*Context)`): the
             # asserted type is x's type, so a later field-hop / method call on x

@@ -43,6 +43,7 @@ class GoRpcExposureProcessor:
         "_go_function_return_types",
         "_ast_cache",
         "_go_engine",
+        "_dir_members_cache",
     )
 
     def __init__(
@@ -67,6 +68,9 @@ class GoRpcExposureProcessor:
         self._go_function_return_types = go_function_return_types
         self._ast_cache = ast_cache
         self._go_engine = GoTypeInferenceEngine()
+        # Package membership is stable by the call pass (the definition pass
+        # has completed), so member lists memoise safely.
+        self._dir_members_cache: dict[str, list[str]] = {}
 
     def process_caller(
         self,
@@ -76,12 +80,21 @@ class GoRpcExposureProcessor:
     ) -> None:
         if not self._enabled or language is not cs.SupportedLanguage.GO:
             return
-        wirings = list(self._wiring_calls(caller_node, module_qn))
+        wirings = self._wiring_calls(caller_node, module_qn)
         if not wirings:
             return
         import_map = self._import_processor.import_mapping.get(module_qn, {})
-        for qualifier, stem, arg_name in wirings:
-            impl_qn = self._resolve_impl_qn(caller_node, module_qn, arg_name)
+        var_types = self._go_engine.build_local_variable_type_map(
+            caller_node, module_qn
+        )
+        call_bindings = self._go_engine.collect_call_var_bindings(caller_node)
+        # A local shadowing the imported package name makes the call a method
+        # on the local value, not codegen wiring (mirrors the client guard).
+        shadowed = set(var_types) | {name for name, _segments in call_bindings}
+        for qualifier, stem, arg in wirings:
+            if qualifier in shadowed:
+                continue
+            impl_qn = self._resolve_impl_qn(module_qn, arg, var_types, call_bindings)
             if impl_qn is None:
                 continue
             connect_dir = import_map.get(qualifier)
@@ -92,10 +105,10 @@ class GoRpcExposureProcessor:
 
     def _wiring_calls(
         self, caller_node: Node, module_qn: str
-    ) -> list[tuple[str, str, str]]:
-        # (qualifier, stem, first-argument identifier) per handler wiring call.
+    ) -> list[tuple[str, str, Node]]:
+        # (qualifier, stem, first-argument node) per handler wiring call.
         import_map = self._import_processor.import_mapping.get(module_qn, {})
-        found: list[tuple[str, str, str]] = []
+        found: list[tuple[str, str, Node]] = []
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         stack = [body] if body is not None else []
         while stack:
@@ -115,40 +128,53 @@ class GoRpcExposureProcessor:
             qualifier = safe_decode_text(operand) or ""
             if not match or not _rpc_qualifier_resolves(qualifier, import_map):
                 continue
-            if arg := self._first_identifier_arg(node):
-                found.append((qualifier, match.group(1), arg))
+            arguments = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+            if arguments is not None and arguments.named_children:
+                found.append((qualifier, match.group(1), arguments.named_children[0]))
         return found
 
-    @staticmethod
-    def _first_identifier_arg(call: Node) -> str | None:
-        arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
-        first = arguments.named_children[0] if arguments and arguments.named_children else None
-        if first is None or first.type != cs.TS_GO_IDENTIFIER:
-            return None
-        return safe_decode_text(first)
-
     def _resolve_impl_qn(
-        self, caller_node: Node, module_qn: str, arg_name: str
+        self,
+        module_qn: str,
+        arg: Node,
+        var_types: Mapping[str, str],
+        call_bindings: list[tuple[str, list[str]]],
     ) -> str | None:
         # A literal-typed local (`impl := &Impl{}`, typed parameter) names the
         # type directly; a constructor binding (`uSrv := server.New(...)`)
-        # resolves through the imported package's recorded return type.
-        var_types = self._go_engine.build_local_variable_type_map(
-            caller_node, module_qn
-        )
-        if type_name := var_types.get(arg_name):
+        # resolves through the imported package's recorded return type. The
+        # same two shapes also appear inline as the argument itself.
+        if arg.type == cs.TS_GO_IDENTIFIER:
+            arg_name = safe_decode_text(arg)
+            if arg_name is None:
+                return None
+            if type_name := var_types.get(arg_name):
+                return self._resolve_type_in_package(
+                    type_name, self._package_members(module_qn)
+                )
+            for name, segments in call_bindings:
+                if name == arg_name:
+                    return self._ctor_return_impl(module_qn, segments)
+            return None
+        if arg.type == cs.TS_GO_CALL_EXPRESSION:
+            segments = self._go_engine.callee_segments(arg)
+            return self._ctor_return_impl(module_qn, segments) if segments else None
+        if type_name := self._go_engine.infer_value_type(arg):
             return self._resolve_type_in_package(
                 type_name, self._package_members(module_qn)
             )
-        for name, segments in self._go_engine.collect_call_var_bindings(caller_node):
-            if name == arg_name and len(segments) == 2:
-                return self._ctor_return_impl(module_qn, segments[0], segments[1])
         return None
 
-    def _ctor_return_impl(
-        self, module_qn: str, qualifier: str, ctor: str
-    ) -> str | None:
-        members = self._imported_package_members(module_qn, qualifier)
+    def _ctor_return_impl(self, module_qn: str, segments: list[str]) -> str | None:
+        # `New()` looks up the wiring module's own package; `server.New()`
+        # the imported one.
+        if len(segments) == 1:
+            members = self._package_members(module_qn)
+        elif len(segments) == 2:
+            members = self._imported_package_members(module_qn, segments[0])
+        else:
+            return None
+        ctor = segments[-1]
         for member in members:
             if type_name := self._go_function_return_types.get(
                 f"{member}{cs.SEPARATOR_DOT}{ctor}"
@@ -156,51 +182,46 @@ class GoRpcExposureProcessor:
                 return self._resolve_type_in_package(type_name, members)
         return None
 
-    def _imported_package_members(
-        self, module_qn: str, qualifier: str
-    ) -> list[str]:
+    def _imported_package_members(self, module_qn: str, qualifier: str) -> list[str]:
         # An unaliased import's source qualifier is the target's `package`
         # clause, which may differ from the path segment the import map is
         # keyed by; fall back to matching the clause across imported packages.
         import_map = self._import_processor.import_mapping.get(module_qn, {})
         if package_dir := import_map.get(qualifier):
             return self._package_dir_members(package_dir)
-        for package_dir in import_map.values():
-            members = self._package_dir_members(package_dir)
-            if members and all(
-                self._go_package_names.get(m) == qualifier for m in members
-            ):
-                return members
-        return []
+        matches = [
+            members
+            for package_dir in import_map.values()
+            if (members := self._package_dir_members(package_dir))
+            and all(self._go_package_names.get(m) == qualifier for m in members)
+        ]
+        # Two imports with the same clause cannot be told apart from the
+        # qualifier alone: stay silent rather than guess.
+        return matches[0] if len(matches) == 1 else []
 
     def _package_dir_members(self, package_dir: str) -> list[str]:
         # Modules of ONE Go package: qn under the dotted dir, all sharing the
         # single parent directory (extension-disambiguated qns keep extra
         # segments, so the path check does the grouping, per issue #930).
+        if (cached := self._dir_members_cache.get(package_dir)) is not None:
+            return cached
         prefix = f"{package_dir}{cs.SEPARATOR_DOT}"
-        dirs = {
-            path.parent
+        candidates = [
+            (qn, path)
             for qn, path in self._module_paths.items()
             if qn.startswith(prefix)
-        }
-        if len(dirs) != 1:
-            candidates = [
-                (qn, path)
-                for qn, path in self._module_paths.items()
-                if qn.startswith(prefix)
-            ]
-            shallowest = min(
-                (len(p.parts) for _qn, p in candidates), default=None
-            )
-            dirs = {p.parent for _qn, p in candidates if len(p.parts) == shallowest}
-            if len(dirs) != 1:
-                return []
-        target = next(iter(dirs))
-        return [
-            qn
-            for qn, path in self._module_paths.items()
-            if qn.startswith(prefix) and path.parent == target
         ]
+        # Subpackage modules share the qn prefix; the package's own files are
+        # the shallowest paths under it.
+        shallowest = min((len(p.parts) for _qn, p in candidates), default=None)
+        dirs = {p.parent for _qn, p in candidates if len(p.parts) == shallowest}
+        members = (
+            [qn for qn, path in candidates if path.parent in dirs]
+            if len(dirs) == 1
+            else []
+        )
+        self._dir_members_cache[package_dir] = members
+        return members
 
     def _package_members(self, module_qn: str) -> list[str]:
         my_path = self._module_paths.get(module_qn)
