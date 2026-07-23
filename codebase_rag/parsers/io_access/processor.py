@@ -131,6 +131,14 @@ def _collect_go_param_bindings(
             )
 
 
+def _same_go_package(
+    sibling_qn: str, path: Path, requester_dir: Path | None, package_qn: str
+) -> bool:
+    if requester_dir is not None:
+        return path.parent == requester_dir
+    return sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] == package_qn
+
+
 def _collect_go_file_fields(
     root: Node,
     import_map: dict[str, str],
@@ -1364,32 +1372,8 @@ class IOAccessProcessor:
             root = root.parent
         package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         # Go splits a package across files: the struct (and its typed field)
-        # may live in a sibling of the calling file. `_test.go` files,
-        # including the REQUESTING one, compile only under `go test` and
-        # contribute no fields.
-        requester = self._module_paths.get(module_qn)
-        # Package membership groups by the file's PARENT DIRECTORY when the
-        # requester's path is known: extension disambiguation (`service.go`
-        # next to `service.ts` -> qn `pkg.service.go`) would split a file
-        # from its Go package under qn-prefix grouping (issue #930 review).
-        requester_dir = requester.parent if requester is not None else None
-        sources: list[tuple[Node, dict[str, str]]] = []
-        if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
-            sources.append((root, import_map))
-        for sibling_qn, path in self._module_paths.items():
-            if sibling_qn == module_qn or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
-                continue
-            if requester_dir is not None:
-                if path.parent != requester_dir:
-                    continue
-            elif sibling_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] != package_qn:
-                continue
-            entry = self._ast_cache.load(path) if self._ast_cache else None
-            if entry is None or entry[1] is not cs.SupportedLanguage.GO:
-                continue
-            sources.append(
-                (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
-            )
+        # may live in a sibling of the calling file.
+        sources = self._go_rpc_field_sources(root, module_qn, import_map)
         key = (package_qn, tuple(sorted(node.id for node, _imports in sources)))
         cached = self._rpc_field_cache.get(key)
         if cached is not None:
@@ -1404,6 +1388,33 @@ class IOAccessProcessor:
             fields.pop(name, None)
         self._rpc_field_cache[key] = fields
         return fields
+
+    def _go_rpc_field_sources(
+        self, root: Node, module_qn: str, import_map: dict[str, str]
+    ) -> list[tuple[Node, dict[str, str]]]:
+        # Package membership groups by the file's PARENT DIRECTORY when the
+        # requester's path is known: extension disambiguation (`service.go`
+        # next to `service.ts` -> qn `pkg.service.go`) would split a file
+        # from its Go package under qn-prefix grouping (issue #930 review).
+        # `_test.go` files, including the requesting one, contribute nothing.
+        requester = self._module_paths.get(module_qn)
+        requester_dir = requester.parent if requester is not None else None
+        package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        sources: list[tuple[Node, dict[str, str]]] = []
+        if requester is None or not requester.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+            sources.append((root, import_map))
+        for sibling_qn, path in self._module_paths.items():
+            if sibling_qn == module_qn or path.stem.endswith(cs.GO_TEST_FILE_SUFFIX):
+                continue
+            if not _same_go_package(sibling_qn, path, requester_dir, package_qn):
+                continue
+            entry = self._ast_cache.load(path) if self._ast_cache else None
+            if entry is None or entry[1] is not cs.SupportedLanguage.GO:
+                continue
+            sources.append(
+                (entry[0], self._import_processor.import_mapping.get(sibling_qn, {}))
+            )
+        return sources
 
     def _emit_rpc_field_method(
         self,
