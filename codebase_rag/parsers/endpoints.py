@@ -444,7 +444,9 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     for network_qn, (url, directions, caller_projects) in networks.items():
         rootful = not urlparse(url).netloc and url.startswith("/")
         candidates = _candidate_endpoints(url, rootful, caller_projects, endpoints)
-        exact, suffix, mounts = _match_candidates(url, directions, candidates, endpoints)
+        exact, suffix, mounts = _match_candidates(
+            url, directions, candidates, endpoints
+        )
         for endpoint_qn in exact:
             writer.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
