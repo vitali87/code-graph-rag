@@ -82,7 +82,8 @@ def _root_package_clause(text: str) -> str | None:
         if not parts:
             continue
         if parts[0] == cs.GO_KEYWORD_PACKAGE and len(parts) >= 2:
-            return parts[1]
+            # `package main;` is a valid explicit-semicolon clause form.
+            return parts[1].rstrip(";")
         return None
     return None
 
@@ -97,6 +98,9 @@ def _strip_go_comments(line: str, in_block: bool) -> tuple[str, bool]:
                 return "".join(code), True
             in_block = False
             i = end + 2
+            # A removed comment is a token separator, never a splice
+            # (`package/*doc*/gen` stays two tokens).
+            code.append(" ")
             continue
         block = line.find("/*", i)
         line_comment = line.find(cs.GO_MOD_COMMENT_PREFIX, i)

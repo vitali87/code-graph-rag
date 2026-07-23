@@ -381,3 +381,55 @@ def test_block_comment_package_text_does_not_qualify_stub(tmp_path: Path) -> Non
     mappings = discover_go_module_paths(tmp_path)
     resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
     assert resolved == "gen", (mappings, resolved)
+
+
+def _write_duplicate_module_pair(
+    tmp_path: Path, stub_main_go: str, real_gen_go: str
+) -> None:
+    (tmp_path / "a_stub").mkdir()
+    (tmp_path / "a_stub" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "a_stub" / "main.go").write_text(stub_main_go, encoding="utf-8")
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "go.mod").write_text(
+        "module github.com/acme/mytool/gen\n", encoding="utf-8"
+    )
+    (tmp_path / "gen" / "gen.go").write_text(real_gen_go, encoding="utf-8")
+
+
+def test_semicolon_package_clause_still_counts_as_main(tmp_path: Path) -> None:
+    # `package main;` is a valid clause form; the trailing semicolon must not
+    # make the stub look importable.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    _write_duplicate_module_pair(
+        tmp_path,
+        "package main;\n\nfunc main() {}\n",
+        'package gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
+
+
+def test_inline_block_comment_keeps_clause_tokens_apart(tmp_path: Path) -> None:
+    # `package/*doc*/gen` must still read as a `gen` clause: removing the
+    # comment may not glue the tokens together, or the real tree looks
+    # unimportable and the stub wins.
+    from codebase_rag.parsers.go import (
+        discover_go_module_paths,
+        resolve_go_import_path,
+    )
+
+    _write_duplicate_module_pair(
+        tmp_path,
+        "package main\n\nfunc main() {}\n",
+        'package/*doc*/gen\n\nfunc Version() string {\n\treturn "1"\n}\n',
+    )
+    mappings = discover_go_module_paths(tmp_path)
+    resolved = resolve_go_import_path(mappings, "github.com/acme/mytool/gen")
+    assert resolved == "gen", (mappings, resolved)
