@@ -1312,15 +1312,20 @@ class IOAccessProcessor:
         if receiver.type == descriptor.member_expression_type:
             prop = receiver.child_by_field_name(descriptor.property_field)
             return safe_decode_text(prop) == _CLIENT_RECEIVER_NAME
-        if receiver.type in (cs.TS_PARENTHESIZED_EXPRESSION, cs.TS_BINARY_EXPRESSION):
-            return any(
-                cls._names_client(child, descriptor)
-                for child in receiver.named_children
+        if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children:
+            return cls._names_client(receiver.named_children[0], descriptor)
+        if receiver.type == cs.TS_BINARY_EXPRESSION:
+            # `a ?? b` / `a || b` yields ONE operand at runtime, so EVERY
+            # operand must be client-shaped; a mixed pair may select the
+            # non-client.
+            children = receiver.named_children
+            return bool(children) and all(
+                cls._names_client(child, descriptor) for child in children
             )
         if receiver.type == cs.TS_JS_TERNARY_EXPRESSION:
-            return any(
-                cls._names_client(child, descriptor)
-                for child in receiver.named_children[1:]
+            branches = receiver.named_children[1:]
+            return bool(branches) and all(
+                cls._names_client(child, descriptor) for child in branches
             )
         if receiver.type == cs.TS_NON_NULL_EXPRESSION and receiver.named_children:
             return cls._names_client(receiver.named_children[0], descriptor)

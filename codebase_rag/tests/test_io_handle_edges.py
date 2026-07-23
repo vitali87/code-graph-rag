@@ -1489,3 +1489,20 @@ class TestTsGeneratedClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_mixed_alternative_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
+        # A wrapper that may select a NON-client at runtime is not client
+        # evidence: every alternative must be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  cache: any;\n"
+                "  m(flag: boolean, options?: any) {\n"
+                "    return (flag ? this.client : this.cache).get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
