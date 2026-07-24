@@ -131,37 +131,20 @@ def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _Manifest
 
 
 def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
-    if isinstance(exports, str):
-        # The shorthand form declares the package root only.
+    # A string, or an object whose keys are all CONDITIONS (`{"import": ..,
+    # "require": ..}`) rather than subpaths, declares the package root: it
+    # applies whole to `.` and matches no other subpath.
+    if isinstance(exports, str) or _is_root_only(exports):
         root = subpath == cs.PATH_CURRENT_DIR
         return _ManifestTargets(_leaf_targets(exports) if root else [], root)
     if not isinstance(exports, dict):
         return _ManifestTargets([], False)
-    # An exports object whose keys are all CONDITIONS (`{"import": ..,
-    # "require": ..}`) rather than subpaths declares the package root, so it
-    # applies whole to `.` and matches no other subpath.
-    if not any(
-        isinstance(key, str) and key.startswith(cs.PATH_CURRENT_DIR) for key in exports
-    ):
-        root = subpath == cs.PATH_CURRENT_DIR
-        return _ManifestTargets(_leaf_targets(exports) if root else [], root)
-    matched: list[tuple[int, int, JsonValue]] = []
-    for key, value in exports.items():
-        if not isinstance(key, str):
-            continue
-        # An exact key outranks every pattern, as it does in Node; among
-        # patterns the longest literal prefix wins.
-        if key == subpath:
-            matched.append((1, len(key), value))
-        elif cs.JS_EXPORTS_WILDCARD in key:
-            prefix, _, suffix = key.partition(cs.JS_EXPORTS_WILDCARD)
-            if (
-                subpath.startswith(prefix)
-                and subpath.endswith(suffix)
-                and len(subpath) >= len(prefix) + len(suffix)
-            ):
-                star = subpath[len(prefix) : len(subpath) - len(suffix) or None]
-                matched.append((0, len(prefix), _substitute(value, star)))
+    matched = [
+        match
+        for key, value in exports.items()
+        if isinstance(key, str)
+        and (match := _key_match(key, value, subpath)) is not None
+    ]
     if not matched:
         return _ManifestTargets([], False)
     matched.sort(key=lambda m: (-m[0], -m[1]))
@@ -180,6 +163,32 @@ def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
         ],
         True,
     )
+
+
+def _is_root_only(exports: JsonValue) -> bool:
+    return isinstance(exports, dict) and not any(
+        isinstance(key, str) and key.startswith(cs.PATH_CURRENT_DIR) for key in exports
+    )
+
+
+def _key_match(
+    key: str, value: JsonValue, subpath: str
+) -> tuple[int, int, JsonValue] | None:
+    # An exact key outranks every pattern, as it does in Node; among patterns
+    # the longest literal prefix wins.
+    if key == subpath:
+        return (1, len(key), value)
+    if cs.JS_EXPORTS_WILDCARD not in key:
+        return None
+    prefix, _, suffix = key.partition(cs.JS_EXPORTS_WILDCARD)
+    if not (
+        subpath.startswith(prefix)
+        and subpath.endswith(suffix)
+        and len(subpath) >= len(prefix) + len(suffix)
+    ):
+        return None
+    star = subpath[len(prefix) : len(subpath) - len(suffix) or None]
+    return (0, len(prefix), _substitute(value, star))
 
 
 def _substitute(value: JsonValue, star: str) -> JsonValue:
@@ -215,35 +224,10 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
     # favour of the source root (`./dist/gen/a.js` -> `gen/a.ts`, `src/gen/a.ts`).
     # Every candidate must exist on disk, so a wrong guess resolves to nothing
     # rather than to a phantom module.
-    relative = target
-    while relative.startswith(f"{cs.PATH_CURRENT_DIR}{cs.SEPARATOR_SLASH}"):
-        relative = relative[2:]
-    relative = posixpath.normpath(relative)
-    if (
-        PurePosixPath(relative).is_absolute()
-        or relative
-        in (
-            cs.PATH_CURRENT_DIR,
-            cs.PATH_PARENT_DIR,
-        )
-        or relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}")
-    ):
+    relative = _within_package(target)
+    if relative is None:
         return None
-    for ext in cs.JS_TS_MODULE_EXTENSIONS:
-        if relative.endswith(ext):
-            relative = relative[: -len(ext)]
-            break
-    candidates = [relative]
-    head, _, tail = relative.partition(cs.SEPARATOR_SLASH)
-    if head in cs.JS_BUILD_OUTPUT_DIRS and tail:
-        candidates.append(tail)
-        candidates.append(f"{cs.JS_SOURCE_DIR}{cs.SEPARATOR_SLASH}{tail}")
-    for candidate in candidates:
-        # A checked-in build output is never indexed, so resolving to one
-        # would mint a module qn the graph does not hold and drop the call
-        # exactly as an unresolved specifier does.
-        if any(part in cs.IGNORE_PATTERNS for part in PurePosixPath(candidate).parts):
-            continue
+    for candidate in _source_candidates(relative):
         base = package_dir / candidate
         if _has_source_file(base):
             return _repo_relative(base, repo_path)
@@ -251,6 +235,45 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
         if base.is_dir() and _has_source_file(index):
             return _repo_relative(index, repo_path)
     return None
+
+
+def _within_package(target: str) -> str | None:
+    # The target as a package-relative path, or None when it names something
+    # outside the package (an absolute path, a parent escape).
+    relative = target
+    prefix = f"{cs.PATH_CURRENT_DIR}{cs.SEPARATOR_SLASH}"
+    while relative.startswith(prefix):
+        relative = relative[len(prefix) :]
+    relative = posixpath.normpath(relative)
+    escapes = relative.startswith(f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}")
+    if (
+        PurePosixPath(relative).is_absolute()
+        or relative in (cs.PATH_CURRENT_DIR, cs.PATH_PARENT_DIR)
+        or escapes
+    ):
+        return None
+    for ext in cs.JS_TS_MODULE_EXTENSIONS:
+        if relative.endswith(ext):
+            return relative[: -len(ext)]
+    return relative
+
+
+def _source_candidates(relative: str) -> list[str]:
+    candidates = [relative]
+    head, _, tail = relative.partition(cs.SEPARATOR_SLASH)
+    if head in cs.JS_BUILD_OUTPUT_DIRS and tail:
+        candidates.append(tail)
+        candidates.append(f"{cs.JS_SOURCE_DIR}{cs.SEPARATOR_SLASH}{tail}")
+    # A checked-in build output is never indexed, so resolving to one would
+    # mint a module qn the graph does not hold and drop the call exactly as
+    # an unresolved specifier does.
+    return [
+        candidate
+        for candidate in candidates
+        if not any(
+            part in cs.IGNORE_PATTERNS for part in PurePosixPath(candidate).parts
+        )
+    ]
 
 
 def _has_source_file(base: Path) -> bool:
