@@ -232,9 +232,8 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
         # the other module system is never considered at all. An
         # unrecognised key (a runtime or bundler condition) is the last
         # resort, in declaration order.
-        other = set(cs.JS_EXPORT_CONDITION_ORDER) | set(cs.JS_REQUIRE_CONDITION_ORDER)
         ordered = [key for key in order if key in value]
-        ordered += [key for key in value if key not in other]
+        ordered += [key for key in value if key not in cs.JS_KNOWN_EXPORT_CONDITIONS]
         return _leaf_targets(value[ordered[0]], require) if ordered else []
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner, require)]

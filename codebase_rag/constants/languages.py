@@ -163,20 +163,17 @@ JS_EXPORTS_WILDCARD = "*"
 # sources, so these usually lead back to one file; when they lead to
 # different ones the first wins, and modern first-party code is ESM.
 # Conditions an ESM import may select, in order. `require` is absent on
-# purpose: the two module systems can name different sources, so a request
-# that finds none of its own conditions indexed resolves to nothing rather
-# than binding to the other system's module.
-JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = (
-    "types",
-    "import",
-    "module",
-    "default",
-)
+# purpose: the two module systems can name different modules, so a request
+# never selects the other system's. `types` is absent too: it names the
+# declaration module, which no runtime selects and which therefore is not
+# what a call graph follows.
+JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = ("import", "module", "default")
 # The same map read from the CommonJS side.
-JS_REQUIRE_CONDITION_ORDER: tuple[str, ...] = (
-    "types",
-    "require",
-    "default",
+JS_REQUIRE_CONDITION_ORDER: tuple[str, ...] = ("require", "default")
+# Every condition with a defined meaning here, so an unrecognised key (a
+# runtime or bundler condition) is told apart from one deliberately skipped.
+JS_KNOWN_EXPORT_CONDITIONS: frozenset[str] = frozenset(
+    {"types", "import", "module", "default", "require"}
 )
 # A manifest points at the PUBLISHED build, which is never indexed; dropping
 # one of these leading directories reaches the source it was built from
