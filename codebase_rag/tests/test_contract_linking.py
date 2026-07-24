@@ -45,6 +45,9 @@ class _FakeIngestor:
     ) -> list[ResultRow]:
         for marker, rows in self._rows.items():
             if marker in query:
+                if "$project_prefix" in query and params is not None:
+                    prefix = str(params["project_prefix"])
+                    return [r for r in rows if f"{r.get('project')}." == prefix]
                 if "$project" in query and params is not None:
                     return [r for r in rows if r.get("project") == params["project"]]
                 return rows
@@ -108,8 +111,12 @@ def _endpoint_row(name: str) -> dict[str, Any]:
     }
 
 
-def _rpc_row(name: str) -> dict[str, Any]:
-    return {"qualified_name": f"resource::RPC::{name}", "name": name}
+def _rpc_row(name: str, project: str = "proj") -> dict[str, Any]:
+    return {
+        "qualified_name": f"resource::RPC::{name}",
+        "name": name,
+        "project": project,
+    }
 
 
 def _links(ingestor: _FakeIngestor) -> set[tuple[PropertyValue, PropertyValue]]:
@@ -142,6 +149,17 @@ class TestRpcAnchoring:
             "resource::RPC::ThingService.CreateThing",
             "resource::CONTRACT::ThingService.CreateThing",
         ) in _links(ingestor)
+
+    def test_an_rpc_no_local_code_touches_stays_unlinked(self, tmp_path: Path) -> None:
+        # RPC resources are deliberately unscoped so a client in one project
+        # meets a server in another; a same-named service in an UNRELATED
+        # project must not be reported as this contract's implementation, so
+        # only an RPC this project's own code participates in anchors.
+        ingestor = _ingestor(
+            rpcs=[_rpc_row("ThingService.CreateThing", project="elsewhere")]
+        )
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        assert not _links(ingestor)
 
     def test_undeclared_rpc_resource_stays_unlinked(self, tmp_path: Path) -> None:
         ingestor = _ingestor(rpcs=[_rpc_row("OtherService.Ping")])
@@ -263,6 +281,16 @@ class TestSweepOwnership:
         ingestor = _FakeIngestor({"'ENDPOINT'": [], "'RPC'": [], "(f:File)": []})
         assert link_contracts(ingestor, _repo(tmp_path), project_name="proj") == 0
         assert not ingestor.nodes
+
+    def test_a_file_that_stopped_declaring_operations_is_cleared(
+        self, tmp_path: Path
+    ) -> None:
+        # An indexed spec edited to declare nothing leaves its File node
+        # anchoring the operations it no longer has; the declarations of
+        # every contract file in the repo are cleared before re-emission.
+        ingestor = _ingestor()
+        link_contracts(ingestor, tmp_path, project_name="proj")
+        assert any("EXPOSES" in query for query in ingestor.writes), ingestor.writes
 
     def test_no_contract_files_writes_nothing(self, tmp_path: Path) -> None:
         ingestor = _ingestor(endpoints=[_endpoint_row("POST /v2/things")])

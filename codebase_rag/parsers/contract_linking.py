@@ -24,9 +24,14 @@ from .contracts import ContractOperation, discover_contract_operations
 from .endpoints import _has_literal_segment, url_matches_template
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 
+# RPC resources are deliberately unscoped, so a client in one project meets a
+# server in another on one node. A contract, though, is declared by THIS
+# repo, so only an operation this project's own code participates in is its
+# implementation; a same-named service elsewhere is a different contract.
 CYPHER_LIVE_RPC_RESOURCES = (
-    "MATCH (r:Resource {kind: 'RPC'}) "
-    "RETURN r.qualified_name AS qualified_name, r.name AS name"
+    "MATCH (f)-[:EXPOSES|READS_FROM|WRITES_TO]->(r:Resource {kind: 'RPC'}) "
+    "WHERE f.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT r.qualified_name AS qualified_name, r.name AS name"
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
     "MATCH ()-[:EXPOSES]->(r:Resource {kind: 'ENDPOINT'}) "
@@ -50,9 +55,12 @@ CYPHER_DELETE_CONTRACT_RESOLVES_TO = (
 # A renamed operation leaves a node whose declaring file still anchors it,
 # so the file's own declarations are cleared before it re-declares them and
 # whatever it no longer declares is pruned as unanchored.
+# Every contract file in the repo, not only the ones that still declare
+# something: a spec edited to declare nothing would otherwise keep anchoring
+# the operations it no longer has.
 CYPHER_DELETE_FILE_CONTRACTS = (
     "MATCH (f:File)-[e:EXPOSES]->(:Resource {kind: 'CONTRACT'}) "
-    "WHERE f.absolute_path IN $paths DELETE e"
+    "WHERE f.absolute_path STARTS WITH $repo_prefix DELETE e"
 )
 
 _IDENTITY_SEPARATOR = "."
@@ -70,30 +78,35 @@ def link_contracts(
 
     Returns the number of RESOLVES_TO edges emitted.
     """
-    operations = discover_contract_operations(repo_path, exclude_paths, unignore_paths)
-    if not operations or not isinstance(ingestor, QueryProtocol):
+    if not isinstance(ingestor, QueryProtocol):
         return 0
     # A filtering sink that would drop the EXPOSES edge must not receive the
     # Resource node either, or selective capture leaves an orphaned contract.
     rel_gate = getattr(ingestor, "rel_enabled", None)
     if callable(rel_gate) and not rel_gate(cs.RelationshipType.EXPOSES):
         return 0
-    operations = _indexed_only(ingestor, operations)
+    # Cleared before anything is discovered, so a file that stopped
+    # declaring operations sheds them: its contract nodes lose their anchor
+    # and the unanchored-resource prune takes them and their edges.
+    ingestor.execute_write(
+        CYPHER_DELETE_FILE_CONTRACTS,
+        {"repo_prefix": cached_resolve_posix(repo_path)},
+    )
+    operations = _indexed_only(
+        ingestor,
+        discover_contract_operations(repo_path, exclude_paths, unignore_paths),
+    )
     if not operations:
         return 0
     ingestor.execute_write(
         CYPHER_DELETE_CONTRACT_RESOLVES_TO,
         {"contract_qns": sorted({_contract_qn(op) for op in operations})},
     )
-    ingestor.execute_write(
-        CYPHER_DELETE_FILE_CONTRACTS,
-        {"paths": sorted({cached_resolve_posix(op.source) for op in operations})},
-    )
     for operation in operations:
         _emit_contract(ingestor, operation)
-    created = _link_rpcs(ingestor, ingestor, operations) + _link_endpoints(
+    created = _link_rpcs(
         ingestor, ingestor, operations, project_name
-    )
+    ) + _link_endpoints(ingestor, ingestor, operations, project_name)
     logger.debug(ls.CONTRACT_OPERATIONS, count=len(operations), created=created)
     return created
 
@@ -157,6 +170,7 @@ def _link_rpcs(
     ingestor: IngestorProtocol,
     reader: QueryProtocol,
     operations: list[ContractOperation],
+    project_name: str,
 ) -> int:
     # An RPC resource is keyed `<Service>.<Method>`, which is exactly the
     # identity the proto declares, so this is a name match, not a heuristic.
@@ -166,7 +180,11 @@ def _link_rpcs(
         if operation.method is None
     }
     created = 0
-    for row in reader.fetch_all(CYPHER_LIVE_RPC_RESOURCES):
+    rows = reader.fetch_all(
+        CYPHER_LIVE_RPC_RESOURCES,
+        {"project_prefix": f"{project_name}{cs.SEPARATOR_DOT}"},
+    )
+    for row in rows:
         name = str(row.get(cs.KEY_NAME) or "")
         operation = by_identity.get(name)
         if operation is None:
