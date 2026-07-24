@@ -22,7 +22,7 @@ PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
 
 # Any value a parsed JSON document can hold (a package.json manifest, a
-# tsconfig): recursive, so a nested condition map or array stays typed.
+# tsconfig, an OpenAPI spec): recursive, so nested mappings stay typed.
 type JsonValue = (
     str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 )
@@ -906,7 +906,7 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
     ),
     RelationshipSchema(
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.FILE),
         RelationshipType.EXPOSES,
         (NodeLabel.RESOURCE,),
     ),
