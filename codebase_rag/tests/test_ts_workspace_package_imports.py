@@ -488,9 +488,7 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/esm/admin"
         )
 
-    def test_conditions_never_cross_the_module_system(
-        self, tmp_path: Path
-    ) -> None:
+    def test_conditions_never_cross_the_module_system(self, tmp_path: Path) -> None:
         # Only the CommonJS source exists here. An ESM import must resolve to
         # nothing rather than bind to the CommonJS module it does not use,
         # and the reverse holds for a require.
