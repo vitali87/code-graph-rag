@@ -169,6 +169,14 @@ JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = (
     "default",
     "require",
 )
+# A CommonJS `require()` reads the same map from the other end.
+JS_REQUIRE_CONDITION_ORDER: tuple[str, ...] = (
+    "types",
+    "require",
+    "default",
+    "import",
+    "module",
+)
 # A manifest points at the PUBLISHED build, which is never indexed; dropping
 # one of these leading directories reaches the source it was built from
 # (`./dist/src/a.js` -> `src/a.ts`).

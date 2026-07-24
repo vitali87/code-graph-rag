@@ -329,9 +329,11 @@ class ImportProcessor:
         js_workspace_packages = discover_js_workspace_packages(repo_path)
 
         @lru_cache(maxsize=4096)
-        def _map_js_workspace_import_cached(import_path: str) -> str | None:
+        def _map_js_workspace_import_cached(
+            import_path: str, require: bool = False
+        ) -> str | None:
             return resolve_js_workspace_import(
-                js_workspace_packages, import_path, repo_path
+                js_workspace_packages, import_path, repo_path, require
             )
 
         self._map_js_workspace_import = _map_js_workspace_import_cached
@@ -1034,11 +1036,13 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
-    def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
+    def _resolve_js_module_path(
+        self, import_path: str, current_module: str, require: bool = False
+    ) -> str:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return aliased
-            if workspace := self._map_js_workspace_import(import_path):
+            if workspace := self._map_js_workspace_import(import_path, require):
                 dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
                 return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
@@ -1143,8 +1147,10 @@ class ImportProcessor:
             arg = next((a for a in args_node.children if a.type == cs.TS_STRING), None)
             if arg is None:
                 continue
+            # A CommonJS `require()` reads a dual-package exports map from
+            # the require side.
             resolved_module = self._resolve_js_module_path(
-                safe_decode_with_fallback(arg).strip("'\""), current_module
+                safe_decode_with_fallback(arg).strip("'\""), current_module, True
             )
             if name_node.type == cs.TS_IDENTIFIER:
                 # `const fs = require('fs')`: bind the whole module.

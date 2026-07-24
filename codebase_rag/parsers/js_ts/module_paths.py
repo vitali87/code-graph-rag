@@ -58,7 +58,10 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
 
 
 def resolve_js_workspace_import(
-    packages: list[tuple[str, Path]], import_path: str, repo_path: Path
+    packages: list[tuple[str, Path]],
+    import_path: str,
+    repo_path: Path,
+    require: bool = False,
 ) -> str | None:
     # Longest package name wins; the remainder of the specifier is the subpath
     # the package's own manifest maps to a file. Returns the repo-relative
@@ -74,13 +77,16 @@ def resolve_js_workspace_import(
             )
         else:
             continue
-        if (resolved := _package_module(package_dir, subpath, repo_path)) is not None:
+        resolved = _package_module(package_dir, subpath, repo_path, require)
+        if resolved is not None:
             return resolved
     return None
 
 
-def _package_module(package_dir: Path, subpath: str, repo_path: Path) -> str | None:
-    targets = _manifest_targets(_read_manifest(package_dir), subpath)
+def _package_module(
+    package_dir: Path, subpath: str, repo_path: Path, require: bool = False
+) -> str | None:
+    targets = _manifest_targets(_read_manifest(package_dir), subpath, require)
     for target in targets.paths:
         if (module := _source_module(package_dir, target, repo_path)) is not None:
             return module
@@ -113,7 +119,9 @@ def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
     return data if isinstance(data, dict) else {}
 
 
-def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _ManifestTargets:
+def _manifest_targets(
+    manifest: dict[str, JsonValue], subpath: str, require: bool = False
+) -> _ManifestTargets:
     # Every file the manifest says this subpath names, most specific first.
     # A conditions object (`{"import": .., "require": .., "types": ..}`) points
     # at one artefact family, so each leaf is tried until a source is found.
@@ -121,7 +129,9 @@ def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _Manifest
     # nothing it does not list, not through the legacy entry fields and not
     # through a conventional path, so its mere presence claims every subpath.
     declares_exports = cs.JS_PACKAGE_EXPORTS_KEY in manifest
-    matched = _exports_matches(manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath)
+    matched = _exports_matches(
+        manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath, require
+    )
     targets = _ManifestTargets(matched.paths, matched.claimed or declares_exports)
     if not targets.claimed and subpath == cs.PATH_CURRENT_DIR:
         targets.paths.extend(
@@ -132,13 +142,15 @@ def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _Manifest
     return targets
 
 
-def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
+def _exports_matches(
+    exports: JsonValue, subpath: str, require: bool = False
+) -> _ManifestTargets:
     # A string, or an object whose keys are all CONDITIONS (`{"import": ..,
     # "require": ..}`) rather than subpaths, declares the package root: it
     # applies whole to `.` and matches no other subpath.
     if isinstance(exports, str) or _is_root_only(exports):
         root = subpath == cs.PATH_CURRENT_DIR
-        return _ManifestTargets(_leaf_targets(exports) if root else [], root)
+        return _ManifestTargets(_leaf_targets(exports, require) if root else [], root)
     if not isinstance(exports, dict):
         return _ManifestTargets([], False)
     matched = [
@@ -161,7 +173,7 @@ def _exports_matches(exports: JsonValue, subpath: str) -> _ManifestTargets:
         [
             target
             for _exact, _length, value in matched
-            for target in _leaf_targets(value)
+            for target in _leaf_targets(value, require)
         ],
         True,
     )
@@ -203,7 +215,7 @@ def _substitute(value: JsonValue, star: str) -> JsonValue:
     return value
 
 
-def _leaf_targets(value: JsonValue) -> list[str]:
+def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
@@ -211,11 +223,14 @@ def _leaf_targets(value: JsonValue) -> list[str]:
         # holds sources, not builds, so any of them may lead back to the same
         # file; where they lead to DIFFERENT ones, the order decides, and it
         # follows how the code under analysis is written (ESM first).
-        ordered = [key for key in cs.JS_EXPORT_CONDITION_ORDER if key in value]
-        ordered += [key for key in value if key not in cs.JS_EXPORT_CONDITION_ORDER]
-        return [t for key in ordered for t in _leaf_targets(value[key])]
+        order = (
+            cs.JS_REQUIRE_CONDITION_ORDER if require else cs.JS_EXPORT_CONDITION_ORDER
+        )
+        ordered = [key for key in order if key in value]
+        ordered += [key for key in value if key not in order]
+        return [t for key in ordered for t in _leaf_targets(value[key], require)]
     if isinstance(value, list):
-        return [t for inner in value for t in _leaf_targets(inner)]
+        return [t for inner in value for t in _leaf_targets(inner, require)]
     return []
 
 
