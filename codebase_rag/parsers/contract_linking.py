@@ -28,9 +28,11 @@ from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 # server in another on one node. A contract, though, is declared by THIS
 # repo, so only an operation this project's own code participates in is its
 # implementation; a same-named service elsewhere is a different contract.
+# Attribution is the qn's FIRST segment, as the endpoint linking does it: a
+# string prefix would let project `api` claim `api.worker`'s participation.
 CYPHER_LIVE_RPC_RESOURCES = (
     "MATCH (f)-[:EXPOSES|READS_FROM|WRITES_TO]->(r:Resource {kind: 'RPC'}) "
-    "WHERE f.qualified_name STARTS WITH $project_prefix "
+    "WHERE head(split(f.qualified_name, '.')) = $project_name "
     "RETURN DISTINCT r.qualified_name AS qualified_name, r.name AS name"
 )
 CYPHER_LIVE_ENDPOINT_RESOURCES = (
@@ -191,10 +193,7 @@ def _link_rpcs(
         if operation.method is None
     }
     created = 0
-    rows = reader.fetch_all(
-        CYPHER_LIVE_RPC_RESOURCES,
-        {"project_prefix": f"{project_name}{cs.SEPARATOR_DOT}"},
-    )
+    rows = reader.fetch_all(CYPHER_LIVE_RPC_RESOURCES, {"project_name": project_name})
     for row in rows:
         name = str(row.get(cs.KEY_NAME) or "")
         operation = by_identity.get(name)

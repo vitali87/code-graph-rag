@@ -46,13 +46,20 @@ class _FakeIngestor:
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         for marker, rows in self._rows.items():
-            if marker in query:
-                if "$project_prefix" in query and params is not None:
-                    prefix = str(params["project_prefix"])
-                    return [r for r in rows if f"{r.get('project')}." == prefix]
-                if "$project" in query and params is not None:
-                    return [r for r in rows if r.get("project") == params["project"]]
+            if marker not in query:
+                continue
+            if params is None:
                 return rows
+            # Model the query's own scoping: first-segment attribution for
+            # RPC rows, exact project match for endpoint rows.
+            if "head(split(" in query:
+                name = str(params["project_name"])
+                return [
+                    r for r in rows if str(r.get("project", "")).split(".")[0] == name
+                ]
+            if "r.project = $project" in query:
+                return [r for r in rows if r.get("project") == params["project"]]
+            return rows
         if "(f:File)" in query and params is not None:
             # Default: every contract file this repo declares is indexed.
             return [{"absolute_path": path} for path in params["paths"]]
@@ -160,6 +167,19 @@ class TestRpcAnchoring:
         # only an RPC this project's own code participates in anchors.
         ingestor = _ingestor(
             rpcs=[_rpc_row("ThingService.CreateThing", project="elsewhere")]
+        )
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        assert not _links(ingestor)
+
+    def test_a_name_sharing_project_does_not_claim_the_rpc(
+        self, tmp_path: Path
+    ) -> None:
+        # `proj` and `projector` are different projects that share a name
+        # prefix; attribution is the qualified name's first SEGMENT, so the
+        # first cannot claim the second's participation in a globally shared
+        # RPC resource.
+        ingestor = _ingestor(
+            rpcs=[_rpc_row("ThingService.CreateThing", project="projector")]
         )
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert not _links(ingestor)
