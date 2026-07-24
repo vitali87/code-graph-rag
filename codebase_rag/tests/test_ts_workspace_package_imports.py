@@ -516,6 +516,29 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/cjs/admin"
         )
 
+    def test_only_the_selected_condition_is_used(self, tmp_path: Path) -> None:
+        # Node selects the first condition PRESENT in the map, and resolution
+        # then stands or falls on that target; a later condition is not a
+        # second chance, so an unavailable `import` does not fall through to
+        # `default`.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "import": "./src/missing.ts",
+                        "default": "./src/present.ts",
+                    }
+                },
+            ),
+            {"src/present.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.
