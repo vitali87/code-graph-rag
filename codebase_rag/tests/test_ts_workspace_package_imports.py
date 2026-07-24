@@ -488,6 +488,37 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/esm/admin"
         )
 
+    def test_the_manifest_decides_which_condition_wins(self, tmp_path: Path) -> None:
+        # A condition map is ordered by whoever wrote it, and the earliest
+        # selectable key wins however unusual the ordering looks. `default`
+        # ahead of `import` is why the convention is to list it last, and a
+        # reader that imposes its own ranking binds the import to a module
+        # the runtime never loads.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "default": "./src/universal/admin.ts",
+                        "import": "./src/esm/admin.ts",
+                    }
+                },
+            ),
+            {"src/universal/admin.ts": ADMIN_SOURCE, "src/esm/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            == "packages/sdk/src/universal/admin"
+        )
+        assert (
+            resolve_js_workspace_import(
+                packages, "@acme/sdk/admin", tmp_path, require=True
+            )
+            == "packages/sdk/src/universal/admin"
+        )
+
     def test_conditions_never_cross_the_module_system(self, tmp_path: Path) -> None:
         # Only the CommonJS source exists here. An ESM import must resolve to
         # nothing rather than bind to the CommonJS module it does not use,

@@ -159,17 +159,17 @@ JS_PACKAGE_NAME_KEY = "name"
 JS_PACKAGE_EXPORTS_KEY = "exports"
 JS_PACKAGE_ENTRY_KEYS: tuple[str, ...] = ("main", "module", "types")
 JS_EXPORTS_WILDCARD = "*"
-# Order the conditions of an `exports` entry are tried in. The graph holds
-# sources, so these usually lead back to one file; when they lead to
-# different ones the first wins, and modern first-party code is ESM.
-# Conditions an ESM import may select, in order. `require` is absent on
-# purpose: the two module systems can name different modules, so a request
-# never selects the other system's. `types` is absent too: it names the
-# declaration module, which no runtime selects and which therefore is not
-# what a call graph follows.
-JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = ("import", "module", "default")
+# The conditions of an `exports` entry an ESM import is allowed to select.
+# Which of them wins is decided by the manifest, which lists them in the
+# order it wants them tried; these sets only say which keys are on offer to
+# a request this analysis can make. `require` is absent on purpose: the two
+# module systems can name different modules, so a request never selects the
+# other system's. `types` is absent too: it names the declaration module,
+# which no runtime selects and which therefore is not what a call graph
+# follows.
+JS_EXPORT_CONDITIONS: frozenset[str] = frozenset({"import", "module", "default"})
 # The same map read from the CommonJS side.
-JS_REQUIRE_CONDITION_ORDER: tuple[str, ...] = ("require", "default")
+JS_REQUIRE_CONDITIONS: frozenset[str] = frozenset({"require", "default"})
 # A manifest points at the PUBLISHED build, which is never indexed; dropping
 # one of these leading directories reaches the source it was built from
 # (`./dist/src/a.js` -> `src/a.ts`).

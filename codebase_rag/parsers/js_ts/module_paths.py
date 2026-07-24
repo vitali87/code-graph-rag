@@ -219,23 +219,20 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        # A conditions object maps one subpath to several builds. The graph
-        # holds sources, not builds, so any of them may lead back to the same
-        # file; where they lead to DIFFERENT ones, the order decides, and it
-        # follows how the code under analysis is written (ESM first).
-        order = (
-            cs.JS_REQUIRE_CONDITION_ORDER if require else cs.JS_EXPORT_CONDITION_ORDER
-        )
-        # Node selects the FIRST condition present in the map, following the
-        # request's own order, and the request stands or falls on that
-        # target: a later condition is not a second chance, and one naming
-        # the other module system is never considered. Only the module-system
-        # conditions and `default` are selectable, because every other one
-        # (`browser`, `development`, `react-native`) is chosen by an
-        # environment this analysis does not have, so a map offering nothing
-        # else names no module it can follow.
-        ordered = [key for key in order if key in value]
-        return _leaf_targets(value[ordered[0]], require) if ordered else []
+        # A conditions object maps one subpath to several builds, and Node
+        # walks it in the order the MANIFEST lists, taking the first key the
+        # request can select; resolution then stands or falls on that target,
+        # because a later condition is not a second chance. Ranking the keys
+        # here instead would pick a module the runtime never loads whenever a
+        # manifest orders them unusually. Selectable means a module-system
+        # condition or `default`: every other one (`browser`, `development`,
+        # `react-native`) is chosen by an environment this analysis does not
+        # have, so a map offering nothing else names no module it can follow.
+        selectable = cs.JS_REQUIRE_CONDITIONS if require else cs.JS_EXPORT_CONDITIONS
+        for key, target in value.items():
+            if key in selectable:
+                return _leaf_targets(target, require)
+        return []
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner, require)]
     return []
