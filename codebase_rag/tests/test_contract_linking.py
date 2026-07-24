@@ -312,11 +312,19 @@ class TestSweepOwnership:
     def test_a_file_that_stopped_declaring_operations_is_cleared(
         self, tmp_path: Path
     ) -> None:
-        # An indexed spec edited to declare nothing leaves its File node
-        # anchoring the operations it no longer has; the declarations of
-        # every contract file in the repo are cleared before re-emission.
+        # The real transition: a repo that declared operations has its specs
+        # emptied, and the relink must still clear what those files declared,
+        # or their File nodes keep anchoring operations that are gone.
         ingestor = _ingestor()
-        link_contracts(ingestor, tmp_path, project_name="proj")
+        repo = _repo(tmp_path)
+        link_contracts(ingestor, repo, project_name="proj")
+        assert ingestor.nodes
+        (repo / "schemas/things.json").write_text("{}", encoding="utf-8")
+        (repo / "schemas/things.proto").write_text("", encoding="utf-8")
+        ingestor.nodes.clear()
+        ingestor.writes.clear()
+        assert link_contracts(ingestor, repo, project_name="proj") == 0
+        assert not ingestor.nodes
         assert any("EXPOSES" in query for query in ingestor.writes), ingestor.writes
 
     def test_no_contract_files_writes_nothing(self, tmp_path: Path) -> None:
