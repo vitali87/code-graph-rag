@@ -221,17 +221,18 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
     if isinstance(value, dict):
         # A conditions object maps one subpath to several builds, and Node
         # walks it in the order the MANIFEST lists, taking the first key the
-        # request can select; resolution then stands or falls on that target,
-        # because a later condition is not a second chance. Ranking the keys
-        # here instead would pick a module the runtime never loads whenever a
-        # manifest orders them unusually. Selectable means a module-system
-        # condition or `default`: every other one (`browser`, `development`,
-        # `react-native`) is chosen by an environment this analysis does not
-        # have, so a map offering nothing else names no module it can follow.
+        # request can select. Ranking the keys here instead would pick a
+        # module the runtime never loads whenever a manifest orders them
+        # unusually. Selectable means a module-system condition or `default`:
+        # every other one (`browser`, `development`, `react-native`) is chosen
+        # by an environment this analysis does not have. A selected key may
+        # nest a further conditions map, and when that inner map offers this
+        # request nothing, Node abandons the key and carries on to the next
+        # rather than failing the whole entry, so an empty branch is skipped.
         selectable = cs.JS_REQUIRE_CONDITIONS if require else cs.JS_EXPORT_CONDITIONS
         for key, target in value.items():
-            if key in selectable:
-                return _leaf_targets(target, require)
+            if key in selectable and (leaves := _leaf_targets(target, require)):
+                return leaves
         return []
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner, require)]

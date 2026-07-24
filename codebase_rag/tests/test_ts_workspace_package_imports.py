@@ -519,6 +519,31 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/universal/admin"
         )
 
+    def test_a_selected_condition_with_no_usable_branch_falls_through(
+        self, tmp_path: Path
+    ) -> None:
+        # A condition may nest another condition map, and when the selected
+        # one offers only branches this analysis cannot pick (an environment
+        # condition, no `default`), Node abandons it and carries on to the
+        # next key rather than failing the whole request. Committing to the
+        # empty branch would leave the package root with no module at all.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "import": {"browser": "./src/browser.ts"},
+                    "default": "./src/index.ts",
+                },
+            ),
+            {"src/browser.ts": ADMIN_SOURCE, "src/index.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk", tmp_path)
+            == "packages/sdk/src/index"
+        )
+
     def test_conditions_never_cross_the_module_system(self, tmp_path: Path) -> None:
         # Only the CommonJS source exists here. An ESM import must resolve to
         # nothing rather than bind to the CommonJS module it does not use,
