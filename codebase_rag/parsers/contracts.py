@@ -100,15 +100,8 @@ def _read_text(path: Path) -> str | None:
 
 
 def _openapi_operations(path: Path, repo_path: Path) -> list[ContractOperation]:
-    text = _read_text(path)
-    # Cheap gate before parsing: a spec always names its version key, and
-    # most JSON/YAML in a repo is not a spec at all.
-    if text is None or not any(marker in text for marker in cs.CONTRACT_SPEC_MARKERS):
-        return []
-    document = _parse_document(path, text)
-    if not isinstance(document, dict):
-        return []
-    if not any(key in document for key in cs.CONTRACT_SPEC_VERSION_KEYS):
+    document = _spec_document(path)
+    if document is None:
         return []
     paths = document.get(cs.CONTRACT_PATHS_KEY)
     if not isinstance(paths, dict):
@@ -118,30 +111,58 @@ def _openapi_operations(path: Path, repo_path: Path) -> list[ContractOperation]:
     # API, or two unrelated services, into a single operation.
     contract = _contract_name(path, repo_path)
     prefix = _base_path(document)
+    return [
+        operation
+        for template, methods in paths.items()
+        if isinstance(template, str) and isinstance(methods, dict)
+        for operation in _path_operations(contract, prefix, template, methods, path)
+    ]
+
+
+def _spec_document(path: Path) -> dict[str, JsonValue] | None:
+    # A document is a spec only when it declares a version key and parses to
+    # a mapping; the text check is a cheap gate, since most JSON and YAML in
+    # a repo is not a spec at all.
+    text = _read_text(path)
+    if text is None or not any(marker in text for marker in cs.CONTRACT_SPEC_MARKERS):
+        return None
+    document = _parse_document(path, text)
+    if not isinstance(document, dict):
+        return None
+    if not any(key in document for key in cs.CONTRACT_SPEC_VERSION_KEYS):
+        return None
+    return document
+
+
+def _path_operations(
+    contract: str,
+    prefix: str,
+    template: str,
+    methods: dict[str, JsonValue],
+    source: Path,
+) -> list[ContractOperation]:
+    # Every key under a path item that names an operation; the rest
+    # (parameters, servers, summary) describes the path, not an operation.
     operations: list[ContractOperation] = []
-    for template, methods in paths.items():
-        if not isinstance(template, str) or not isinstance(methods, dict):
+    for method, operation in methods.items():
+        if not isinstance(operation, dict) or not _is_operation_method(method):
             continue
-        for method, operation in methods.items():
-            if (
-                not isinstance(method, str)
-                or method.lower() not in cs.CONTRACT_OPERATION_METHODS
-            ):
-                continue
-            if not isinstance(operation, dict):
-                continue
-            operation_id = operation.get(cs.CONTRACT_OPERATION_ID_KEY)
-            if isinstance(operation_id, str) and operation_id:
-                operations.append(
-                    ContractOperation(
-                        contract,
-                        operation_id,
-                        method.upper(),
-                        f"{prefix}{template}",
-                        path,
-                    )
+        operation_id = operation.get(cs.CONTRACT_OPERATION_ID_KEY)
+        if isinstance(operation_id, str) and operation_id:
+            operations.append(
+                ContractOperation(
+                    contract,
+                    operation_id,
+                    method.upper(),
+                    f"{prefix}{template}",
+                    source,
                 )
+            )
     return operations
+
+
+def _is_operation_method(method: str) -> bool:
+    return isinstance(method, str) and method.lower() in cs.CONTRACT_OPERATION_METHODS
 
 
 def _contract_name(path: Path, repo_path: Path) -> str:
