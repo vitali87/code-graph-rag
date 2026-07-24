@@ -90,7 +90,7 @@ def link_contracts(
     # and the unanchored-resource prune takes them and their edges.
     ingestor.execute_write(
         CYPHER_DELETE_FILE_CONTRACTS,
-        {"repo_prefix": cached_resolve_posix(repo_path)},
+        {"repo_prefix": f"{cached_resolve_posix(repo_path)}{cs.SEPARATOR_SLASH}"},
     )
     operations = _indexed_only(
         ingestor,
@@ -100,10 +100,10 @@ def link_contracts(
         return 0
     ingestor.execute_write(
         CYPHER_DELETE_CONTRACT_RESOLVES_TO,
-        {"contract_qns": sorted({_contract_qn(op) for op in operations})},
+        {"contract_qns": sorted({_contract_qn(op, project_name) for op in operations})},
     )
     for operation in operations:
-        _emit_contract(ingestor, operation)
+        _emit_contract(ingestor, operation, project_name)
     created = _link_rpcs(
         ingestor, ingestor, operations, project_name
     ) + _link_endpoints(ingestor, ingestor, operations, project_name)
@@ -131,15 +131,22 @@ def _identity(operation: ContractOperation) -> str:
     return f"{operation.contract}{_IDENTITY_SEPARATOR}{operation.operation}"
 
 
-def _contract_qn(operation: ContractOperation) -> str:
+def _contract_qn(operation: ContractOperation, project_name: str) -> str:
+    # Scoped by declaring project, exactly as an ENDPOINT resource is: two
+    # repositories can hold the same spec at the same relative path, and
+    # merging them would attribute each one's implementations to the other
+    # and let either one's relink delete the other's links.
     return RESOURCE_QN_FORMAT.format(
-        kind=ResourceKind.CONTRACT.value, identity=_identity(operation)
+        kind=ResourceKind.CONTRACT.value,
+        identity=f"{project_name}::{_identity(operation)}",
     )
 
 
-def _emit_contract(ingestor: IngestorProtocol, operation: ContractOperation) -> None:
+def _emit_contract(
+    ingestor: IngestorProtocol, operation: ContractOperation, project_name: str
+) -> None:
     properties: PropertyDict = {
-        cs.KEY_QUALIFIED_NAME: _contract_qn(operation),
+        cs.KEY_QUALIFIED_NAME: _contract_qn(operation, project_name),
         cs.KEY_NAME: _identity(operation),
         KEY_KIND: ResourceKind.CONTRACT.value,
     }
@@ -154,7 +161,11 @@ def _emit_contract(ingestor: IngestorProtocol, operation: ContractOperation) -> 
             cached_resolve_posix(operation.source),
         ),
         cs.RelationshipType.EXPOSES,
-        (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, _contract_qn(operation)),
+        (
+            cs.NodeLabel.RESOURCE,
+            cs.KEY_QUALIFIED_NAME,
+            _contract_qn(operation, project_name),
+        ),
     )
 
 
@@ -189,7 +200,11 @@ def _link_rpcs(
         operation = by_identity.get(name)
         if operation is None:
             continue
-        _resolve(ingestor, str(row.get(cs.KEY_QUALIFIED_NAME)), _contract_qn(operation))
+        _resolve(
+            ingestor,
+            str(row.get(cs.KEY_QUALIFIED_NAME)),
+            _contract_qn(operation, project_name),
+        )
         created += 1
     return created
 
@@ -217,7 +232,9 @@ def _link_endpoints(
         if len(matches) != 1:
             continue
         _resolve(
-            ingestor, str(row.get(cs.KEY_QUALIFIED_NAME)), _contract_qn(matches[0])
+            ingestor,
+            str(row.get(cs.KEY_QUALIFIED_NAME)),
+            _contract_qn(matches[0], project_name),
         )
         created += 1
     return created

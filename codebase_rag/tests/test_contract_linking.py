@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from codebase_rag import constants as cs
 from codebase_rag.parsers.contract_linking import link_contracts
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
@@ -39,6 +40,7 @@ class _FakeIngestor:
         self.nodes: list[tuple[str, PropertyDict]] = []
         self.rels: list[tuple[PropertyValue, str, PropertyValue]] = []
         self.writes: list[str] = []
+        self.writes_with_params: list[tuple[str, PropertyDict | None]] = []
 
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
@@ -58,6 +60,7 @@ class _FakeIngestor:
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         self.writes.append(query)
+        self.writes_with_params.append((query, params))
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         self.nodes.append((str(label), properties))
@@ -147,7 +150,7 @@ class TestRpcAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::RPC::ThingService.CreateThing",
-            "resource::CONTRACT::ThingService.CreateThing",
+            "resource::CONTRACT::proj::ThingService.CreateThing",
         ) in _links(ingestor)
 
     def test_an_rpc_no_local_code_touches_stays_unlinked(self, tmp_path: Path) -> None:
@@ -173,7 +176,7 @@ class TestEndpointAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::POST /v2/things",
-            "resource::CONTRACT::schemas/things.createThing",
+            "resource::CONTRACT::proj::schemas/things.createThing",
         ) in _links(ingestor)
 
     def test_path_parameter_spelling_does_not_matter(self, tmp_path: Path) -> None:
@@ -182,7 +185,7 @@ class TestEndpointAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::GET /v2/things/:thingId",
-            "resource::CONTRACT::schemas/things.getThing",
+            "resource::CONTRACT::proj::schemas/things.getThing",
         ) in _links(ingestor)
 
     def test_unknown_mount_lead_still_anchors(self, tmp_path: Path) -> None:
@@ -192,7 +195,7 @@ class TestEndpointAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::POST /**/v2/things",
-            "resource::CONTRACT::schemas/things.createThing",
+            "resource::CONTRACT::proj::schemas/things.createThing",
         ) in _links(ingestor)
 
     def test_method_must_match(self, tmp_path: Path) -> None:
@@ -214,7 +217,7 @@ class TestEndpointAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::ENDPOINT::proj::ANY /v2/things",
-            "resource::CONTRACT::schemas/things.createThing",
+            "resource::CONTRACT::proj::schemas/things.createThing",
         ) in _links(ingestor)
 
 
@@ -251,6 +254,30 @@ class TestLinkBounds:
         ingestor = _ingestor(endpoints=[_endpoint_row("GET /**")])
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert not _links(ingestor)
+
+
+class TestProjectIsolation:
+    def test_contract_identities_are_project_scoped(self, tmp_path: Path) -> None:
+        # Two repositories can hold the same spec at the same relative path;
+        # merging their operations into one node would attribute each
+        # project's implementations to the other, and the relink sweep of
+        # either would delete the other's links.
+        ingestor = _ingestor()
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        names = {str(props[cs.KEY_QUALIFIED_NAME]) for _label, props in ingestor.nodes}
+        assert all("::proj::" in name for name in names), names
+
+    def test_cleanup_stops_at_the_repository_root(self, tmp_path: Path) -> None:
+        # `/work/api` must not claim `/work/api-backup`: an unbounded prefix
+        # would delete the sibling repository's contract anchors.
+        ingestor = _ingestor()
+        link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        prefixes = [
+            params["repo_prefix"]
+            for query, params in ingestor.writes_with_params
+            if "repo_prefix" in (params or {})
+        ]
+        assert prefixes and all(p.endswith("/") for p in prefixes), prefixes
 
 
 class TestCaptureGate:
