@@ -11,7 +11,10 @@ permissions: read-all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs to save minutes, but never cancel a main push:
+  # each main commit (incl. the auto version-bump) must finish so the CI badge
+  # never latches onto a cancelled run and flashes "failing".
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
