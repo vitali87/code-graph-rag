@@ -561,6 +561,50 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/runtime"
         )
 
+    def test_environment_only_conditions_resolve_to_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        # `browser` / `development` / `react-native` are selected by an
+        # environment this analysis does not have, and picking one would
+        # bind the import to a module the request may never load.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "browser": "./src/browser.ts",
+                        "react-native": "./src/native.ts",
+                    }
+                },
+            ),
+            {"src/browser.ts": ADMIN_SOURCE, "src/native.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
+        )
+
+    def test_default_still_serves_every_environment(self, tmp_path: Path) -> None:
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "browser": "./src/browser.ts",
+                        "default": "./src/admin.ts",
+                    }
+                },
+            ),
+            {"src/browser.ts": ADMIN_SOURCE, "src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
+            == "packages/sdk/src/admin"
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.

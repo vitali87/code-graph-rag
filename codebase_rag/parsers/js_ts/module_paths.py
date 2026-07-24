@@ -229,11 +229,12 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
         # Node selects the FIRST condition present in the map, following the
         # request's own order, and the request stands or falls on that
         # target: a later condition is not a second chance, and one naming
-        # the other module system is never considered at all. An
-        # unrecognised key (a runtime or bundler condition) is the last
-        # resort, in declaration order.
+        # the other module system is never considered. Only the module-system
+        # conditions and `default` are selectable, because every other one
+        # (`browser`, `development`, `react-native`) is chosen by an
+        # environment this analysis does not have, so a map offering nothing
+        # else names no module it can follow.
         ordered = [key for key in order if key in value]
-        ordered += [key for key in value if key not in cs.JS_KNOWN_EXPORT_CONDITIONS]
         return _leaf_targets(value[ordered[0]], require) if ordered else []
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner, require)]

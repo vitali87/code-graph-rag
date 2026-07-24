@@ -170,11 +170,6 @@ JS_EXPORTS_WILDCARD = "*"
 JS_EXPORT_CONDITION_ORDER: tuple[str, ...] = ("import", "module", "default")
 # The same map read from the CommonJS side.
 JS_REQUIRE_CONDITION_ORDER: tuple[str, ...] = ("require", "default")
-# Every condition with a defined meaning here, so an unrecognised key (a
-# runtime or bundler condition) is told apart from one deliberately skipped.
-JS_KNOWN_EXPORT_CONDITIONS: frozenset[str] = frozenset(
-    {"types", "import", "module", "default", "require"}
-)
 # A manifest points at the PUBLISHED build, which is never indexed; dropping
 # one of these leading directories reaches the source it was built from
 # (`./dist/src/a.js` -> `src/a.ts`).
