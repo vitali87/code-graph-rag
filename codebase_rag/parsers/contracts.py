@@ -216,6 +216,9 @@ def _parse_document(path: Path, text: str) -> JsonValue:
 
 # `service Name {` opens a block; `rpc Name(` is an operation inside one.
 _PROTO_SERVICE_RE = re.compile(r"\bservice\s+(\w+)\s*\{")
+# protobuf identifies a service by `package.Service`, so two packages
+# declaring the same service name declare two different services.
+_PROTO_PACKAGE_RE = re.compile(r"\bpackage\s+([\w.]+)\s*;")
 _PROTO_RPC_RE = re.compile(r"\brpc\s+(\w+)\s*\(")
 
 
@@ -264,9 +267,11 @@ def _proto_operations(path: Path) -> list[ContractOperation]:
     if text is None:
         return []
     code = _proto_code(text)
+    package_match = _PROTO_PACKAGE_RE.search(code)
+    package = f"{package_match.group(1)}." if package_match else ""
     operations: list[ContractOperation] = []
     for match in _PROTO_SERVICE_RE.finditer(code):
-        service = match.group(1)
+        service = f"{package}{match.group(1)}"
         body = _block_body(code, match.end() - 1)
         operations.extend(
             ContractOperation(service, name, None, None, path)

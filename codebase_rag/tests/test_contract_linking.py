@@ -26,6 +26,14 @@ _SPEC = json.dumps(
 )
 _PROTO = (
     'syntax = "proto3";\n\n'
+    "package things.v1;\n\n"
+    "service ThingService {\n"
+    "    rpc CreateThing(Req) returns (Res) {}\n"
+    "}\n"
+)
+_PROTO_TWIN = (
+    'syntax = "proto3";\n\n'
+    "package other.v1;\n\n"
     "service ThingService {\n"
     "    rpc CreateThing(Req) returns (Res) {}\n"
     "}\n"
@@ -142,7 +150,7 @@ class TestContractNodes:
             "schemas/things.createThing",
             "schemas/things.getThing",
             "schemas/things.unservedThing",
-            "ThingService.CreateThing",
+            "things.v1.ThingService.CreateThing",
         }
 
     def test_nodes_carry_the_contract_kind(self, tmp_path: Path) -> None:
@@ -157,7 +165,7 @@ class TestRpcAnchoring:
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
         assert (
             "resource::RPC::ThingService.CreateThing",
-            "resource::CONTRACT::proj::ThingService.CreateThing",
+            "resource::CONTRACT::proj::things.v1.ThingService.CreateThing",
         ) in _links(ingestor)
 
     def test_an_rpc_no_local_code_touches_stays_unlinked(self, tmp_path: Path) -> None:
@@ -182,6 +190,30 @@ class TestRpcAnchoring:
             rpcs=[_rpc_row("ThingService.CreateThing", project="projector")]
         )
         link_contracts(ingestor, _repo(tmp_path), project_name="proj")
+        assert not _links(ingestor)
+
+    def test_two_packages_declaring_one_service_stay_distinct(
+        self, tmp_path: Path
+    ) -> None:
+        # Same service name in two protobuf packages is two services; one
+        # node for both would report either package's implementation as the
+        # other's.
+        ingestor = _ingestor()
+        repo = _repo(tmp_path)
+        (repo / "schemas/twin.proto").write_text(_PROTO_TWIN, encoding="utf-8")
+        link_contracts(ingestor, repo, project_name="proj")
+        names = {str(props[cs.KEY_NAME]) for _label, props in ingestor.nodes}
+        assert "things.v1.ThingService.CreateThing" in names, names
+        assert "other.v1.ThingService.CreateThing" in names, names
+
+    def test_an_ambiguous_service_name_anchors_nothing(self, tmp_path: Path) -> None:
+        # The RPC resource is keyed by the bare `Service.Method` the codegen
+        # produced, so when two packages declare it, which contract it
+        # implements is unknowable and neither is claimed.
+        ingestor = _ingestor(rpcs=[_rpc_row("ThingService.CreateThing")])
+        repo = _repo(tmp_path)
+        (repo / "schemas/twin.proto").write_text(_PROTO_TWIN, encoding="utf-8")
+        link_contracts(ingestor, repo, project_name="proj")
         assert not _links(ingestor)
 
     def test_undeclared_rpc_resource_stays_unlinked(self, tmp_path: Path) -> None:

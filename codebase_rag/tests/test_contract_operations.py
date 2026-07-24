@@ -260,8 +260,10 @@ class TestProtoDiscovery:
         _write(tmp_path, {"schemas/proto/things/v1/things.proto": _PROTO})
         proto = tmp_path / "schemas/proto/things/v1/things.proto"
         assert set(discover_contract_operations(tmp_path)) == {
-            ContractOperation("ThingService", "CreateThing", None, None, proto),
-            ContractOperation("ThingService", "GetThing", None, None, proto),
+            ContractOperation(
+                "things.v1.ThingService", "CreateThing", None, None, proto
+            ),
+            ContractOperation("things.v1.ThingService", "GetThing", None, None, proto),
         }
 
     def test_rpcs_outside_a_service_are_not_operations(self, tmp_path: Path) -> None:
@@ -276,6 +278,29 @@ class TestProtoDiscovery:
         )
         _write(tmp_path, {"a.proto": source})
         assert discover_contract_operations(tmp_path) == []
+
+    def test_the_package_qualifies_the_service(self, tmp_path: Path) -> None:
+        # protobuf identifies a service by `package.Service`, so two packages
+        # declaring `Health` are two different services.
+        _write(
+            tmp_path,
+            {
+                "a.proto": (
+                    'syntax = "proto3";\n'
+                    "package things.v1;\n"
+                    "service Health {\n    rpc Check(P) returns (P);\n}\n"
+                ),
+                "b.proto": (
+                    'syntax = "proto3";\n'
+                    "package users.v1;\n"
+                    "service Health {\n    rpc Check(P) returns (P);\n}\n"
+                ),
+            },
+        )
+        assert {op.contract for op in discover_contract_operations(tmp_path)} == {
+            "things.v1.Health",
+            "users.v1.Health",
+        }
 
     def test_multiple_services_stay_separate(self, tmp_path: Path) -> None:
         source = (

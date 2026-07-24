@@ -129,6 +129,11 @@ def _indexed_only(
     ]
 
 
+def _rpc_key(operation: ContractOperation) -> str:
+    service = operation.contract.rsplit(_IDENTITY_SEPARATOR, 1)[-1]
+    return f"{service}{_IDENTITY_SEPARATOR}{operation.operation}"
+
+
 def _identity(operation: ContractOperation) -> str:
     return f"{operation.contract}{_IDENTITY_SEPARATOR}{operation.operation}"
 
@@ -185,20 +190,22 @@ def _link_rpcs(
     operations: list[ContractOperation],
     project_name: str,
 ) -> int:
-    # An RPC resource is keyed `<Service>.<Method>`, which is exactly the
-    # identity the proto declares, so this is a name match, not a heuristic.
-    by_identity = {
-        _identity(operation): operation
-        for operation in operations
-        if operation.method is None
-    }
+    # An RPC resource is keyed by the BARE `<Service>.<Method>` the codegen
+    # produced, while a contract is identified by the protobuf
+    # `package.Service`, so the match drops the package. Two packages
+    # declaring one service name make the key ambiguous, and an ambiguous
+    # key claims nothing.
+    by_key: dict[str, list[ContractOperation]] = {}
+    for operation in operations:
+        if operation.method is None:
+            by_key.setdefault(_rpc_key(operation), []).append(operation)
     created = 0
     rows = reader.fetch_all(CYPHER_LIVE_RPC_RESOURCES, {"project_name": project_name})
     for row in rows:
-        name = str(row.get(cs.KEY_NAME) or "")
-        operation = by_identity.get(name)
-        if operation is None:
+        matches = by_key.get(str(row.get(cs.KEY_NAME) or ""), [])
+        if len(matches) != 1:
             continue
+        operation = matches[0]
         _resolve(
             ingestor,
             str(row.get(cs.KEY_QUALIFIED_NAME)),
