@@ -322,7 +322,10 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/entry"
         )
 
-    def test_root_condition_map_claims_no_subpath(self, tmp_path: Path) -> None:
+    def test_root_condition_map_matches_only_the_root(self, tmp_path: Path) -> None:
+        # The condition map declares the root, and declaring `exports` at all
+        # means the package exposes nothing else, so a subpath resolves to
+        # nothing rather than to a file the package does not export.
         self._package(
             tmp_path,
             _manifest("@acme/sdk", exports={"import": "./dist/index.js"}),
@@ -330,8 +333,11 @@ class TestWorkspaceResolver:
         )
         packages = discover_js_workspace_packages(tmp_path)
         assert (
-            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
-            == "packages/sdk/src/admin"
+            resolve_js_workspace_import(packages, "@acme/sdk", tmp_path)
+            == "packages/sdk/src/index"
+        )
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
         )
 
     def test_unresolvable_exact_key_does_not_fall_through_to_a_pattern(
@@ -425,6 +431,33 @@ class TestWorkspaceResolver:
         assert (
             resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path)
             == "packages/sdk/src/esm/admin"
+        )
+
+    def test_subpath_only_exports_do_not_expose_the_root(self, tmp_path: Path) -> None:
+        # An `exports` map is exhaustive: a package that lists only subpaths
+        # does not expose its root, so the root request resolves to nothing
+        # rather than falling through to a legacy entry or an index guess.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={"./features": "./src/features.ts"},
+                main="./src/index.ts",
+            ),
+            {"src/features.ts": ADMIN_SOURCE, "src/index.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert resolve_js_workspace_import(packages, "@acme/sdk", tmp_path) is None
+
+    def test_root_only_exports_do_not_expose_a_subpath(self, tmp_path: Path) -> None:
+        self._package(
+            tmp_path,
+            _manifest("@acme/sdk", exports={"import": "./src/index.ts"}),
+            {"src/index.ts": ADMIN_SOURCE, "src/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
         )
 
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:

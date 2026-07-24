@@ -117,10 +117,12 @@ def _manifest_targets(manifest: dict[str, JsonValue], subpath: str) -> _Manifest
     # Every file the manifest says this subpath names, most specific first.
     # A conditions object (`{"import": .., "require": .., "types": ..}`) points
     # at one artefact family, so each leaf is tried until a source is found.
-    targets = _exports_matches(manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath)
-    # `exports` describes the package alone: Node ignores the legacy entry
-    # fields wherever it applies, so they are only consulted when no export
-    # claimed this subpath.
+    # An `exports` map is EXHAUSTIVE: a package that declares one exposes
+    # nothing it does not list, not through the legacy entry fields and not
+    # through a conventional path, so its mere presence claims every subpath.
+    declares_exports = cs.JS_PACKAGE_EXPORTS_KEY in manifest
+    matched = _exports_matches(manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath)
+    targets = _ManifestTargets(matched.paths, matched.claimed or declares_exports)
     if not targets.claimed and subpath == cs.PATH_CURRENT_DIR:
         targets.paths.extend(
             value
