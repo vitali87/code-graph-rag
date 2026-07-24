@@ -488,6 +488,36 @@ class TestWorkspaceResolver:
             == "packages/sdk/src/esm/admin"
         )
 
+    def test_conditions_never_cross_the_module_system(
+        self, tmp_path: Path
+    ) -> None:
+        # Only the CommonJS source exists here. An ESM import must resolve to
+        # nothing rather than bind to the CommonJS module it does not use,
+        # and the reverse holds for a require.
+        self._package(
+            tmp_path,
+            _manifest(
+                "@acme/sdk",
+                exports={
+                    "./admin": {
+                        "import": "./src/esm/admin.ts",
+                        "require": "./src/cjs/admin.ts",
+                    }
+                },
+            ),
+            {"src/cjs/admin.ts": ADMIN_SOURCE},
+        )
+        packages = discover_js_workspace_packages(tmp_path)
+        assert (
+            resolve_js_workspace_import(packages, "@acme/sdk/admin", tmp_path) is None
+        )
+        assert (
+            resolve_js_workspace_import(
+                packages, "@acme/sdk/admin", tmp_path, require=True
+            )
+            == "packages/sdk/src/cjs/admin"
+        )
+
     def test_null_export_blocks_the_subpath(self, tmp_path: Path) -> None:
         # `null` is how a manifest forbids a subpath; guessing a source file
         # for it would resolve an import the package refuses to serve.

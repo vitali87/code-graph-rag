@@ -226,8 +226,12 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
         order = (
             cs.JS_REQUIRE_CONDITION_ORDER if require else cs.JS_EXPORT_CONDITION_ORDER
         )
+        # Only this module system's conditions, in order; a key naming the
+        # OTHER system is skipped entirely, and an unrecognised key (a
+        # runtime or bundler condition) is tried last.
+        other = set(cs.JS_EXPORT_CONDITION_ORDER) | set(cs.JS_REQUIRE_CONDITION_ORDER)
         ordered = [key for key in order if key in value]
-        ordered += [key for key in value if key not in order]
+        ordered += [key for key in value if key not in other]
         return [t for key in ordered for t in _leaf_targets(value[key], require)]
     if isinstance(value, list):
         return [t for inner in value for t in _leaf_targets(inner, require)]
