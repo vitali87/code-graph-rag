@@ -10,8 +10,12 @@ on:
 permissions: read-all
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
+  # Non-PR events (main push, version-bump push, dispatch) group by SHA so each
+  # commit gets its own group and can neither cancel nor be cancelled, even in a
+  # burst. A cancelled run is what makes the branch CI badge flash "failing".
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
