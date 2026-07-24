@@ -183,8 +183,11 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
     ) -> None:
         try:
+            # A destructured `require()` reads a dual-package exports map from
+            # the require side, so the CommonJS condition, not the ESM one,
+            # names the source module.
             resolved_source_module = self.import_processor._resolve_js_module_path(
-                module_name, module_qn
+                module_name, module_qn, require=True
             )
 
             import_key = f"{module_qn}->{resolved_source_module}"

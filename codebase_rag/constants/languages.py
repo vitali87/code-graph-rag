@@ -175,6 +175,30 @@ CONTRACT_SERVER_URL_KEY = "url"
 CONTRACT_MAX_FILE_BYTES = 8 * 1024 * 1024
 
 JS_INDEX_STEM = "index"
+# package.json fields read when mapping a workspace package name to the source
+# file a specifier names (issue #945). `exports` is the modern declaration and
+# may nest condition objects and `*` patterns; the entry keys are the legacy
+# root-only fallbacks.
+JS_PACKAGE_NAME_KEY = "name"
+JS_PACKAGE_EXPORTS_KEY = "exports"
+JS_PACKAGE_ENTRY_KEYS: tuple[str, ...] = ("main", "module", "types")
+JS_EXPORTS_WILDCARD = "*"
+# The conditions of an `exports` entry an ESM import is allowed to select.
+# Which of them wins is decided by the manifest, which lists them in the
+# order it wants them tried; these sets only say which keys are on offer to
+# a request this analysis can make. `require` is absent on purpose: the two
+# module systems can name different modules, so a request never selects the
+# other system's. `types` is absent too: it names the declaration module,
+# which no runtime selects and which therefore is not what a call graph
+# follows.
+JS_EXPORT_CONDITIONS: frozenset[str] = frozenset({"import", "module", "default"})
+# The same map read from the CommonJS side.
+JS_REQUIRE_CONDITIONS: frozenset[str] = frozenset({"require", "default"})
+# A manifest points at the PUBLISHED build, which is never indexed; dropping
+# one of these leading directories reaches the source it was built from
+# (`./dist/src/a.js` -> `src/a.ts`).
+JS_BUILD_OUTPUT_DIRS: frozenset[str] = frozenset({"dist", "build", "out", "lib"})
+JS_SOURCE_DIR = "src"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"

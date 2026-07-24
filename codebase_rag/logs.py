@@ -548,6 +548,7 @@ IMP_RUST = "Rust import: {name} -> {path}"
 IMP_CSHARP = "C# using: {name} -> {path}"
 IMP_GO = "Go import: {package} -> {path}"
 IMP_GO_MODULE_PATH = "Go module path: {module} -> {path}"
+IMP_JS_WORKSPACE_PACKAGE = "JS workspace package: {package} -> {path}"
 CONTRACT_OPERATIONS = "Contract operations: {count} declared, {created} artefact links"
 CONTRACT_YAML_UNAVAILABLE = (
     "PyYAML is not installed; skipping YAML contract spec {path}"

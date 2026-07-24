@@ -36,6 +36,14 @@ FILES = {
         "    def extract(self, node):\n"
         "        return ['js']\n"
     ),
+    # A same-named method in another language: no Python Protocol conformer
+    # is written in TypeScript, so the dispatch fan-out must not reach it
+    # (issue #945; in the dogfooded monorepo a `claims.get(...)` reached eight
+    # generated TS `HeyApiRegistry.get` methods this way).
+    "web/registry.ts": (
+        "export class HeyApiRegistry {\n  extract(node: unknown) {\n"
+        "    return [node];\n  }\n}\n"
+    ),
     "pkg/proc.py": (
         "from .proto import HandlerLike\n\n\n"
         "class Proc:\n"
@@ -113,6 +121,13 @@ class TestProtocolDispatchResolution:
             "proj.pkg.proc.Proc.go",
             "proj.pkg.base.BaseHandler.extract",
         ) in calls, calls
+
+    def test_does_not_dispatch_across_languages(self, tmp_path: Path) -> None:
+        calls = _calls(tmp_path)
+        assert (
+            "proj.pkg.proc.Proc.go",
+            "proj.web.registry.HeyApiRegistry.extract",
+        ) not in calls, calls
 
     def test_does_not_emit_protocol_stub_edge(self, tmp_path: Path) -> None:
         calls = _calls(tmp_path)
