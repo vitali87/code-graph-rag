@@ -1664,6 +1664,7 @@ def _initialize_services_and_agent(
         structural_search_tool,
         structural_editor_tool,
     ]
+    # A key is created at https://serpdive.com/dashboard/keys
     if serpdive_key := os.environ.get("SERPDIVE_API_KEY"):
         agentic_tools.append(create_web_search_tool(WebSearcher(serpdive_key)))
 

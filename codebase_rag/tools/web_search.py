@@ -9,6 +9,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from . import tool_descriptions as td
 
+# Keys are created at https://serpdive.com/dashboard/keys (free, no card).
 SERPDIVE_URL = "https://api.serpdive.com/v1/search"
 _TIMEOUT = 30.0
 _MAX_RESULTS = 10
@@ -65,9 +66,16 @@ class WebSearcher:
             return te.WEB_SEARCH_FAILED.format(status=response.status_code)
 
         try:
-            results = response.json().get("results", [])
+            payload = response.json()
         except Exception as e:
             logger.error(ls.WEB_SEARCH_ERROR.format(query=query, error=e))
+            return te.WEB_SEARCH_BAD_RESPONSE
+
+        # A 200 does not guarantee the shape. Validate before formatting rather
+        # than letting a malformed payload raise from inside the tool.
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
+            logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(query=query))
             return te.WEB_SEARCH_BAD_RESPONSE
 
         if not results:

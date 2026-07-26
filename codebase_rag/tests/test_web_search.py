@@ -115,7 +115,24 @@ def test_no_results_is_a_message_not_an_error(monkeypatch) -> None:
     import httpx
 
     monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse({"results": []}))
-    assert "q" in WebSearcher("k").search_web("q")
+    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(query="q")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ["not", "a", "dict"],
+        {"results": "not a list"},
+        {"results": [{"url": "https://ok"}, "not a dict"]},
+        {},
+    ],
+)
+def test_malformed_payload_is_reported_not_raised(monkeypatch, payload) -> None:
+    """A 200 does not guarantee the shape; the tool must not raise from inside."""
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse(payload))
+    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_BAD_RESPONSE
 
 
 def test_tool_is_registered_with_the_expected_name() -> None:
