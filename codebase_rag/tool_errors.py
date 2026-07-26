@@ -61,3 +61,9 @@ MCP_PROJECT_NOT_FOUND = (
 # CLI validation errors
 INVALID_POSITIVE_INT = "{value!r} is not a valid positive integer"
 INVALID_NON_NEGATIVE_FLOAT = "Value must be non-negative, got {value}"
+
+WEB_SEARCH_EMPTY_QUERY = "Error: The search query is empty."
+WEB_SEARCH_UNREACHABLE = "Error: The web search service could not be reached."
+WEB_SEARCH_FAILED = "Error: Web search failed (HTTP {status})."
+WEB_SEARCH_BAD_RESPONSE = "Error: The web search service returned an unreadable response."
+WEB_SEARCH_NO_RESULTS = "No web results found for '{query}'."

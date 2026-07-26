@@ -845,3 +845,7 @@ CAPTURE_DEPENDENCY_GAP = (
     "obeying as requested (edges may be incomplete)"
 )
 CAPTURE_RESOLVED = "Capture enabled: {rels}"
+
+WEB_SEARCH_QUERY = "Web search ({model}): {query}"
+WEB_SEARCH_HTTP_ERROR = "Web search returned HTTP {status} for: {query}"
+WEB_SEARCH_ERROR = "Web search failed for '{query}': {error}"
