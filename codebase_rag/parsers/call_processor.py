@@ -2954,7 +2954,15 @@ class CallProcessor:
                                 caller_spec, calls_rel, (ctor_type, qn_key, variant)
                             )
                     continue
-                init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+                # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
+                # `constructor`, not Python's `__init__`); redirect the CALLS
+                # edge there so an explicitly-declared constructor is reachable.
+                ctor_member = (
+                    cs.KEYWORD_CONSTRUCTOR
+                    if language in cs.JS_TS_LANGUAGES
+                    else cs.PY_METHOD_INIT
+                )
+                init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{ctor_member}"
                 if init_qn not in resolver.function_registry:
                     continue
                 callee_type = cs.NodeLabel.METHOD
