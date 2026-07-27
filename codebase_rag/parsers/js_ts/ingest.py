@@ -24,7 +24,7 @@ from ..utils import (
     sorted_captures,
 )
 from .module_system import JsTsModuleSystemMixin
-from .utils import get_js_ts_language_obj
+from .utils import arrow_binding_name, get_js_ts_language_obj
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
@@ -799,12 +799,18 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         # a value of, or the lhs of an assignment. Recovering it keeps a callback
         # under its arrow-const component (module.Cmp.onSuccess), consistent with the
         # call pass, instead of collapsing to module.onSuccess and dangling.
+        # The value-bound forms (`const f = () => ...` declarator and a class
+        # field `create = (s) => ...`), including through paren/cast wrappers
+        # (`create = ((s) => ...) as Create`), share the call pass's helper so a
+        # callback in the arrow body attributes to `scope.create.cb` in lock-step
+        # with the caller qn; without this a class arrow-property factory drops
+        # the property scope and its callbacks report dead.
+        if name := arrow_binding_name(node):
+            return name
         parent = node.parent
         if parent is None:
             return None
-        if parent.type == cs.TS_VARIABLE_DECLARATOR:
-            binding = parent.child_by_field_name(cs.FIELD_NAME)
-        elif parent.type == cs.TS_PAIR:
+        if parent.type == cs.TS_PAIR:
             binding = parent.child_by_field_name(cs.FIELD_KEY)
         elif parent.type == cs.TS_ASSIGNMENT_EXPRESSION:
             binding = parent.child_by_field_name(cs.FIELD_LEFT)
