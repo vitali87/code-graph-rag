@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -14,8 +16,8 @@ from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
 PROJECT = "proj"
 
-MODULE_SRC = """class Widget {
-  x: number;
+# Type-annotation-free so the one source is valid JavaScript, TypeScript and TSX.
+JS_FAMILY_SRC = """class Widget {
   constructor() {
     this.x = 1;
   }
@@ -23,13 +25,31 @@ MODULE_SRC = """class Widget {
 
 class Plain {}
 
-function build(): Widget {
+function build() {
   return new Widget();
 }
 
-function buildPlain(): Plain {
+function buildPlain() {
   return new Plain();
 }
+"""
+
+# Python regression: the language switch must keep routing `X()` to `__init__`.
+PY_SRC = """class Widget:
+    def __init__(self) -> None:
+        self.x = 1
+
+
+class Plain:
+    pass
+
+
+def build() -> Widget:
+    return Widget()
+
+
+def build_plain() -> Plain:
+    return Plain()
 """
 
 
@@ -61,8 +81,10 @@ class _Capture:
         return None
 
 
-def _calls(tmp_path: Path) -> set[tuple[PropertyValue, PropertyValue]]:
-    (tmp_path / "m.ts").write_text(MODULE_SRC)
+def _calls(
+    tmp_path: Path, filename: str, src: str
+) -> set[tuple[PropertyValue, PropertyValue]]:
+    (tmp_path / filename).write_text(src)
     parsers, queries = load_parsers()
     cap = _Capture()
     GraphUpdater(
@@ -77,13 +99,26 @@ def _calls(tmp_path: Path) -> set[tuple[PropertyValue, PropertyValue]]:
     }
 
 
-class TestTsConstructorCallResolution:
-    def test_new_calls_constructor(self, tmp_path: Path) -> None:
-        calls = _calls(tmp_path)
+class TestJsFamilyConstructorCallResolution:
+    @pytest.mark.parametrize("filename", ["m.js", "m.ts", "m.tsx"])
+    def test_new_calls_constructor(self, tmp_path: Path, filename: str) -> None:
+        calls = _calls(tmp_path, filename, JS_FAMILY_SRC)
         assert ("proj.m.build", "proj.m.Widget.constructor") in calls, calls
 
-    def test_new_without_constructor_not_dropped_to_class(self, tmp_path: Path) -> None:
-        calls = _calls(tmp_path)
-        # Plain declares no constructor; cgr must not emit a CALLS edge to the
-        # class node (INSTANTIATES carries the construction instead).
+    @pytest.mark.parametrize("filename", ["m.js", "m.ts", "m.tsx"])
+    def test_new_without_constructor_emits_no_phantom_edge(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        calls = _calls(tmp_path, filename, JS_FAMILY_SRC)
+        # Plain declares no constructor: neither a CALLS edge to the class node
+        # nor a phantom CALLS edge to a non-existent `Plain.constructor` method.
         assert ("proj.m.buildPlain", "proj.m.Plain") not in calls, calls
+        assert ("proj.m.buildPlain", "proj.m.Plain.constructor") not in calls, calls
+
+
+class TestPythonConstructorStillRoutesToInit:
+    def test_new_calls_init(self, tmp_path: Path) -> None:
+        # The `constructor`-vs-`__init__` language switch must not regress Python.
+        calls = _calls(tmp_path, "m.py", PY_SRC)
+        assert ("proj.m.build", "proj.m.Widget.__init__") in calls, calls
+        assert ("proj.m.build_plain", "proj.m.Plain") not in calls, calls
