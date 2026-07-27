@@ -335,6 +335,12 @@ _TS_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPR
 _ASSIGNMENT_RHS_FIELDS = {
     cs.TS_PY_ASSIGNMENT: cs.TS_FIELD_RIGHT,
     cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
+    # A JS/TS logical-assign default (`obj.when ??= (p) => {...}`, `x ||= fn`)
+    # stores the RHS function for later dynamic dispatch, exactly like a plain
+    # assignment, so its RHS is scanned the same way (same `right` field). Only a
+    # callable RHS (an inline arrow or a name resolving to a function) yields an
+    # edge; a data RHS (`count += 1`) resolves to nothing and adds none.
+    cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
     cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
     cs.TS_GO_SHORT_VAR_DECLARATION: cs.TS_FIELD_RIGHT,
@@ -3997,6 +4003,19 @@ class CallProcessor:
         # `fn.call(...)` / `fn.apply(...)` in value position (onError:
         # handleError.bind(toast)) hands off `fn`; peel both to a fixpoint.
         node = self._peel_bound_callable(node)
+        # An inline arrow/function-expression element (`handlers = [() => {}]`,
+        # zod's `onattach = [(inst) => {...}]`) is registered anonymously in the
+        # enclosing scope and named after no identifier, so resolve_func cannot
+        # find it; reference it by position exactly like an inline call argument.
+        if node.type in _INLINE_FUNC_VALUE_TYPES:
+            self._emit_inline_arg_function_ref(
+                node,
+                caller_spec,
+                ensure_rel,
+                caller_spec[2],
+                cs.RelationshipType.REFERENCES,
+            )
+            return
         # Only a bare name / attribute / member-expression in value position names
         # a function; a call, comprehension or literal is not a reference to a
         # callable. Reuses the flow-arg ref types (identifier, Python attribute,
