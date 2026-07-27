@@ -121,4 +121,7 @@ class TestPythonConstructorStillRoutesToInit:
         # The `constructor`-vs-`__init__` language switch must not regress Python.
         calls = _calls(tmp_path, "m.py", PY_SRC)
         assert ("proj.m.build", "proj.m.Widget.__init__") in calls, calls
+        # Plain has no __init__: neither a CALLS edge to the class node nor a
+        # phantom edge to a non-existent Plain.__init__ method.
         assert ("proj.m.build_plain", "proj.m.Plain") not in calls, calls
+        assert ("proj.m.build_plain", "proj.m.Plain.__init__") not in calls, calls
