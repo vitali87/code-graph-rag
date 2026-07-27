@@ -61,6 +61,7 @@ from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
+from .tools.web_search import WebSearcher, create_web_search_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
@@ -1647,6 +1648,26 @@ def _initialize_services_and_agent(
     structural_search_tool = create_structural_search_tool(ast_grep_service)
     structural_editor_tool = create_structural_editor_tool(ast_grep_service)
 
+    # Web search is only offered when a key is configured: an agent must never
+    # be handed a tool that can only fail. SERPdive's default model is free and
+    # unlimited under fair use, so having the key set costs nothing.
+    agentic_tools = [
+        query_tool,
+        code_tool,
+        file_reader_tool,
+        file_writer_tool,
+        file_editor_tool,
+        shell_command_tool,
+        directory_lister_tool,
+        semantic_search_tool,
+        function_source_tool,
+        structural_search_tool,
+        structural_editor_tool,
+    ]
+    # A key is created at https://serpdive.com/dashboard/keys
+    if serpdive_key := os.environ.get("SERPDIVE_API_KEY"):
+        agentic_tools.append(create_web_search_tool(WebSearcher(serpdive_key)))
+
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
         create_file=file_writer_tool.name,
@@ -1655,19 +1676,7 @@ def _initialize_services_and_agent(
     )
 
     rag_agent, system_prompt = create_rag_orchestrator(
-        tools=[
-            query_tool,
-            code_tool,
-            file_reader_tool,
-            file_writer_tool,
-            file_editor_tool,
-            shell_command_tool,
-            directory_lister_tool,
-            semantic_search_tool,
-            function_source_tool,
-            structural_search_tool,
-            structural_editor_tool,
-        ],
+        tools=agentic_tools,
         project_root=Path(repo_path),
         load_instructions=app_context.session.load_cgr_instructions,
         active_projects=active_projects,
