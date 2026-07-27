@@ -337,8 +337,9 @@ _ASSIGNMENT_RHS_FIELDS = {
     cs.TS_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
     # A JS/TS logical-assign default (`obj.when ??= (p) => {...}`, `x ||= fn`)
     # stores the RHS function for later dynamic dispatch, exactly like a plain
-    # assignment; a numeric `+=` RHS is never an inline function, so it adds no
-    # edge. The RHS sits in the same `right` field.
+    # assignment, so its RHS is scanned the same way (same `right` field). Only a
+    # callable RHS (an inline arrow or a name resolving to a function) yields an
+    # edge; a data RHS (`count += 1`) resolves to nothing and adds none.
     cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
     cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
