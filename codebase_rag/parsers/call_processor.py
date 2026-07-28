@@ -36,6 +36,7 @@ from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import utils as java_utils
+from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -5580,40 +5581,10 @@ class CallProcessor:
         return f"{module_qn}{cs.SEPARATOR_DOT}{func_name}"
 
     def _js_ts_arrow_binding_name(self, func_node: Node) -> str | None:
-        # An arrow / function expression has no `name` field, so the call pass
-        # skipped it and never processed its body's calls. Recover the binding
-        # name for the two named forms whose value IS the arrow: a module/local
-        # `const f = () => ...` (variable_declarator) and a class field
-        # `helper = () => ...` (public_field_definition). The body's calls then
-        # attribute to the qn the definition pass registered. Anonymous /
-        # destructured arrows stay unnamed (skipped).
-        if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
-            return None
-        # The arrow may be bound THROUGH transparent wrappers: parens and TS
-        # casts (`export const createStore = ((s) => ...) as CreateStore`,
-        # zustand's public-API shape). The def pass unwraps these when naming the
-        # function, so the call pass must climb them too or the arrow looks
-        # anonymous and its body's calls drop at module scope.
-        node = func_node
-        parent = node.parent
-        while parent is not None and parent.type in _TS_BINDING_WRAPPER_TYPES:
-            node = parent
-            parent = node.parent
-        if parent is None:
-            return None
-        # node must be the parent's value/initializer for both forms
-        # (variable_declarator and public_field_definition), so one value check
-        # covers both. `==` not `is`: py-tree-sitter returns a fresh Node wrapper
-        # per access, so identity comparison always fails (Node `==` compares id).
-        if parent.child_by_field_name(cs.FIELD_VALUE) != node:
-            return None
-        name_node = parent.child_by_field_name(cs.FIELD_NAME)
-        if name_node is None or name_node.type not in (
-            cs.TS_IDENTIFIER,
-            cs.TS_PROPERTY_IDENTIFIER,
-        ):
-            return None
-        return safe_decode_text(name_node)
+        # Shared with the definition pass (function_ingest) so both derive the
+        # SAME name for a name-bound arrow; divergence makes the caller qn a
+        # phantom and the arrow's body callbacks report dead.
+        return js_ts_utils.arrow_binding_name(func_node)
 
     def _attributable_func_nodes(
         self, func_nodes: list[Node], language: cs.SupportedLanguage

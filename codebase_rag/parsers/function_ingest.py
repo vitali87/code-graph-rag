@@ -29,6 +29,7 @@ from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
+from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
@@ -1378,37 +1379,13 @@ class FunctionIngestMixin:
         if name_node and name_node.text:
             return safe_decode_text(name_node)
 
-        # Anonymous function EXPRESSIONS bound to a declarator (`export const
-        # api = (function (x) {...}) as unknown as Api`) take the binding name like
-        # arrows: the call pass's binding-name climb accepts both, and the two
-        # passes must agree or the caller qn is a phantom.
-        if func_node.type in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
-            current = func_node.parent
-            while current:
-                if current.type == cs.TS_VARIABLE_DECLARATOR:
-                    # `const m = useMutation({fn: () => {}})` binds the CALL result
-                    # to `m`, not the inner arrow; naming the arrow `m` invents a
-                    # phantom function (dead-code false positive). Only claim the
-                    # declarator name when its value is not a call.
-                    value = current.child_by_field_name(cs.FIELD_VALUE)
-                    if (
-                        value is not None
-                        and value.type in cs.JS_CALL_RESULT_VALUE_TYPES
-                    ):
-                        return None
-                    for child in current.children:
-                        if child.type == cs.TS_IDENTIFIER and child.text:
-                            return safe_decode_text(child)
-                    return None
-                # Crossing another function's body means this arrow is nested
-                # inside it (a JSX handler, a `.map()` callback), not bound to the
-                # outer const: stop so it stays anonymous instead of inheriting the
-                # component's name as a `Component.Component` phantom.
-                if current.type in cs.JS_ARROW_NAME_CLIMB_BOUNDARY:
-                    return None
-                current = current.parent
-
-        return None
+        # An anonymous arrow / function expression bound to a name (a
+        # `const f = () => ...` declarator OR a `helper = () => ...` class field)
+        # takes that binding name, in lock-step with the call pass's
+        # binding-name climb (they must agree or the caller qn is a phantom and
+        # the arrow's body callbacks report dead). One shared helper keeps both
+        # passes' naming identical.
+        return js_ts_utils.arrow_binding_name(func_node)
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
         parent = func_node.parent

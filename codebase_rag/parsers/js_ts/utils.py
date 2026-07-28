@@ -130,6 +130,45 @@ def extract_constructor_name(new_expr_node: Node) -> str | None:
     return None
 
 
+_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+
+
+def arrow_binding_name(func_node: Node) -> str | None:
+    # An arrow / function expression has no `name` field. Recover the binding
+    # name for the two named forms whose VALUE is the arrow: a module/local
+    # `const f = () => ...` (variable_declarator) and a class field
+    # `helper = () => ...` (public_field_definition). Both the definition pass
+    # (registering the arrow's qn) and the call pass (attributing the body's
+    # calls) must derive the SAME name, or the caller qn is a phantom and the
+    # arrow's body callbacks report dead; sharing this one helper keeps them in
+    # step. Anonymous / destructured arrows, and arrows that are merely an
+    # argument to a call bound to a name (`const m = useMutation(() => {})`),
+    # stay unnamed: the arrow is not the binding's own value there.
+    if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+        return None
+    # The arrow may sit behind transparent wrappers (parens, TS casts:
+    # `export const create = ((s) => ...) as Create`); climb them so the arrow
+    # is recognised as the binding's value.
+    node = func_node
+    parent = node.parent
+    while parent is not None and parent.type in _BINDING_WRAPPER_TYPES:
+        node = parent
+        parent = node.parent
+    if parent is None:
+        return None
+    # `==` not `is`: py-tree-sitter returns a fresh Node wrapper per access, so
+    # identity comparison always fails.
+    if parent.child_by_field_name(cs.FIELD_VALUE) != node:
+        return None
+    name_node = parent.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.type not in (
+        cs.TS_IDENTIFIER,
+        cs.TS_PROPERTY_IDENTIFIER,
+    ):
+        return None
+    return safe_decode_text(name_node)
+
+
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
     match expr_node.type:
         case cs.TS_NEW_EXPRESSION:
