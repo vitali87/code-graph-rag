@@ -1144,12 +1144,16 @@ class CallProcessor:
                 collection_boundaries = self._flow_scope_boundaries(
                     queries[language][cs.QUERY_CONFIG]
                 )
-                if language == cs.SupportedLanguage.PYTHON:
-                    # A Python class body executes at import time, so a
-                    # dispatch table stored as a class ATTRIBUTE (django's
-                    # backend `data_types = {"CharField": _get_varchar_...}`)
-                    # is module-load wiring like a module-level table; the scan
-                    # descends through classes but still stops at function
+                if (
+                    language == cs.SupportedLanguage.PYTHON
+                    or language in _JS_TS_LANGUAGES
+                ):
+                    # A Python class body (import time) or a JS/TS class-field
+                    # initializer (construction time) can store a dispatch table
+                    # as a class ATTRIBUTE (django's `data_types = {"CharField":
+                    # _get_varchar_...}`; a JS `opts = { retryStrategy }`), which
+                    # is construction-load wiring like a module-level table; the
+                    # scan descends through classes but still stops at function
                     # scopes. ponytail: decorated classes stay boundaries
                     # (decorated_definition also wraps functions).
                     collection_boundaries = collection_boundaries - frozenset(

@@ -28,6 +28,15 @@ SHORTHAND_SRC = """export function getOpts() {
 }
 """
 
+# A class field holding an object literal with a shorthand (the collection scan
+# must also descend into class bodies).
+CLASS_FIELD_OBJECT_SRC = """function retryStrategy() {}
+
+export class Client {
+  opts = { retryStrategy };
+}
+"""
+
 
 class _Capture:
     def __init__(self) -> None:
@@ -68,12 +77,9 @@ def _referenced(tmp_path: Path, src: str, leaf: str) -> bool:
         queries=queries,
         project_name=PROJECT,
     ).run(force=True)
-    ref_rels = {
-        str(cs.RelationshipType.REFERENCES),
-        str(cs.RelationshipType.CALLS),
-    }
+    references = str(cs.RelationshipType.REFERENCES)
     return any(
-        rel in ref_rels and str(to).rsplit(".", 1)[-1] == leaf
+        rel == references and str(to).rsplit(".", 1)[-1] == leaf
         for _frm, rel, to in cap.rels
     )
 
@@ -84,3 +90,8 @@ class TestFieldAndShorthandRefs:
 
     def test_object_shorthand_references_function(self, tmp_path: Path) -> None:
         assert _referenced(tmp_path, SHORTHAND_SRC, "retryStrategy")
+
+    def test_class_field_object_shorthand_references_function(
+        self, tmp_path: Path
+    ) -> None:
+        assert _referenced(tmp_path, CLASS_FIELD_OBJECT_SRC, "retryStrategy")
