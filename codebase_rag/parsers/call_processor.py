@@ -342,6 +342,9 @@ _ASSIGNMENT_RHS_FIELDS = {
     # callable RHS (an inline arrow or a name resolving to a function) yields an
     # edge; a data RHS (`count += 1`) resolves to nothing and adds none.
     cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
+    # A class field bound to a first-class function value (`log = noop`,
+    # `handler = () => {}`) references it exactly like a `const` declarator.
+    cs.TS_PUBLIC_FIELD_DEFINITION: cs.FIELD_VALUE,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
     cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
     cs.TS_GO_SHORT_VAR_DECLARATION: cs.TS_FIELD_RIGHT,
@@ -1164,13 +1167,24 @@ class CallProcessor:
                 # handle_event, module.exports.run = run) references its target
                 # even in a file with no calls, so scan before the no-calls
                 # early return.
+                assignment_boundaries = self._flow_scope_boundaries(
+                    queries[language][cs.QUERY_CONFIG]
+                )
+                if language in _JS_TS_LANGUAGES:
+                    # A JS/TS class-field initializer (`log = noop`) runs at
+                    # construction, so descend into class bodies to reference the
+                    # function it binds; the scan still stops at method/function
+                    # scopes, so a local assignment inside a method stays theirs.
+                    assignment_boundaries = assignment_boundaries - frozenset(
+                        queries[language][cs.QUERY_CONFIG].class_node_types
+                    )
                 self._ingest_assignment_function_references(
                     root_node,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     module_qn,
                     None,
                     None,
-                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                    assignment_boundaries,
                 )
             if language == cs.SupportedLanguage.GO:
                 # A module-scope Go func map/slice (var funcMap = map[...]{...})
@@ -3623,6 +3637,22 @@ class CallProcessor:
                     if pair.type == cs.TS_METHOD_DEFINITION:
                         self._emit_shorthand_method_ref(
                             pair, caller_spec, module_qn, ensure_rel
+                        )
+                        continue
+                    # A SHORTHAND property (`{ retryStrategy }` == `retryStrategy:
+                    # retryStrategy`): the identifier is both key and value, so it
+                    # can name a first-class function value to reference.
+                    if pair.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+                        self._emit_callback_edge(
+                            caller_spec,
+                            pair,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_spec[2],
+                            cs.RelationshipType.REFERENCES,
                         )
                         continue
                     if (
