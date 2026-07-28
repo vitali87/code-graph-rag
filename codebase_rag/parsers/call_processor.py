@@ -342,8 +342,9 @@ _ASSIGNMENT_RHS_FIELDS = {
     # callable RHS (an inline arrow or a name resolving to a function) yields an
     # edge; a data RHS (`count += 1`) resolves to nothing and adds none.
     cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION: cs.TS_FIELD_RIGHT,
-    # A class field bound to a first-class function value (`log = noop`,
-    # `handler = () => {}`) references it exactly like a `const` declarator.
+    # A class field bound to a NAMED first-class function value (`log = noop`)
+    # references it like a `const` declarator. (An inline-arrow field value is a
+    # method definition, referenced elsewhere, not a name to resolve here.)
     cs.TS_PUBLIC_FIELD_DEFINITION: cs.FIELD_VALUE,
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_VALUE,
     cs.TS_GO_VAR_SPEC: cs.FIELD_VALUE,
@@ -3641,7 +3642,11 @@ class CallProcessor:
                         continue
                     # A SHORTHAND property (`{ retryStrategy }` == `retryStrategy:
                     # retryStrategy`): the identifier is both key and value, so it
-                    # can name a first-class function value to reference.
+                    # can name a first-class function value to reference. ponytail:
+                    # a local data var shadowing a same-named module function is
+                    # over-referenced (the resolver is name-based), matching the
+                    # existing explicit-pair path; a per-scope shadow check is the
+                    # upgrade path if it ever matters.
                     if pair.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
                         self._emit_callback_edge(
                             caller_spec,

@@ -82,12 +82,9 @@ TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
 TS_ASSIGNMENT_PATTERN = "assignment_pattern"
 TS_JS_ASSIGNMENT_EXPRESSION = "assignment_expression"
-# A class field holding a value: `log = noop` / `helper = () => {}`; `name` is
-# the property, `value` is the initializer.
+# A class field holding a value (`log = noop`); `name` is the property, `value`
+# is the initializer. Used to reference a NAMED function a field binds.
 TS_PUBLIC_FIELD_DEFINITION = "public_field_definition"
-# An object-literal shorthand property `{ retryStrategy }`: the identifier is
-# BOTH the key and the value, so it can name a first-class function value.
-TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 # `x += v` and friends: reads the old value AND writes the new one.
 TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION = "augmented_assignment_expression"
 # `x++` / `--x`: also a read-then-write; the operand is the `argument` field.
