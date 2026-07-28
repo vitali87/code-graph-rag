@@ -390,7 +390,7 @@ def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
         return _dart_collection_values(node)
     if node.type == cs.TS_PY_DICTIONARY:
         return _py_dict_values(node)
-    if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+    if node.type in (cs.TS_PY_CONDITIONAL_EXPRESSION, cs.TS_JS_TERNARY_EXPRESSION):
         return _conditional_result_operands(node, is_dart)
     if (
         is_dart
@@ -453,10 +453,11 @@ def _conditional_result_operands(node: Node, is_dart: bool) -> list[Node]:
     operands = list(node.named_children)
     if len(operands) != 3:
         return operands
-    # Dart orders [condition, consequence, alternative]; Python orders
-    # [body, condition, alternative]. Pick the two result operands, never
-    # the truthiness-tested one.
-    return [operands[1], operands[2]] if is_dart else [operands[0], operands[2]]
+    # Dart and JS/TS (`ternary_expression`) order [condition, consequence,
+    # alternative]; Python (`conditional_expression`) orders [body, condition,
+    # alternative]. Pick the two result operands, never the truthiness-tested one.
+    condition_first = is_dart or node.type == cs.TS_JS_TERNARY_EXPRESSION
+    return [operands[1], operands[2]] if condition_first else [operands[0], operands[2]]
 
 
 def _find_call_arguments_node(call_node: Node) -> Node | None:
