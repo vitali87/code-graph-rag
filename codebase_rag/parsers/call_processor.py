@@ -382,7 +382,9 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     return [scope_qn, natural]
 
 
-def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
+def _first_class_value_children(
+    node: Node, is_dart: bool, is_js_ts: bool = False
+) -> list[Node] | None:
     # The wrapped value nodes a container/branch node hands onward, or None
     # for a leaf that IS the first-class value.
     if node.type in _PY_VALUE_WRAPPER_TYPES:
@@ -393,6 +395,22 @@ def _first_class_value_children(node: Node, is_dart: bool) -> list[Node] | None:
         return _py_dict_values(node)
     if node.type in (cs.TS_PY_CONDITIONAL_EXPRESSION, cs.TS_JS_TERNARY_EXPRESSION):
         return _conditional_result_operands(node, is_dart)
+    # A TS cast (`(() => {}) as any`, `fn satisfies T`, `cb!`) is transparent for
+    # first-class-value resolution: the wrapped value is the first named child.
+    if node.type in cs.TS_CAST_WRAPPER_TYPES and node.named_children:
+        return [node.named_children[0]]
+    # A JS/TS short-circuit operator (`fn ?? (() => {})`, `a || cb`) binds one of
+    # its OPERANDS as the value, exactly like Python's boolean_operator; JS/TS
+    # spells it `binary_expression`. Gated to JS/TS: Go and C also use
+    # `binary_expression` with `||`/`&&`, where a bare-name operand resolves to a
+    # boolean, not a callable, and expanding it would fabricate a phantom edge.
+    if (
+        is_js_ts
+        and node.type == cs.TS_BINARY_EXPRESSION
+        and (operator := node.child_by_field_name(cs.FIELD_OPERATOR)) is not None
+        and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
+    ):
+        return list(node.named_children)
     if (
         is_dart
         and node.type.endswith(cs.DART_EXPRESSION_NODE_SUFFIX)
@@ -1140,6 +1158,7 @@ class CallProcessor:
                     None,
                     None,
                     collection_boundaries,
+                    language,
                 )
                 # A module-scope first-class assignment (registry_handler =
                 # handle_event, module.exports.run = run) references its target
@@ -2378,6 +2397,7 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
+                language,
             )
         # Dispatch-table handler references, for every flow language. Module-scope
         # literals are scanned explicitly in process_calls_in_file (before the
@@ -2392,6 +2412,7 @@ class CallProcessor:
                 local_var_types,
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                language,
             )
         if language == cs.SupportedLanguage.GO and caller_type != cs.NodeLabel.MODULE:
             self._ingest_go_composite_function_references(
@@ -3300,14 +3321,18 @@ class CallProcessor:
                     # boolean operands are possible results.
                     if value.type in (
                         cs.TS_PY_CONDITIONAL_EXPRESSION,
+                        cs.TS_JS_TERNARY_EXPRESSION,
                         cs.TS_PY_BOOLEAN_OPERATOR,
                     ):
-                        operands = list(value.named_children)
-                        if (
-                            value.type == cs.TS_PY_CONDITIONAL_EXPRESSION
-                            and len(operands) == 3
-                        ):
-                            operands = [operands[0], operands[2]]
+                        # A boolean-default RHS binds either operand; a ternary
+                        # binds a RESULT operand, never the truthiness-tested
+                        # condition (whose index differs between Python's
+                        # conditional_expression and TS's ternary_expression).
+                        operands = (
+                            list(value.named_children)
+                            if value.type == cs.TS_PY_BOOLEAN_OPERATOR
+                            else _conditional_result_operands(value, False)
+                        )
                         for operand in operands:
                             operand = self._unwrap_ts_value(operand)
                             if (
@@ -3471,6 +3496,7 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # A function handed back via `return` (a useEffect cleanup
         # `return () => unsubscribe()`, a factory `return handler`) is invoked by
@@ -3504,7 +3530,7 @@ class CallProcessor:
                     # __reduce__: pickle later calls the first element);
                     # expand containers so each function handed back inside
                     # one is referenced like a bare return.
-                    for expanded in self._expand_py_first_class_values(value):
+                    for expanded in self._expand_py_first_class_values(value, language):
                         self._emit_callback_edge(
                             caller_spec,
                             expanded,
@@ -3529,11 +3555,12 @@ class CallProcessor:
         # bound, so it stays excluded. Any other node comes back unchanged, so
         # non-Python shapes are unaffected.
         is_dart = language == cs.SupportedLanguage.DART
+        is_js_ts = language in cs.JS_TS_LANGUAGES
         out: list[Node] = []
         stack = [value]
         while stack:
             node = stack.pop()
-            children = _first_class_value_children(node, is_dart)
+            children = _first_class_value_children(node, is_dart, is_js_ts)
             if children is None:
                 out.append(node)
             else:
@@ -3565,6 +3592,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         boundary_types: frozenset[str],
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # A function/method placed as a value in a dict/object or list/array literal
         # is a dispatch table wired to be invoked later (handlers[key](...)),
@@ -3611,7 +3639,9 @@ class CallProcessor:
                         # (django SQLCompiler's `"local_setter": (partial(...)
                         # if ... else local_setter_noop)`) hides the handler
                         # candidates one level down; expand before emitting.
-                        for expanded in self._expand_py_first_class_values(value):
+                        for expanded in self._expand_py_first_class_values(
+                            value, language
+                        ):
                             self._emit_value_function_ref(
                                 expanded,
                                 caller_spec,
@@ -3623,7 +3653,9 @@ class CallProcessor:
                             )
             elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
                 for element in node.named_children:
-                    for expanded in self._expand_py_first_class_values(element):
+                    for expanded in self._expand_py_first_class_values(
+                        element, language
+                    ):
                         self._emit_value_function_ref(
                             expanded,
                             caller_spec,
