@@ -34,7 +34,11 @@ class WebSearcher:
 
     def __init__(self, api_key: str, model: str | None = None) -> None:
         self.api_key = api_key
-        chosen = (model or os.environ.get("SERPDIVE_MODEL") or _DEFAULT_MODEL).strip().lower()
+        chosen = (
+            (model or os.environ.get("SERPDIVE_MODEL") or _DEFAULT_MODEL)
+            .strip()
+            .lower()
+        )
         # An unknown value falls back to the free tier rather than failing: a
         # typo in an env var must not cost money and must not break search.
         self.model = chosen if chosen in _MODELS else _DEFAULT_MODEL
@@ -61,7 +65,9 @@ class WebSearcher:
 
         if response.status_code != 200:
             logger.error(
-                ls.WEB_SEARCH_HTTP_ERROR.format(status=response.status_code, query=query)
+                ls.WEB_SEARCH_HTTP_ERROR.format(
+                    status=response.status_code, query=query
+                )
             )
             return te.WEB_SEARCH_FAILED.format(status=response.status_code)
 
@@ -74,7 +80,9 @@ class WebSearcher:
         # A 200 does not guarantee the shape. Validate before formatting rather
         # than letting a malformed payload raise from inside the tool.
         results = payload.get("results") if isinstance(payload, dict) else None
-        if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
+        if not isinstance(results, list) or any(
+            not isinstance(r, dict) for r in results
+        ):
             logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(query=query))
             return te.WEB_SEARCH_BAD_RESPONSE
 

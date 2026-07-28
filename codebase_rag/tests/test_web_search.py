@@ -96,7 +96,9 @@ def test_empty_query_is_refused_without_a_call(captured: dict) -> None:
 def test_http_error_is_reported_not_raised(monkeypatch) -> None:
     import httpx
 
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse({}, status_code=401))
+    monkeypatch.setattr(
+        httpx, "post", lambda url, **kw: FakeResponse({}, status_code=401)
+    )
     out = WebSearcher("bad-key").search_web("q")
     assert out == te.WEB_SEARCH_FAILED.format(status=401)
 
@@ -115,7 +117,9 @@ def test_no_results_is_a_message_not_an_error(monkeypatch) -> None:
     import httpx
 
     monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse({"results": []}))
-    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(query="q")
+    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(
+        query="q"
+    )
 
 
 @pytest.mark.parametrize(

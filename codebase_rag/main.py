@@ -61,7 +61,6 @@ from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
-from .tools.web_search import WebSearcher, create_web_search_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
@@ -72,6 +71,7 @@ from .tools.semantic_search import (
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .tools.structural_editor import create_structural_editor_tool
 from .tools.structural_search import create_structural_search_tool
+from .tools.web_search import WebSearcher, create_web_search_tool
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
