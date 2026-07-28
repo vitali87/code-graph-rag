@@ -118,10 +118,12 @@ def _is_shape_callback(qn: str) -> bool:
 
 
 def _shape_referenced_from(cap: _Capture, expected_scope_suffix: str) -> bool:
-    # The escaping `shape` callback must be referenced FROM the recovered
-    # property scope (e.g. `...Box.make`), not merely reachable from anywhere.
+    # The escaping `shape` callback must get a REFERENCES edge (the exact edge
+    # the fix emits) FROM the recovered property scope (e.g. `...Box.make`), not
+    # merely a CALLS edge or reachability from anywhere.
+    references = str(cs.RelationshipType.REFERENCES)
     return any(
-        rel in _REF_RELS
+        rel == references
         and _is_shape_callback(str(to))
         and str(frm).endswith(expected_scope_suffix)
         for frm, rel, to in cap.rels
