@@ -56,6 +56,16 @@ export class Outer {
 }
 """
 
+# A class-expression method whose body holds ONLY a callback and NO call
+# expression: the whole file has no call nodes, so the caller pass must still run
+# for the callback to get a REFERENCES edge (else it is dead-flagged).
+NO_CALL_CALLBACK_SRC = """const Proxy = class {
+  run(): () => number {
+    return () => 1;
+  }
+};
+"""
+
 
 class _Capture:
     def __init__(self) -> None:
@@ -120,13 +130,39 @@ def _has_rel(cap: _Capture, frm: str, rel_type: str, to: str) -> bool:
 class TestClassExpressionMethods:
     def test_field_bound_class_expression_body_is_walked(self, tmp_path: Path) -> None:
         # The `useX` call inside the reduce callback inside `exclude` must emit
-        # a CALLS edge; today the class expression is skipped and it does not.
+        # a CALLS edge FROM the binding-qualified method scope; today the class
+        # expression is skipped and it does not.
         cap = _run(tmp_path, FIELD_CLASS_SRC)
         assert _calls_leaf(cap, "useX")
+        assert _has_rel(
+            cap,
+            f"{PROJECT}.m.Outer.Proxy.exclude",
+            cs.RelationshipType.CALLS,
+            f"{PROJECT}.m.useX",
+        )
 
     def test_var_bound_class_expression_body_is_walked(self, tmp_path: Path) -> None:
         cap = _run(tmp_path, VAR_CLASS_SRC)
         assert _calls_leaf(cap, "useX")
+        assert _has_rel(
+            cap,
+            f"{PROJECT}.m.Proxy.run",
+            cs.RelationshipType.CALLS,
+            f"{PROJECT}.m.useX",
+        )
+
+    def test_callback_referenced_when_file_has_no_call_nodes(
+        self, tmp_path: Path
+    ) -> None:
+        # A file with no call expressions must still run the caller pass so a
+        # class-expression method's inline callback gets a REFERENCES edge and is
+        # not dead-flagged.
+        cap = _run(tmp_path, NO_CALL_CALLBACK_SRC)
+        method = f"{PROJECT}.m.Proxy.run"
+        callbacks = {q for q in _qns(cap) if q.startswith(f"{method}.anonymous")}
+        assert callbacks, f"no callback node; qns={_qns(cap)}"
+        callback = callbacks.pop()
+        assert _has_rel(cap, method, cs.RelationshipType.REFERENCES, callback)
 
     def test_block_callback_referenced_from_proxy_method(self, tmp_path: Path) -> None:
         # The block-body callback must register under the Proxy-qualified method

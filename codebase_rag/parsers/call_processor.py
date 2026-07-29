@@ -1239,19 +1239,26 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes and language not in (
-                cs.SupportedLanguage.CSHARP,
-                cs.SupportedLanguage.CPP,
-                cs.SupportedLanguage.DART,
+            if (
+                not all_call_nodes
+                and language
+                not in (
+                    cs.SupportedLanguage.CSHARP,
+                    cs.SupportedLanguage.CPP,
+                    cs.SupportedLanguage.DART,
+                )
+                and language not in _JS_TS_LANGUAGES
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
                 # properties (`return Size;`), C++, where a ctor's
                 # member initializer list (`: buffer(g, 0)`) runs base
-                # ctors without any call_expression node, and Dart, where
+                # ctors without any call_expression node, Dart, where
                 # a getter body can read another getter (`=> _wonders.length`,
-                # issue #873); these passes run per caller inside class
-                # processing, so they proceed.
+                # issue #873), and JS/TS, where a method's inline callback
+                # (`run() { return () => 1; }`) gets its REFERENCES edge only
+                # when the class pass runs (issue #970); these passes run per
+                # caller inside class processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
