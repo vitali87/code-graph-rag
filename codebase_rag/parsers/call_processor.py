@@ -1239,19 +1239,26 @@ class CallProcessor:
                         root_node,
                         queries[language][cs.QUERY_CONFIG],
                     )
-            if not all_call_nodes and language not in (
-                cs.SupportedLanguage.CSHARP,
-                cs.SupportedLanguage.CPP,
-                cs.SupportedLanguage.DART,
+            if (
+                not all_call_nodes
+                and language
+                not in (
+                    cs.SupportedLanguage.CSHARP,
+                    cs.SupportedLanguage.CPP,
+                    cs.SupportedLanguage.DART,
+                )
+                and language not in _JS_TS_LANGUAGES
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
                 # properties (`return Size;`), C++, where a ctor's
                 # member initializer list (`: buffer(g, 0)`) runs base
-                # ctors without any call_expression node, and Dart, where
+                # ctors without any call_expression node, Dart, where
                 # a getter body can read another getter (`=> _wonders.length`,
-                # issue #873); these passes run per caller inside class
-                # processing, so they proceed.
+                # issue #873), and JS/TS, where a method's inline callback
+                # (`run() { return () => 1; }`) gets its REFERENCES edge only
+                # when the class pass runs (issue #970); these passes run per
+                # caller inside class processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -1811,6 +1818,12 @@ class CallProcessor:
 
         for class_node in class_nodes:
             class_name = self._get_class_name_for_node(class_node, language)
+            if not class_name and language in _JS_TS_LANGUAGES:
+                # An anonymous class expression (`static Proxy = class {...}`)
+                # has no `name`; recover its field/declarator binding name so
+                # its methods get a caller pass (issue #970). Matches the qn the
+                # definition pass builds via _js_get_name.
+                class_name = js_ts_utils.class_binding_name(class_node)
             if not class_name:
                 continue
             # A C++ class inside a namespace, or a NESTED class (Outer.Inner),
