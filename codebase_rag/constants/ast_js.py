@@ -193,9 +193,6 @@ TS_JS_TERNARY_EXPRESSION = "ternary_expression"
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
-# `a && b` binds ONLY its right operand as the resulting value (the left is
-# truthiness-tested and never the value); `||` / `??` can bind either operand.
-JS_LOGICAL_AND_OPERATOR = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"
 TS_JS_WHILE_STATEMENT = "while_statement"
 TS_JS_FOR_STATEMENT = "for_statement"

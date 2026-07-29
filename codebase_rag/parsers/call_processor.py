@@ -422,14 +422,8 @@ def _first_class_value_children(
         is_js_ts
         and node.type == cs.TS_BINARY_EXPRESSION
         and (operator := node.child_by_field_name(cs.FIELD_OPERATOR)) is not None
-        and (op_text := safe_decode_text(operator)) in cs.JS_SHORT_CIRCUIT_OPERATORS
+        and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
     ):
-        # `a && b` binds ONLY its right operand as the value (the left is
-        # truthiness-tested, never the value), so returning both would falsely
-        # reference the left operand; `||` / `??` can bind either operand.
-        if op_text == cs.JS_LOGICAL_AND_OPERATOR:
-            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-            return [right] if right is not None else []
         return list(node.named_children)
     if (
         is_dart
@@ -1241,7 +1235,6 @@ class CallProcessor:
                     None,
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-                    language=language,
                 )
             if language == cs.SupportedLanguage.PYTHON:
                 decorator_targets = list(sorted_func_nodes or [])
@@ -2437,7 +2430,6 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
-                language=language,
             )
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
             # selector = identity as any)`, zustand) references it: the default
@@ -3529,7 +3521,6 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # `<Card />` renders the Card component: the framework invokes it
         # through the element, never by a call the graph can see, so the JSX
@@ -3577,11 +3568,14 @@ class CallProcessor:
                 # or inline arrow (onClick={() => x()}) is a function the
                 # framework invokes on the event, so reference it; other
                 # expressions resolve to nothing and are skipped by the helper.
-                # Peel a conditional / cast wrapper first, so a handler chosen by
-                # a ternary (onDrop={cond ? this.handleDrop : undefined}) is
-                # referenced through each result operand (issue #980).
+                # Peel ONLY a ternary / cast wrapper, whose operands are candidate
+                # handler values (onDrop={cond ? this.handleDrop : undefined},
+                # issue #980). A short-circuit (`x || y`, `x && y`) is NOT peeled:
+                # in a JSX data prop (`alt={name || fallback}`) its operands are
+                # data, and expanding them would false-revive a same-named module
+                # function.
                 for value in node.named_children:
-                    for operand in self._expand_py_first_class_values(value, language):
+                    for operand in self._jsx_value_operands(value):
                         self._emit_callback_edge(
                             caller_spec,
                             operand,
@@ -3594,6 +3588,21 @@ class CallProcessor:
                             rel_type=cs.RelationshipType.REFERENCES,
                         )
             stack.extend(node.children)
+
+    @staticmethod
+    def _jsx_value_operands(value: Node) -> list[Node]:
+        # The candidate handler operands of a JSX `{...}` value: a ternary's two
+        # result branches (`cond ? a : b`), peeled through any transparent TS
+        # cast wrapper (`(cond ? a : b) as any`). A short-circuit or any other
+        # expression is returned as-is (a single operand) so it is resolved
+        # directly, never peeled -- expanding `||`/`&&`/`??` in a JSX data prop
+        # would false-revive a same-named module function (issue #980).
+        node = value
+        while node.type in cs.TS_CAST_WRAPPER_TYPES and node.named_children:
+            node = node.named_children[0]
+        if node.type in (cs.TS_PY_CONDITIONAL_EXPRESSION, cs.TS_JS_TERNARY_EXPRESSION):
+            return _conditional_result_operands(node, is_dart=False)
+        return [node]
 
     def _ingest_returned_function_references(
         self,

@@ -90,23 +90,25 @@ def test_ternary_jsx_handler_is_referenced(tmp_path: Path) -> None:
     assert _refs_leaf(_run(tmp_path), "handleDrop")
 
 
-SHORT_CIRCUIT_SRC = """import React from "react";
-function guard() { return true; }
+# A short-circuit in a JSX DATA prop selects data, not a handler; its operands
+# must not be peeled, or a same-named module function is false-revived.
+DATA_PROP_SHORT_CIRCUIT_SRC = """import React from "react";
+function profile() { return 1; }
 export class W extends React.Component {
-  handleClick = () => {};
   render() {
-    return <div onClick={guard && this.handleClick}>x</div>;
+    return <img alt={displayName || profile} title={ready && profile} />;
   }
 }
 """
 
 
-def test_short_circuit_and_left_operand_is_not_referenced(tmp_path: Path) -> None:
-    # In `guard && this.handleClick` the LEFT operand `guard` is only
-    # truthiness-tested, never the bound value, so it must NOT be referenced
-    # (a same-named module function would otherwise be falsely revived); the
-    # RIGHT operand `this.handleClick` IS the value and must be referenced.
-    (tmp_path / "w.tsx").write_text(SHORT_CIRCUIT_SRC)
+def test_short_circuit_data_prop_does_not_reference_module_function(
+    tmp_path: Path,
+) -> None:
+    # `alt={displayName || profile}` / `title={ready && profile}` select DATA;
+    # a JSX short-circuit must NOT be peeled, or `profile` (a same-named module
+    # function) is falsely revived (adversarial review of #980).
+    (tmp_path / "w.tsx").write_text(DATA_PROP_SHORT_CIRCUIT_SRC)
     parsers, queries = load_parsers()
     cap = _Capture()
     GraphUpdater(
@@ -116,5 +118,4 @@ def test_short_circuit_and_left_operand_is_not_referenced(tmp_path: Path) -> Non
         queries=queries,
         project_name=PROJECT,
     ).run(force=True)
-    assert _refs_leaf(cap, "handleClick")  # right operand = the value
-    assert not _refs_leaf(cap, "guard")  # left operand = truthiness only
+    assert not _refs_leaf(cap, "profile")
