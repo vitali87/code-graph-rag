@@ -232,7 +232,7 @@ def _is_react_base_qn(base_qn: str) -> bool:
     return (
         bool(sep)
         and leaf in cs.REACT_COMPONENT_BASE_NAMES
-        and cs.REACT_NAMESPACE_TOKEN in namespace.lower()
+        and namespace.lower() == cs.REACT_NAMESPACE_TOKEN
     )
 
 

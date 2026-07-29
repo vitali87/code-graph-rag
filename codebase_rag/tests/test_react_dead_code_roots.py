@@ -137,6 +137,22 @@ def test_non_react_component_base_is_not_rooted() -> None:
     assert "app.App.Card.render" in dead
 
 
+def test_react_lookalike_namespace_is_not_rooted() -> None:
+    # A base in a namespace that merely CONTAINS "react" (preact, notreact) is
+    # not React: the namespace must match exactly, so a `render` there stays dead.
+    for base in ("preact.Component", "notreact.Component"):
+        nodes = [
+            _node(_MODULE, "app.App", "App"),
+            _node(_CLASS, "app.App.C", "C"),
+            _node(_METHOD, "app.App.C.render", "render"),
+        ]
+        rels = [
+            _rel(_CLASS, "app.App.C", _INHERITS, _CLASS, base),
+            _rel(_CLASS, "app.App.C", _DEFINES_METHOD, _METHOD, "app.App.C.render"),
+        ]
+        assert "app.App.C.render" in _dead(nodes, rels), base
+
+
 def test_transitive_react_base_lifecycle_is_rooted() -> None:
     # App extends a first-party BaseWidget that extends react.Component: App's
     # lifecycle methods are still React-invoked, so they must be rooted.

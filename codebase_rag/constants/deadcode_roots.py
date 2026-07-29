@@ -267,9 +267,10 @@ NEST_FRAMEWORK_METHOD_NAMES: frozenset[str] = frozenset(
 # identifies it regardless of the import alias.
 REACT_COMPONENT_BASE_NAMES: frozenset[str] = frozenset({"Component", "PureComponent"})
 
-# The module-namespace token that distinguishes React's `Component`/`PureComponent`
-# base (`react.Component`, `React.Component`) from an unrelated base sharing that
-# simple name (Ember/Glimmer's `@glimmer/component.Component`). Lowercased match.
+# The module namespace React's `Component`/`PureComponent` base lives in
+# (`react.Component`, `React.Component`). The base's namespace must equal this
+# EXACTLY (lowercased), so a look-alike (`preact.Component`, `notreact.Component`,
+# Ember/Glimmer's `@glimmer/component.Component`) is not mistaken for React.
 REACT_NAMESPACE_TOKEN = "react"
 
 # React class-component lifecycle methods the runtime invokes (mount/update/
