@@ -5870,6 +5870,10 @@ class CallProcessor:
         recv = member_node.child_by_field_name(cs.FIELD_OBJECT)
         if recv is None:
             return None
+        # Peel transparent TS casts/parens/non-null off the receiver so
+        # `(box as Base).thing` and `this!.thing` resolve like `box.thing` /
+        # `this.thing`.
+        recv = self._unwrap_ts_value(recv)
         if recv.type == cs.TS_THIS:
             # `this` binds to the class instance only when the read is lexically
             # inside a CLASS method or class-field (arrows are transparent);
@@ -5919,7 +5923,6 @@ class CallProcessor:
         ensure_rel = self.ingestor.ensure_relationship_batch
         registry = self._resolver.function_registry
         refs_rel = cs.RelationshipType.REFERENCES
-        method_label = cs.NodeLabel.METHOD
         qn_key = cs.KEY_QUALIFIED_NAME
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
@@ -5949,15 +5952,20 @@ class CallProcessor:
                         )
                     )
                 ):
-                    candidate = f"{class_qn}{cs.SEPARATOR_DOT}{name}"
-                    if registry.is_property(candidate):
-                        for target_qn in registry.variants(candidate):
+                    # Resolve the getter on the receiver's class OR an ancestor
+                    # (an inherited getter still invokes real code); emit only
+                    # when the resolved target is a registered property, so a
+                    # same-named data field or regular method never links.
+                    resolved = self._resolver._try_resolve_method(class_qn, name)
+                    if resolved is not None and registry.is_property(resolved[1]):
+                        res_label, res_qn = resolved
+                        for target_qn in registry.variants(res_qn):
                             if target_qn != caller_qn and target_qn not in seen:
                                 seen.add(target_qn)
                                 ensure_rel(
                                     caller_spec,
                                     refs_rel,
-                                    (method_label, qn_key, target_qn),
+                                    (res_label, qn_key, target_qn),
                                 )
             stack.extend(node.children)
 

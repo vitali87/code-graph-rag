@@ -115,6 +115,32 @@ def test_typed_local_getter_read_in_compound_expression_is_referenced(
     assert _edge_to(cap, "thing", _REFERENCES)
 
 
+def test_inherited_getter_read_is_referenced(tmp_path: Path) -> None:
+    # A getter defined on a base class and read through a subclass instance must
+    # link to the base getter (CodeRabbit review of #984).
+    src = """class Base { get thing() { return 1; } }
+export class Sub extends Base {
+  method() { return this.thing ? 1 : 2; }
+}
+"""
+    assert _edge_to(_run(tmp_path, src), "thing", _REFERENCES)
+
+
+def test_cast_and_non_null_receiver_reads_are_referenced(tmp_path: Path) -> None:
+    # A receiver wrapped in a TS cast or non-null assertion is transparent, so
+    # `(box as Base).thing` and `this!.thing` must link (CodeRabbit review).
+    src = """class Base { get thing() { return 1; } }
+export class T extends Base {
+  method(box: Base) {
+    const a = (box as Base).thing ? 1 : 0;
+    const b = this!.thing ? 1 : 0;
+    return a + b;
+  }
+}
+"""
+    assert _edge_to(_run(tmp_path, src), "thing", _REFERENCES)
+
+
 def test_static_getter_read_is_referenced(tmp_path: Path) -> None:
     # `static get thing()` carries `static` before `get`; it must still be
     # detected as a getter and referenced through the class name.
