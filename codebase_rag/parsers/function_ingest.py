@@ -1507,7 +1507,14 @@ class FunctionIngestMixin:
         # which always builds that path, references the same node; otherwise the
         # closure is orphaned and reports as dead.
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
-            return self._extract_node_name(class_node)
+            if name := self._extract_node_name(class_node):
+                return name
+            # An anonymous class expression (`static Proxy = class {...}`) has no
+            # `name` field; recover its binding name so a closure nested in its
+            # methods keeps the full `Outer.Proxy.method.<name>` path the call
+            # pass builds, instead of an orphaned `Outer.method.<name>` (issue
+            # #970).
+            return js_ts_utils.class_binding_name(class_node)
         return False
 
     def _is_nested_within_class_member(

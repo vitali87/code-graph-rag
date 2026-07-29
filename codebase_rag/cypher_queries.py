@@ -187,7 +187,8 @@ ORDER BY count DESC
 # query timeout on big projects (django: 31k roots, 101k CALLS edges). These
 # two linear scans fetch the project's nodes and edges instead; the target
 # of a relationship is deliberately unfiltered so INHERITS to an external
-# base (typing.Protocol) and OVERRIDES of external methods stay visible.
+# base (typing.Protocol), OVERRIDES of external methods, and IMPLEMENTS of an
+# external interface (NestJS `...OptionsFactory`) stay visible.
 _DEAD_CODE_NODE_LABELS = "|".join(
     (
         NodeLabel.FUNCTION.value,
@@ -205,6 +206,7 @@ _DEAD_CODE_REL_TYPES = "|".join(
         RelationshipType.DEFINES.value,
         RelationshipType.DEFINES_METHOD.value,
         RelationshipType.OVERRIDES.value,
+        RelationshipType.IMPLEMENTS.value,
     )
 )
 

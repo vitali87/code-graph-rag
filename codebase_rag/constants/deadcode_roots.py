@@ -210,6 +210,96 @@ TEST_PATH_PATTERNS: tuple[str, ...] = (
     "__tests__",
 )
 
+# NestJS component decorators that mark a CLASS as instantiated and driven by
+# the DI container / framework, never by a first-party `new` the graph can see:
+# `@Injectable` (providers/services), `@Controller`, `@Module`, `@Catch`
+# (exception filters), `@Resolver` (GraphQL), `@WebSocketGateway`. Such a class's
+# constructor is invoked by the container and its framework-contract methods by
+# Nest, so both are reachability roots (gated by a JS/TS extension). Names are the
+# lowercased, argument-stripped form _norm_decorator produces.
+NEST_ROOT_CLASS_DECORATORS: frozenset[str] = frozenset(
+    {
+        "injectable",
+        "controller",
+        "module",
+        "catch",
+        "resolver",
+        "websocketgateway",
+    }
+)
+
+# NestJS async-options factory interfaces follow the `XxxOptionsFactory` naming
+# convention (`TypeOrmOptionsFactory`, `MongooseOptionsFactory`,
+# `GqlOptionsFactory`, ...). A class that `implements` one has its factory method
+# invoked by Nest, so its methods are roots. Matched on the interface leaf name
+# so only these framework contracts root (an unrelated third-party interface
+# does not), gated to an EXTERNAL interface (outside the project prefix).
+NEST_OPTIONS_FACTORY_SUFFIX = "OptionsFactory"
+
+# NestJS methods invoked by the framework through a lifecycle or interface
+# contract, never by a named call the graph can see: lifecycle hooks
+# (`onModuleInit`, `onApplicationBootstrap`, ...) and the single-method
+# interface contracts (`NestMiddleware.use`, `NestInterceptor.intercept`,
+# `NestModule.configure`, `CanActivate.canActivate`, `ExceptionFilter.catch`,
+# `PipeTransform.transform`). Rooted only on a method of a NestJS component
+# class (a NEST_ROOT_CLASS_DECORATORS decorator), so a same-named ordinary
+# method (`use`, `transform`) on a plain class is NOT force-rooted.
+NEST_FRAMEWORK_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "onModuleInit",
+        "onModuleDestroy",
+        "onApplicationBootstrap",
+        "onApplicationShutdown",
+        "beforeApplicationShutdown",
+        "configure",
+        "use",
+        "intercept",
+        "canActivate",
+        "catch",
+        "transform",
+    }
+)
+
+# React component base classes: a class that `extends` one of these is a class
+# component whose lifecycle methods React drives at runtime. Matched on the base
+# interface/class leaf name (`React.Component`, `PureComponent`, and the rarely
+# spelled-out `React.PureComponent`), so the INHERITS target's last segment
+# identifies it regardless of the import alias.
+REACT_COMPONENT_BASE_NAMES: frozenset[str] = frozenset({"Component", "PureComponent"})
+
+# The module namespace React's `Component`/`PureComponent` base lives in
+# (`react.Component`, `React.Component`). The base's namespace must equal this
+# EXACTLY (lowercased), so a look-alike (`preact.Component`, `notreact.Component`,
+# Ember/Glimmer's `@glimmer/component.Component`) is not mistaken for React.
+REACT_NAMESPACE_TOKEN = "react"
+
+# React class-component lifecycle methods the runtime invokes (mount/update/
+# unmount/render/error), plus the constructor React calls when it instantiates
+# the component. Never called by a first-party call the graph can see, so they
+# are reachability roots on a React component class (gated by INHERITS to a
+# REACT_COMPONENT_BASE_NAMES base and a JS/TS extension); the methods and
+# callbacks they reach via `this.` then expand from them.
+REACT_LIFECYCLE_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "render",
+        "constructor",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "shouldComponentUpdate",
+        "getSnapshotBeforeUpdate",
+        "componentDidCatch",
+        "getDerivedStateFromProps",
+        "getDerivedStateFromError",
+        "componentWillMount",
+        "componentWillReceiveProps",
+        "componentWillUpdate",
+        "UNSAFE_componentWillMount",
+        "UNSAFE_componentWillReceiveProps",
+        "UNSAFE_componentWillUpdate",
+    }
+)
+
 # Python Enum protocol hooks: the enum machinery invokes these sunder
 # METHODS by NAME (_generate_next_value_ on auto(), _missing_ on a failed
 # value lookup), never through a call the graph can see -- runtime roots

@@ -55,7 +55,10 @@ JS_TS_FUNCTION_NODES = (
     "arrow_function",
     "method_definition",
 )
-JS_TS_CLASS_NODES = ("class_declaration", "class")
+# The anonymous class-expression node type (`const X = class {...}`); the named
+# form is `class_declaration`.
+TS_CLASS_EXPRESSION = "class"
+JS_TS_CLASS_NODES = ("class_declaration", TS_CLASS_EXPRESSION)
 JS_TS_IMPORT_NODES = (
     "import_statement",
     "lexical_declaration",
