@@ -1235,6 +1235,7 @@ class CallProcessor:
                     None,
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                    language=language,
                 )
             if language == cs.SupportedLanguage.PYTHON:
                 decorator_targets = list(sorted_func_nodes or [])
@@ -2430,6 +2431,7 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
+                language=language,
             )
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
             # selector = identity as any)`, zustand) references it: the default
@@ -3521,6 +3523,7 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # `<Card />` renders the Card component: the framework invokes it
         # through the element, never by a call the graph can see, so the JSX
@@ -3568,18 +3571,22 @@ class CallProcessor:
                 # or inline arrow (onClick={() => x()}) is a function the
                 # framework invokes on the event, so reference it; other
                 # expressions resolve to nothing and are skipped by the helper.
+                # Peel a conditional / cast wrapper first, so a handler chosen by
+                # a ternary (onDrop={cond ? this.handleDrop : undefined}) is
+                # referenced through each result operand (issue #980).
                 for value in node.named_children:
-                    self._emit_callback_edge(
-                        caller_spec,
-                        value,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn=caller_qn,
-                        rel_type=cs.RelationshipType.REFERENCES,
-                    )
+                    for operand in self._expand_py_first_class_values(value, language):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            operand,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn=caller_qn,
+                            rel_type=cs.RelationshipType.REFERENCES,
+                        )
             stack.extend(node.children)
 
     def _ingest_returned_function_references(
