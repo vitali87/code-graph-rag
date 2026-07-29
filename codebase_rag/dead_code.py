@@ -221,6 +221,43 @@ def _is_nest_root(
     return False
 
 
+def _is_react_base_qn(base_qn: str) -> bool:
+    # A React component base: the simple name is `Component`/`PureComponent` AND
+    # it lives in a react-namespaced module (`react.Component`, `React.Component`,
+    # `react.PureComponent`). The namespace check keeps an unrelated base that
+    # merely SHARES the `Component` simple name (Ember/Glimmer's
+    # `@glimmer/component.Component`, a bespoke `ui.Component`) from being taken
+    # for React.
+    namespace, sep, leaf = base_qn.rpartition(cs.SEPARATOR_DOT)
+    return (
+        bool(sep)
+        and leaf in cs.REACT_COMPONENT_BASE_NAMES
+        and cs.REACT_NAMESPACE_TOKEN in namespace.lower()
+    )
+
+
+def _is_react_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    react_component_classes: set[str],
+) -> bool:
+    # A React class-component lifecycle method (render/componentDidMount/... and
+    # the constructor React calls on instantiation) is invoked by React, never by
+    # a first-party call the graph sees, so it is a reachability root on a class
+    # that INHERITS a React component base. The methods/callbacks it reaches via
+    # `this.` then expand from it. Gated to JS/TS methods; a same-named method on
+    # a plain (non-React) class is untouched.
+    if not is_method or not path.endswith(_JS_TS_EXTS):
+        return False
+    if member not in cs.REACT_LIFECYCLE_METHOD_NAMES:
+        return False
+    cls = method_to_class.get(qn)
+    return cls is not None and cls in react_component_classes
+
+
 def _walk(
     frontier: set[str],
     adjacency: dict[str, set[str]],
@@ -295,13 +332,23 @@ def dead_code_from_graph(
     # methods are roots (issue #973). Restricted to that naming convention so an
     # unrelated third-party interface implementer is not force-rooted.
     nest_factory_classes: set[str] = set()
+    # A class that `extends` a React component base (directly or through a
+    # first-party intermediate base) is a class component whose lifecycle methods
+    # React drives at runtime (issue #978). Seeds are direct extenders; the
+    # transitive closure over INHERITS is computed after the scan.
+    react_component_classes: set[str] = set()
+    inherits_subclasses: dict[str, set[str]] = defaultdict(set)
     for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
             if to_label == _CLASS:
                 nested_class_pairs.append((str(from_val), str(to_val)))
-        elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
-            protocol_classes.add(str(from_val))
+        elif rel_type == _INHERITS:
+            inherits_subclasses[str(to_val)].add(str(from_val))
+            if str(to_val) in cs.PROTOCOL_BASE_QNS:
+                protocol_classes.add(str(from_val))
+            elif _is_react_base_qn(str(to_val)):
+                react_component_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
             class_methods.append((str(from_val), str(to_val)))
         elif (
@@ -323,6 +370,10 @@ def dead_code_from_graph(
             roots.add(target_qn)
     protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
     method_to_class = {m: c for c, m in class_methods}
+    # Expand React components down the inheritance tree: a class extending a
+    # first-party base that (transitively) extends react.Component is itself a
+    # React component (a shared `BaseComponent extends React.Component` is common).
+    _walk(set(react_component_classes), inherits_subclasses, react_component_classes)
 
     for qn in candidates:
         if qn in roots:
@@ -388,6 +439,15 @@ def dead_code_from_graph(
             method_to_class,
             class_decorators_norm,
             nest_factory_classes,
+        ):
+            roots.add(qn)
+        elif _is_react_root(
+            qn,
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
+            qn in method_qns,
+            path,
+            method_to_class,
+            react_component_classes,
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):

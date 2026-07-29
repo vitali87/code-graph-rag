@@ -260,6 +260,45 @@ NEST_FRAMEWORK_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# React component base classes: a class that `extends` one of these is a class
+# component whose lifecycle methods React drives at runtime. Matched on the base
+# interface/class leaf name (`React.Component`, `PureComponent`, and the rarely
+# spelled-out `React.PureComponent`), so the INHERITS target's last segment
+# identifies it regardless of the import alias.
+REACT_COMPONENT_BASE_NAMES: frozenset[str] = frozenset({"Component", "PureComponent"})
+
+# The module-namespace token that distinguishes React's `Component`/`PureComponent`
+# base (`react.Component`, `React.Component`) from an unrelated base sharing that
+# simple name (Ember/Glimmer's `@glimmer/component.Component`). Lowercased match.
+REACT_NAMESPACE_TOKEN = "react"
+
+# React class-component lifecycle methods the runtime invokes (mount/update/
+# unmount/render/error), plus the constructor React calls when it instantiates
+# the component. Never called by a first-party call the graph can see, so they
+# are reachability roots on a React component class (gated by INHERITS to a
+# REACT_COMPONENT_BASE_NAMES base and a JS/TS extension); the methods and
+# callbacks they reach via `this.` then expand from them.
+REACT_LIFECYCLE_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "render",
+        "constructor",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "shouldComponentUpdate",
+        "getSnapshotBeforeUpdate",
+        "componentDidCatch",
+        "getDerivedStateFromProps",
+        "getDerivedStateFromError",
+        "componentWillMount",
+        "componentWillReceiveProps",
+        "componentWillUpdate",
+        "UNSAFE_componentWillMount",
+        "UNSAFE_componentWillReceiveProps",
+        "UNSAFE_componentWillUpdate",
+    }
+)
+
 # Python Enum protocol hooks: the enum machinery invokes these sunder
 # METHODS by NAME (_generate_next_value_ on auto(), _missing_ on a failed
 # value lookup), never through a call the graph can see -- runtime roots
