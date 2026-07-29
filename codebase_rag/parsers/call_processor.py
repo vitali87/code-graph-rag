@@ -2414,6 +2414,26 @@ class CallProcessor:
                 dart_prop_names,
             )
 
+        # Same need again, JS/TS shape (issue #984): a getter read is a
+        # member_expression (`this.relation`, `loadMap.mainLoadMapItem`), never
+        # an invocation. The return/assignment reference passes only inspect the
+        # direct value, so a getter read nested in a ternary, member chain, `if`
+        # condition, or binary expression emitted nothing and dead-code flagged
+        # it (TypeORM's JoinAttribute.relation, LoadMap.mainLoadMapItem).
+        if language in _JS_TS_LANGUAGES and (
+            js_ts_prop_names := self._resolver.function_registry.property_names()
+        ):
+            self._ingest_js_ts_getter_reads(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                queries[language][cs.QUERY_CONFIG],
+                js_ts_prop_names,
+                caller_qn=caller_qn,
+            )
+
         # Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
         # methods; emit those edges when the operand is a first-party type.
         if language == cs.SupportedLanguage.PYTHON:
@@ -5776,6 +5796,191 @@ class CallProcessor:
                     and parent.child_by_field_name(cs.FIELD_TYPE) != node
                 ):
                     try_emit(safe_decode_text(node), node, False)
+            stack.extend(node.children)
+
+    @staticmethod
+    def _js_ts_member_is_write_target(node: Node) -> bool:
+        # True when a member read is the WRITE target of a plain assignment
+        # (`this.thing = v`, and destructuring forms `[this.thing] = a`,
+        # `({x: this.thing} = o)` where the member is nested in the left pattern
+        # but is not its direct `left` child); those invoke the SETTER, not the
+        # getter. An augmented assignment (`this.thing += 1`) reads first, so it
+        # is NOT a write target. The walk stops at the nearest assignment or at a
+        # function/class boundary so an outer assignment cannot misjudge a member
+        # that actually sits in a nested scope or on the right-hand side.
+        current = node.parent
+        while current is not None:
+            node_type = current.type
+            if node_type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                left = current.child_by_field_name(cs.FIELD_LEFT)
+                return (
+                    left is not None
+                    and left.start_byte <= node.start_byte
+                    and node.end_byte <= left.end_byte
+                )
+            if (
+                node_type
+                in (
+                    cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+                    cs.TS_METHOD_DEFINITION,
+                    cs.TS_ARROW_FUNCTION,
+                )
+                or node_type in _JS_THIS_REBINDING_FUNC_TYPES
+                or node_type in cs.JS_TS_CLASS_NODES
+            ):
+                return False
+            current = current.parent
+        return False
+
+    @staticmethod
+    def _js_this_binds_to_enclosing_class(read_node: Node) -> bool:
+        # True when `this`/`super` at read_node lexically refers to the enclosing
+        # class instance: walk up, arrows are transparent (they inherit `this`),
+        # a method_definition binds `this` to the class ONLY when it is a class
+        # member (parent is a class_body) -- an object-literal shorthand method
+        # binds `this` to the object; a class node itself is a class-field arrow
+        # context; a plain function / function-expression / generator rebinds.
+        current = read_node.parent
+        while current is not None:
+            node_type = current.type
+            if node_type == cs.TS_METHOD_DEFINITION:
+                parent = current.parent
+                return parent is not None and parent.type == cs.TS_CLASS_BODY
+            if node_type in cs.JS_TS_CLASS_NODES:
+                return True
+            if node_type in _JS_THIS_REBINDING_FUNC_TYPES:
+                return False
+            current = current.parent
+        return False
+
+    def _js_ts_getter_read_class_qn(
+        self,
+        member_node: Node,
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> str | None:
+        # The class that owns a getter read `recv.getter`, resolved from the
+        # RECEIVER's type only: `this`/`super` is the enclosing class, and a
+        # plain identifier is typed via local_var_types then resolved to its
+        # class qn. Any other receiver (an unknown local, a chained expression)
+        # yields None so no edge is fabricated. Resolving by receiver type (not
+        # the name-global trie) is what keeps a same-named getter on an
+        # unrelated class from being falsely revived.
+        recv = member_node.child_by_field_name(cs.FIELD_OBJECT)
+        # Parens, `x!`, and `x satisfies T` keep the operand's type, so peel them;
+        # an `as` cast ASSERTS a type, so resolve the receiver from that target
+        # type directly (`(box as Base).thing` links even when box is untyped).
+        while recv is not None:
+            recv_type = recv.type
+            if recv_type in (
+                cs.TS_PARENTHESIZED_EXPRESSION,
+                cs.TS_NON_NULL_EXPRESSION,
+                cs.TS_SATISFIES_EXPRESSION,
+            ):
+                recv = recv.named_child(0)
+            elif recv_type == cs.TS_AS_EXPRESSION:
+                type_node = recv.named_children[-1] if recv.named_children else None
+                if type_node is None or not (tname := safe_decode_text(type_node)):
+                    return None
+                return self._resolver._resolve_class_name(tname, module_qn)
+            else:
+                break
+        if recv is None:
+            return None
+        if recv.type == cs.TS_THIS:
+            # `this` binds to the class instance only when the read is lexically
+            # inside a CLASS method or class-field (arrows are transparent);
+            # inside a nested plain `function`/function-expression, or an
+            # object-literal method, `this` rebinds, so it is NOT the class and
+            # must not link (issue #971's rebinding rule, extended to reject an
+            # object-literal method whose method_definition binds `this` to the
+            # object, not the class). `super.getter` is deliberately NOT handled:
+            # it reads the BASE class's getter, and class_context is the current
+            # class, so mapping it here would target the wrong (or a missing)
+            # method; a conservative miss is preferred to a wrong edge.
+            if self._js_this_binds_to_enclosing_class(member_node):
+                return class_context
+            return None
+        if recv.type == cs.TS_IDENTIFIER and (recv_name := safe_decode_text(recv)):
+            # A typed local already stores its resolved class qn; a bare
+            # class-name receiver (a static getter read, `Box.thing`) resolves
+            # through the class registry. An unknown receiver (an untyped
+            # parameter) matches neither and yields None, so the name-global
+            # trie never fires and an unrelated same-named getter is not revived.
+            if (recv_type := (local_var_types or {}).get(recv_name)) is not None:
+                return recv_type
+            return self._resolver._resolve_class_name(recv_name, module_qn)
+        return None
+
+    def _ingest_js_ts_getter_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+        caller_qn: str | None = None,
+    ) -> None:
+        # Emit a REFERENCES edge (a read invokes the getter but is not a call, so
+        # the call graph stays invocation-only) for every member_expression whose
+        # property resolves to a getter ON THE RECEIVER'S OWN CLASS, wherever it
+        # appears in the body. The walk is position-agnostic, so a getter read
+        # inside a ternary, member chain (`loadMap.mainLoadMapItem.entity` visits
+        # the inner `loadMap.mainLoadMapItem`), or `if` condition links the same
+        # as a bare read. The candidate qn is built from the receiver's class and
+        # emitted only when it is a registered property, so a same-named data
+        # field, a same-named regular method, or a same-named getter on an
+        # unrelated class never fabricates an edge.
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        registry = self._resolver.function_registry
+        refs_rel = cs.RelationshipType.REFERENCES
+        qn_key = cs.KEY_QUALIFIED_NAME
+        function_types = lang_config.function_node_types
+        class_types = lang_config.class_node_types
+        seen: set[str] = set()
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            # A nested class or NON-arrow function owns its own reads (and
+            # rebinds `this`), so it is processed as its own caller; do not
+            # descend. An arrow is transparent (it captures the enclosing `this`
+            # and shares the outer locals), so descend into it or getter reads in
+            # `.map`/`.find`/`.forEach` callbacks are missed.
+            if (
+                node_type in function_types and node_type != cs.TS_ARROW_FUNCTION
+            ) or node_type in class_types:
+                continue
+            if node_type == cs.TS_MEMBER_EXPRESSION:
+                prop = node.child_by_field_name(cs.FIELD_PROPERTY)
+                if (
+                    not self._js_ts_member_is_write_target(node)
+                    and prop is not None
+                    and (name := safe_decode_text(prop)) in prop_names
+                    and (
+                        class_qn := self._js_ts_getter_read_class_qn(
+                            node, class_context, local_var_types, module_qn
+                        )
+                    )
+                ):
+                    # Resolve the getter on the receiver's class OR an ancestor
+                    # (an inherited getter still invokes real code); emit only
+                    # when the resolved target is a registered property, so a
+                    # same-named data field or regular method never links.
+                    resolved = self._resolver._try_resolve_method(class_qn, name)
+                    if resolved is not None and registry.is_property(resolved[1]):
+                        res_label, res_qn = resolved
+                        for target_qn in registry.variants(res_qn):
+                            if target_qn != caller_qn and target_qn not in seen:
+                                seen.add(target_qn)
+                                ensure_rel(
+                                    caller_spec,
+                                    refs_rel,
+                                    (res_label, qn_key, target_qn),
+                                )
             stack.extend(node.children)
 
     def _build_nested_qualified_name(

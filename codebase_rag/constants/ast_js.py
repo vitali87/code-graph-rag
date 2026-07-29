@@ -77,6 +77,10 @@ TS_ARRAY = "array"
 # name; arrows nested under a const-bound object still take the object's name.
 JS_CALL_RESULT_VALUE_TYPES = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
 TS_FUNCTION_EXPRESSION = "function_expression"
+# The `get` accessor keyword prefixing a getter `method_definition`
+# (`get thing() {...}`); its presence marks the method as a property whose
+# reads are member accesses, not invocations.
+TS_GET_ACCESSOR_KEYWORD = "get"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"

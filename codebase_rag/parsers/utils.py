@@ -812,9 +812,27 @@ def ingest_method(
     # Python's @property marking feeds its attribute-access pass. A Dart
     # getter_signature is the same shape (issue #869): its accesses are
     # attribute reads the Dart getter-read pass resolves through this flag.
-    is_property = _is_property_decorator(decorators) or method_node.type in (
-        cs.TS_CSHARP_PROPERTY_DECLARATION,
-        cs.TS_DART_GETTER_SIGNATURE,
+    # A JS/TS getter is a `method_definition` carrying the `get` keyword; its
+    # reads are member accesses (`obj.thing`), so mark it like the other
+    # languages' properties to feed the JS/TS getter-read pass. The keyword is a
+    # direct child but not always the first (`static get x()` leads with
+    # `static`); a method named `get` carries a property_identifier, not a `get`
+    # keyword node, so scanning direct children stays exact.
+    is_js_ts_getter = (
+        language in cs.JS_TS_LANGUAGES
+        and method_node.type == cs.TS_METHOD_DEFINITION
+        and any(
+            child.type == cs.TS_GET_ACCESSOR_KEYWORD for child in method_node.children
+        )
+    )
+    is_property = (
+        _is_property_decorator(decorators)
+        or is_js_ts_getter
+        or method_node.type
+        in (
+            cs.TS_CSHARP_PROPERTY_DECLARATION,
+            cs.TS_DART_GETTER_SIGNATURE,
+        )
     )
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
