@@ -422,8 +422,14 @@ def _first_class_value_children(
         is_js_ts
         and node.type == cs.TS_BINARY_EXPRESSION
         and (operator := node.child_by_field_name(cs.FIELD_OPERATOR)) is not None
-        and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
+        and (op_text := safe_decode_text(operator)) in cs.JS_SHORT_CIRCUIT_OPERATORS
     ):
+        # `a && b` binds ONLY its right operand as the value (the left is
+        # truthiness-tested, never the value), so returning both would falsely
+        # reference the left operand; `||` / `??` can bind either operand.
+        if op_text == cs.JS_LOGICAL_AND_OPERATOR:
+            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+            return [right] if right is not None else []
         return list(node.named_children)
     if (
         is_dart

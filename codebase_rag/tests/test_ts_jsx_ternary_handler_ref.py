@@ -88,3 +88,33 @@ def test_direct_jsx_handler_is_referenced(tmp_path: Path) -> None:
 def test_ternary_jsx_handler_is_referenced(tmp_path: Path) -> None:
     # `cond ? this.handleDrop : undefined` must reference handleDrop.
     assert _refs_leaf(_run(tmp_path), "handleDrop")
+
+
+SHORT_CIRCUIT_SRC = """import React from "react";
+function guard() { return true; }
+export class W extends React.Component {
+  handleClick = () => {};
+  render() {
+    return <div onClick={guard && this.handleClick}>x</div>;
+  }
+}
+"""
+
+
+def test_short_circuit_and_left_operand_is_not_referenced(tmp_path: Path) -> None:
+    # In `guard && this.handleClick` the LEFT operand `guard` is only
+    # truthiness-tested, never the bound value, so it must NOT be referenced
+    # (a same-named module function would otherwise be falsely revived); the
+    # RIGHT operand `this.handleClick` IS the value and must be referenced.
+    (tmp_path / "w.tsx").write_text(SHORT_CIRCUIT_SRC)
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    assert _refs_leaf(cap, "handleClick")  # right operand = the value
+    assert not _refs_leaf(cap, "guard")  # left operand = truthiness only
