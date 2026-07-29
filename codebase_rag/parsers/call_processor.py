@@ -3531,7 +3531,14 @@ class CallProcessor:
         # function directly, both on the caller itself and on any unowned anon
         # arrow the walk continues through (deeper currying bubbles here too).
         self._emit_expression_body_return(
-            caller_node, caller_spec, ensure_rel, caller_qn
+            caller_node,
+            caller_spec,
+            ensure_rel,
+            caller_qn,
+            module_qn,
+            local_var_types,
+            class_context,
+            resolve_func,
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
@@ -3540,7 +3547,14 @@ class CallProcessor:
                 if not self._is_unowned_js_scope(node):
                     continue
                 self._emit_expression_body_return(
-                    node, caller_spec, ensure_rel, caller_qn
+                    node,
+                    caller_spec,
+                    ensure_rel,
+                    caller_qn,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    resolve_func,
                 )
             if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
@@ -3592,15 +3606,36 @@ class CallProcessor:
         caller_spec: tuple[str, str, str],
         ensure_rel,
         caller_qn: str | None,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        resolve_func,
     ) -> None:
         body = func_node.child_by_field_name(cs.FIELD_BODY)
-        if body is not None and body.type in _INLINE_FUNC_VALUE_TYPES:
+        if body is None:
+            return
+        if body.type in _INLINE_FUNC_VALUE_TYPES:
             self._emit_inline_arg_function_ref(
                 body,
                 caller_spec,
                 ensure_rel,
                 caller_qn,
                 cs.RelationshipType.REFERENCES,
+            )
+        elif body.type in _ASSIGNMENT_RHS_REF_TYPES:
+            # A bare-name implicit return (`() => noop`) hands back an EXISTING
+            # function by reference; resolve it like an explicit `return noop`
+            # instead of treating the arrow's body as an inline declaration.
+            self._emit_callback_edge(
+                caller_spec,
+                body,
+                module_qn,
+                local_var_types,
+                class_context,
+                resolve_func,
+                ensure_rel,
+                caller_qn=caller_qn,
+                rel_type=cs.RelationshipType.REFERENCES,
             )
 
     def _ingest_collection_function_references(
