@@ -2111,6 +2111,19 @@ class CallProcessor:
                             receiver = receiver_node.text.decode(cs.ENCODING_UTF8)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
+                case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
+                    # A bound function that is itself invoked (`fn.bind(ctx)()`)
+                    # has a nested `fn.bind(ctx)` call_expression as its callee, so
+                    # no earlier case names it. Resolve to fn so the invocation
+                    # links to fn, not the Function.prototype builtin (issue:
+                    # JoinAttribute.relation's local getValue called as
+                    # getValue.bind(this)()). Guard on _unwrap_bound_function so a
+                    # plain call-of-a-call (`getFactory()()`) stays unnamed, then
+                    # peel to a fixpoint for chained binds / interleaved casts.
+                    if self._unwrap_bound_function(func_child) is not None:
+                        peeled = self._peel_bound_callable(func_child)
+                        if peeled.text is not None:
+                            return peeled.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 
