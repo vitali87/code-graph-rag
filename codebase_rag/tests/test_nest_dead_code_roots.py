@@ -62,9 +62,12 @@ def _rel(
     }
 
 
-def _dead(nodes: list[ResultRow], rels: list[ResultRow]) -> set[str]:
-    # include_classes False: we only assert about function/method candidates.
-    config = default_dead_code_config(include_tests=True, include_classes=False)
+def _dead(
+    nodes: list[ResultRow], rels: list[ResultRow], include_classes: bool = False
+) -> set[str]:
+    config = default_dead_code_config(
+        include_tests=True, include_classes=include_classes
+    )
     return {
         row["qualified_name"]
         for row in collect_dead_code(FakeIngestor(nodes, rels), "proj", config)
@@ -135,6 +138,57 @@ def test_dead_code_rels_query_fetches_implements_edges() -> None:
     # The external-interface (`...OptionsFactory`) root rule is fed by IMPLEMENTS
     # edges, so the rel-fetch query must include that relationship type.
     assert cs.RelationshipType.IMPLEMENTS.value in cq.CYPHER_DEAD_CODE_RELS
+
+
+def test_component_class_node_is_rooted_with_include_classes() -> None:
+    # With --classes, the CLASS node is a candidate. A non-exported @Injectable
+    # component class is instantiated by the container, so the class node itself
+    # must be a root (a rooted constructor cannot revive it: DEFINES_METHOD is
+    # not a reachability edge).
+    nodes = [
+        _node(_MODULE, "proj.app.module", "app.module"),
+        _node(_CLASS, "proj.app.module.Svc", "Svc", ["@Injectable()"]),
+        _node(_METHOD, "proj.app.module.Svc.constructor", "constructor"),
+    ]
+    rels = [
+        _rel(
+            _CLASS,
+            "proj.app.module.Svc",
+            _DEFINES_METHOD,
+            _METHOD,
+            "proj.app.module.Svc.constructor",
+        )
+    ]
+    dead = _dead(nodes, rels, include_classes=True)
+    assert "proj.app.module.Svc" not in dead
+
+
+def test_non_nest_external_interface_helper_stays_dead() -> None:
+    # Implementing an unrelated third-party interface (NOT a NestJS
+    # `...OptionsFactory`) must NOT root the class's private helpers.
+    nodes = [
+        _node(_MODULE, "proj.app.module", "app.module"),
+        _node(_CLASS, "proj.app.module.Widget", "Widget"),
+        _node(_METHOD, "proj.app.module.Widget.helper", "helper"),
+    ]
+    rels = [
+        _rel(
+            _CLASS,
+            "proj.app.module.Widget",
+            _DEFINES_METHOD,
+            _METHOD,
+            "proj.app.module.Widget.helper",
+        ),
+        _rel(
+            _CLASS,
+            "proj.app.module.Widget",
+            _IMPLEMENTS,
+            _CLASS,
+            "some.thirdparty.Comparable",
+        ),
+    ]
+    dead = _dead(nodes, rels)
+    assert "proj.app.module.Widget.helper" in dead
 
 
 def test_plain_class_framework_named_method_is_not_rooted() -> None:

@@ -228,6 +228,14 @@ NEST_ROOT_CLASS_DECORATORS: frozenset[str] = frozenset(
     }
 )
 
+# NestJS async-options factory interfaces follow the `XxxOptionsFactory` naming
+# convention (`TypeOrmOptionsFactory`, `MongooseOptionsFactory`,
+# `GqlOptionsFactory`, ...). A class that `implements` one has its factory method
+# invoked by Nest, so its methods are roots. Matched on the interface leaf name
+# so only these framework contracts root (an unrelated third-party interface
+# does not), gated to an EXTERNAL interface (outside the project prefix).
+NEST_OPTIONS_FACTORY_SUFFIX = "OptionsFactory"
+
 # NestJS methods invoked by the framework through a lifecycle or interface
 # contract, never by a named call the graph can see: lifecycle hooks
 # (`onModuleInit`, `onApplicationBootstrap`, ...) and the single-method

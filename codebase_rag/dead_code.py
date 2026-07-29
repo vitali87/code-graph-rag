@@ -172,6 +172,17 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
 
 
+def _is_nest_component_class(
+    class_qn: str,
+    class_decorators_norm: dict[str, frozenset[str]],
+    nest_factory_classes: set[str],
+) -> bool:
+    if class_qn in nest_factory_classes:
+        return True
+    decorators = class_decorators_norm.get(class_qn)
+    return bool(decorators and decorators & cs.NEST_ROOT_CLASS_DECORATORS)
+
+
 def _is_nest_root(
     qn: str,
     member: str,
@@ -179,21 +190,28 @@ def _is_nest_root(
     path: str,
     method_to_class: dict[str, str],
     class_decorators_norm: dict[str, frozenset[str]],
-    external_impl_classes: set[str],
+    nest_factory_classes: set[str],
 ) -> bool:
     # NestJS runs code the static graph sees no call to. A class decorated
     # @Injectable/@Controller/@Module/... is instantiated by the DI container
     # (root its constructor) and driven by the framework through lifecycle and
     # single-method interface contracts (root those methods by name). A class
-    # implementing an EXTERNAL `...OptionsFactory` interface has its methods
-    # invoked by Nest, so root them all (mirrors overrides_external). Gated to
-    # JS/TS methods; a same-named ordinary method on a plain class is untouched.
-    if not is_method or not path.endswith(_JS_TS_EXTS):
+    # implementing an EXTERNAL `...OptionsFactory` interface has its factory
+    # method invoked by Nest, so root all its methods (mirrors overrides_external).
+    # Gated to JS/TS; a same-named ordinary method on a plain class is untouched.
+    if not path.endswith(_JS_TS_EXTS):
         return False
+    if not is_method:
+        # A CLASS-node candidate (only present with --classes): the component
+        # class is instantiated by the container, so it roots itself -- a rooted
+        # constructor cannot revive it because DEFINES_METHOD is not a
+        # reachability edge. (A non-class, non-method candidate -- a bare
+        # function -- is not in either map, so this returns False.)
+        return _is_nest_component_class(qn, class_decorators_norm, nest_factory_classes)
     cls = method_to_class.get(qn)
     if cls is None:
         return False
-    if cls in external_impl_classes:
+    if cls in nest_factory_classes:
         return True
     decorators = class_decorators_norm.get(cls)
     if decorators and decorators & cs.NEST_ROOT_CLASS_DECORATORS:
@@ -272,10 +290,11 @@ def dead_code_from_graph(
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
     nested_class_pairs: list[tuple[str, str]] = []
-    # A class implementing an interface NOT defined in this project (an external
-    # framework interface such as NestJS `...OptionsFactory`) has its methods
-    # invoked by that framework (issue #973).
-    external_impl_classes: set[str] = set()
+    # A class implementing an EXTERNAL NestJS `...OptionsFactory` interface (one
+    # not defined in this project) has its factory method invoked by Nest, so its
+    # methods are roots (issue #973). Restricted to that naming convention so an
+    # unrelated third-party interface implementer is not force-rooted.
+    nest_factory_classes: set[str] = set()
     for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
@@ -285,8 +304,14 @@ def dead_code_from_graph(
             protocol_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
             class_methods.append((str(from_val), str(to_val)))
-        elif rel_type == _IMPLEMENTS and not str(to_val).startswith(project_prefix):
-            external_impl_classes.add(str(from_val))
+        elif (
+            rel_type == _IMPLEMENTS
+            and not str(to_val).startswith(project_prefix)
+            and str(to_val)
+            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            .endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
+        ):
+            nest_factory_classes.add(str(from_val))
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
@@ -362,7 +387,7 @@ def dead_code_from_graph(
             path,
             method_to_class,
             class_decorators_norm,
-            external_impl_classes,
+            nest_factory_classes,
         ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
