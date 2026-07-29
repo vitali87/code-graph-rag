@@ -210,6 +210,48 @@ TEST_PATH_PATTERNS: tuple[str, ...] = (
     "__tests__",
 )
 
+# NestJS component decorators that mark a CLASS as instantiated and driven by
+# the DI container / framework, never by a first-party `new` the graph can see:
+# `@Injectable` (providers/services), `@Controller`, `@Module`, `@Catch`
+# (exception filters), `@Resolver` (GraphQL), `@WebSocketGateway`. Such a class's
+# constructor is invoked by the container and its framework-contract methods by
+# Nest, so both are reachability roots (gated by a JS/TS extension). Names are the
+# lowercased, argument-stripped form _norm_decorator produces.
+NEST_ROOT_CLASS_DECORATORS: frozenset[str] = frozenset(
+    {
+        "injectable",
+        "controller",
+        "module",
+        "catch",
+        "resolver",
+        "websocketgateway",
+    }
+)
+
+# NestJS methods invoked by the framework through a lifecycle or interface
+# contract, never by a named call the graph can see: lifecycle hooks
+# (`onModuleInit`, `onApplicationBootstrap`, ...) and the single-method
+# interface contracts (`NestMiddleware.use`, `NestInterceptor.intercept`,
+# `NestModule.configure`, `CanActivate.canActivate`, `ExceptionFilter.catch`,
+# `PipeTransform.transform`). Rooted only on a method of a NestJS component
+# class (a NEST_ROOT_CLASS_DECORATORS decorator), so a same-named ordinary
+# method (`use`, `transform`) on a plain class is NOT force-rooted.
+NEST_FRAMEWORK_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "onModuleInit",
+        "onModuleDestroy",
+        "onApplicationBootstrap",
+        "onApplicationShutdown",
+        "beforeApplicationShutdown",
+        "configure",
+        "use",
+        "intercept",
+        "canActivate",
+        "catch",
+        "transform",
+    }
+)
+
 # Python Enum protocol hooks: the enum machinery invokes these sunder
 # METHODS by NAME (_generate_next_value_ on auto(), _missing_ on a failed
 # value lookup), never through a call the graph can see -- runtime roots

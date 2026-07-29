@@ -31,6 +31,8 @@ _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
+_IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
+_JS_TS_EXTS = cs.TS_EXTENSIONS + cs.TSX_EXTENSIONS + cs.JS_EXTENSIONS
 _NodeId = tuple[str, PropertyValue]
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 
@@ -170,6 +172,37 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
 
 
+def _is_nest_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    class_decorators_norm: dict[str, frozenset[str]],
+    external_impl_classes: set[str],
+) -> bool:
+    # NestJS runs code the static graph sees no call to. A class decorated
+    # @Injectable/@Controller/@Module/... is instantiated by the DI container
+    # (root its constructor) and driven by the framework through lifecycle and
+    # single-method interface contracts (root those methods by name). A class
+    # implementing an EXTERNAL `...OptionsFactory` interface has its methods
+    # invoked by Nest, so root them all (mirrors overrides_external). Gated to
+    # JS/TS methods; a same-named ordinary method on a plain class is untouched.
+    if not is_method or not path.endswith(_JS_TS_EXTS):
+        return False
+    cls = method_to_class.get(qn)
+    if cls is None:
+        return False
+    if cls in external_impl_classes:
+        return True
+    decorators = class_decorators_norm.get(cls)
+    if decorators and decorators & cs.NEST_ROOT_CLASS_DECORATORS:
+        return (
+            member == cs.KEYWORD_CONSTRUCTOR or member in cs.NEST_FRAMEWORK_METHOD_NAMES
+        )
+    return False
+
+
 def _walk(
     frontier: set[str],
     adjacency: dict[str, set[str]],
@@ -205,10 +238,20 @@ def dead_code_from_graph(
     props_by_qn: dict[str, PropertyDict] = {}
     method_qns: set[str] = set()
     module_path: dict[str, str] = {}
+    # Normalized decorators per CLASS qn (collected for every class, not just
+    # class candidates), so a method root rule can consult its class's
+    # @Injectable/@Controller/@Module marker (NestJS DI roots, issue #973).
+    class_decorators_norm: dict[str, frozenset[str]] = {}
     for (label, uid), props in nodes.items():
         if label == _MODULE:
             module_path[str(uid)] = str(props.get(cs.KEY_PATH, ""))
-        elif label in labels and str(uid).startswith(project_prefix):
+        if label == _CLASS:
+            decorators = props.get(cs.KEY_DECORATORS)
+            if isinstance(decorators, list):
+                class_decorators_norm[str(uid)] = frozenset(
+                    _norm_decorator(str(d)) for d in decorators
+                )
+        if label in labels and str(uid).startswith(project_prefix):
             # With tests excluded, a test-file symbol's only callers are
             # excluded as roots, so reporting it is noise (test helpers and
             # mocks are infrastructure, not dead production code).
@@ -229,6 +272,10 @@ def dead_code_from_graph(
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
     nested_class_pairs: list[tuple[str, str]] = []
+    # A class implementing an interface NOT defined in this project (an external
+    # framework interface such as NestJS `...OptionsFactory`) has its methods
+    # invoked by that framework (issue #973).
+    external_impl_classes: set[str] = set()
     for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
@@ -238,6 +285,8 @@ def dead_code_from_graph(
             protocol_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
             class_methods.append((str(from_val), str(to_val)))
+        elif rel_type == _IMPLEMENTS and not str(to_val).startswith(project_prefix):
+            external_impl_classes.add(str(from_val))
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
@@ -248,6 +297,7 @@ def dead_code_from_graph(
         if config.include_tests or not is_test:
             roots.add(target_qn)
     protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
+    method_to_class = {m: c for c, m in class_methods}
 
     for qn in candidates:
         if qn in roots:
@@ -304,6 +354,16 @@ def dead_code_from_graph(
         ):
             roots.add(qn)
         elif _is_csharp_operator_or_finalizer_root(leaf, path):
+            roots.add(qn)
+        elif _is_nest_root(
+            qn,
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
+            qn in method_qns,
+            path,
+            method_to_class,
+            class_decorators_norm,
+            external_impl_classes,
+        ):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
