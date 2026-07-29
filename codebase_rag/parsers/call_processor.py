@@ -3568,19 +3568,41 @@ class CallProcessor:
                 # or inline arrow (onClick={() => x()}) is a function the
                 # framework invokes on the event, so reference it; other
                 # expressions resolve to nothing and are skipped by the helper.
+                # Peel ONLY a ternary / cast wrapper, whose operands are candidate
+                # handler values (onDrop={cond ? this.handleDrop : undefined},
+                # issue #980). A short-circuit (`x || y`, `x && y`) is NOT peeled:
+                # in a JSX data prop (`alt={name || fallback}`) its operands are
+                # data, and expanding them would false-revive a same-named module
+                # function.
                 for value in node.named_children:
-                    self._emit_callback_edge(
-                        caller_spec,
-                        value,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn=caller_qn,
-                        rel_type=cs.RelationshipType.REFERENCES,
-                    )
+                    for operand in self._jsx_value_operands(value):
+                        self._emit_callback_edge(
+                            caller_spec,
+                            operand,
+                            module_qn,
+                            local_var_types,
+                            class_context,
+                            resolve_func,
+                            ensure_rel,
+                            caller_qn=caller_qn,
+                            rel_type=cs.RelationshipType.REFERENCES,
+                        )
             stack.extend(node.children)
+
+    @staticmethod
+    def _jsx_value_operands(value: Node) -> list[Node]:
+        # The candidate handler operands of a JSX `{...}` value: a ternary's two
+        # result branches (`cond ? a : b`), peeled through any transparent TS
+        # cast wrapper (`(cond ? a : b) as any`). A short-circuit or any other
+        # expression is returned as-is (a single operand) so it is resolved
+        # directly, never peeled -- expanding `||`/`&&`/`??` in a JSX data prop
+        # would false-revive a same-named module function (issue #980).
+        node = value
+        while node.type in cs.TS_CAST_WRAPPER_TYPES and node.named_children:
+            node = node.named_children[0]
+        if node.type in (cs.TS_PY_CONDITIONAL_EXPRESSION, cs.TS_JS_TERNARY_EXPRESSION):
+            return _conditional_result_operands(node, is_dart=False)
+        return [node]
 
     def _ingest_returned_function_references(
         self,
