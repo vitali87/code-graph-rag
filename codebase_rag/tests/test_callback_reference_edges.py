@@ -418,6 +418,44 @@ def test_bound_function_argument_flows_to_callable_param(tmp_path: Path) -> None
     assert _has(rels, "flow.run", "CALLS", "flow.handler")
 
 
+def test_expression_body_arrow_returning_bare_identifier_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # `() => noop` (no braces) hands back the EXISTING function `noop` by name;
+    # it must be referenced like an explicit `return noop`, not skipped as an
+    # inline function body (Proxy `get: () => noop` trap shape, issue #972).
+    files = {
+        "trap.js": (
+            "function noop() {}\n"
+            "function getNoop() {\n"
+            "    return () => noop;\n"
+            "}\n"
+            "module.exports = getNoop;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert _has(rels, "trap.getNoop", REFERENCES, "trap.noop")
+
+
+def test_expression_body_arrow_returning_own_parameter_is_not_referenced(
+    tmp_path: Path,
+) -> None:
+    # `(noop) => noop` returns the arrow's OWN PARAMETER, which shadows the
+    # module `noop`; resolving the body would fabricate a false REFERENCES edge
+    # to the module function (parameter-shadow, sibling of the #969 shadow note).
+    files = {
+        "trap.js": (
+            "function noop() {}\n"
+            "function make() {\n"
+            "    return (noop) => noop;\n"
+            "}\n"
+            "module.exports = make;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert not _has(rels, "trap.make", REFERENCES, "trap.noop")
+
+
 def test_bound_function_flows_through_passthrough_param(tmp_path: Path) -> None:
     # The callable-flow fixpoint (outer forwards its param to run) records
     # seeds in _collect_callable_flow, which must peel .bind like the
