@@ -126,16 +126,22 @@ export class Sub extends Base {
     assert _edge_to(_run(tmp_path, src), "thing", _REFERENCES)
 
 
-def test_cast_and_non_null_receiver_reads_are_referenced(tmp_path: Path) -> None:
-    # A receiver wrapped in a TS cast or non-null assertion is transparent, so
-    # `(box as Base).thing` and `this!.thing` must link (CodeRabbit review).
+def test_cast_receiver_read_is_referenced(tmp_path: Path) -> None:
+    # An `as` cast asserts the receiver's type, so `(box as Base).thing` links to
+    # Base's getter through the cast target type (even for an untyped receiver).
+    src = """class Base { get thing() { return 1; } }
+export class T {
+  method(box: unknown) { return (box as Base).thing ? 1 : 0; }
+}
+"""
+    assert _edge_to(_run(tmp_path, src), "thing", _REFERENCES)
+
+
+def test_non_null_receiver_read_is_referenced(tmp_path: Path) -> None:
+    # A non-null-asserted receiver is transparent: `this!.thing` must link.
     src = """class Base { get thing() { return 1; } }
 export class T extends Base {
-  method(box: Base) {
-    const a = (box as Base).thing ? 1 : 0;
-    const b = this!.thing ? 1 : 0;
-    return a + b;
-  }
+  method() { return this!.thing ? 1 : 0; }
 }
 """
     assert _edge_to(_run(tmp_path, src), "thing", _REFERENCES)

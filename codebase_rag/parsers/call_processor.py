@@ -5868,12 +5868,26 @@ class CallProcessor:
         # the name-global trie) is what keeps a same-named getter on an
         # unrelated class from being falsely revived.
         recv = member_node.child_by_field_name(cs.FIELD_OBJECT)
+        # Parens, `x!`, and `x satisfies T` keep the operand's type, so peel them;
+        # an `as` cast ASSERTS a type, so resolve the receiver from that target
+        # type directly (`(box as Base).thing` links even when box is untyped).
+        while recv is not None:
+            recv_type = recv.type
+            if recv_type in (
+                cs.TS_PARENTHESIZED_EXPRESSION,
+                cs.TS_NON_NULL_EXPRESSION,
+                cs.TS_SATISFIES_EXPRESSION,
+            ):
+                recv = recv.named_child(0)
+            elif recv_type == cs.TS_AS_EXPRESSION:
+                type_node = recv.named_children[-1] if recv.named_children else None
+                if type_node is None or not (tname := safe_decode_text(type_node)):
+                    return None
+                return self._resolver._resolve_class_name(tname, module_qn)
+            else:
+                break
         if recv is None:
             return None
-        # Peel transparent TS casts/parens/non-null off the receiver so
-        # `(box as Base).thing` and `this!.thing` resolve like `box.thing` /
-        # `this.thing`.
-        recv = self._unwrap_ts_value(recv)
         if recv.type == cs.TS_THIS:
             # `this` binds to the class instance only when the read is lexically
             # inside a CLASS method or class-field (arrows are transparent);
