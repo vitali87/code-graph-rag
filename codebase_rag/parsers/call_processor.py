@@ -3621,11 +3621,21 @@ class CallProcessor:
                 ensure_rel,
                 caller_qn,
                 cs.RelationshipType.REFERENCES,
+                module_qn=module_qn,
             )
         elif body.type in _ASSIGNMENT_RHS_REF_TYPES:
             # A bare-name implicit return (`() => noop`) hands back an EXISTING
             # function by reference; resolve it like an explicit `return noop`
             # instead of treating the arrow's body as an inline declaration.
+            # BUT a body rooted at one of the arrow's OWN parameters
+            # (`(noop) => noop`, `(x) => x.foo`) names the parameter, which
+            # shadows any same-named module function; resolving it would
+            # fabricate a false edge, so skip it.
+            if (
+                func_node.type in _INLINE_FUNC_VALUE_TYPES
+                and self._body_root_identifier(body) in js_ts_parameter_names(func_node)
+            ):
+                return
             self._emit_callback_edge(
                 caller_spec,
                 body,
@@ -3637,6 +3647,19 @@ class CallProcessor:
                 caller_qn=caller_qn,
                 rel_type=cs.RelationshipType.REFERENCES,
             )
+
+    @staticmethod
+    def _body_root_identifier(node: Node) -> str | None:
+        # The leading identifier of a reference body: `noop` -> "noop",
+        # `x.foo.bar` / `x->foo` -> "x". Peels member/attribute/selector wrappers
+        # to their object/operand so a member chain rooted at a parameter is
+        # recognised. Returns None when the leftmost element is not an identifier.
+        current: Node | None = node
+        while current is not None:
+            if current.type == cs.TS_PY_IDENTIFIER:
+                return safe_decode_text(current)
+            current = current.child_by_field_name(cs.FIELD_OBJECT)
+        return None
 
     def _ingest_collection_function_references(
         self,

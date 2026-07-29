@@ -437,6 +437,25 @@ def test_expression_body_arrow_returning_bare_identifier_is_referenced(
     assert _has(rels, "trap.getNoop", REFERENCES, "trap.noop")
 
 
+def test_expression_body_arrow_returning_own_parameter_is_not_referenced(
+    tmp_path: Path,
+) -> None:
+    # `(noop) => noop` returns the arrow's OWN PARAMETER, which shadows the
+    # module `noop`; resolving the body would fabricate a false REFERENCES edge
+    # to the module function (parameter-shadow, sibling of the #969 shadow note).
+    files = {
+        "trap.js": (
+            "function noop() {}\n"
+            "function make() {\n"
+            "    return (noop) => noop;\n"
+            "}\n"
+            "module.exports = make;\n"
+        ),
+    }
+    rels = _run_rels(tmp_path, files)
+    assert not _has(rels, "trap.make", REFERENCES, "trap.noop")
+
+
 def test_bound_function_flows_through_passthrough_param(tmp_path: Path) -> None:
     # The callable-flow fixpoint (outer forwards its param to run) records
     # seeds in _collect_callable_flow, which must peel .bind like the
