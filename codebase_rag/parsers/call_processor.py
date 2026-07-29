@@ -372,6 +372,16 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # (scope.onSuccess), so a passed object of callbacks must reference each or
 # every TanStack-style callback reports as dead.
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# JS/TS function scopes that REBIND `this` per call (a plain function /
+# generator / function expression), as opposed to an arrow_function (inherits
+# `this` lexically) or a method_definition / class-field arrow (binds `this` to
+# the instance). Used to tell whether a `this.M()` call site lexically refers to
+# the enclosing class instance.
+_JS_THIS_REBINDING_FUNC_TYPES: frozenset[str] = frozenset(
+    t
+    for t in cs.JS_TS_FUNCTION_NODES
+    if t not in (cs.TS_ARROW_FUNCTION, cs.TS_METHOD_DEFINITION)
+)
 
 
 def _scope_qn_candidates(scope_qn: str) -> list[str]:
@@ -1744,6 +1754,29 @@ class CallProcessor:
         return f"{name}{param_sig}"
 
     @staticmethod
+    def _js_this_is_class_instance(call_node: Node) -> bool:
+        # True when `this` at this JS/TS call site lexically refers to the
+        # enclosing class instance: walk up treating an arrow_function as
+        # transparent (it inherits `this`), stopping at the first scope that
+        # BINDS `this` -- a method_definition or the class itself (a class-field
+        # arrow) means the instance (True); a plain function / generator /
+        # function expression rebinds `this` per call, so `this` is NOT the
+        # instance (False). Prevents a false self-dispatch edge for `this.M()`
+        # inside a plain nested `function(){}` (adversarial review of issue #971).
+        current = call_node.parent
+        while current is not None:
+            node_type = current.type
+            if (
+                node_type == cs.TS_METHOD_DEFINITION
+                or node_type in cs.JS_TS_CLASS_NODES
+            ):
+                return True
+            if node_type in _JS_THIS_REBINDING_FUNC_TYPES:
+                return False
+            current = current.parent
+        return False
+
+    @staticmethod
     def _method_in_class_body(
         method_node: Node, class_body: Node, lang_config: LanguageSpec
     ) -> bool:
@@ -2794,6 +2827,36 @@ class CallProcessor:
                 )
 
             if not callee_info:
+                if (
+                    is_js_ts
+                    and class_context
+                    and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+                    and self._js_this_is_class_instance(call_node)
+                ):
+                    # `this.M()` binds `this` lexically to the enclosing class
+                    # instance ONLY in a method body or a nested arrow that inherits
+                    # its `this`; a plain nested `function(){}` rebinds `this` per
+                    # call, so `_js_this_is_class_instance` gates those out (JS
+                    # same-syntax/different-semantics). Ordinary name resolution
+                    # climbs one scope from the caller qn -- which lands on the class
+                    # for a direct method but on the METHOD for a nested arrow --
+                    # then falls back to a bare `M` lookup that, under cross-class
+                    # same-name ambiguity, is dropped, so M reports dead (issue
+                    # #971). Anchor on the enclosing class instead and emit the
+                    # self-dispatch edge(s).
+                    _, _, self_method = call_name.partition(cs.SEPARATOR_DOT)
+                    if self_method and cs.SEPARATOR_DOT not in self_method:
+                        for target_type, target_qn in resolver.self_dispatch_targets(
+                            class_context, self_method
+                        ):
+                            for variant in resolver.function_registry.variants(
+                                target_qn
+                            ):
+                                ensure_rel(
+                                    caller_spec,
+                                    calls_rel,
+                                    (target_type, qn_key, variant),
+                                )
                 if is_arg_ref_lang:
                     # The callee is not first-party (a framework/stdlib call such as
                     # grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
