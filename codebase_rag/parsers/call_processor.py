@@ -1811,6 +1811,12 @@ class CallProcessor:
 
         for class_node in class_nodes:
             class_name = self._get_class_name_for_node(class_node, language)
+            if not class_name and language in _JS_TS_LANGUAGES:
+                # An anonymous class expression (`static Proxy = class {...}`)
+                # has no `name`; recover its field/declarator binding name so
+                # its methods get a caller pass (issue #970). Matches the qn the
+                # definition pass builds via _js_get_name.
+                class_name = js_ts_utils.class_binding_name(class_node)
             if not class_name:
                 continue
             # A C++ class inside a namespace, or a NESTED class (Outer.Inner),

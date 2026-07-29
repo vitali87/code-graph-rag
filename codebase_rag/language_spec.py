@@ -31,6 +31,13 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _js_get_name(node: Node) -> str | None:
+    if node.type == cs.TS_CLASS_EXPRESSION:
+        # An anonymous class expression carries its name on the binding it is
+        # the value of (`static Proxy = class {...}`); recover it so the class
+        # and its methods get a real qn (issue #970).
+        from .parsers.js_ts import utils as js_ts_utils
+
+        return js_ts_utils.class_binding_name(node)
     if node.type in cs.JS_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
