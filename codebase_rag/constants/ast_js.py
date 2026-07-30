@@ -224,10 +224,13 @@ TS_SUBSCRIPT_EXPRESSION = "subscript_expression"
 TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
+TS_GENERATOR_FUNCTION = "generator_function"
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"
 FIELD_KEY = "key"
+# An `export_statement` wraps the exported declaration in this field.
+FIELD_DECLARATION = "declaration"
 
 # JS/TS module system keywords
 JS_REQUIRE_KEYWORD = "require"

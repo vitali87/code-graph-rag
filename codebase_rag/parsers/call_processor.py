@@ -372,6 +372,22 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # (scope.onSuccess), so a passed object of callbacks must reference each or
 # every TanStack-style callback reports as dead.
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# JS/TS scopes that bind their own parameters (and, for a named function
+# expression, their own name) for the lexical receiver resolution of #988.
+_JS_LEXICAL_CALLABLE_SCOPES = frozenset(
+    {
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_METHOD_DEFINITION,
+    }
+)
+# Declarations hoisted to function/module scope: the LAST same-named one wins.
+_JS_LEXICAL_HOISTED_DECLARATIONS = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
+)
 # JS/TS function scopes that REBIND `this` per call (a plain function /
 # generator / function expression), as opposed to an arrow_function (inherits
 # `this` lexically) or a method_definition / class-field arrow (binds `this` to
@@ -2615,6 +2631,25 @@ class CallProcessor:
                 self._ingest_inline_call_arg_references(
                     call_node, caller_spec, ensure_rel, caller_qn, module_qn
                 )
+                # `fn.call(this, ...)` / `fn.apply(this, ...)` invokes fn, but
+                # the callee names Function.prototype.call, so the resolve
+                # below fails (or, cast-wrapped, never even names the site)
+                # and a function invoked ONLY this way in statement position
+                # reports dead (issue #988; value positions link through the
+                # bound-callable peel). The receiver is resolved by LEXICAL
+                # BINDING, never by name lookup: only a binding that IS a
+                # function (a hoisted declaration or a declarator holding an
+                # inline function) emits, resolved by its own source span.
+                # Everything else about the site (name resolution, builtin
+                # handling, argument references) proceeds unchanged below.
+                if (
+                    loc := self._js_fn_call_receiver_binding(call_node, module_qn)
+                ) is not None:
+                    ensure_rel(
+                        caller_spec,
+                        calls_rel,
+                        (cs.NodeLabel.FUNCTION, qn_key, loc.qualified_name),
+                    )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
                 # or otherwise yields no name still consumes its arguments through
@@ -2755,76 +2790,6 @@ class CallProcessor:
                 is_macro_target = callee_info[1] in self.macro_qns
                 if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
                     callee_info = None
-            if not callee_info and is_js_ts:
-                # `fn.call(this, ...)` / `fn.apply(this, ...)` on a plain
-                # identifier that resolves to a first-party function is
-                # Function.prototype.call, an invocation of fn. Value positions
-                # already link via the bound-callable peel; a STATEMENT
-                # invocation reached here nameless-in-effect and its target
-                # reported dead (fastify's `multipleBindings.call(this, ...)`
-                # and the plugin-utils trio, issue #988). Only an identifier
-                # receiver qualifies: a member-expression receiver
-                # (`checks[instance].call(...)`, `router.route.call(...)`)
-                # stays ambiguous exactly as PR #983 left it. Bare-name
-                # resolution guesses, so the guess is confined to bindings the
-                # name can actually mean here: never a caller PARAMETER, never
-                # a name the caller REBINDS locally (unless it resolved to that
-                # local function itself), and never outside this module (the
-                # project-wide trie would revive same-named functions in
-                # unrelated files). The edge is emitted directly and the site
-                # is finished: routing through callee_info would map the
-                # callable-param flow onto the RAW argument list, whose
-                # position 0 is the `this` value, binding parameters one slot
-                # off. Real function-valued arguments keep their reachability
-                # through the argument-reference pass instead.
-                receiver, sep, invoke = call_name.rpartition(cs.SEPARATOR_DOT)
-                if (
-                    sep
-                    and invoke in (cs.JS_METHOD_CALL, cs.JS_METHOD_APPLY)
-                    and receiver
-                    and cs.SEPARATOR_DOT not in receiver
-                    and receiver not in caller_params
-                    and (
-                        receiver_info := resolve_func(
-                            receiver,
-                            module_qn,
-                            call_var_types,
-                            class_context,
-                            caller_qn,
-                            language,
-                        )
-                    )
-                    is not None
-                    and receiver_info[0] == cs.NodeLabel.FUNCTION
-                    and receiver_info[1].startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-                    and (
-                        (
-                            caller_qn is not None
-                            and receiver_info[1].startswith(
-                                f"{caller_qn}{cs.SEPARATOR_DOT}"
-                            )
-                        )
-                        or not self._js_caller_rebinds_name(caller_node, receiver)
-                    )
-                ):
-                    ensure_rel(
-                        caller_spec,
-                        calls_rel,
-                        (receiver_info[0], qn_key, receiver_info[1]),
-                    )
-                    self._ingest_argument_function_references(
-                        call_node,
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                        class_context,
-                        resolve_func,
-                        ensure_rel,
-                        caller_qn,
-                        cs.RelationshipType.REFERENCES,
-                        language,
-                    )
-                    continue
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
@@ -6173,33 +6138,144 @@ class CallProcessor:
             return False
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
 
+    def _js_fn_call_receiver_binding(
+        self, call_node: Node, module_qn: str
+    ) -> FunctionLocation | None:
+        # For `fn.call(...)` / `fn.apply(...)` (only: `.bind` produces a value
+        # without invoking), peel casts/parens off the receiver and, when it is
+        # a bare identifier, resolve what that identifier DENOTES at this site
+        # by lexical scoping. `.bind`-style member receivers and computed
+        # receivers never qualify.
+        fn_child = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn_child is None or fn_child.type != cs.TS_MEMBER_EXPRESSION:
+            return None
+        prop = fn_child.child_by_field_name(cs.FIELD_PROPERTY)
+        if prop is None or safe_decode_text(prop) not in (
+            cs.JS_METHOD_CALL,
+            cs.JS_METHOD_APPLY,
+        ):
+            return None
+        obj = fn_child.child_by_field_name(cs.FIELD_OBJECT)
+        if obj is None:
+            return None
+        obj = self._unwrap_ts_value(obj)
+        if obj.type != cs.TS_IDENTIFIER:
+            return None
+        name = safe_decode_text(obj)
+        if not name:
+            return None
+        return self._js_lexical_function_binding(call_node, name, module_qn)
+
+    def _js_lexical_function_binding(
+        self, site: Node, name: str, module_qn: str
+    ) -> FunctionLocation | None:
+        # Walk the enclosing scopes innermost-out; the FIRST scope that binds
+        # `name` decides. A binding that is a function (hoisted declaration,
+        # self-name of a function expression, or a declarator holding an
+        # inline function) resolves by its own source span; any other binding
+        # (parameter, loop/catch/class binding, non-function declarator) means
+        # the runtime value is unknowable and resolution stops with nothing.
+        # An unbound name (a true global or an import) also yields nothing.
+        scope = site.parent
+        while scope is not None:
+            bound, func_node = self._js_scope_binding_for(scope, name)
+            if bound:
+                if func_node is None:
+                    return None
+                return self._recorded_caller(func_node, module_qn)
+            scope = scope.parent
+        return None
+
+    def _js_scope_binding_for(self, scope: Node, name: str) -> tuple[bool, Node | None]:
+        # (bound, function_node): whether this scope introduces `name`, and
+        # the function node it binds when the binding IS a function.
+        if scope.type in _JS_LEXICAL_CALLABLE_SCOPES:
+            name_node = scope.child_by_field_name(cs.FIELD_NAME)
+            if name_node is not None and safe_decode_text(name_node) == name:
+                # A named function expression binds its own name in its body.
+                return True, scope
+            params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+            if params is not None and self._js_pattern_binds(params, name):
+                return True, None
+            # A single-identifier arrow param (`x => ...`) has no
+            # formal_parameters wrapper.
+            if (
+                scope.type == cs.TS_ARROW_FUNCTION
+                and params is None
+                and (single := scope.child_by_field_name(cs.FIELD_PARAMETER))
+                is not None
+                and safe_decode_text(single) == name
+            ):
+                return True, None
+            return False, None
+        if scope.type in (cs.TS_STATEMENT_BLOCK, cs.TS_PROGRAM):
+            hoisted: Node | None = None
+            for child in scope.named_children:
+                if child.type == cs.TS_EXPORT_STATEMENT:
+                    # `export function f ...` wraps the declaration; the
+                    # binding rules are those of the declaration itself.
+                    wrapped = child.child_by_field_name(cs.FIELD_DECLARATION)
+                    if wrapped is None:
+                        continue
+                    child = wrapped
+                if child.type in _JS_LEXICAL_HOISTED_DECLARATIONS:
+                    child_name = child.child_by_field_name(cs.FIELD_NAME)
+                    if child_name is not None and safe_decode_text(child_name) == name:
+                        # Later declaration wins under hoisting.
+                        hoisted = child
+                elif child.type in (
+                    cs.TS_LEXICAL_DECLARATION,
+                    cs.TS_VARIABLE_DECLARATION,
+                ):
+                    for declarator in child.named_children:
+                        if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                            continue
+                        target = declarator.child_by_field_name(cs.FIELD_NAME)
+                        if target is None or not self._js_pattern_binds(target, name):
+                            continue
+                        value = declarator.child_by_field_name(cs.FIELD_VALUE)
+                        if value is not None:
+                            value = self._unwrap_ts_value(value)
+                            if value.type in _INLINE_FUNC_VALUE_TYPES:
+                                return True, value
+                        return True, None
+                elif child.type == cs.TS_CLASS_DECLARATION:
+                    child_name = child.child_by_field_name(cs.FIELD_NAME)
+                    if child_name is not None and safe_decode_text(child_name) == name:
+                        return True, None
+            if hoisted is not None:
+                return True, hoisted
+            return False, None
+        if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
+            left = scope.child_by_field_name(cs.FIELD_LEFT)
+            if left is not None and self._js_pattern_binds(left, name):
+                return True, None
+            return False, None
+        if scope.type == cs.TS_JS_CATCH_CLAUSE:
+            param = scope.child_by_field_name(cs.FIELD_PARAMETER)
+            if param is not None and self._js_pattern_binds(param, name):
+                return True, None
+            return False, None
+        return False, None
+
     @staticmethod
-    def _js_caller_rebinds_name(caller_node: Node, name: str) -> bool:
-        # True when any variable declarator anywhere in the caller's body binds
-        # `name`, meaning a bare `name` inside the caller may denote that local
-        # value rather than the same-named module-level function a scope-walk
-        # resolution would return (`const emitter = handlers.build();
-        # emitter.call(1)` must not bind a module function named emitter).
-        # Destructuring patterns count via the identifier scan of the whole
-        # `name` field. Over-approximate on purpose: a declarator in a nested
-        # inner scope also suppresses, trading a conservative miss for never
-        # emitting a cross-binding false edge.
-        stack = list(caller_node.children)
+    def _js_pattern_binds(pattern: Node, name: str) -> bool:
+        # Whether a binding pattern subtree (params, destructuring target,
+        # loop/catch binding) introduces `name`. Identifiers inside DEFAULT
+        # VALUES over-match; that only suppresses an edge, never invents one.
+        stack = [pattern]
         while stack:
-            node = stack.pop()
-            if node.type == cs.TS_VARIABLE_DECLARATOR:
-                target = node.child_by_field_name(cs.FIELD_NAME)
-                if target is not None:
-                    inner = [target]
-                    while inner:
-                        part = inner.pop()
-                        if (
-                            part.type == cs.TS_IDENTIFIER
-                            and safe_decode_text(part) == name
-                        ):
-                            return True
-                        inner.extend(part.named_children)
-            stack.extend(node.children)
+            part = stack.pop()
+            if (
+                part.type
+                in (
+                    cs.TS_IDENTIFIER,
+                    cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+                )
+                and safe_decode_text(part) == name
+            ):
+                return True
+            stack.extend(part.named_children)
         return False
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:

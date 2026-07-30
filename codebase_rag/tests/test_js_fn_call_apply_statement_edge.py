@@ -225,3 +225,136 @@ module.exports = { main }
     # Both function-valued arguments stay reachable from the call site.
     assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "target"))
     assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "decoy"))
+
+
+def test_sibling_nested_function_is_not_visible(tmp_path: Path) -> None:
+    # A function nested inside a SIBLING scope is not lexically visible at
+    # the call site; the same-file prefix must not stand in for scoping.
+    src = """'use strict'
+function other () { function helper (x) { return x }; return helper }
+function main () {
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main, other }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_for_of_binding_does_not_mislink(tmp_path: Path) -> None:
+    # A loop binding carries collection elements; `.call` through it must not
+    # bind the same-named module function (the tapable hook shape as a loop).
+    src = """'use strict'
+function hook (x) { return x }
+function main (compiler) {
+  for (const hook of compiler.hooks) {
+    hook.call(this, 1)
+  }
+  return 2
+}
+module.exports = { main, hook }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_catch_binding_does_not_mislink(tmp_path: Path) -> None:
+    src = """'use strict'
+function err () { return 'decoy' }
+function main (fn) {
+  try { fn() } catch (err) { err.call(this, 1) }
+  return 2
+}
+module.exports = { main, err }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "err"))
+
+
+def test_nested_callback_param_does_not_mislink(tmp_path: Path) -> None:
+    # Calls inside an anonymous callback bubble to the enclosing named
+    # caller, but the callback's OWN parameter still shadows the module
+    # function at the call site.
+    src = """'use strict'
+function handler (x) { return x }
+function main (list) {
+  list.forEach(function (handler) { handler.call(this, 1) })
+  return 2
+}
+module.exports = { main, handler }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "handler"))
+
+
+def test_module_level_callback_shadow_does_not_mislink(tmp_path: Path) -> None:
+    # A module-level anonymous callback whose local rebinds the name must not
+    # emit a module-scope edge to the same-named module function.
+    src = """'use strict'
+function hook (x) { return x }
+function setup (cb) { return cb }
+setup(() => {
+  const hook = { call: (n) => n }
+  hook.call(1)
+})
+module.exports = { hook, setup }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_duplicate_declarations_last_one_wins(tmp_path: Path) -> None:
+    # Two same-named hoisted declarations: the later one is what the name
+    # denotes at runtime; SOME registered variant must gain the edge.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+function helper (x) { return x + 2 }
+function main () {
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "helper")) or any(
+        f.endswith(".main")
+        for f, rel in {
+            (str(frm), rel)
+            for frm, rel, to in cap.rels
+            if "helper@" in str(to) and rel != str(cs.RelationshipType.DEFINES)
+        }
+    )
+
+
+def test_variant_caller_local_arrow_still_links(tmp_path: Path) -> None:
+    # A DUPLICATE caller (registered as a @line variant) still resolves its
+    # own local arrow receiver by span; the feature must not switch off for
+    # variant callers.
+    src = """'use strict'
+function main () { return 3 }
+function main () {
+  const getValue = () => 1
+  getValue.call(this)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(rel == calls for _f, rel in _edges_to_leaf(cap, "getValue"))
+
+
+def test_ts_cast_receiver_links(tmp_path: Path) -> None:
+    # A cast-wrapped receiver (`(helper as any).call(...)`) peels to the
+    # identifier and resolves like the plain form.
+    src = """export function helper (x: number): number { return x + 1 }
+export function main (): number {
+  (helper as any).call(this, 1)
+  return 2
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    edges = _edges_to_leaf(cap, "helper")
+    assert any(f.endswith(".main") for f, _rel in edges)
