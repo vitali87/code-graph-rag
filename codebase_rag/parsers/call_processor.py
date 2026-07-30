@@ -4530,12 +4530,6 @@ class CallProcessor:
         rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
         module_qn: str | None = None,
     ) -> None:
-        # An inline arrow/function-expression call argument is registered by the
-        # definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
-        # start position. The anonymous node lives in the CALLER's scope, so build
-        # the candidate from caller_qn (source_spec[2] is the callee for the
-        # callable-param path). Registry guard skips unregistered names.
-        registry = self._resolver.function_registry
         # The node's OWN source span records the qn the definition pass minted,
         # so resolve by span first when the module is known: it is authoritative
         # across the two ways caller_qn can mislead a name/position guess. An
@@ -4546,8 +4540,8 @@ class CallProcessor:
         # named function-expression (`mod.make.update.handler`) whose name
         # collides with a module-level function would otherwise match the
         # module-flat name candidate and reference the WRONG top-level node. The
-        # candidate loop below is kept as the fallback for an incremental run
-        # where an unchanged file's span was not re-recorded this pass.
+        # candidate fallback is kept for an incremental run where an unchanged
+        # file's span was not re-recorded this pass.
         if (
             module_qn is not None
             and (loc := self._recorded_caller(arg_node, module_qn)) is not None
@@ -4558,6 +4552,25 @@ class CallProcessor:
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, loc.qualified_name),
             )
             return
+        self._emit_inline_ref_candidates(
+            arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
+        )
+
+    def _emit_inline_ref_candidates(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+        rel_type: cs.RelationshipType,
+        module_qn: str | None,
+    ) -> None:
+        # An inline arrow/function-expression call argument is registered by the
+        # definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
+        # start position. The anonymous node lives in the CALLER's scope, so build
+        # the candidate from caller_qn (source_spec[2] is the callee for the
+        # callable-param path). Registry guard skips unregistered names.
+        registry = self._resolver.function_registry
         scope_qn = caller_qn or source_spec[2]
         suffixes = [
             f"{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
