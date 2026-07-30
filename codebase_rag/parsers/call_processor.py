@@ -2755,6 +2755,39 @@ class CallProcessor:
                 is_macro_target = callee_info[1] in self.macro_qns
                 if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
                     callee_info = None
+            if not callee_info and is_js_ts:
+                # `fn.call(this, ...)` / `fn.apply(this, ...)` on a plain
+                # identifier that resolves to a first-party function is
+                # Function.prototype.call, an invocation of fn. Value positions
+                # already link via the bound-callable peel; a STATEMENT
+                # invocation reached here nameless-in-effect and its target
+                # reported dead (fastify's `multipleBindings.call(this, ...)`
+                # and the plugin-utils trio, issue #988). Runs only after the
+                # primary resolution failed, so a genuine method named
+                # call/apply on a typed receiver keeps its own edge, and only
+                # for an identifier receiver: a member-expression receiver
+                # (`checks[instance].call(...)`, `router.route.call(...)`)
+                # stays ambiguous exactly as PR #983 left it.
+                receiver, sep, invoke = call_name.rpartition(cs.SEPARATOR_DOT)
+                if (
+                    sep
+                    and invoke in (cs.JS_METHOD_CALL, cs.JS_METHOD_APPLY)
+                    and receiver
+                    and cs.SEPARATOR_DOT not in receiver
+                    and (
+                        receiver_info := resolve_func(
+                            receiver,
+                            module_qn,
+                            call_var_types,
+                            class_context,
+                            caller_qn,
+                            language,
+                        )
+                    )
+                    is not None
+                    and receiver_info[0] == cs.NodeLabel.FUNCTION
+                ):
+                    callee_info = receiver_info
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
