@@ -4276,6 +4276,7 @@ class CallProcessor:
                 ensure_rel,
                 caller_spec[2],
                 cs.RelationshipType.REFERENCES,
+                module_qn,
             )
             return
         # Only a bare name / attribute / member-expression in value position names
@@ -4528,6 +4529,41 @@ class CallProcessor:
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
         module_qn: str | None = None,
+    ) -> None:
+        # The node's OWN source span records the qn the definition pass minted,
+        # so resolve by span first when the module is known: it is authoritative
+        # across the two ways caller_qn can mislead a name/position guess. An
+        # object-literal method nested in a bound arrow is named FLAT (`mod.
+        # update`, dropping the nameless `make`) while the function it contains
+        # nests a level deeper (`mod.make.update.anonymous_R_C`), so no
+        # `{caller_qn}.anonymous_R_C` candidate matches (issue #985); and a NESTED
+        # named function-expression (`mod.make.update.handler`) whose name
+        # collides with a module-level function would otherwise match the
+        # module-flat name candidate and reference the WRONG top-level node. The
+        # candidate fallback is kept for an incremental run where an unchanged
+        # file's span was not re-recorded this pass.
+        if (
+            module_qn is not None
+            and (loc := self._recorded_caller(arg_node, module_qn)) is not None
+        ):
+            ensure_rel(
+                source_spec,
+                rel_type,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, loc.qualified_name),
+            )
+            return
+        self._emit_inline_ref_candidates(
+            arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
+        )
+
+    def _emit_inline_ref_candidates(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        ensure_rel,
+        caller_qn: str | None,
+        rel_type: cs.RelationshipType,
+        module_qn: str | None,
     ) -> None:
         # An inline arrow/function-expression call argument is registered by the
         # definition pass as {enclosing_scope}.anonymous_<row>_<col> from its own
@@ -4816,7 +4852,7 @@ class CallProcessor:
         # reference it by position the same way inline object-literal values are.
         if arg_node.type in _INLINE_FUNC_VALUE_TYPES:
             self._emit_inline_arg_function_ref(
-                arg_node, source_spec, ensure_rel, caller_qn, rel_type
+                arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
         if not (arg_text := safe_decode_text(arg_node)):
