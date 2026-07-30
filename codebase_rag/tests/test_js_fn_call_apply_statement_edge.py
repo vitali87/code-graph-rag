@@ -136,16 +136,92 @@ module.exports = { main, Invoker, inv }
 
 
 def test_object_receiver_named_like_function_does_not_mislink(tmp_path: Path) -> None:
-    # `emitter.call(...)` where `emitter` is a plain object local must not
-    # link to an unrelated module-level function named `emitter`.
+    # `emitter.call(...)` where `emitter` is a LOCAL binding shadowing a
+    # module-level function of the same name must not link to that function:
+    # the local holds some other value and the name match is coincidence.
     src = """'use strict'
 function emitter () { return 'decoy' }
 function main (handlers) {
-  const holder = { call: handlers.onCall }
-  holder.call(1)
+  const emitter = { call: handlers.onCall }
+  emitter.call(1)
   return 2
 }
 module.exports = { main, emitter }
 """
     cap = _run(tmp_path, src)
     assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "emitter"))
+
+
+def test_param_shadowing_function_name_does_not_mislink(tmp_path: Path) -> None:
+    # A PARAMETER named like a module-level function carries whatever the
+    # caller passed; `.call` through it must not bind the module function.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+function main (helper) {
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main, helper }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_cross_file_name_collision_does_not_mislink(tmp_path: Path) -> None:
+    # A local bound from an untyped expression and `.call`ed must never bind
+    # by bare name to a same-named function in an UNRELATED file (the
+    # tapable shape: `const hook = compiler.hooks.beforeRun; hook.call(...)`).
+    (tmp_path / "other.js").write_text("""'use strict'
+function hook (x) { return x }
+module.exports = { hook }
+""")
+    src = """'use strict'
+function main (compiler) {
+  const hook = compiler.hooks.beforeRun
+  hook.call(compiler)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src, filename="user.js")
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_local_function_receiver_still_links(tmp_path: Path) -> None:
+    # A LOCAL arrow invoked via `.call` resolves to the local itself (it is
+    # the declared binding), so the shadow guard must not block it.
+    src = """'use strict'
+function main () {
+  const getValue = () => 1
+  getValue.call(this)
+  return 2
+}
+module.exports = { main }
+"""
+    edges = _edges_to_leaf(_run(tmp_path, src), "getValue")
+    assert any(f.endswith(".main") for f, _rel in edges)
+
+
+def test_this_arg_does_not_shift_callback_flow(tmp_path: Path) -> None:
+    # `runner.call(this, target, decoy)` passes target as parameter 0 and
+    # decoy as parameter 1; mapping the raw argument list positionally would
+    # bind `second` (the invoked parameter) to TARGET. No such wrong edge may
+    # be emitted, and the real arguments must stay referenced from the caller.
+    src = """'use strict'
+function runner (first, second) { second(); return first }
+function target () { return 1 }
+function decoy () { return 2 }
+function main () {
+  runner.call(this, target, decoy)
+  return 3
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(
+        f.endswith(".runner") and rel == str(cs.RelationshipType.CALLS)
+        for f, rel in _edges_to_leaf(cap, "target")
+    )
+    # Both function-valued arguments stay reachable from the call site.
+    assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "target"))
+    assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "decoy"))

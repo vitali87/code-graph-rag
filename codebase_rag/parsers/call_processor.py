@@ -2762,18 +2762,28 @@ class CallProcessor:
                 # already link via the bound-callable peel; a STATEMENT
                 # invocation reached here nameless-in-effect and its target
                 # reported dead (fastify's `multipleBindings.call(this, ...)`
-                # and the plugin-utils trio, issue #988). Runs only after the
-                # primary resolution failed, so a genuine method named
-                # call/apply on a typed receiver keeps its own edge, and only
-                # for an identifier receiver: a member-expression receiver
+                # and the plugin-utils trio, issue #988). Only an identifier
+                # receiver qualifies: a member-expression receiver
                 # (`checks[instance].call(...)`, `router.route.call(...)`)
-                # stays ambiguous exactly as PR #983 left it.
+                # stays ambiguous exactly as PR #983 left it. Bare-name
+                # resolution guesses, so the guess is confined to bindings the
+                # name can actually mean here: never a caller PARAMETER, never
+                # a name the caller REBINDS locally (unless it resolved to that
+                # local function itself), and never outside this module (the
+                # project-wide trie would revive same-named functions in
+                # unrelated files). The edge is emitted directly and the site
+                # is finished: routing through callee_info would map the
+                # callable-param flow onto the RAW argument list, whose
+                # position 0 is the `this` value, binding parameters one slot
+                # off. Real function-valued arguments keep their reachability
+                # through the argument-reference pass instead.
                 receiver, sep, invoke = call_name.rpartition(cs.SEPARATOR_DOT)
                 if (
                     sep
                     and invoke in (cs.JS_METHOD_CALL, cs.JS_METHOD_APPLY)
                     and receiver
                     and cs.SEPARATOR_DOT not in receiver
+                    and receiver not in caller_params
                     and (
                         receiver_info := resolve_func(
                             receiver,
@@ -2786,8 +2796,35 @@ class CallProcessor:
                     )
                     is not None
                     and receiver_info[0] == cs.NodeLabel.FUNCTION
+                    and receiver_info[1].startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                    and (
+                        (
+                            caller_qn is not None
+                            and receiver_info[1].startswith(
+                                f"{caller_qn}{cs.SEPARATOR_DOT}"
+                            )
+                        )
+                        or not self._js_caller_rebinds_name(caller_node, receiver)
+                    )
                 ):
-                    callee_info = receiver_info
+                    ensure_rel(
+                        caller_spec,
+                        calls_rel,
+                        (receiver_info[0], qn_key, receiver_info[1]),
+                    )
+                    self._ingest_argument_function_references(
+                        call_node,
+                        caller_spec,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        resolve_func,
+                        ensure_rel,
+                        caller_qn,
+                        cs.RelationshipType.REFERENCES,
+                        language,
+                    )
+                    continue
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
@@ -6135,6 +6172,35 @@ class CallProcessor:
         if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return False
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
+
+    @staticmethod
+    def _js_caller_rebinds_name(caller_node: Node, name: str) -> bool:
+        # True when any variable declarator anywhere in the caller's body binds
+        # `name`, meaning a bare `name` inside the caller may denote that local
+        # value rather than the same-named module-level function a scope-walk
+        # resolution would return (`const emitter = handlers.build();
+        # emitter.call(1)` must not bind a module function named emitter).
+        # Destructuring patterns count via the identifier scan of the whole
+        # `name` field. Over-approximate on purpose: a declarator in a nested
+        # inner scope also suppresses, trading a conservative miss for never
+        # emitting a cross-binding false edge.
+        stack = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_VARIABLE_DECLARATOR:
+                target = node.child_by_field_name(cs.FIELD_NAME)
+                if target is not None:
+                    inner = [target]
+                    while inner:
+                        part = inner.pop()
+                        if (
+                            part.type == cs.TS_IDENTIFIER
+                            and safe_decode_text(part) == name
+                        ):
+                            return True
+                        inner.extend(part.named_children)
+            stack.extend(node.children)
+        return False
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
