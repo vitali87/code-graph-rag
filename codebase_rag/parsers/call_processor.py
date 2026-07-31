@@ -2631,26 +2631,37 @@ class CallProcessor:
     ) -> FunctionLocation | None:
         # A NAMED IIFE (`(function build () {...})()`, `function build ()
         # {...}()`) registers under its own name, minted as a duplicate
-        # variant when a sibling shares it, so neither the positional iife_*
-        # names nor bare-name resolution can reach it safely. Resolve the
-        # callee NODE by its own source span to the exact minted qn.
+        # variant when a sibling shares it; a sequence IIFE
+        # (`(0, function () {...})()`, the indirect-this idiom) registers as
+        # an anonymous node. Neither the positional iife_* names nor
+        # bare-name resolution can reach them safely, so resolve the callee
+        # NODE by its own source span to the exact minted qn. The plain
+        # anonymous parenthesised/direct forms keep their positional names
+        # and are excluded here.
         func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func_child is None:
             return None
         target = func_child
+        from_sequence = False
         if func_child.type == cs.TS_PARENTHESIZED_EXPRESSION:
-            target = next(
+            inner = next(
                 (
                     child
-                    for child in func_child.children
-                    if child.type
-                    in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION)
+                    for child in func_child.named_children
+                    if child.type != cs.TS_COMMENT
                 ),
-                func_child,
+                None,
             )
+            if inner is not None and inner.type == cs.TS_JS_SEQUENCE_EXPRESSION:
+                # The comma operator yields its LAST operand; that operand
+                # is what the call invokes.
+                from_sequence = True
+                inner = inner.named_children[-1] if inner.named_children else None
+            if inner is not None:
+                target = inner
         if target.type not in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
             return None
-        if not self._js_iife_callee_name(target):
+        if not from_sequence and not self._js_iife_callee_name(target):
             return None
         return self._recorded_caller(target, module_qn)
 

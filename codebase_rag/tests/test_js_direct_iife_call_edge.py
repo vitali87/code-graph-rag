@@ -131,3 +131,33 @@ const b = (function pnamed () { return helper(2) })()
 module.exports = { b }
 """
     _assert_named_iife_called(_run(tmp_path, src), "pnamed")
+
+
+def _assert_single_anonymous_called(cap: _Capture) -> None:
+    anon = [n for n in cap.nodes if cs.PREFIX_ANONYMOUS in n]
+    assert len(anon) == 1
+    assert any(
+        rel == str(cs.RelationshipType.CALLS) and str(to) == anon[0]
+        for _frm, rel, to in cap.rels
+    )
+
+
+def test_sequence_generator_iife_gets_call_edge(tmp_path: Path) -> None:
+    # The comma operator yields its LAST operand; `(0, fn)()` invokes fn
+    # (the indirect-this idiom). The function registers as an anonymous
+    # node, so the call side must resolve it by span or it orphans.
+    src = """'use strict'
+function helper (x) { return x }
+const a = (0, function* () { yield helper(1) })()
+module.exports = { a }
+"""
+    _assert_single_anonymous_called(_run(tmp_path, src))
+
+
+def test_sequence_function_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const b = (0, function () { return helper(2) })()
+module.exports = { b }
+"""
+    _assert_single_anonymous_called(_run(tmp_path, src))
