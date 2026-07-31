@@ -258,4 +258,64 @@ class JsTypeInferenceEngine:
                 if inferred_type := ut.analyze_return_expression(child, method_qn):
                     return inferred_type
 
+                # `return x` where the body assigns `x = new C(...)` (the
+                # cache-then-construct factory, fastify's ContentType.from,
+                # issue #992): the constructed class types the return when
+                # every construction bound to x agrees. Assignments of
+                # UNKNOWN values (the cache hit) do not veto: the cached
+                # instance is the same constructed type in practice, and a
+                # conflicting second class does veto below.
+                if child.type == cs.TS_IDENTIFIER and (
+                    constructed := self._sole_constructed_binding(
+                        method_node, safe_decode_text(child)
+                    )
+                ):
+                    if inferred_type := ut.analyze_return_expression(
+                        constructed, method_qn
+                    ):
+                        return inferred_type
+
         return None
+
+    @staticmethod
+    def _sole_constructed_binding(
+        method_node: ASTNode, name: str | None
+    ) -> ASTNode | None:
+        # The single `new C(...)` bound to local `name` anywhere in this
+        # method (declarator value or assignment right), or None when there
+        # is no construction or two constructions of DIFFERENT classes.
+        if not name:
+            return None
+        found: ASTNode | None = None
+        found_ctor: str | None = None
+        stack: list[ASTNode] = list(method_node.children)
+        while stack:
+            node = stack.pop()
+            target_value: tuple[ASTNode | None, ASTNode | None] | None = None
+            if node.type == cs.TS_VARIABLE_DECLARATOR:
+                target_value = (
+                    node.child_by_field_name(cs.FIELD_NAME),
+                    node.child_by_field_name(cs.FIELD_VALUE),
+                )
+            elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                target_value = (
+                    node.child_by_field_name(cs.FIELD_LEFT),
+                    node.child_by_field_name(cs.TS_FIELD_RIGHT),
+                )
+            if target_value is not None:
+                target, value = target_value
+                if (
+                    target is not None
+                    and value is not None
+                    and target.type == cs.TS_IDENTIFIER
+                    and safe_decode_text(target) == name
+                    and value.type == cs.TS_NEW_EXPRESSION
+                ):
+                    ctor = ut.extract_constructor_name(value)
+                    if found is None:
+                        found = value
+                        found_ctor = ctor
+                    elif ctor != found_ctor:
+                        return None
+            stack.extend(node.children)
+        return found
