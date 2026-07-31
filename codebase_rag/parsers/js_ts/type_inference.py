@@ -381,6 +381,9 @@ class JsTypeInferenceEngine:
     def _js_enclosing_invocation(owner: ASTNode) -> ASTNode | None:
         # Climb value-transparent wrappers; at a call, require the wrapped
         # owner to BE the callee (not an argument, not one operand of many).
+        # The one argument-position exception: the JS grammar parses
+        # `await (X)()` as a call to an identifier spelled `await` with X as
+        # its sole argument, so that call IS a transparent await of X.
         node = owner
         current = owner.parent
         while current is not None:
@@ -391,6 +394,23 @@ class JsTypeInferenceEngine:
                 node = current
                 current = current.parent
                 continue
+            if current.type == cs.TS_ARGUMENTS:
+                call = current.parent
+                func = (
+                    call.child_by_field_name(cs.FIELD_FUNCTION)
+                    if call is not None and call.type == cs.TS_CALL_EXPRESSION
+                    else None
+                )
+                if (
+                    call is not None
+                    and func is not None
+                    and func.type == cs.TS_IDENTIFIER
+                    and safe_decode_text(func) == cs.JS_AWAIT_IDENTIFIER
+                ):
+                    node = call
+                    current = call.parent
+                    continue
+                return None
             if current.type == cs.TS_CALL_EXPRESSION:
                 func = current.child_by_field_name(cs.FIELD_FUNCTION)
                 if func is not None and func.id == node.id:

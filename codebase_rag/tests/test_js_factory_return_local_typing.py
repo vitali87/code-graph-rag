@@ -395,6 +395,32 @@ module.exports = ContentType
     )
 
 
+def test_awaited_async_iife_return_types_the_construction(tmp_path: Path) -> None:
+    # tree-sitter-javascript parses `await (X)()` as a CALL to an identifier
+    # named `await` with X as its argument, invoked; the climb must treat
+    # that call as the transparent await it spells, or the .js spelling of
+    # an awaited async IIFE factory loses its type (the TS grammar has no
+    # such ambiguity).
+    files = {
+        "content-type.js": """'use strict'
+class ContentType {
+  static async from (v) {
+    return await (async function () { return new ContentType(v) })()
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        str(frm).endswith(".send")
+        and str(to) == "p.content-type.ContentType.parameters"
+        for frm, _rel, to in cap.rels
+    )
+
+
 def test_destructuring_reads_do_not_shadow(tmp_path: Path) -> None:
     # Destructuring DEFAULTS, computed keys and array defaults READ outer
     # names; treating those reads as block-scoped declarations would shadow
