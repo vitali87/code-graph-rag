@@ -82,3 +82,36 @@ def test_symbol_name_on_non_js_path_still_reports() -> None:
         [_method("proj.x.C.[Symbol.toStringTag]", "[Symbol.toStringTag]", "x/c.py")]
     )
     assert "proj.x.C.[Symbol.toStringTag]" in dead
+
+
+def test_spaced_and_bracket_notation_variants_are_roots() -> None:
+    # `[ Symbol.iterator ]` and `[Symbol["iterator"]]` are the same runtime
+    # protocol member spelled differently; formatting must not decide.
+    dead = _collect(
+        [
+            _method(
+                "proj.a.Spaced.[ Symbol.iterator ]",
+                "[ Symbol.iterator ]",
+                "a/s.ts",
+            ),
+            _method(
+                'proj.a.Bracketed.[Symbol["iterator"]]',
+                '[Symbol["iterator"]]',
+                "a/b.ts",
+            ),
+        ]
+    )
+    assert not dead
+
+
+def test_near_miss_names_still_report() -> None:
+    # A STRING key spelling `'Symbol.fake'` and a user symbol variable are
+    # ordinary members: no runtime protocol invokes them.
+    dead = _collect(
+        [
+            _method("proj.a.C.['Symbol.fake']", "['Symbol.fake']", "a/c.ts"),
+            _method("proj.a.C.[mySym]", "[mySym]", "a/c.ts"),
+        ]
+    )
+    assert "proj.a.C.['Symbol.fake']" in dead
+    assert "proj.a.C.[mySym]" in dead

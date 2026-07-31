@@ -202,6 +202,7 @@ JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
 # registers it; user symbol keys register without the `Symbol.` path.
 JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
 JS_COMPUTED_NAME_SUFFIX = "]"
+JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX = "[Symbol["
 # `&&` alone among them cannot yield its LEFT operand as a function value.
 JS_OPERATOR_LOGICAL_AND = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"

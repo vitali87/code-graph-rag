@@ -130,11 +130,17 @@ def _is_js_well_known_symbol_root(name: str, is_method: bool, path: str) -> bool
     # computed-name brackets, so the `[Symbol.` prefix on a JS/TS file
     # identifies exactly these members; a user symbol key registers without
     # the `Symbol.` path and stays ordinary code.
-    return (
-        is_method
-        and path.endswith(cs.JS_TS_ALL_EXTENSIONS)
-        and name.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
-        and name.endswith(cs.JS_COMPUTED_NAME_SUFFIX)
+    if not is_method or not path.endswith(_JS_TS_EXTS):
+        return False
+    # Formatting must not decide (`[ Symbol.iterator ]`, `[Symbol["iterator"]]`
+    # spell the same protocol member): compare whitespace-free, accepting the
+    # dotted and the bracket-notation access off the Symbol global. A string
+    # key (`['Symbol.fake']`) or user symbol variable (`[mySym]`) keeps its
+    # own spelling and never matches.
+    compact = name.replace(" ", "")
+    return compact.endswith(cs.JS_COMPUTED_NAME_SUFFIX) and (
+        compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
+        or compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX)
     )
 
 
