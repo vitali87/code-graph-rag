@@ -6285,15 +6285,16 @@ class CallProcessor:
                     if name_node is not None:
                         add(safe_decode_text(name_node), node, node)
                 elif node_type in _JS_LEXICAL_HOISTED_DECLARATIONS:
+                    # Function declarations hoist; Annex B makes even a
+                    # block-level one function-scoped in sloppy mode, and one
+                    # under a switch case is live across the whole switch
+                    # body, so the enclosing callable body (or module) is the
+                    # only container that never understates the binding's
+                    # reach. In strict-mode block cases this over-widens,
+                    # which can only suppress.
                     name_node = node.child_by_field_name(cs.FIELD_NAME)
-                    container: Node | None = node.parent
-                    if (
-                        container is not None
-                        and container.type == cs.TS_EXPORT_STATEMENT
-                    ):
-                        container = container.parent
                     if name_node is not None:
-                        add(safe_decode_text(name_node), node, container)
+                        add(safe_decode_text(name_node), node, fn_container)
                 # A method_definition name is a property, never a binding.
                 next_container = node.child_by_field_name(cs.FIELD_BODY) or node
             elif node_type == cs.TS_CLASS_STATIC_BLOCK:
@@ -6329,21 +6330,24 @@ class CallProcessor:
                 param = node.child_by_field_name(cs.FIELD_PARAMETER)
                 if param is not None:
                     add_pattern(param, node)
-            elif node_type in (cs.TS_CLASS_DECLARATION, cs.TS_CLASS_EXPRESSION):
+            elif node_type in (
+                cs.TS_CLASS_DECLARATION,
+                cs.TS_CLASS_EXPRESSION,
+                cs.TS_ENUM_DECLARATION,
+                cs.TS_INTERNAL_MODULE,
+                cs.TS_MODULE,
+            ):
+                # Classes, TS enums and namespaces all bind VALUE names (an
+                # enum compiles to a var, a namespace to an object).
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
                 if name_node is not None:
                     add(safe_decode_text(name_node), None, None)
             elif node_type == cs.TS_IMPORT_STATEMENT:
-                clause = next(
-                    (
-                        child
-                        for child in node.named_children
-                        if child.type == cs.TS_IMPORT_CLAUSE
-                    ),
-                    None,
-                )
-                if clause is not None:
-                    add_pattern(clause, None)
+                # Covers default/named/namespace clauses AND the TS
+                # `import x = require(...)` form: every identifier in the
+                # statement is a bound name (the module path is a string).
+                add_pattern(node, None)
+                continue
             elif node_type in (
                 cs.TS_JS_ASSIGNMENT_EXPRESSION,
                 cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,

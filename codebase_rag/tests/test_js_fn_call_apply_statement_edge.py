@@ -731,3 +731,80 @@ module.exports = { main }
     cap = _run(tmp_path, src)
     calls = str(cs.RelationshipType.CALLS)
     assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_switch_case_function_declaration_shadow_suppresses(tmp_path: Path) -> None:
+    # A function declaration under one case is live across the WHOLE switch
+    # body; a call in another case hits the inner one, so no edge may bind
+    # the outer namesake.
+    src = """'use strict'
+function helper (x) { return 'outer' }
+function main (x) {
+  switch (x) {
+    case 1:
+      function helper (y) { return 'inner' }
+      break
+    case 2:
+      helper.call(this, 1)
+      break
+  }
+  return 2
+}
+module.exports = { main, helper }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
+
+
+def test_sloppy_block_function_declaration_shadow_suppresses(
+    tmp_path: Path,
+) -> None:
+    # Annex B: in a non-strict file a block-level function declaration is
+    # function-scoped; after the block the name is the inner function or
+    # undefined, never the outer one.
+    src = """function h2 (x) { return 'outer' }
+function main (cond) {
+  if (cond) { function h2 (y) { return 'inner' } }
+  return h2.call(this, 1)
+}
+module.exports = { main, h2 }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls and str(to) == "p.a.h2" for _frm, rel, to in cap.rels)
+
+
+def test_ts_enum_shadow_suppresses(tmp_path: Path) -> None:
+    # A local TS enum is a VALUE binding (it compiles to a var); a call
+    # through the shadowed name must not bind the outer function.
+    src = """export function helper (x: number): number { return x + 1 }
+export function main (): void {
+  enum helper { A, B }
+  helper.call(this, 1)
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_ts_import_require_shadow_suppresses(tmp_path: Path) -> None:
+    # `import helper = require('./other')` inside a namespace binds a value
+    # name that shadows the outer function for sites in that namespace.
+    (tmp_path / "other.ts").write_text("export function o (): number { return 1 }\n")
+    src = """export function helper (x: number): number { return x + 1 }
+namespace N {
+  import helper = require('./other')
+  export function main (): void {
+    helper.call(this, 1)
+  }
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
