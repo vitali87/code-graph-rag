@@ -934,3 +934,58 @@ namespace N { export function use (): number { return helper.call(this) } }
         for frm, rel, to in cap.rels
         if str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "helper"
     )
+
+
+def test_merged_namespace_ambient_namesake_no_edge_outside(tmp_path: Path) -> None:
+    # At file scope the name is the ambient declaration; the merged
+    # namespace's member is visible only inside N's blocks, so the outer
+    # site must emit nothing at all.
+    src = """declare function helper (): number
+namespace N { export function helper (): number { return 2 } }
+namespace N { export function other (): void {} }
+export function outerUse (): void { helper.call(this) }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(frm).endswith(".outerUse") for frm, rel, _to in cap.rels
+    )
+
+
+def test_merged_namespace_nonexported_member_stays_private(tmp_path: Path) -> None:
+    # A NON-exported member is visible only in its own block, not in the
+    # namespace's other blocks and never outside.
+    src = """namespace N {
+  function helper (): number { return 1 }
+  export function inner (): void { helper.call(this) }
+}
+namespace N { export function other (): void {} }
+export function outerUse (): void { helper.call(this) }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(frm).endswith(".outerUse") for frm, rel, _to in cap.rels
+    )
+    # Inside its own block the member still resolves.
+    assert any(
+        rel == calls and str(frm).endswith(".inner")
+        for frm, rel, to in cap.rels
+        if str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "helper"
+    )
+
+
+def test_merged_namespace_nested_namespace_stays_narrow(tmp_path: Path) -> None:
+    # A member of a NON-merged inner namespace M must not leak file-wide
+    # just because the outer N is merged.
+    src = """namespace N {
+  export namespace M { export function helper (): number { return 1 } }
+}
+namespace N { export function other (): void {} }
+export function outerUse (): void { helper.call(this) }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(frm).endswith(".outerUse") for frm, rel, _to in cap.rels
+    )

@@ -6230,10 +6230,14 @@ class CallProcessor:
         # empty and nothing ever resolves.
         bindings: dict[str, list[tuple[Node | None, Node | None]]] = {}
         # TS declaration merging: every `namespace N` block in the file
-        # shares one member scope. Track occurrences so a repeated name's
-        # blocks are widened afterwards.
+        # shares one scope for EXPORTED direct members. Track blocks per
+        # namespace name and the exported members declared in each, so a
+        # repeated name's members gain one introduction per SIBLING block
+        # afterwards; that is exactly where merging makes them visible, and
+        # nowhere else.
         namespace_blocks: dict[str, list[Node]] = {}
-        namespace_parent: dict[int, Node] = {}
+        namespace_name_of: dict[int, str] = {}
+        ns_exported: list[tuple[str, Node | None, Node]] = []
 
         def add(name: str | None, fn_node: Node | None, container: Node | None) -> None:
             if name:
@@ -6312,7 +6316,16 @@ class CallProcessor:
                     # which can only suppress.
                     name_node = node.child_by_field_name(cs.FIELD_NAME)
                     if name_node is not None:
-                        add(safe_decode_text(name_node), node, fn_container)
+                        decl_name = safe_decode_text(name_node)
+                        add(decl_name, node, fn_container)
+                        if (
+                            decl_name
+                            and fn_container.type
+                            in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE)
+                            and node.parent is not None
+                            and node.parent.type == cs.TS_EXPORT_STATEMENT
+                        ):
+                            ns_exported.append((decl_name, node, fn_container))
                 # A method_definition name is a property, never a binding.
                 next_container = node.child_by_field_name(cs.FIELD_BODY) or node
             elif node_type == cs.TS_CLASS_STATIC_BLOCK:
@@ -6333,7 +6346,18 @@ class CallProcessor:
                             value = self._unwrap_ts_value(value)
                             if value.type in _JS_INLINE_CALLABLE_VALUE_TYPES:
                                 fn_value = value
-                        add(safe_decode_text(target), fn_value, container)
+                        target_name = safe_decode_text(target)
+                        add(target_name, fn_value, container)
+                        wrapper = declaration.parent
+                        if (
+                            target_name
+                            and wrapper is not None
+                            and wrapper.type == cs.TS_EXPORT_STATEMENT
+                            and (body := wrapper.parent) is not None
+                            and (ns := body.parent) is not None
+                            and ns.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE)
+                        ):
+                            ns_exported.append((target_name, fn_value, ns))
                     else:
                         add_pattern(target, container)
             elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
@@ -6368,7 +6392,7 @@ class CallProcessor:
                         ns_name := safe_decode_text(name_node)
                     ):
                         namespace_blocks.setdefault(ns_name, []).append(node)
-                        namespace_parent[id(node)] = fn_container
+                        namespace_name_of[id(node)] = ns_name
             elif node_type == cs.TS_IMPORT_ALIAS:
                 # `import x = Other.thing` (namespace alias form) binds x;
                 # the aliased path identifiers over-collect, which can only
@@ -6395,37 +6419,17 @@ class CallProcessor:
                         add_pattern(left, None)
             for child in node.named_children:
                 stack.append((child, next_container))
-        merged = [
-            (block, namespace_parent[id(block)])
-            for blocks in namespace_blocks.values()
-            if len(blocks) > 1
-            for block in blocks
-        ]
-        if merged:
-            # Any binding scoped inside a merged namespace block is visible
-            # from that namespace's OTHER blocks; widening to the blocks'
-            # enclosing container never understates the reach (an over-wide
-            # container can only suppress).
-            for name, entries in bindings.items():
-                bindings[name] = [
-                    (fn_node, self._widen_merged_container(container, merged))
-                    for fn_node, container in entries
-                ]
+        for member_name, fn_node, block in ns_exported:
+            ns_name = namespace_name_of.get(id(block))
+            if ns_name is None:
+                continue
+            blocks = namespace_blocks.get(ns_name, [])
+            if len(blocks) < 2:
+                continue
+            for sibling in blocks:
+                if sibling is not block:
+                    add(member_name, fn_node, sibling)
         return bindings
-
-    @staticmethod
-    def _widen_merged_container(
-        container: Node | None, merged: list[tuple[Node, Node]]
-    ) -> Node | None:
-        if container is None:
-            return None
-        for block, parent in merged:
-            if (
-                block.start_byte <= container.start_byte
-                and container.end_byte <= block.end_byte
-            ):
-                return parent
-        return container
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
