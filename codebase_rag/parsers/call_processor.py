@@ -2692,6 +2692,56 @@ class CallProcessor:
             return None
         return self._recorded_caller(target, module_qn)
 
+    def _js_branch_callee_functions(
+        self, call_node: Node, module_qn: str
+    ) -> list[FunctionLocation]:
+        # A BRANCH-valued callee (`(c ? f : g)()`, `(f || g)()`) may invoke
+        # ANY of its inline function operands, and no single node can be the
+        # span-resolved callee. Reference each operand so a function whose
+        # only use is such a call (and everything only it calls) stays live:
+        # a sound liveness over-approximation (issue #1002's family).
+        func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func_child is None:
+            return []
+        locations: list[FunctionLocation] = []
+        branched = False
+        stack: list[Node] = [func_child]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if (
+                node_type == cs.TS_PARENTHESIZED_EXPRESSION
+                or node_type in cs.TS_CAST_WRAPPER_TYPES
+            ):
+                stack.extend(
+                    child
+                    for child in node.named_children
+                    if child.type != cs.TS_COMMENT
+                )
+            elif node_type == cs.TS_JS_SEQUENCE_EXPRESSION:
+                if node.named_children:
+                    stack.append(node.named_children[-1])
+            elif node_type == cs.TS_JS_TERNARY_EXPRESSION:
+                branched = True
+                for field in (cs.FIELD_CONSEQUENCE, cs.FIELD_ALTERNATIVE):
+                    if (child := node.child_by_field_name(field)) is not None:
+                        stack.append(child)
+            elif node_type == cs.TS_BINARY_EXPRESSION and self._js_is_logical_binary(
+                node
+            ):
+                branched = True
+                for field in (cs.FIELD_LEFT, cs.FIELD_RIGHT):
+                    if (child := node.child_by_field_name(field)) is not None:
+                        stack.append(child)
+            elif node_type in (
+                cs.TS_FUNCTION_EXPRESSION,
+                cs.TS_GENERATOR_FUNCTION,
+                cs.TS_ARROW_FUNCTION,
+            ):
+                if (loc := self._recorded_caller(node, module_qn)) is not None:
+                    locations.append(loc)
+        return locations if branched else []
+
     def _ingest_function_calls(
         self,
         caller_node: Node,
@@ -3047,6 +3097,14 @@ class CallProcessor:
                         caller_spec,
                         calls_rel,
                         (iife_loc.label, qn_key, iife_loc.qualified_name),
+                    )
+                for branch_loc in self._js_branch_callee_functions(
+                    call_node, module_qn
+                ):
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.REFERENCES,
+                        (branch_loc.label, qn_key, branch_loc.qualified_name),
                     )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)

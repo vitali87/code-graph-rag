@@ -204,6 +204,41 @@ module.exports = { a, b }
         assert any(rel == calls and str(to) == node for _frm, rel, to in cap.rels)
 
 
+def _has_inbound(cap: _Capture, node_qn: str) -> bool:
+    return any(
+        str(to) == node_qn and rel != str(cs.RelationshipType.DEFINES)
+        for _frm, rel, to in cap.rels
+    )
+
+
+def test_ternary_callee_function_operands_are_referenced(tmp_path: Path) -> None:
+    # A branch-valued callee may invoke ANY of its inline function operands;
+    # each must be referenced or the operand (and everything only it calls)
+    # reports dead (issue #1002 family).
+    src = """'use strict'
+function onlyHere (x) { return x }
+const k = 1
+const a = (k ? function* gt () { yield onlyHere(1) } : null)()
+module.exports = { a }
+"""
+    cap = _run(tmp_path, src)
+    named = [n for n in cap.nodes if n.endswith(".gt")]
+    assert len(named) == 1
+    assert _has_inbound(cap, named[0])
+
+
+def test_logical_callee_function_operands_are_referenced(tmp_path: Path) -> None:
+    src = """'use strict'
+function onlyHere (x) { return x }
+const b = (null || function () { return onlyHere(2) })()
+module.exports = { b }
+"""
+    cap = _run(tmp_path, src)
+    anon = [n for n in cap.nodes if cs.PREFIX_ANONYMOUS in n]
+    assert len(anon) == 1
+    assert _has_inbound(cap, anon[0])
+
+
 def test_ts_cast_wrapped_iife_gets_call_edge(tmp_path: Path) -> None:
     # TS cast wrappers are value-transparent; `(fn as any)()` invokes fn.
     src = """function helper (x: number) { return x }

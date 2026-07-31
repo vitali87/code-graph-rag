@@ -209,6 +209,7 @@ TS_JS_CATCH_CLAUSE = "catch_clause"
 TS_JS_SEQUENCE_EXPRESSION = "sequence_expression"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
+FIELD_CONSEQUENCE = "consequence"
 FIELD_HANDLER = "handler"
 FIELD_FINALIZER = "finalizer"
 # The C-style `for (init; cond; increment)` update clause, which runs AFTER the
