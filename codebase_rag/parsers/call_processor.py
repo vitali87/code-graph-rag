@@ -371,7 +371,11 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # JS/TS definition pass registers these as their own nodes named by the key
 # (scope.onSuccess), so a passed object of callbacks must reference each or
 # every TanStack-style callback reports as dead.
-_INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# Generator expressions are inline function values like the other two
+# (issue #994): a registered node with no reference path is an orphan.
+_INLINE_FUNC_VALUE_TYPES = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
 # JS/TS scopes that bind their own parameters (and, for a named function
 # expression, their own name) for the lexical receiver resolution of #988.
 _JS_LEXICAL_CALLABLE_SCOPES = frozenset(

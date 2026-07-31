@@ -141,14 +141,14 @@ JS_PROTOTYPE_METHOD_QUERY = """
       object: (identifier) @constructor_name
       property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
     property: (property_identifier) @method_name)
-  right: (function_expression) @method_function)
+  right: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS object method query
 JS_OBJECT_METHOD_QUERY = """
 (pair
   key: (property_identifier) @method_name
-  value: (function_expression) @method_function)
+  value: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS method definition query
@@ -177,7 +177,7 @@ JS_ASSIGNMENT_ARROW_QUERY = """
 JS_ASSIGNMENT_FUNCTION_QUERY = """
 (assignment_expression
   (member_expression) @member_expr
-  (function_expression) @function_expr)
+  [(function_expression) (generator_function)] @function_expr)
 """
 
 # JS/TS control-flow node types + fields for the path-sensitive taint walk
