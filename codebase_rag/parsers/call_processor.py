@@ -1200,6 +1200,7 @@ class CallProcessor:
                     None,
                     None,
                     assignment_boundaries,
+                    language=language,
                 )
             if language == cs.SupportedLanguage.GO:
                 # A module-scope Go func map/slice (var funcMap = map[...]{...})
@@ -1223,6 +1224,7 @@ class CallProcessor:
                     None,
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                    language=language,
                 )
             if language in _JS_TS_LANGUAGES:
                 # A module-scope JSX element (export default <App />) can sit
@@ -2453,6 +2455,7 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
+                language=language,
             )
         if language in _JS_TS_LANGUAGES:
             self._ingest_jsx_component_references(
@@ -3367,9 +3370,14 @@ class CallProcessor:
     @staticmethod
     def _js_is_logical_binary(node: Node) -> bool:
         # `||`, `??` and `&&` evaluate to ONE OF their operands; every other
-        # binary operator produces a fresh value.
-        operator = node.child_by_field_name(cs.JS_FIELD_OPERATOR)
-        return operator is not None and operator.type in cs.JS_LOGICAL_OPERATORS
+        # binary operator produces a fresh value. Callers gate to JS/TS: Go
+        # spells boolean `||`/`&&` with the same node and field, where a
+        # named operand is a bool, never a callable.
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return (
+            operator is not None
+            and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
+        )
 
     def _ingest_assignment_function_references(
         self,
@@ -3380,6 +3388,7 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # `x = some_function` binds a first-class function value to a name; the
         # alias is then stored, passed onward, or returned for dynamic dispatch
@@ -3440,7 +3449,14 @@ class CallProcessor:
                     # assigned value, so named operands there stay silent
                     # while inline functions keep the historical reference.
                     if value.type == cs.TS_BINARY_EXPRESSION:
-                        is_logical = self._js_is_logical_binary(value)
+                        # Named-operand emission is JS/TS-only: Go reaches
+                        # this walk too, and its boolean `||`/`&&` operands
+                        # would fabricate phantom edges (a bool named like a
+                        # method falsely revives it).
+                        is_logical = (
+                            language in cs.JS_TS_LANGUAGES
+                            and self._js_is_logical_binary(value)
+                        )
                         operands: list[Node] = []
                         pending = list(value.named_children)
                         while pending:

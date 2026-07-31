@@ -146,3 +146,25 @@ function main (done) {
 module.exports = { main }
 """
     assert _referenced_from(_run(tmp_path, src), "main", "fallbackDone")
+
+
+def test_go_boolean_operands_are_not_referenced(tmp_path: Path) -> None:
+    # Go spells boolean `||` with the same binary_expression node and
+    # operator field; a bool named like a method must not revive it.
+    src = """package m
+
+type T struct{}
+
+func (t T) valid() bool { return true }
+
+func Run(valid bool, other bool) bool {
+\tres := valid || other
+\treturn res
+}
+"""
+    cap = _run(tmp_path, src, filename="a.go")
+    assert not any(
+        str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "valid"
+        and rel == str(cs.RelationshipType.REFERENCES)
+        for _frm, rel, to in cap.rels
+    )
