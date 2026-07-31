@@ -152,3 +152,140 @@ module.exports = function anonymous(validator, serializer) {
         str(to) == "p.ser.anonymous" and rel == str(cs.RelationshipType.CALLS)
         for _frm, rel, to in cap.rels
     )
+
+
+def test_iife_wrapper_collision_targets_the_wrapper_variant(tmp_path: Path) -> None:
+    # The wrapper's own name collides with an unrelated top-level function;
+    # the module CALLS edge must target the qn actually minted for the
+    # WRAPPER (a duplicate variant), never the namesake.
+    cap = _run(
+        tmp_path,
+        {
+            "ser.js": """'use strict'
+function build (v) { return v }
+module.exports = function build (validator) {
+  function inner (x) { return x }
+  return inner
+}(1)
+""",
+        },
+    )
+    calls = str(cs.RelationshipType.CALLS)
+    module_calls = {
+        str(to) for frm, rel, to in cap.rels if rel == calls and str(frm) == "p.ser"
+    }
+    assert "p.ser.build" not in module_calls
+    assert any(t.startswith("p.ser.build") for t in module_calls)
+
+
+def test_export_inside_function_emits_nothing(tmp_path: Path) -> None:
+    # `module.exports = ...` INSIDE a function is not a module-load export;
+    # no module CALLS edge and no phantom qn may be emitted.
+    cap = _run(
+        tmp_path,
+        {
+            "ser.js": """'use strict'
+function setup () {
+  module.exports = function wrapped (v) { return v }(1)
+}
+setup()
+""",
+        },
+    )
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(frm) == "p.ser" and "wrapped" in str(to)
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_inside_function_export_does_not_map_alias(tmp_path: Path) -> None:
+    # The refused registration must not leave a guessed alias mapping behind
+    # that points a consumer call at an unrelated top-level namesake.
+    cap = _run(
+        tmp_path,
+        {
+            "m.js": """'use strict'
+function handler (v) { return 'top' }
+function setup () {
+  module.exports = function handler (v) { return 'inner' }
+}
+setup()
+""",
+            "b.js": """'use strict'
+const h = require('./m')
+function main () { return h(1) }
+module.exports = { main }
+""",
+        },
+    )
+    assert not any(
+        str(frm).endswith(".main") and str(to) == "p.m.handler"
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_reindex_clears_direct_export_map(tmp_path: Path) -> None:
+    # A re-parsed module that no longer directly exports a function must not
+    # leave the stale alias mapping behind (watch mode).
+    (tmp_path / "ser.js").write_text("""'use strict'
+module.exports = function serialize (v) { return String(v) }
+""")
+    (tmp_path / "b.js").write_text("""'use strict'
+const s = require('./ser')
+function main () { return s(1) }
+module.exports = { main }
+""")
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    updater = GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    (tmp_path / "ser.js").write_text("""'use strict'
+function serialize (v) { return String(v) }
+module.exports = { other: (v) => v }
+""")
+    cap.rels.clear()
+    updater.run(force=True)
+    assert not any(
+        str(frm).endswith(".main") and str(to) == "p.ser.serialize"
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_parenthesised_iife_export_links(tmp_path: Path) -> None:
+    # The canonical hand-written IIFE: `(function wrapped () {...})(1)`.
+    cap = _run(
+        tmp_path,
+        {
+            "ser.js": """'use strict'
+module.exports = (function wrapped (v) { return v })(1)
+""",
+        },
+    )
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and str(frm) == "p.ser" and str(to).endswith(".wrapped")
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_parenthesised_arrow_iife_export_links(tmp_path: Path) -> None:
+    cap = _run(
+        tmp_path,
+        {
+            "ser.js": """'use strict'
+module.exports = ((v) => v)(1)
+""",
+        },
+    )
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and str(frm) == "p.ser" and str(to).startswith("p.ser.")
+        for frm, rel, to in cap.rels
+    )
