@@ -397,6 +397,12 @@ class DefinitionProcessor(
                 # only genuinely anonymous spans (callbacks, IIFEs) still
                 # need their held-back registration.
                 self._flush_deferred_js_anonymous()
+                # Direct module.exports functions finalise by SPAN now that
+                # every node's minted qn is recorded.
+                self._finalise_direct_module_exports(
+                    module_qn, self._pending_direct_module_exports
+                )
+                self._pending_direct_module_exports = []
 
             return (root_node, language)
 

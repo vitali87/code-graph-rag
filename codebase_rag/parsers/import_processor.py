@@ -215,6 +215,7 @@ class ImportProcessor:
         "ingestor",
         "function_registry",
         "import_mapping",
+        "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
         "js_ts_bare_imports",
@@ -244,6 +245,11 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # CommonJS modules whose ENTIRE export is one function
+        # (`module.exports = function (...) {...}`): module qn -> the
+        # exported function's qn, so a whole-module require alias called
+        # directly (`const f = require('./m'); f(x)`) resolves to it.
+        self.commonjs_direct_exports: dict[str, str] = {}
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -396,6 +402,9 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        # A re-parsed module that no longer directly exports one function
+        # must not leave the stale whole-module alias mapping behind.
+        self.commonjs_direct_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
