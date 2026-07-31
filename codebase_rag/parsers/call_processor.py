@@ -635,11 +635,11 @@ class CallProcessor:
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
-        # Per-module map of identifier -> (binding count, function node,
+        # Per-module map of identifier -> introductions as (function node,
         # container) for the #988 lexical receiver resolution; built once per
         # file on first use.
         self._js_file_receiver_bindings: dict[
-            str, dict[str, tuple[int, Node | None, Node | None]]
+            str, dict[str, list[tuple[Node | None, Node | None]]]
         ] = {}
 
         self._resolver = CallResolver(
@@ -6179,17 +6179,18 @@ class CallProcessor:
     def _js_lexical_function_binding(
         self, site: Node, name: str, module_qn: str
     ) -> FunctionLocation | None:
-        # UNIQUE-BINDING resolution: the receiver name resolves only when the
-        # WHOLE FILE introduces it exactly once, that introduction IS a
-        # function (a hoisted declaration, a declarator holding an inline
-        # function, or a function expression's self-name), and the binding's
-        # container span encloses the site. Any second introduction anywhere
-        # (a parameter, another declarator, a loop/catch/class/import binding,
-        # even a plain reassignment) makes the runtime value unknowable and
-        # suppresses. This deliberately trades conservative misses for never
-        # inventing an edge: shadowing, `var` hoisting across sibling blocks,
-        # switch/for/catch scoping and duplicate declarations all collapse
-        # into "more than one introduction", with no scope simulation at all.
+        # UNIQUE-RELEVANT-BINDING resolution: collect every INTRODUCTION of
+        # every name in the file once (cached), each with the container whose
+        # span bounds where it is usable, then keep only the introductions
+        # whose container encloses THIS site (a file-wide container always
+        # qualifies). The receiver resolves only when exactly ONE relevant
+        # introduction remains and it IS a function registered by the
+        # definition pass; two or more relevant introductions, or a
+        # non-function one, mean the runtime value is unknowable and nothing
+        # is emitted. Shadowing, `var` hoisting, switch/for/catch scoping and
+        # duplicate declarations all collapse into "a second relevant
+        # introduction", with no scope simulation; an introduction confined
+        # to a SIBLING scope is irrelevant here and cannot suppress.
         root = site
         while root.parent is not None:
             root = root.parent
@@ -6197,45 +6198,72 @@ class CallProcessor:
         if bindings is None:
             bindings = self._js_collect_file_bindings(root)
             self._js_file_receiver_bindings[module_qn] = bindings
-        entry = bindings.get(name)
-        if entry is None:
+        entries = bindings.get(name)
+        if not entries:
             return None
-        count, fn_node, container = entry
-        if count != 1 or fn_node is None or container is None:
+        relevant = [
+            (fn_node, container)
+            for fn_node, container in entries
+            if container is None
+            or container.start_byte <= site.start_byte < container.end_byte
+        ]
+        if len(relevant) != 1:
             return None
-        if not (container.start_byte <= site.start_byte < container.end_byte):
+        fn_node, _container = relevant[0]
+        if fn_node is None:
             return None
         return self._recorded_caller(fn_node, module_qn)
 
     def _js_collect_file_bindings(
         self, root: Node
-    ) -> dict[str, tuple[int, Node | None, Node | None]]:
-        # One pass over the file: name -> (introduction count, function node
-        # when the single introduction is a function, container node whose
-        # span bounds where the binding is usable). Introductions are
-        # OVER-collected on purpose (destructuring defaults, import aliases,
-        # bare assignment targets): each extra count can only suppress.
-        bindings: dict[str, tuple[int, Node | None, Node | None]] = {}
+    ) -> dict[str, list[tuple[Node | None, Node | None]]]:
+        # One pass over the file: name -> introductions as (function node or
+        # None, container node or None for file-wide). Non-function
+        # introductions are OVER-collected on purpose (destructuring,
+        # import aliases, reassignment targets): each can only suppress. A
+        # `with` block makes every name dynamic, so the whole file returns
+        # empty and nothing ever resolves.
+        bindings: dict[str, list[tuple[Node | None, Node | None]]] = {}
 
         def add(name: str | None, fn_node: Node | None, container: Node | None) -> None:
-            if not name:
-                return
-            prior = bindings.get(name)
-            if prior is None:
-                bindings[name] = (1, fn_node, container)
-            else:
-                bindings[name] = (prior[0] + 1, None, None)
+            if name:
+                bindings.setdefault(name, []).append((fn_node, container))
 
-        def add_pattern(pattern: Node) -> None:
+        def add_pattern(pattern: Node, container: Node | None) -> None:
+            # Binding-side only: a default value (assignment_pattern right)
+            # or a TS type annotation READS names, it does not introduce them.
             stack = [pattern]
             while stack:
                 part = stack.pop()
+                if part.type == cs.TS_ASSIGNMENT_PATTERN:
+                    left = part.child_by_field_name(cs.FIELD_LEFT)
+                    if left is not None:
+                        stack.append(left)
+                    continue
+                if part.type == cs.TS_TYPE_ANNOTATION:
+                    continue
                 if part.type in (
                     cs.TS_IDENTIFIER,
                     cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
                 ):
-                    add(safe_decode_text(part), None, None)
+                    add(safe_decode_text(part), None, container)
                 stack.extend(part.named_children)
+
+        def declarator_container(declaration: Node, fn_container: Node) -> Node | None:
+            # `var` hoists to the enclosing callable body; `let`/`const`
+            # scope to the declaration's parent, peeling an export_statement
+            # wrapper and widening a switch-case slot to the shared switch
+            # body.
+            if declaration.type != cs.TS_LEXICAL_DECLARATION:
+                return fn_container
+            parent = declaration.parent
+            if parent is None:
+                return fn_container
+            if parent.type == cs.TS_EXPORT_STATEMENT:
+                return parent.parent
+            if parent.type in (cs.TS_JS_SWITCH_CASE, cs.TS_JS_SWITCH_DEFAULT):
+                return parent.parent
+            return parent
 
         stack: list[tuple[Node, Node]] = [(root, root)]
         while stack:
@@ -6245,11 +6273,11 @@ class CallProcessor:
             if node_type in _JS_LEXICAL_CALLABLE_SCOPES:
                 params = node.child_by_field_name(cs.FIELD_PARAMETERS)
                 if params is not None:
-                    add_pattern(params)
+                    add_pattern(params, node)
                 elif (
                     single := node.child_by_field_name(cs.FIELD_PARAMETER)
                 ) is not None:
-                    add_pattern(single)
+                    add_pattern(single, node)
                 if node_type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
                     # A named function expression binds its own name in its
                     # body only.
@@ -6268,9 +6296,17 @@ class CallProcessor:
                         add(safe_decode_text(name_node), node, container)
                 # A method_definition name is a property, never a binding.
                 next_container = node.child_by_field_name(cs.FIELD_BODY) or node
+            elif node_type == cs.TS_CLASS_STATIC_BLOCK:
+                # A static block is its own `var` scope.
+                next_container = node
+            elif node_type == cs.TS_JS_WITH_STATEMENT:
+                # Dynamic scoping: no receiver in this file can be trusted.
+                return {}
             elif node_type == cs.TS_VARIABLE_DECLARATOR:
                 target = node.child_by_field_name(cs.FIELD_NAME)
-                if target is not None:
+                declaration = node.parent
+                if target is not None and declaration is not None:
+                    container = declarator_container(declaration, fn_container)
                     if target.type == cs.TS_IDENTIFIER:
                         value = node.child_by_field_name(cs.FIELD_VALUE)
                         fn_value: Node | None = None
@@ -6278,31 +6314,21 @@ class CallProcessor:
                             value = self._unwrap_ts_value(value)
                             if value.type in _JS_INLINE_CALLABLE_VALUE_TYPES:
                                 fn_value = value
-                        declaration = node.parent
-                        # `var` (variable_declaration) hoists to the enclosing
-                        # function; `let`/`const` scope to their declaration's
-                        # parent block.
-                        if (
-                            declaration is not None
-                            and declaration.type == cs.TS_LEXICAL_DECLARATION
-                            and declaration.parent is not None
-                        ):
-                            container = declaration.parent
-                        else:
-                            container = fn_container
                         add(safe_decode_text(target), fn_value, container)
                     else:
-                        add_pattern(target)
+                        add_pattern(target, container)
             elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
                 # Covers for-of and for-in, with or without var/let/const:
-                # the left side binds (or rebinds) its identifiers.
+                # the left side binds (or rebinds) its identifiers. The
+                # enclosing callable body over-approximates the lexical
+                # variants' scope, which can only suppress.
                 left = node.child_by_field_name(cs.FIELD_LEFT)
                 if left is not None:
-                    add_pattern(left)
+                    add_pattern(left, fn_container)
             elif node_type == cs.TS_JS_CATCH_CLAUSE:
                 param = node.child_by_field_name(cs.FIELD_PARAMETER)
                 if param is not None:
-                    add_pattern(param)
+                    add_pattern(param, node)
             elif node_type in (cs.TS_CLASS_DECLARATION, cs.TS_CLASS_EXPRESSION):
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
                 if name_node is not None:
@@ -6317,15 +6343,19 @@ class CallProcessor:
                     None,
                 )
                 if clause is not None:
-                    add_pattern(clause)
+                    add_pattern(clause, None)
             elif node_type in (
                 cs.TS_JS_ASSIGNMENT_EXPRESSION,
                 cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
             ):
-                # A bare reassignment rebinds the name to an arbitrary value.
+                # A reassignment rebinds a name declared SOMEWHERE to an
+                # arbitrary value; file-wide relevance is the safe reading.
                 left = node.child_by_field_name(cs.FIELD_LEFT)
-                if left is not None and left.type == cs.TS_IDENTIFIER:
-                    add(safe_decode_text(left), None, None)
+                if left is not None:
+                    if left.type == cs.TS_IDENTIFIER:
+                        add(safe_decode_text(left), None, None)
+                    elif left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN):
+                        add_pattern(left, None)
             for child in node.named_children:
                 stack.append((child, next_container))
         return bindings

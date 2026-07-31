@@ -212,6 +212,9 @@ FIELD_FINALIZER = "finalizer"
 FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
+TS_TYPE_ANNOTATION = "type_annotation"
+TS_JS_WITH_STATEMENT = "with_statement"
+TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"

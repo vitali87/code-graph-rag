@@ -591,3 +591,143 @@ module.exports = { main }
 """
     cap = _run(tmp_path, src)
     assert not _edges_to_leaf(cap, "gen")
+
+
+def test_export_const_arrow_receiver_links(tmp_path: Path) -> None:
+    # The modern ESM idiom: an exported const arrow invoked only via `.call`
+    # must link; the export_statement wrapper must not shrink the binding's
+    # container to the single statement.
+    src = """export const helper = (x: number): number => x + 1
+export function main (): number {
+  helper.call(this, 1)
+  return 2
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )
+
+
+def test_default_param_value_reference_does_not_suppress(tmp_path: Path) -> None:
+    # `wrap (cb = helper)` READS helper as a default value; it introduces
+    # `cb`, not `helper`, so the genuine `.call` elsewhere keeps its edge.
+    src = """'use strict'
+function helper (x) { return x }
+function wrap (cb = helper) { return cb }
+function main () {
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main, wrap, helper }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )
+
+
+def test_ts_typeof_param_type_does_not_suppress(tmp_path: Path) -> None:
+    # A `typeof helper` TYPE QUERY in a parameter annotation is a use of the
+    # name, not an introduction.
+    src = """export function helper (x: number): number { return x }
+export function wrap (cb: typeof helper): void { void cb }
+export function main (): void {
+  helper.call(this, 1)
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )
+
+
+def test_sibling_function_local_does_not_suppress(tmp_path: Path) -> None:
+    # The fastify lib/route.js shape: a `const route = ...` inside a SIBLING
+    # function can never be in scope at the call site, so it must not
+    # suppress the edge onto the module-level `route`.
+    src = """'use strict'
+function prepareRoute (opts) {
+  route.call(this, { opts })
+}
+function findRoute (router) {
+  const route = router.find()
+  return route
+}
+function route (o) { return o }
+module.exports = { prepareRoute, findRoute }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".prepareRoute")
+        for f, rel in _edges_to_leaf(cap, "route")
+    )
+
+
+def test_static_block_var_not_visible_outside(tmp_path: Path) -> None:
+    # A `var` inside a class static block scopes to the block; a site outside
+    # must not receive an edge onto it (the name is unbound there).
+    src = """'use strict'
+class C {
+  static { var doIt = () => 1 }
+}
+function main () {
+  doIt.call(this)
+  return 2
+}
+module.exports = { main, C }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "doIt"))
+
+
+def test_destructuring_reassignment_suppresses(tmp_path: Path) -> None:
+    # `({ helper } = ...)` and `[helper] = ...` rebind the name to arbitrary
+    # values; the declared function is no longer what the site invokes.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+;({ helper } = require('./m'))
+function main () {
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_array_destructuring_reassignment_suppresses(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x + 1 }
+function main (list) {
+  ;[helper] = list
+  helper.call(this, 1)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_with_statement_poisons_file(tmp_path: Path) -> None:
+    # `with (obj)` makes every name dynamically resolvable through obj; no
+    # receiver in the file can be trusted.
+    src = """function helper (x) { return x + 1 }
+function main (obj) {
+  with (obj) { helper.call(this, 1) }
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
