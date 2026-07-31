@@ -233,6 +233,45 @@ module.exports = { build, use }
     )
 
 
+def test_plain_function_nested_helper_never_types_the_install(
+    tmp_path: Path,
+) -> None:
+    # `new makeThing()` where makeThing is a PLAIN function (no prototype
+    # members): its nested private helpers share the `module.fn.name`
+    # registry namespace with prototype methods, so accepting the function
+    # as a constructor would manufacture a confident CALLS to an
+    # unreachable helper.
+    files = {
+        "symbols.js": SYMBOLS,
+        "factory.js": """'use strict'
+function makeThing (o) {
+  function ping () { return 'private helper' }
+  ping()
+  return {}
+}
+module.exports = makeThing
+""",
+        "main.js": """'use strict'
+const { kCtrl } = require('./symbols.js')
+const makeThing = require('./factory.js')
+function build () {
+  return { [kCtrl]: new makeThing() }
+}
+function use (s) {
+  return s[kCtrl].ping()
+}
+module.exports = { build, use }
+""",
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to) == "p.factory.makeThing.ping"
+        for frm, rel, to in cap.rels
+    )
+
+
 def test_class_field_symbol_install_links(tmp_path: Path) -> None:
     # `class Server { [kCtrl] = new Ctrl() }`: the class-field installation
     # feeds the index like an object-literal key.

@@ -6706,17 +6706,52 @@ class CallProcessor:
         # prototype methods resolve. Never allowed for name hints, where a
         # function qn is a factory, not a type.
         registry = self._resolver.function_registry
-        accepted = (
-            (NodeType.CLASS, NodeType.FUNCTION)
-            if allow_constructor_function
-            else (NodeType.CLASS,)
-        )
-        if name in registry and registry[name] in accepted:
-            return name
-        for candidate in self._js_name_candidates(name, module_qn):
-            if candidate in registry and registry[candidate] in accepted:
+        candidates = [name, *self._js_name_candidates(name, module_qn)]
+        for candidate in candidates:
+            if candidate not in registry:
+                continue
+            node_type = registry[candidate]
+            if node_type == NodeType.CLASS:
+                return candidate
+            if (
+                allow_constructor_function
+                and node_type == NodeType.FUNCTION
+                and self._js_has_prototype_members(candidate)
+            ):
                 return candidate
         return None
+
+    def _js_has_prototype_members(self, fn_qn: str) -> bool:
+        # Constructor EVIDENCE: at least one `Fn.prototype.x = ...` in the
+        # function's module. Without it, `module.fn.name` registry entries
+        # under the function are its NESTED helpers, not methods, and
+        # accepting the function as a type would manufacture edges to them.
+        fn_module, _, fn_leaf = fn_qn.rpartition(cs.SEPARATOR_DOT)
+        type_inference = self._resolver.type_inference
+        file_path = type_inference.module_qn_to_file_path.get(fn_module)
+        if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
+            return False
+        root_node, _language = entry
+        stack: list[Node] = [root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                left = node.child_by_field_name(cs.FIELD_LEFT)
+                if (
+                    left is not None
+                    and left.type == cs.TS_MEMBER_EXPRESSION
+                    and (inner := left.child_by_field_name(cs.FIELD_OBJECT)) is not None
+                    and inner.type == cs.TS_MEMBER_EXPRESSION
+                    and (obj := inner.child_by_field_name(cs.FIELD_OBJECT)) is not None
+                    and obj.type == cs.TS_IDENTIFIER
+                    and safe_decode_text(obj) == fn_leaf
+                    and (prop := inner.child_by_field_name(cs.FIELD_PROPERTY))
+                    is not None
+                    and safe_decode_text(prop) == cs.JS_PROTOTYPE_KEYWORD
+                ):
+                    return True
+            stack.extend(node.children)
+        return False
 
     def _js_name_candidates(self, name: str, module_qn: str) -> list[str]:
         # The qns a bare name may denote: the imported member, the imported
