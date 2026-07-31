@@ -857,9 +857,9 @@ export function outerUse (): void {
     cap = _run(tmp_path, src, filename="a.ts")
     calls = str(cs.RelationshipType.CALLS)
     outer = {
-        (f, str(to))
-        for f, rel, to in [(str(a), b, c) for a, b, c in cap.rels]
-        if rel == calls and f.endswith(".outerUse")
+        (str(frm), str(to))
+        for frm, rel, to in cap.rels
+        if rel == calls and str(frm).endswith(".outerUse")
     }
     assert not outer
     assert any(
