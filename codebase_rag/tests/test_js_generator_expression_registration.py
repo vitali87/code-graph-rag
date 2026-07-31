@@ -89,6 +89,24 @@ module.exports = { api }
     assert _has_inbound(cap, ".gen")
 
 
+def test_anonymous_generator_body_references_bubble(tmp_path: Path) -> None:
+    # An anonymous, unbound generator gets no caller pass of its own; the
+    # reference-emission walks must descend THROUGH it (like anonymous
+    # arrows) or a returned function inside it is never referenced and
+    # reports dead with everything only it calls.
+    src = """'use strict'
+function helperFn () { return 1 }
+function stream (g) { return g }
+function main () { return stream(function* () { return helperFn }) }
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    assert any(
+        "helperFn" in str(to) and rel != str(cs.RelationshipType.DEFINES)
+        for _frm, rel, to in cap.rels
+    )
+
+
 def test_prototype_generator_assignment_names_the_method(tmp_path: Path) -> None:
     src = """'use strict'
 function C () {}
