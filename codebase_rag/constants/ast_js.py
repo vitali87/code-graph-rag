@@ -212,6 +212,10 @@ FIELD_FINALIZER = "finalizer"
 FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
+# The operator field of a JS/TS binary_expression, and the short-circuit
+# operators that evaluate to one of their operands.
+JS_FIELD_OPERATOR = "operator"
+JS_LOGICAL_OPERATORS = frozenset({"||", "??", "&&"})
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"

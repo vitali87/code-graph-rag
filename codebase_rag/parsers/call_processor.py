@@ -3364,6 +3364,13 @@ class CallProcessor:
                 )
         return True
 
+    @staticmethod
+    def _js_is_logical_binary(node: Node) -> bool:
+        # `||`, `??` and `&&` evaluate to ONE OF their operands; every other
+        # binary operator produces a fresh value.
+        operator = node.child_by_field_name(cs.JS_FIELD_OPERATOR)
+        return operator is not None and operator.type in cs.JS_LOGICAL_OPERATORS
+
     def _ingest_assignment_function_references(
         self,
         caller_node: Node,
@@ -3422,12 +3429,34 @@ class CallProcessor:
                     # arrow-const RHS is registered by its name, so the by-position
                     # lookup finds nothing.
                     # A LOGICAL DEFAULT RHS (`done = done || function (err,
-                    # str) {...}`, express's render) hides the stored function
-                    # one level down; scan the binary operands too.
+                    # str) {...}`, express's render; `options.handler =
+                    # options.handler || defaultHandler`, fastify, issue
+                    # #990) evaluates TO one of its operands, so a NAMED
+                    # function operand flows as the assigned value exactly
+                    # like an inline one; chains (`a || b || defaultFmt`)
+                    # nest further logical binaries on the left. Only the
+                    # short-circuit operators qualify: a comparison or
+                    # arithmetic operand (`x === fn`, `n + fn`) never IS the
+                    # assigned value, so named operands there stay silent
+                    # while inline functions keep the historical reference.
                     if value.type == cs.TS_BINARY_EXPRESSION:
-                        for operand in value.named_children:
-                            operand = self._unwrap_ts_value(operand)
-                            if operand.type in _INLINE_FUNC_VALUE_TYPES:
+                        is_logical = self._js_is_logical_binary(value)
+                        operands: list[Node] = []
+                        pending = list(value.named_children)
+                        while pending:
+                            operand = self._unwrap_ts_value(pending.pop())
+                            if (
+                                is_logical
+                                and operand.type == cs.TS_BINARY_EXPRESSION
+                                and self._js_is_logical_binary(operand)
+                            ):
+                                pending.extend(operand.named_children)
+                                continue
+                            operands.append(operand)
+                        for operand in operands:
+                            if operand.type in _INLINE_FUNC_VALUE_TYPES or (
+                                is_logical and operand.type in _ASSIGNMENT_RHS_REF_TYPES
+                            ):
                                 self._emit_callback_edge(
                                     caller_spec,
                                     operand,
