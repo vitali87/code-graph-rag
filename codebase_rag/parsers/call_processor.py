@@ -2648,7 +2648,7 @@ class CallProcessor:
                     ensure_rel(
                         caller_spec,
                         calls_rel,
-                        (cs.NodeLabel.FUNCTION, qn_key, loc.qualified_name),
+                        (loc.label, qn_key, loc.qualified_name),
                     )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
@@ -6190,10 +6190,8 @@ class CallProcessor:
         # (bound, function_node): whether this scope introduces `name`, and
         # the function node it binds when the binding IS a function.
         if scope.type in _JS_LEXICAL_CALLABLE_SCOPES:
-            name_node = scope.child_by_field_name(cs.FIELD_NAME)
-            if name_node is not None and safe_decode_text(name_node) == name:
-                # A named function expression binds its own name in its body.
-                return True, scope
+            # Parameters shadow everything else in the body, including a
+            # function expression's own name.
             params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
             if params is not None and self._js_pattern_binds(params, name):
                 return True, None
@@ -6207,44 +6205,35 @@ class CallProcessor:
                 and safe_decode_text(single) == name
             ):
                 return True, None
+            # Only a named function/generator EXPRESSION binds its own name in
+            # its body; a declaration binds in the ENCLOSING scope (found by
+            # the hoisted scan there), and a METHOD name never binds at all.
+            if scope.type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+                name_node = scope.child_by_field_name(cs.FIELD_NAME)
+                if name_node is not None and safe_decode_text(name_node) == name:
+                    return True, scope
+            # `var` hoists to function scope no matter which block wrote it.
+            return self._js_var_hoisted_binding(
+                scope.child_by_field_name(cs.FIELD_BODY), name
+            )
+        if scope.type in (cs.TS_STATEMENT_BLOCK, cs.TS_PROGRAM, cs.TS_JS_SWITCH_BODY):
+            decided = self._js_block_binding(scope, name)
+            if decided is not None:
+                return decided
+            if scope.type == cs.TS_PROGRAM:
+                # Module scope is also the top-level `var` hoist target.
+                return self._js_var_hoisted_binding(scope, name)
             return False, None
-        if scope.type in (cs.TS_STATEMENT_BLOCK, cs.TS_PROGRAM):
-            hoisted: Node | None = None
-            for child in scope.named_children:
-                if child.type == cs.TS_EXPORT_STATEMENT:
-                    # `export function f ...` wraps the declaration; the
-                    # binding rules are those of the declaration itself.
-                    wrapped = child.child_by_field_name(cs.FIELD_DECLARATION)
-                    if wrapped is None:
-                        continue
-                    child = wrapped
-                if child.type in _JS_LEXICAL_HOISTED_DECLARATIONS:
-                    child_name = child.child_by_field_name(cs.FIELD_NAME)
-                    if child_name is not None and safe_decode_text(child_name) == name:
-                        # Later declaration wins under hoisting.
-                        hoisted = child
-                elif child.type in (
-                    cs.TS_LEXICAL_DECLARATION,
-                    cs.TS_VARIABLE_DECLARATION,
-                ):
-                    for declarator in child.named_children:
-                        if declarator.type != cs.TS_VARIABLE_DECLARATOR:
-                            continue
-                        target = declarator.child_by_field_name(cs.FIELD_NAME)
-                        if target is None or not self._js_pattern_binds(target, name):
-                            continue
-                        value = declarator.child_by_field_name(cs.FIELD_VALUE)
-                        if value is not None:
-                            value = self._unwrap_ts_value(value)
-                            if value.type in _INLINE_FUNC_VALUE_TYPES:
-                                return True, value
-                        return True, None
-                elif child.type == cs.TS_CLASS_DECLARATION:
-                    child_name = child.child_by_field_name(cs.FIELD_NAME)
-                    if child_name is not None and safe_decode_text(child_name) == name:
-                        return True, None
-            if hoisted is not None:
-                return True, hoisted
+        if scope.type == cs.TS_JS_FOR_STATEMENT:
+            # The C-style loop's init clause scopes its bindings to the loop.
+            init = scope.child_by_field_name(cs.FIELD_INITIALIZER)
+            if init is not None and init.type in (
+                cs.TS_LEXICAL_DECLARATION,
+                cs.TS_VARIABLE_DECLARATION,
+            ):
+                decided = self._js_declaration_binding(init, name)
+                if decided is not None:
+                    return decided
             return False, None
         if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
             left = scope.child_by_field_name(cs.FIELD_LEFT)
@@ -6257,6 +6246,95 @@ class CallProcessor:
                 return True, None
             return False, None
         return False, None
+
+    def _js_block_binding(
+        self, scope: Node, name: str
+    ) -> tuple[bool, Node | None] | None:
+        # Scan a block-like scope's own declarations; None means the scope
+        # does not bind `name` and the walk continues outward. A switch body
+        # is one shared scope whose declarations sit inside its case clauses.
+        children: list[Node] = []
+        for child in scope.named_children:
+            if child.type in (cs.TS_JS_SWITCH_CASE, cs.TS_JS_SWITCH_DEFAULT):
+                children.extend(child.named_children)
+            else:
+                children.append(child)
+        hoisted: Node | None = None
+        for child in children:
+            if child.type == cs.TS_EXPORT_STATEMENT:
+                # `export function f ...` wraps the declaration; the binding
+                # rules are those of the declaration itself.
+                wrapped = child.child_by_field_name(cs.FIELD_DECLARATION)
+                if wrapped is None:
+                    continue
+                child = wrapped
+            if child.type in _JS_LEXICAL_HOISTED_DECLARATIONS:
+                child_name = child.child_by_field_name(cs.FIELD_NAME)
+                if child_name is not None and safe_decode_text(child_name) == name:
+                    # Later declaration wins under hoisting.
+                    hoisted = child
+            elif child.type in (
+                cs.TS_LEXICAL_DECLARATION,
+                cs.TS_VARIABLE_DECLARATION,
+            ):
+                decided = self._js_declaration_binding(child, name)
+                if decided is not None:
+                    return decided
+            elif child.type == cs.TS_CLASS_DECLARATION:
+                child_name = child.child_by_field_name(cs.FIELD_NAME)
+                if child_name is not None and safe_decode_text(child_name) == name:
+                    return True, None
+        if hoisted is not None:
+            return True, hoisted
+        return None
+
+    def _js_declaration_binding(
+        self, declaration: Node, name: str
+    ) -> tuple[bool, Node | None] | None:
+        for declarator in declaration.named_children:
+            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                continue
+            target = declarator.child_by_field_name(cs.FIELD_NAME)
+            if target is None or not self._js_pattern_binds(target, name):
+                continue
+            value = declarator.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None:
+                value = self._unwrap_ts_value(value)
+                if value.type in _INLINE_FUNC_VALUE_TYPES:
+                    return True, value
+            return True, None
+        return None
+
+    def _js_var_hoisted_binding(
+        self, body: Node | None, name: str
+    ) -> tuple[bool, Node | None]:
+        # `var` declarators anywhere in this function's body (nested callables
+        # and class bodies excluded: their vars are their own) bind `name` at
+        # function scope. A single var holding an inline function resolves to
+        # it; multiple same-named vars or a non-function value are unknowable.
+        if body is None:
+            return False, None
+        found: Node | None = None
+        count = 0
+        stack = list(body.named_children)
+        while stack:
+            node = stack.pop()
+            if (
+                node.type in _JS_LEXICAL_CALLABLE_SCOPES
+                or node.type == cs.TS_CLASS_BODY
+            ):
+                continue
+            if node.type == cs.TS_VARIABLE_DECLARATION:
+                decided = self._js_declaration_binding(node, name)
+                if decided is not None:
+                    count += 1
+                    found = decided[1]
+            stack.extend(node.named_children)
+        if count == 0:
+            return False, None
+        if count == 1:
+            return True, found
+        return True, None
 
     @staticmethod
     def _js_pattern_binds(pattern: Node, name: str) -> bool:

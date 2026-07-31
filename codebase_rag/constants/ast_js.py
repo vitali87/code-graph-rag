@@ -189,6 +189,7 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
 TS_JS_IF_STATEMENT = "if_statement"
 # Switch family: cases may fall through into the next case.
 TS_JS_SWITCH_STATEMENT = "switch_statement"
+TS_JS_SWITCH_BODY = "switch_body"
 TS_JS_SWITCH_CASE = "switch_case"
 TS_JS_SWITCH_DEFAULT = "switch_default"
 # `c ? a : b` (shared name with the Java grammar); C++ spells it

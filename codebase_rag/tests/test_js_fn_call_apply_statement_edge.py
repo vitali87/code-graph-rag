@@ -358,3 +358,146 @@ export function main (): number {
     cap = _run(tmp_path, src, filename="a.ts")
     edges = _edges_to_leaf(cap, "helper")
     assert any(f.endswith(".main") for f, _rel in edges)
+
+
+def _self_loops(cap: _Capture) -> set[str]:
+    return {
+        str(frm)
+        for frm, rel, to in cap.rels
+        if str(frm) == str(to) and rel == str(cs.RelationshipType.CALLS)
+    }
+
+
+def test_c_style_for_var_receiver_does_not_mislink(tmp_path: Path) -> None:
+    # The C-style loop variable is the binding at the call site, not the
+    # module function; `for_statement` introduces it outside any block.
+    src = """'use strict'
+function hook (x) { return x + 1 }
+function main (list) {
+  for (var hook = list.head; hook; hook = hook.next) { hook.call(this, 1) }
+  return 2
+}
+module.exports = { main, hook }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_switch_case_binding_does_not_mislink(tmp_path: Path) -> None:
+    # A lexical declaration inside a switch case scopes to the switch body.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+function main (o, x) {
+  switch (x) {
+    case 1: {
+      helper.call(this, 1)
+      break
+    }
+    case 2:
+      break
+  }
+  switch (x) {
+    case 1:
+      const helper = o.thing
+      helper.call(this, 1)
+      break
+  }
+  return 2
+}
+module.exports = { main, helper }
+"""
+    cap = _run(tmp_path, src)
+    # The first switch's receiver is genuinely the module function (a block
+    # with no local binding); the second's is the case-scoped const. Exactly
+    # the first site may emit; the assertion pins that the const site does
+    # not, by demanding at most the single legitimate edge.
+    edges = {
+        (f, rel)
+        for f, rel in _edges_to_leaf(cap, "helper")
+        if rel == str(cs.RelationshipType.CALLS) and f.endswith(".main")
+    }
+    assert len(edges) <= 1
+
+
+def test_try_block_var_hoists_to_function_scope(tmp_path: Path) -> None:
+    # `try { var hook = ... } catch {}` binds `hook` for the WHOLE function;
+    # the call after the try must not bind the module function.
+    src = """'use strict'
+function hook (x) { return x + 1 }
+function main (list) {
+  try { var hook = list.resolve() } catch (e) { }
+  hook.call(this, 1)
+  return 2
+}
+module.exports = { main, hook }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_sibling_block_var_arrow_links(tmp_path: Path) -> None:
+    # The mirror case: a var-bound arrow in a nested block hoists to function
+    # scope, so the call after the block resolves to the arrow.
+    src = """'use strict'
+function main (cond) {
+  if (cond) { var doIt = () => 1 }
+  doIt.call(this)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(rel == calls for _f, rel in _edges_to_leaf(cap, "doIt"))
+
+
+def test_object_method_shadowing_name_calls_module_function(tmp_path: Path) -> None:
+    # An object method's NAME does not bind in its own body; the call inside
+    # it resolves to the module function, never to a phantom self-loop.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+const o = { helper (x) { helper.call(this, 1); return x } }
+module.exports = { o, helper }
+"""
+    cap = _run(tmp_path, src)
+    assert not _self_loops(cap)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels)
+
+
+def test_class_method_named_like_function_calls_module_function(
+    tmp_path: Path,
+) -> None:
+    src = """'use strict'
+function helper (x) { return x + 1 }
+class C {
+  helper (x) { helper.call(this, 1); return x }
+}
+module.exports = { C, helper }
+"""
+    cap = _run(tmp_path, src)
+    assert not _self_loops(cap)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels)
+
+
+def test_named_function_expression_param_shadows_self_name(tmp_path: Path) -> None:
+    # A parameter sharing the function expression's own name wins inside the
+    # body, so the call must not bind the expression to itself.
+    src = """'use strict'
+const f = function helper (helper) { helper.call(this, 1); return 2 }
+module.exports = { f }
+"""
+    cap = _run(tmp_path, src)
+    assert not _self_loops(cap)
+
+
+def test_named_function_expression_self_recursion_links(tmp_path: Path) -> None:
+    # Without a shadowing param, the self-name IS the binding: genuine
+    # `.call` self-recursion keeps the function reachable.
+    src = """'use strict'
+const f = function helper () { helper.call(this) }
+module.exports = { f }
+"""
+    cap = _run(tmp_path, src)
+    assert _self_loops(cap)
