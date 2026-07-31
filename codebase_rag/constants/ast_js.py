@@ -228,6 +228,8 @@ TS_REST_PATTERN = "rest_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"
+# `{ a = dflt }` in a destructuring pattern: `left` binds, `right` is a READ.
+TS_OBJECT_ASSIGNMENT_PATTERN = "object_assignment_pattern"
 # `process.env.X` is a member_expression; `process.env['X']` a subscript, used
 # to detect environment-variable reads (issue #714 process.env follow-up).
 TS_SUBSCRIPT_EXPRESSION = "subscript_expression"

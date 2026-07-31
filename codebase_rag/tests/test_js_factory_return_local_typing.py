@@ -371,6 +371,111 @@ module.exports = ContentType
     )
 
 
+def test_iife_returning_factory_types_the_construction(tmp_path: Path) -> None:
+    # `return (function () { return new C(v) })()`: the IIFE's value IS the
+    # method's return, so the inner construction types it (a blanket
+    # nested-callable exclusion regresses this).
+    files = {
+        "content-type.js": """'use strict'
+class ContentType {
+  static from (v) {
+    return (function () { return new ContentType(v) })()
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        str(frm).endswith(".send")
+        and str(to) == "p.content-type.ContentType.parameters"
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_destructuring_reads_do_not_shadow(tmp_path: Path) -> None:
+    # Destructuring DEFAULTS, computed keys and array defaults READ outer
+    # names; treating those reads as block-scoped declarations would shadow
+    # the real outer binding and drop its type.
+    files = {
+        "content-type.js": """'use strict'
+function use (v) { return v }
+class ContentType {
+  static from (v) {
+    let x = new ContentType(v)
+    if (v === 1) { const { a = x } = v; use(a); return x }
+    if (v === 2) { const { [x]: b } = v; use(b); return x }
+    if (v === 3) { const [ c = x ] = v; use(c); return x }
+    return null
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        str(frm).endswith(".send")
+        and str(to) == "p.content-type.ContentType.parameters"
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_destructuring_read_keeps_conflict_veto(tmp_path: Path) -> None:
+    # The spurious block declaration also mis-scoped a genuine conflicting
+    # reassignment into the block, silently disabling the veto.
+    files = {
+        "content-type.js": """'use strict'
+class Other {
+  get parameters () { return new Map() }
+  touch () { return 1 }
+}
+class ContentType {
+  static from (v) {
+    let x = new ContentType(v)
+    if (v) { const { a = x } = v; x = new Other(v) }
+    return x
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_unextractable_constructor_keeps_veto(tmp_path: Path) -> None:
+    # `new registry.Cached(v)` has no extractable class name; a later
+    # DIFFERENT construction must veto, never silently win.
+    files = {
+        "content-type.js": """'use strict'
+class ContentType {
+  static from (v) {
+    let x = new v.registry.Cached(v)
+    if (!v) x = new ContentType(v)
+    return x
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )
+
+
 def test_generator_expression_locals_do_not_leak(tmp_path: Path) -> None:
     # `var` inside the generator discriminates: the lexical-block rule lets
     # var through, so only the generator exclusion blocks this leak.

@@ -284,8 +284,13 @@ class JsTypeInferenceEngine:
         for return_node in return_nodes:
             # Nested callables own their returns: a callback's `return new
             # Foo()` (or `return x`) is the callback's value, never the
-            # method's, so BOTH branches below are gated here.
-            if not self._return_belongs_to(return_node, method_node):
+            # method's. The ONE exception is an IIFE whose call value the
+            # method itself returns (`return (function () { return new C()
+            # })()`): its direct-expression returns ARE the method's value.
+            owner_is_method = self._return_belongs_to(return_node, method_node)
+            if not owner_is_method and not self._iife_return_of(
+                return_node, method_node
+            ):
                 continue
             for child in return_node.children:
                 if child.type == cs.TS_RETURN:
@@ -293,6 +298,11 @@ class JsTypeInferenceEngine:
 
                 if inferred_type := ut.analyze_return_expression(child, method_qn):
                     return inferred_type
+
+                if not owner_is_method:
+                    # An IIFE's `return x` reads the IIFE's OWN locals; the
+                    # method-body binding index says nothing about them.
+                    continue
 
                 # `return x` where the METHOD'S OWN body binds `x = new
                 # C(...)` (the cache-then-construct factory, fastify's
@@ -343,6 +353,67 @@ class JsTypeInferenceEngine:
                 return current.id == method_node.id
             current = current.parent
         return False
+
+    def _iife_return_of(self, return_node: ASTNode, method_node: ASTNode) -> bool:
+        # True when the return's owning callable is immediately invoked and
+        # the call's value is returned by the method itself, so the inner
+        # return IS the method's return value. A callback ARGUMENT never
+        # qualifies: its owner is not the callee of any enclosing call.
+        owner = self._js_owning_callable(return_node)
+        if owner is None or owner.id == method_node.id:
+            return False
+        call = self._js_enclosing_invocation(owner)
+        if call is None:
+            return False
+        consumer = self._js_value_consumer_return(call)
+        return consumer is not None and self._return_belongs_to(consumer, method_node)
+
+    @staticmethod
+    def _js_owning_callable(return_node: ASTNode) -> ASTNode | None:
+        current = return_node.parent
+        while current is not None:
+            if current.type in _JS_NESTED_CALLABLE_TYPES:
+                return current
+            current = current.parent
+        return None
+
+    @staticmethod
+    def _js_enclosing_invocation(owner: ASTNode) -> ASTNode | None:
+        # Climb value-transparent wrappers; at a call, require the wrapped
+        # owner to BE the callee (not an argument, not one operand of many).
+        node = owner
+        current = owner.parent
+        while current is not None:
+            if (
+                current.type == cs.TS_PARENTHESIZED_EXPRESSION
+                or current.type in cs.TS_CAST_WRAPPER_TYPES
+            ):
+                node = current
+                current = current.parent
+                continue
+            if current.type == cs.TS_CALL_EXPRESSION:
+                func = current.child_by_field_name(cs.FIELD_FUNCTION)
+                if func is not None and func.id == node.id:
+                    return current
+                return None
+            return None
+        return None
+
+    @staticmethod
+    def _js_value_consumer_return(call: ASTNode) -> ASTNode | None:
+        current = call.parent
+        while current is not None:
+            if (
+                current.type == cs.TS_PARENTHESIZED_EXPRESSION
+                or current.type in cs.TS_CAST_WRAPPER_TYPES
+                or current.type == cs.TS_AWAIT_EXPRESSION
+            ):
+                current = current.parent
+                continue
+            if current.type == cs.TS_RETURN_STATEMENT:
+                return current
+            return None
+        return None
 
     def _js_ctor_binding_index(self, method_node: ASTNode) -> _CtorBindingIndex:
         # One scan of the method body (nested callables excluded: their
@@ -438,21 +509,35 @@ class JsTypeInferenceEngine:
 
     @staticmethod
     def _js_binding_names(target: ASTNode) -> list[str]:
-        if target.type == cs.TS_IDENTIFIER:
-            name = safe_decode_text(target)
-            return [name] if name else []
+        # Only BINDING positions introduce names: a pattern default's right
+        # side, a computed key's expression, and a pair's key are READS of
+        # the enclosing scope and must not shadow it.
         names: list[str] = []
-        stack: list[ASTNode] = list(target.children)
+        stack: list[ASTNode] = [target]
         while stack:
             node = stack.pop()
-            if node.type in (
+            node_type = node.type
+            if node_type in (
                 cs.TS_IDENTIFIER,
                 cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
             ):
                 if name := safe_decode_text(node):
                     names.append(name)
-                continue
-            stack.extend(node.children)
+            elif node_type in (
+                cs.TS_ASSIGNMENT_PATTERN,
+                cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+            ):
+                if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
+                    stack.append(left)
+            elif node_type == cs.TS_PAIR_PATTERN:
+                if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                    stack.append(value)
+            elif node_type in (
+                cs.TS_OBJECT_PATTERN,
+                cs.TS_ARRAY_PATTERN,
+                cs.TS_REST_PATTERN,
+            ):
+                stack.extend(node.named_children)
         return names
 
     @staticmethod
@@ -498,11 +583,15 @@ class JsTypeInferenceEngine:
         for site, value in assigns.get(name, []):
             if self._js_innermost_scope(entries, site) == scope:
                 constructions.append(value)
+        # A construction whose class name cannot be extracted (`new
+        # registry.Cached(v)`) is an UNKNOWN class: it vetoes exactly like a
+        # different named class, never silently loses to one.
         ctor_names = {ut.extract_constructor_name(value) for value in constructions}
-        ctor_names.discard(None)
         if len(ctor_names) != 1:
             return None
         chosen = ctor_names.pop()
+        if chosen is None:
+            return None
         return next(
             value
             for value in constructions
