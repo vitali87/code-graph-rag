@@ -575,12 +575,9 @@ module.exports = { C, helper }
     assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
 
 
-def test_generator_function_expression_receiver_is_safe(tmp_path: Path) -> None:
-    # A `const gen = function* () {...}` receiver is recognised as a callable
-    # binding, but the definition pass does not yet REGISTER generator
-    # function expressions as nodes (tracked separately), so the span lookup
-    # correctly refuses and nothing is emitted. Pin that no edge is invented;
-    # once generator expressions are ingested, this flips to a positive link.
+def test_generator_function_expression_receiver_links(tmp_path: Path) -> None:
+    # A `const gen = function* () {...}` receiver registers like any inline
+    # function (issue #994) and the `.call` resolves to it by span.
     src = """'use strict'
 function main () {
   const gen = function* () { yield 1 }
@@ -590,7 +587,8 @@ function main () {
 module.exports = { main }
 """
     cap = _run(tmp_path, src)
-    assert not _edges_to_leaf(cap, "gen")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(rel == calls for _f, rel in _edges_to_leaf(cap, "gen"))
 
 
 def test_export_const_arrow_receiver_links(tmp_path: Path) -> None:

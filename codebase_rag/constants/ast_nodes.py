@@ -51,6 +51,10 @@ IMPORT_NODES_INCLUDE = ("preproc_include",)
 JS_TS_FUNCTION_NODES = (
     "function_declaration",
     "generator_function_declaration",
+    # The generator EXPRESSION (`const g = function* () {}`) is a function
+    # value like function_expression; omitting it left such nodes
+    # unregistered and unreferencable (issue #994).
+    "generator_function",
     "function_expression",
     "arrow_function",
     "method_definition",

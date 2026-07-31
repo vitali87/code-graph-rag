@@ -151,14 +151,14 @@ JS_PROTOTYPE_METHOD_QUERY = """
       object: (identifier) @constructor_name
       property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
     property: (property_identifier) @method_name)
-  right: (function_expression) @method_function)
+  right: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS object method query
 JS_OBJECT_METHOD_QUERY = """
 (pair
   key: (property_identifier) @method_name
-  value: (function_expression) @method_function)
+  value: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS method definition query
@@ -187,7 +187,7 @@ JS_ASSIGNMENT_ARROW_QUERY = """
 JS_ASSIGNMENT_FUNCTION_QUERY = """
 (assignment_expression
   (member_expression) @member_expr
-  (function_expression) @function_expr)
+  [(function_expression) (generator_function)] @function_expr)
 """
 
 # JS/TS control-flow node types + fields for the path-sensitive taint walk
@@ -225,12 +225,15 @@ TS_JS_FOR_STATEMENT = "for_statement"
 TS_JS_FOR_IN_STATEMENT = "for_in_statement"
 TS_JS_TRY_STATEMENT = "try_statement"
 TS_JS_CATCH_CLAUSE = "catch_clause"
+# `(a, b)`: the comma operator; its value is the LAST operand.
+TS_JS_SEQUENCE_EXPRESSION = "sequence_expression"
 TS_JS_SWITCH_BODY = "switch_body"
 # `for (var x of xs)` hoists x to the function; only this `kind` widens the
 # loop binding's scope past the for statement itself.
 TS_JS_VAR_KIND = "var"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
+FIELD_CONSEQUENCE = "consequence"
 FIELD_HANDLER = "handler"
 FIELD_FINALIZER = "finalizer"
 # The C-style `for (init; cond; increment)` update clause, which runs AFTER the
