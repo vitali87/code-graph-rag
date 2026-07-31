@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
 import sys
@@ -47,6 +48,12 @@ class MockNode:
     @property
     def type(self) -> str:
         return self.node_type
+
+    @property
+    def id(self) -> int:
+        # Real tree-sitter nodes expose a per-parse identity; object identity
+        # is the mock's equivalent.
+        return builtins.id(self)
 
     @property
     def children(self) -> list[MockNode]:

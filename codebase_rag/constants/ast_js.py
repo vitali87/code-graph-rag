@@ -194,9 +194,19 @@ TS_JS_SWITCH_DEFAULT = "switch_default"
 # `c ? a : b` (shared name with the Java grammar); C++ spells it
 # conditional_expression.
 TS_JS_TERNARY_EXPRESSION = "ternary_expression"
+# tree-sitter-javascript parses `await (X)()` as a CALL to an identifier
+# spelled `await` with X as its argument (the TS grammar does not); climbs
+# treat that call as the transparent await it denotes.
+JS_AWAIT_IDENTIFIER = "await"
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
+# The computed-name leaf prefix of a well-known-symbol class member
+# (`[Symbol.iterator]`, `[Symbol.toStringTag]`) as the definition pass
+# registers it; user symbol keys register without the `Symbol.` path.
+JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
+JS_COMPUTED_NAME_SUFFIX = "]"
+JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX = "[Symbol["
 # `&&` alone among them cannot yield its LEFT operand as a function value.
 JS_OPERATOR_LOGICAL_AND = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"
@@ -207,6 +217,10 @@ TS_JS_TRY_STATEMENT = "try_statement"
 TS_JS_CATCH_CLAUSE = "catch_clause"
 # `(a, b)`: the comma operator; its value is the LAST operand.
 TS_JS_SEQUENCE_EXPRESSION = "sequence_expression"
+TS_JS_SWITCH_BODY = "switch_body"
+# `for (var x of xs)` hoists x to the function; only this `kind` widens the
+# loop binding's scope past the for statement itself.
+TS_JS_VAR_KIND = "var"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
 FIELD_CONSEQUENCE = "consequence"
@@ -227,6 +241,8 @@ TS_REST_PATTERN = "rest_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"
+# `{ a = dflt }` in a destructuring pattern: `left` binds, `right` is a READ.
+TS_OBJECT_ASSIGNMENT_PATTERN = "object_assignment_pattern"
 # `process.env.X` is a member_expression; `process.env['X']` a subscript, used
 # to detect environment-variable reads (issue #714 process.env follow-up).
 TS_SUBSCRIPT_EXPRESSION = "subscript_expression"
