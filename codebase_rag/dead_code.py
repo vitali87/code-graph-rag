@@ -121,6 +121,23 @@ def _is_cpp_operator_root(name: str, path: str) -> bool:
     return name.startswith(cs.CPP_OPERATOR_PREFIX) and path.endswith(cs.CPP_EXTENSIONS)
 
 
+def _is_js_well_known_symbol_root(name: str, is_method: bool, path: str) -> bool:
+    # A JS/TS class member keyed by a well-known symbol (`[Symbol.iterator]`,
+    # `get [Symbol.toStringTag]`) is invoked implicitly by the language
+    # runtime (iteration protocol, Object.prototype.toString, using/dispose),
+    # never by a name the graph can see, so it is a reachability root (like
+    # Python dunders / Rust trait methods). The registered leaf keeps the
+    # computed-name brackets, so the `[Symbol.` prefix on a JS/TS file
+    # identifies exactly these members; a user symbol key registers without
+    # the `Symbol.` path and stays ordinary code.
+    return (
+        is_method
+        and path.endswith(cs.JS_TS_ALL_EXTENSIONS)
+        and name.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
+        and name.endswith(cs.JS_COMPUTED_NAME_SUFFIX)
+    )
+
+
 def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     # A Java serialization hook (`readObject`/`writeObject`/`writeReplace`/
     # `readResolve`/`readObjectNoData`) is invoked reflectively by the java.io
@@ -415,6 +432,13 @@ def dead_code_from_graph(
             roots.add(qn)
         elif _is_rust_runtime_root(leaf, qn in method_qns, path):
             roots.add(qn)
+        # NOT leaf-based: the computed name contains a dot, so the qn's
+        # last dotted segment is `toStringTag]`; match on the bracketed
+        # member name as registered.
+        elif _is_js_well_known_symbol_root(
+            str(props.get(cs.KEY_NAME) or ""), qn in method_qns, path
+        ):
+            roots.add(qn)
         elif _is_cpp_operator_root(leaf, path) or _is_c_cpp_entry_root(
             leaf, qn in method_qns, path, qn, project_prefix
         ):
@@ -568,6 +592,10 @@ def _node_props(row: ResultRow) -> PropertyDict:
     # reads are kept; the report is built from the raw rows.
     return {
         cs.KEY_PATH: str(row.get(cs.KEY_PATH) or ""),
+        # The registered member NAME survives here because a computed
+        # well-known-symbol name (`[Symbol.toStringTag]`) contains a dot and
+        # cannot be recovered from the qn's last dotted segment.
+        cs.KEY_NAME: str(row.get(cs.KEY_NAME) or ""),
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,

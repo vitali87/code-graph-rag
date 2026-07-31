@@ -197,6 +197,11 @@ TS_JS_TERNARY_EXPRESSION = "ternary_expression"
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
+# The computed-name leaf prefix of a well-known-symbol class member
+# (`[Symbol.iterator]`, `[Symbol.toStringTag]`) as the definition pass
+# registers it; user symbol keys register without the `Symbol.` path.
+JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
+JS_COMPUTED_NAME_SUFFIX = "]"
 # `&&` alone among them cannot yield its LEFT operand as a function value.
 JS_OPERATOR_LOGICAL_AND = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"
