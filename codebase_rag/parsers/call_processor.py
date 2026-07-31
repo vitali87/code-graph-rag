@@ -2439,8 +2439,12 @@ class CallProcessor:
                     language in _JS_TS_LANGUAGES
                 ):
                     # An unparenthesised direct IIFE (`const x = function ()
-                    # {...}()`) has the function itself as the callee; mirror
-                    # the PREFIX_IIFE_DIRECT name the definition side mints.
+                    # {...}()`) has the function itself as the callee. A NAMED
+                    # one registers under its own name (possibly a duplicate
+                    # variant), so only the span-resolved path may emit its
+                    # edge; a positional name here is for the anonymous form.
+                    if self._js_iife_callee_name(func_child):
+                        return None
                     return (
                         f"{cs.PREFIX_IIFE_DIRECT}"
                         f"{func_child.start_point[0]}_{func_child.start_point[1]}"
@@ -2604,10 +2608,51 @@ class CallProcessor:
         for child in parenthesized_expr.children:
             match child.type:
                 case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION:
+                    # A named IIFE registers under its own name, not the
+                    # positional iife_* name; its edge comes from the
+                    # span-resolved path, never a bare-name lookup (a
+                    # same-named sibling would capture it).
+                    if self._js_iife_callee_name(child):
+                        return None
                     return f"{cs.IIFE_FUNC_PREFIX}{child.start_point[0]}_{child.start_point[1]}"
                 case cs.TS_ARROW_FUNCTION:
                     return f"{cs.IIFE_ARROW_PREFIX}{child.start_point[0]}_{child.start_point[1]}"
         return None
+
+    @staticmethod
+    def _js_iife_callee_name(func_node: Node) -> str | None:
+        name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and name_node.text is not None:
+            return name_node.text.decode(cs.ENCODING_UTF8)
+        return None
+
+    def _js_named_iife_callee(
+        self, call_node: Node, module_qn: str
+    ) -> FunctionLocation | None:
+        # A NAMED IIFE (`(function build () {...})()`, `function build ()
+        # {...}()`) registers under its own name, minted as a duplicate
+        # variant when a sibling shares it, so neither the positional iife_*
+        # names nor bare-name resolution can reach it safely. Resolve the
+        # callee NODE by its own source span to the exact minted qn.
+        func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func_child is None:
+            return None
+        target = func_child
+        if func_child.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            target = next(
+                (
+                    child
+                    for child in func_child.children
+                    if child.type
+                    in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION)
+                ),
+                func_child,
+            )
+        if target.type not in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+            return None
+        if not self._js_iife_callee_name(target):
+            return None
+        return self._recorded_caller(target, module_qn)
 
     def _ingest_function_calls(
         self,
@@ -2953,6 +2998,17 @@ class CallProcessor:
                         caller_spec,
                         calls_rel,
                         (loc.label, qn_key, loc.qualified_name),
+                    )
+                # A NAMED IIFE yields no call name (a bare-name lookup would
+                # bind a same-named sibling); its edge is emitted here from
+                # the callee node's own span.
+                if (
+                    iife_loc := self._js_named_iife_callee(call_node, module_qn)
+                ) is not None:
+                    ensure_rel(
+                        caller_spec,
+                        calls_rel,
+                        (iife_loc.label, qn_key, iife_loc.qualified_name),
                     )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)

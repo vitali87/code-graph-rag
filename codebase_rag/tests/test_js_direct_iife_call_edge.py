@@ -83,3 +83,51 @@ const a = function* () { yield helper(1) }()
 module.exports = { a }
 """
     _assert_single_direct_iife_called(_run(tmp_path, src))
+
+
+def _assert_named_iife_called(cap: _Capture, leaf: str) -> None:
+    # A NAMED IIFE registers under its own name, not a positional iife_*
+    # name; the call side must agree or the node and everything only it
+    # calls report dead.
+    named = [n for n in cap.nodes if n.endswith(f".{leaf}")]
+    assert len(named) == 1
+    assert any(
+        rel == str(cs.RelationshipType.CALLS) and str(to) == named[0]
+        for _frm, rel, to in cap.rels
+    )
+
+
+def test_named_direct_generator_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const b = function* gnamed () { yield helper(2) }()
+module.exports = { b }
+"""
+    _assert_named_iife_called(_run(tmp_path, src), "gnamed")
+
+
+def test_named_parenthesized_generator_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const b = (function* pnamed () { yield helper(2) })()
+module.exports = { b }
+"""
+    _assert_named_iife_called(_run(tmp_path, src), "pnamed")
+
+
+def test_named_direct_function_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const b = function named () { return helper(2) }()
+module.exports = { b }
+"""
+    _assert_named_iife_called(_run(tmp_path, src), "named")
+
+
+def test_named_parenthesized_function_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const b = (function pnamed () { return helper(2) })()
+module.exports = { b }
+"""
+    _assert_named_iife_called(_run(tmp_path, src), "pnamed")
