@@ -98,6 +98,20 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
+
+# Declarator kinds for the symbol-index value chase (issue #989).
+_JS_DECL_PLAIN = "plain"
+_JS_DECL_DESTRUCTURED = "destructured"
+
+
+def _walk_named(node: Node):  # noqa: ANN201 - simple generator over Node
+    stack = list(node.named_children)
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(current.named_children)
+
+
 # Languages with argument-REFERENCE edges but no interprocedural
 # callable-param flow: passing a function keeps it reachable (REFERENCES),
 # while invocation edges stay with the flow languages.
@@ -6623,66 +6637,43 @@ class CallProcessor:
 
     def _js_symbol_value_class_qn(self, value: Node, module_qn: str) -> str | None:
         # Resolve the INSTALLED value to a class qn, entirely at sweep time
-        # so only strings are kept: a direct construction, a factory call, or
-        # an identifier typed by the enclosing callable's locals.
-        js = self._resolver.type_inference.js_type_inference
-        if value.type == cs.TS_IDENTIFIER:
-            enclosing = value.parent
-            while (
-                enclosing is not None and enclosing.type not in cs.JS_TS_FUNCTION_NODES
-            ):
-                enclosing = enclosing.parent
-            if enclosing is None:
-                return None
-            hint = js.build_local_variable_type_map(enclosing, module_qn).get(
-                safe_decode_text(value) or ""
-            )
-        else:
-            hint = js._infer_js_variable_type_from_value(value, module_qn)
-        if not hint:
-            return None
-        return self._js_class_qn_from_hint(hint, module_qn)
+        # so only strings are kept.
+        return self._js_value_type_class_qn(value, module_qn, depth=0)
 
-    def _js_class_qn_from_hint(self, hint: str, module_qn: str) -> str | None:
+    def _js_value_type_class_qn(
+        self, value: Node | None, module_qn: str, depth: int
+    ) -> str | None:
+        # Type a VALUE expression to a registered class qn: a direct
+        # construction, a factory call (bare, member/static, or one whose
+        # returned OBJECT the caller destructures), or an identifier chased
+        # to its declarator. Depth-capped: each hop crosses at most one
+        # binding or one function return.
+        if value is None or depth > 3:
+            return None
+        node_type = value.type
+        if (
+            node_type == cs.TS_PARENTHESIZED_EXPRESSION
+            or node_type in cs.TS_CAST_WRAPPER_TYPES
+        ):
+            inner = next(
+                (c for c in value.named_children if c.type != cs.TS_COMMENT), None
+            )
+            return self._js_value_type_class_qn(inner, module_qn, depth)
+        if node_type == cs.TS_NEW_EXPRESSION:
+            ctor = js_ts_utils.extract_constructor_name(value)
+            return self._js_registered_class(ctor, module_qn) if ctor else None
+        if node_type == cs.TS_IDENTIFIER:
+            return self._js_identifier_class_qn(value, module_qn, depth)
+        if node_type == cs.TS_CALL_EXPRESSION:
+            return self._js_call_result_class_qn(value, module_qn, depth)
+        return None
+
+    def _js_registered_class(self, name: str, module_qn: str) -> str | None:
         js = self._resolver.type_inference.js_type_inference
         registry = self._resolver.function_registry
-        if hint in registry and registry[hint] == NodeType.CLASS:
-            return hint
-        # _resolve_js_class_name falls back to the imported qn even when it
-        # is not a class; only a REGISTERED class ends the search here.
-        resolved = js._resolve_js_class_name(hint, module_qn)
-        if (
-            resolved is not None
-            and resolved in registry
-            and registry[resolved] == NodeType.CLASS
-        ):
-            return resolved
-        # A bare FACTORY name: resolve the function and type its return.
-        fn_qn = self._js_symbol_name_qn(hint, module_qn)
-        if fn_qn is None or fn_qn not in registry:
-            return None
-        fn_node = self._js_function_node_by_qn(fn_qn)
-        if fn_node is None:
-            return None
-        factory_module = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        # A direct `return new X(...)` names the class outright (the general
-        # return analysis resolves a NEW to the factory's OWN scope, which
-        # for a top-level function is the module).
-        if ctor := self._js_direct_return_ctor(fn_node):
-            resolved = js._resolve_js_class_name(ctor, factory_module)
-            if (
-                resolved is not None
-                and resolved in registry
-                and registry[resolved] == NodeType.CLASS
-            ):
-                return resolved
-            return None
-        returned = js._analyze_return_statements(fn_node, fn_qn)
-        if returned is None:
-            return None
-        if returned in registry and registry[returned] == NodeType.CLASS:
-            return returned
-        resolved = js._resolve_js_class_name(returned, factory_module)
+        if name in registry and registry[name] == NodeType.CLASS:
+            return name
+        resolved = js._resolve_js_class_name(name, module_qn)
         if (
             resolved is not None
             and resolved in registry
@@ -6690,6 +6681,180 @@ class CallProcessor:
         ):
             return resolved
         return None
+
+    def _js_identifier_class_qn(
+        self, ident: Node, module_qn: str, depth: int
+    ) -> str | None:
+        # Chase the identifier to the declarator that binds it, searching
+        # each enclosing callable from the innermost outward (a closure
+        # reads outer scopes), then module scope.
+        name = safe_decode_text(ident)
+        if not name:
+            return None
+        scope = ident.parent
+        while scope is not None:
+            if scope.type in cs.JS_TS_FUNCTION_NODES or scope.parent is None:
+                found = self._js_declarator_for(scope, name)
+                if found is not None:
+                    kind, value = found
+                    if kind == _JS_DECL_PLAIN:
+                        return self._js_value_type_class_qn(value, module_qn, depth + 1)
+                    return self._js_destructured_return_class(
+                        value, name, module_qn, depth + 1
+                    )
+            scope = scope.parent
+        return None
+
+    @staticmethod
+    def _js_declarator_for(scope: Node, name: str) -> tuple[str, Node] | None:
+        # The declarator binding `name` directly under this scope (nested
+        # callables own their locals and are skipped).
+        stack: list[Node] = list(scope.children)
+        while stack:
+            node = stack.pop()
+            if node.type in cs.JS_TS_FUNCTION_NODES:
+                continue
+            if node.type == cs.TS_VARIABLE_DECLARATOR:
+                target = node.child_by_field_name(cs.FIELD_NAME)
+                value = node.child_by_field_name(cs.FIELD_VALUE)
+                if target is not None and value is not None:
+                    if (
+                        target.type == cs.TS_IDENTIFIER
+                        and safe_decode_text(target) == name
+                    ):
+                        return _JS_DECL_PLAIN, value
+                    if target.type != cs.TS_IDENTIFIER and any(
+                        n.type
+                        in (
+                            cs.TS_IDENTIFIER,
+                            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+                        )
+                        and safe_decode_text(n) == name
+                        for n in _walk_named(target)
+                    ):
+                        return _JS_DECL_DESTRUCTURED, value
+            stack.extend(node.children)
+        return None
+
+    def _js_call_result_class_qn(
+        self, call: Node, module_qn: str, depth: int
+    ) -> str | None:
+        func = call.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None:
+            return None
+        if func.type == cs.TS_IDENTIFIER:
+            fn_name = safe_decode_text(func)
+            if not fn_name:
+                return None
+            return self._js_factory_return_class(
+                self._js_symbol_name_qn(fn_name, module_qn), module_qn, depth
+            )
+        if func.type == cs.TS_MEMBER_EXPRESSION:
+            obj = func.child_by_field_name(cs.FIELD_OBJECT)
+            prop = func.child_by_field_name(cs.FIELD_PROPERTY)
+            if (
+                obj is None
+                or prop is None
+                or obj.type != cs.TS_IDENTIFIER
+                or not (owner := safe_decode_text(obj))
+                or not (method := safe_decode_text(prop))
+            ):
+                return None
+            js = self._resolver.type_inference.js_type_inference
+            hint = js._infer_js_method_return_type(
+                f"{owner}{cs.SEPARATOR_DOT}{method}", module_qn
+            )
+            if hint and (resolved := self._js_registered_class(hint, module_qn)):
+                return resolved
+            # A static assigned OUTSIDE the class body (`C.build = build`;
+            # fastify's SchemaController.buildSchemaController) is a free
+            # function in the class's module, invisible to the class-body
+            # method finder.
+            class_qn = js._resolve_js_class_name(owner, module_qn)
+            if class_qn is None:
+                return None
+            class_module = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            return self._js_factory_return_class(
+                f"{class_module}{cs.SEPARATOR_DOT}{method}", class_module, depth
+            )
+        return None
+
+    def _js_factory_return_class(
+        self, fn_qn: str | None, module_qn: str, depth: int
+    ) -> str | None:
+        registry = self._resolver.function_registry
+        if fn_qn is None or fn_qn not in registry:
+            return None
+        fn_node = self._js_function_node_by_qn(fn_qn)
+        if fn_node is None:
+            return None
+        factory_module = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if ctor := self._js_direct_return_ctor(fn_node):
+            return self._js_registered_class(ctor, factory_module)
+        js = self._resolver.type_inference.js_type_inference
+        returned = js._analyze_return_statements(fn_node, fn_qn)
+        if returned is None:
+            return None
+        return self._js_registered_class(returned, factory_module)
+
+    def _js_destructured_return_class(
+        self, call_value: Node, prop_name: str, module_qn: str, depth: int
+    ) -> str | None:
+        # `const { name } = f(...)`: the binding's type is the type of the
+        # `name` property in f's returned object literal.
+        if depth > 3 or call_value.type != cs.TS_CALL_EXPRESSION:
+            return None
+        func = call_value.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None or func.type != cs.TS_IDENTIFIER:
+            return None
+        fn_name = safe_decode_text(func)
+        if not fn_name:
+            return None
+        fn_qn = self._js_symbol_name_qn(fn_name, module_qn)
+        registry = self._resolver.function_registry
+        if fn_qn is None or fn_qn not in registry:
+            return None
+        fn_node = self._js_function_node_by_qn(fn_qn)
+        if fn_node is None:
+            return None
+        factory_module = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        for obj in self._js_own_returned_objects(fn_node):
+            for child in obj.named_children:
+                if child.type == cs.TS_PAIR:
+                    key = child.child_by_field_name(cs.FIELD_KEY)
+                    if (
+                        key is not None
+                        and key.type == cs.TS_PROPERTY_IDENTIFIER
+                        and safe_decode_text(key) == prop_name
+                    ):
+                        return self._js_value_type_class_qn(
+                            child.child_by_field_name(cs.FIELD_VALUE),
+                            factory_module,
+                            depth + 1,
+                        )
+                elif (
+                    child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER
+                    and safe_decode_text(child) == prop_name
+                ):
+                    return self._js_identifier_class_qn(
+                        child, factory_module, depth + 1
+                    )
+        return None
+
+    @staticmethod
+    def _js_own_returned_objects(fn_node: Node) -> list[Node]:
+        objects: list[Node] = []
+        stack: list[Node] = list(fn_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in cs.JS_TS_FUNCTION_NODES:
+                continue
+            if node.type == cs.TS_RETURN_STATEMENT:
+                for child in node.named_children:
+                    if child.type == cs.TS_OBJECT:
+                        objects.append(child)
+            stack.extend(node.children)
+        return objects
 
     @staticmethod
     def _js_direct_return_ctor(fn_node: Node) -> str | None:
