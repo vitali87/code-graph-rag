@@ -2435,6 +2435,16 @@ class CallProcessor:
                             return peeled.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
+                case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION if (
+                    language in _JS_TS_LANGUAGES
+                ):
+                    # An unparenthesised direct IIFE (`const x = function ()
+                    # {...}()`) has the function itself as the callee; mirror
+                    # the PREFIX_IIFE_DIRECT name the definition side mints.
+                    return (
+                        f"{cs.PREFIX_IIFE_DIRECT}"
+                        f"{func_child.start_point[0]}_{func_child.start_point[1]}"
+                    )
 
         match call_node.type:
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
