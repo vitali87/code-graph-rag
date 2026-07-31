@@ -2593,7 +2593,7 @@ class CallProcessor:
     def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
         for child in parenthesized_expr.children:
             match child.type:
-                case cs.TS_FUNCTION_EXPRESSION:
+                case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION:
                     return f"{cs.IIFE_FUNC_PREFIX}{child.start_point[0]}_{child.start_point[1]}"
                 case cs.TS_ARROW_FUNCTION:
                     return f"{cs.IIFE_ARROW_PREFIX}{child.start_point[0]}_{child.start_point[1]}"

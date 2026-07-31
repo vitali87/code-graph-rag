@@ -73,8 +73,8 @@ module.exports = { main }
 """
     cap = _run(tmp_path, src)
     gen_nodes = [n for n in cap.nodes if cs.PREFIX_ANONYMOUS in n]
-    assert gen_nodes
-    assert any(_has_inbound(cap, n) for n in gen_nodes)
+    assert len(gen_nodes) == 1
+    assert _has_inbound(cap, gen_nodes[0])
 
 
 def test_object_literal_generator_value_names_and_references(tmp_path: Path) -> None:
@@ -98,3 +98,24 @@ module.exports = { C, main }
 """
     cap = _run(tmp_path, src)
     assert any(str(n).endswith("C.gen") for n in cap.nodes)
+    assert any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".main")
+        and str(to).endswith("C.gen")
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_parenthesized_generator_iife_gets_module_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const a = (function* () { yield helper(1) })()
+module.exports = { a }
+"""
+    cap = _run(tmp_path, src)
+    iife_nodes = [n for n in cap.nodes if cs.IIFE_FUNC_PREFIX in n]
+    assert len(iife_nodes) == 1
+    assert any(
+        rel == str(cs.RelationshipType.CALLS) and str(to) == iife_nodes[0]
+        for _frm, rel, to in cap.rels
+    )
