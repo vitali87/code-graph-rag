@@ -26,6 +26,7 @@ class JsTypeInferenceEngine:
         "project_name",
         "_find_method_ast_node",
         "_queries",
+        "_ctor_binding_maps",
     )
 
     def __init__(
@@ -41,6 +42,10 @@ class JsTypeInferenceEngine:
         self.project_name = project_name
         self._find_method_ast_node = find_method_ast_node_func
         self._queries = queries
+        # Per-method map of local name -> the single `new C(...)` bound to it
+        # (None marks a conflict), built once per method for the identifier
+        # return inference; keyed by the method node's stable id.
+        self._ctor_binding_maps: dict[int, dict[str, ASTNode | None]] = {}
 
     def _get_declarators_via_query(
         self, caller_node: ASTNode, language: cs.SupportedLanguage | None = None
@@ -258,39 +263,64 @@ class JsTypeInferenceEngine:
                 if inferred_type := ut.analyze_return_expression(child, method_qn):
                     return inferred_type
 
-                # `return x` where the body assigns `x = new C(...)` (the
-                # cache-then-construct factory, fastify's ContentType.from,
-                # issue #992): the constructed class types the return when
-                # every construction bound to x agrees. Assignments of
-                # UNKNOWN values (the cache hit) do not veto: the cached
-                # instance is the same constructed type in practice, and a
-                # conflicting second class does veto below.
-                if child.type == cs.TS_IDENTIFIER and (
-                    constructed := self._sole_constructed_binding(
-                        method_node, safe_decode_text(child)
-                    )
+                # `return x` where the METHOD'S OWN body binds `x = new
+                # C(...)` (the cache-then-construct factory, fastify's
+                # ContentType.from, issue #992): the CONSTRUCTED class types
+                # the return when every construction bound to x agrees.
+                # Unknown-value assignments (the cache hit) do not veto; a
+                # second DIFFERENT class does. Nested callables own their
+                # locals and their returns, so both are excluded.
+                if (
+                    child.type == cs.TS_IDENTIFIER
+                    and self._return_belongs_to(return_node, method_node)
+                    and (name := safe_decode_text(child))
+                    and (constructed := self._js_ctor_bindings(method_node).get(name))
+                    is not None
                 ):
-                    if inferred_type := ut.analyze_return_expression(
-                        constructed, method_qn
-                    ):
-                        return inferred_type
+                    ctor = ut.extract_constructor_name(constructed)
+                    if ctor:
+                        own_qn = ut.analyze_return_expression(constructed, method_qn)
+                        own_leaf = (
+                            own_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if own_qn else None
+                        )
+                        # analyze_return_expression resolves a NEW to the
+                        # method's OWN class; keep that qn precision only
+                        # when the constructed class IS the own class.
+                        # Otherwise resolve the constructed class in the
+                        # FACTORY'S module (where the construction names it),
+                        # falling back to the bare name.
+                        if ctor == own_leaf:
+                            return own_qn
+                        if own_qn and cs.SEPARATOR_DOT in own_qn:
+                            factory_module = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                            if resolved := self._resolve_js_class_name(
+                                ctor, factory_module
+                            ):
+                                return resolved
+                        return ctor
 
         return None
 
     @staticmethod
-    def _sole_constructed_binding(
-        method_node: ASTNode, name: str | None
-    ) -> ASTNode | None:
-        # The single `new C(...)` bound to local `name` anywhere in this
-        # method (declarator value or assignment right), or None when there
-        # is no construction or two constructions of DIFFERENT classes.
-        if not name:
-            return None
-        found: ASTNode | None = None
-        found_ctor: str | None = None
+    def _return_belongs_to(return_node: ASTNode, method_node: ASTNode) -> bool:
+        current = return_node.parent
+        while current is not None:
+            if current.type in cs.JS_TS_FUNCTION_NODES:
+                return current.id == method_node.id
+            current = current.parent
+        return False
+
+    def _js_ctor_bindings(self, method_node: ASTNode) -> dict[str, ASTNode | None]:
+        cached = self._ctor_binding_maps.get(method_node.id)
+        if cached is not None:
+            return cached
+        bindings: dict[str, ASTNode | None] = {}
         stack: list[ASTNode] = list(method_node.children)
         while stack:
             node = stack.pop()
+            if node.type in cs.JS_TS_FUNCTION_NODES:
+                # A nested callable's locals are its own.
+                continue
             target_value: tuple[ASTNode | None, ASTNode | None] | None = None
             if node.type == cs.TS_VARIABLE_DECLARATOR:
                 target_value = (
@@ -308,14 +338,16 @@ class JsTypeInferenceEngine:
                     target is not None
                     and value is not None
                     and target.type == cs.TS_IDENTIFIER
-                    and safe_decode_text(target) == name
                     and value.type == cs.TS_NEW_EXPRESSION
+                    and (bound_name := safe_decode_text(target))
                 ):
                     ctor = ut.extract_constructor_name(value)
-                    if found is None:
-                        found = value
-                        found_ctor = ctor
-                    elif ctor != found_ctor:
-                        return None
+                    if bound_name not in bindings:
+                        bindings[bound_name] = value
+                    else:
+                        prior = bindings[bound_name]
+                        if prior is None or ut.extract_constructor_name(prior) != ctor:
+                            bindings[bound_name] = None
             stack.extend(node.children)
-        return found
+        self._ctor_binding_maps[method_node.id] = bindings
+        return bindings
