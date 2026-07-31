@@ -1496,6 +1496,7 @@ class CallProcessor:
                     None,
                     None,
                     assignment_boundaries,
+                    language=language,
                 )
             if language == cs.SupportedLanguage.GO:
                 # A module-scope Go func map/slice (var funcMap = map[...]{...})
@@ -1519,6 +1520,7 @@ class CallProcessor:
                     None,
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                    language=language,
                 )
             if language in _JS_TS_LANGUAGES:
                 # A module-scope JSX element (export default <App />) can sit
@@ -2756,6 +2758,7 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
+                language=language,
             )
         if language in _JS_TS_LANGUAGES:
             self._ingest_jsx_component_references(
@@ -3686,6 +3689,18 @@ class CallProcessor:
                 )
         return True
 
+    @staticmethod
+    def _js_is_logical_binary(node: Node) -> bool:
+        # `||`, `??` and `&&` evaluate to ONE OF their operands; every other
+        # binary operator produces a fresh value. Callers gate to JS/TS: Go
+        # spells boolean `||`/`&&` with the same node and field, where a
+        # named operand is a bool, never a callable.
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return (
+            operator is not None
+            and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
+        )
+
     def _ingest_assignment_function_references(
         self,
         caller_node: Node,
@@ -3695,6 +3710,7 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # `x = some_function` binds a first-class function value to a name; the
         # alias is then stored, passed onward, or returned for dynamic dispatch
@@ -3744,12 +3760,61 @@ class CallProcessor:
                     # arrow-const RHS is registered by its name, so the by-position
                     # lookup finds nothing.
                     # A LOGICAL DEFAULT RHS (`done = done || function (err,
-                    # str) {...}`, express's render) hides the stored function
-                    # one level down; scan the binary operands too.
+                    # str) {...}`, express's render; `options.handler =
+                    # options.handler || defaultHandler`, fastify, issue
+                    # #990) evaluates TO one of its operands, so a NAMED
+                    # function operand flows as the assigned value exactly
+                    # like an inline one; chains (`a || b || defaultFmt`)
+                    # nest further logical binaries on the left. Only the
+                    # short-circuit operators qualify: a comparison or
+                    # arithmetic operand (`x === fn`, `n + fn`) never IS the
+                    # assigned value, so named operands there stay silent
+                    # while inline functions keep the historical reference.
                     if value.type == cs.TS_BINARY_EXPRESSION:
-                        for operand in value.named_children:
-                            operand = self._unwrap_ts_value(operand)
-                            if operand.type in _INLINE_FUNC_VALUE_TYPES:
+                        # Named-operand emission is JS/TS-only: Go reaches
+                        # this walk too, and its boolean `||`/`&&` operands
+                        # would fabricate phantom edges (a bool named like a
+                        # method falsely revives it).
+                        is_logical = (
+                            language in cs.JS_TS_LANGUAGES
+                            and self._js_is_logical_binary(value)
+                        )
+                        # Position matters for `&&` only: a function value
+                        # is always truthy, so the LEFT operand of `&&` can
+                        # never be the expression's result; `||`/`??` flow
+                        # either operand.
+                        operands: list[tuple[Node, bool]] = []
+                        pending: list[tuple[Node, bool]] = [(value, True)]
+                        while pending:
+                            raw, value_position = pending.pop()
+                            operand = self._unwrap_ts_value(raw)
+                            if (
+                                is_logical
+                                and operand.type == cs.TS_BINARY_EXPRESSION
+                                and self._js_is_logical_binary(operand)
+                            ):
+                                is_and = (
+                                    safe_decode_text(
+                                        operand.child_by_field_name(cs.FIELD_OPERATOR)
+                                    )
+                                    == cs.JS_OPERATOR_LOGICAL_AND
+                                )
+                                left = operand.child_by_field_name(cs.FIELD_LEFT)
+                                right = operand.child_by_field_name(cs.TS_FIELD_RIGHT)
+                                if left is not None:
+                                    pending.append(
+                                        (left, value_position and not is_and)
+                                    )
+                                if right is not None:
+                                    pending.append((right, value_position))
+                                continue
+                            operands.append((operand, value_position))
+                        for operand, value_position in operands:
+                            if operand.type in _INLINE_FUNC_VALUE_TYPES or (
+                                is_logical
+                                and value_position
+                                and operand.type in _ASSIGNMENT_RHS_REF_TYPES
+                            ):
                                 self._emit_callback_edge(
                                     caller_spec,
                                     operand,
