@@ -337,43 +337,43 @@ class JsTsModuleSystemMixin:
                 # Assigned when the enclosing function runs, not at module
                 # load: neither a load-time call nor the module's export.
                 continue
-            immediately_invoked = False
-            if export_function.type == cs.TS_CALL_EXPRESSION:
-                callee: ASTNode | None = export_function.child_by_field_name(
-                    cs.FIELD_FUNCTION
-                )
-                while (
-                    callee is not None and callee.type == cs.TS_PARENTHESIZED_EXPRESSION
-                ):
-                    callee = callee.named_children[0] if callee.named_children else None
-                if callee is None or callee.type not in (
-                    cs.TS_FUNCTION_EXPRESSION,
-                    cs.TS_ARROW_FUNCTION,
-                ):
-                    # Any other call expression is not a function export.
-                    continue
-                export_function = callee
-                immediately_invoked = True
-            else:
-                # The function IS the export: register it (own name, or its
-                # position when anonymous) marked exported. A refusal (span
-                # already claimed by the node's earlier registration) is
-                # fine: finalisation reads the claimed span either way.
-                name_node = export_function.child_by_field_name(cs.FIELD_NAME)
-                function_name = (
-                    safe_decode_text(name_node) if name_node is not None else None
-                )
-                if not function_name:
-                    row, col = export_function.start_point
-                    function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
-                self._ingest_export_function(
-                    export_function,
-                    function_name,
-                    module_qn,
-                    cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
-                )
-            pending.append((export_function, immediately_invoked))
+            entry = self._pending_direct_export_entry(export_function, module_qn)
+            if entry is not None:
+                pending.append(entry)
         return pending
+
+    def _pending_direct_export_entry(
+        self, export_function: ASTNode, module_qn: str
+    ) -> tuple[ASTNode, bool] | None:
+        if export_function.type == cs.TS_CALL_EXPRESSION:
+            callee: ASTNode | None = export_function.child_by_field_name(
+                cs.FIELD_FUNCTION
+            )
+            while callee is not None and callee.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                callee = callee.named_children[0] if callee.named_children else None
+            if callee is None or callee.type not in (
+                cs.TS_FUNCTION_EXPRESSION,
+                cs.TS_ARROW_FUNCTION,
+            ):
+                # Any other call expression is not a function export.
+                return None
+            return callee, True
+        # The function IS the export: register it (own name, or its position
+        # when anonymous) marked exported. A refusal (span already claimed by
+        # the node's earlier registration) is fine: finalisation reads the
+        # claimed span either way.
+        name_node = export_function.child_by_field_name(cs.FIELD_NAME)
+        function_name = safe_decode_text(name_node) if name_node is not None else None
+        if not function_name:
+            row, col = export_function.start_point
+            function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
+        self._ingest_export_function(
+            export_function,
+            function_name,
+            module_qn,
+            cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+        )
+        return export_function, False
 
     def _finalise_direct_module_exports(
         self, module_qn: str, pending: list[tuple[ASTNode, bool]]
