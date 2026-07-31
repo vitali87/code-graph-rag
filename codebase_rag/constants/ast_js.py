@@ -102,6 +102,8 @@ TS_CLASS_BODY = "class_body"
 TS_PROPERTY_IDENTIFIER = "property_identifier"
 # `[expr]` as an object-literal / class-member key.
 TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
+# The `(a, b = 1, ...rest)` parameter list of a function.
+TS_JS_FORMAL_PARAMETERS = "formal_parameters"
 # The Symbol global: `Symbol('x')` / `Symbol.for('x')` mint the unique keys
 # that symbol-keyed member dispatch (issue #989) indexes.
 JS_SYMBOL_GLOBAL = "Symbol"
