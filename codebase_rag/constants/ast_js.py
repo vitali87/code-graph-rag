@@ -269,6 +269,17 @@ JS_COMMONJS_EXPORTS_FUNCTION_QUERY = """
 """
 
 # JS/TS CommonJS module.exports query
+# The DIRECT form `module.exports = function (...) {...}` / arrow: the whole
+# module IS one function (fastify's generated error-serializer). Two-level
+# member on the left, unlike the three-level named-property form below.
+JS_COMMONJS_DIRECT_EXPORT_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (identifier) @module_obj
+    property: (property_identifier) @exports_prop)
+  right: [(function_expression) (arrow_function) (call_expression)] @export_function)
+"""
+
 JS_COMMONJS_MODULE_EXPORTS_QUERY = """
 (assignment_expression
   left: (member_expression

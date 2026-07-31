@@ -1300,6 +1300,9 @@ class GraphUpdater:
             else relative_path.with_suffix("").parts
         )
         module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
+        self.factory.import_processor.commonjs_direct_exports.pop(
+            module_qn_prefix, None
+        )
 
         qns_to_remove = set()
 
