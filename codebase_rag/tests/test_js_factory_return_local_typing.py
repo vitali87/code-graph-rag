@@ -255,15 +255,17 @@ module.exports = ContentType
 
 
 def test_generator_expression_locals_do_not_leak(tmp_path: Path) -> None:
+    # `var` inside the generator discriminates: the lexical-block rule lets
+    # var through, so only the generator exclusion blocks this leak.
     files = {
         "content-type.js": """'use strict'
 class Other {
   get parameters () { return new Map() }
 }
 class ContentType {
-  static from (v) {
-    const g = function* () { const y = new Other(v); return y }
-    const list = [...g()]
+  static from (list) {
+    const g = function* () { var list = new Other(1); yield list }
+    g().next()
     return list
   }
   get parameters () { return new Map() }
