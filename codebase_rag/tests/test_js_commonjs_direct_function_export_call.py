@@ -127,3 +127,28 @@ module.exports = { main }
         },
     )
     assert _linked(cap, "main", "p.lib.fn")
+
+
+def test_iife_module_export_calls_the_wrapped_function(tmp_path: Path) -> None:
+    # The generated fast-json-stringify shape (fastify's error-serializer):
+    # the export is the RESULT of immediately invoking the function, so the
+    # module must gain a CALLS edge onto the wrapped function; its returned
+    # inner callable stays alive transitively through the internal reference.
+    cap = _run(
+        tmp_path,
+        {
+            "ser.js": """'use strict'
+const validator = null
+const serializer = null
+module.exports = function anonymous(validator, serializer) {
+  function anonymous0 (input) { return String(input) }
+  const main = anonymous0
+  return main
+}(validator, serializer)
+""",
+        },
+    )
+    assert any(
+        str(to) == "p.ser.anonymous" and rel == str(cs.RelationshipType.CALLS)
+        for _frm, rel, to in cap.rels
+    )

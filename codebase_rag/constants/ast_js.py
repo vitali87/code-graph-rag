@@ -270,7 +270,7 @@ JS_COMMONJS_DIRECT_EXPORT_QUERY = """
   left: (member_expression
     object: (identifier) @module_obj
     property: (property_identifier) @exports_prop)
-  right: [(function_expression) (arrow_function)] @export_function)
+  right: [(function_expression) (arrow_function) (call_expression)] @export_function)
 """
 
 JS_COMMONJS_MODULE_EXPORTS_QUERY = """

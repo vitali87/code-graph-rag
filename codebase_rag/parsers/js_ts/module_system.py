@@ -324,6 +324,23 @@ class JsTsModuleSystemMixin:
                 continue
             if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
                 continue
+            immediately_invoked = False
+            if export_function.type == cs.TS_CALL_EXPRESSION:
+                # `module.exports = function (...) {...}(args)` (generated
+                # fast-json-stringify, fastify's error-serializer): the
+                # export is the IIFE's RETURN value, and the wrapped
+                # function runs at module load, so the module CALLS it; its
+                # returned callables stay alive through their internal
+                # references. Any other call expression is not a function
+                # export.
+                callee = export_function.child_by_field_name(cs.FIELD_FUNCTION)
+                if callee is None or callee.type not in (
+                    cs.TS_FUNCTION_EXPRESSION,
+                    cs.TS_ARROW_FUNCTION,
+                ):
+                    continue
+                export_function = callee
+                immediately_invoked = True
             name_node = export_function.child_by_field_name(cs.FIELD_NAME)
             function_name = (
                 safe_decode_text(name_node) if name_node is not None else None
@@ -337,9 +354,17 @@ class JsTsModuleSystemMixin:
                 module_qn,
                 cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
             )
-            self.import_processor.commonjs_direct_exports[module_qn] = (
-                f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-            )
+            function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+            if immediately_invoked:
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
+                )
+            else:
+                # The alias map is only sound for the plain form: an IIFE's
+                # export is its return value, not the wrapped function.
+                self.import_processor.commonjs_direct_exports[module_qn] = function_qn
 
     def _ingest_commonjs_exports(
         self,
