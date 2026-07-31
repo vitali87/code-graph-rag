@@ -225,3 +225,55 @@ module.exports = ContentType
         str(frm).endswith(".send") and "parameters" in str(to)
         for frm, _rel, to in cap.rels
     )
+
+
+def test_block_scoped_shadow_does_not_type_the_parameter(tmp_path: Path) -> None:
+    # `let x` inside a nested block is a DIFFERENT variable from the
+    # returned parameter x.
+    files = {
+        "content-type.js": """'use strict'
+class Other {
+  get parameters () { return new Map() }
+  warm () { return 1 }
+}
+class ContentType {
+  static from (x) {
+    if (x) { let x = new Other('a'); x.warm() }
+    return x
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_generator_expression_locals_do_not_leak(tmp_path: Path) -> None:
+    files = {
+        "content-type.js": """'use strict'
+class Other {
+  get parameters () { return new Map() }
+}
+class ContentType {
+  static from (v) {
+    const g = function* () { const y = new Other(v); return y }
+    const list = [...g()]
+    return list
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )

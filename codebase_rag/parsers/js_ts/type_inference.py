@@ -12,6 +12,12 @@ from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..utils import get_cached_query, safe_decode_text
 from . import utils as ut
 
+# Callable node types whose bodies own their locals and returns; the shared
+# JS_TS_FUNCTION_NODES tuple lacks the generator EXPRESSION form.
+_JS_NESTED_CALLABLE_TYPES = frozenset(cs.JS_TS_FUNCTION_NODES) | {
+    cs.TS_GENERATOR_FUNCTION
+}
+
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
     from ..import_processor import ImportProcessor
@@ -26,7 +32,6 @@ class JsTypeInferenceEngine:
         "project_name",
         "_find_method_ast_node",
         "_queries",
-        "_ctor_binding_maps",
     )
 
     def __init__(
@@ -42,10 +47,6 @@ class JsTypeInferenceEngine:
         self.project_name = project_name
         self._find_method_ast_node = find_method_ast_node_func
         self._queries = queries
-        # Per-method map of local name -> the single `new C(...)` bound to it
-        # (None marks a conflict), built once per method for the identifier
-        # return inference; keyed by the method node's stable id.
-        self._ctor_binding_maps: dict[int, dict[str, ASTNode | None]] = {}
 
     def _get_declarators_via_query(
         self, caller_node: ASTNode, language: cs.SupportedLanguage | None = None
@@ -255,6 +256,12 @@ class JsTypeInferenceEngine:
         return_nodes: list[ASTNode] = []
         ut.find_return_statements(method_node, return_nodes, self._get_language_obj())
 
+        # One O(body) scan shared by every `return <identifier>` in this
+        # method; deliberately NOT stored on the engine: a tree-sitter node id
+        # is a recycled heap address across parses, and holding Node values
+        # would pin whole trees against the bounded AST cache.
+        ctor_bindings: dict[str, ASTNode | None] | None = None
+
         for return_node in return_nodes:
             for child in return_node.children:
                 if child.type == cs.TS_RETURN:
@@ -274,9 +281,12 @@ class JsTypeInferenceEngine:
                     child.type == cs.TS_IDENTIFIER
                     and self._return_belongs_to(return_node, method_node)
                     and (name := safe_decode_text(child))
-                    and (constructed := self._js_ctor_bindings(method_node).get(name))
-                    is not None
                 ):
+                    if ctor_bindings is None:
+                        ctor_bindings = self._js_ctor_bindings(method_node)
+                    constructed = ctor_bindings.get(name)
+                    if constructed is None:
+                        continue
                     ctor = ut.extract_constructor_name(constructed)
                     if ctor:
                         own_qn = ut.analyze_return_expression(constructed, method_qn)
@@ -305,20 +315,18 @@ class JsTypeInferenceEngine:
     def _return_belongs_to(return_node: ASTNode, method_node: ASTNode) -> bool:
         current = return_node.parent
         while current is not None:
-            if current.type in cs.JS_TS_FUNCTION_NODES:
+            if current.type in _JS_NESTED_CALLABLE_TYPES:
                 return current.id == method_node.id
             current = current.parent
         return False
 
     def _js_ctor_bindings(self, method_node: ASTNode) -> dict[str, ASTNode | None]:
-        cached = self._ctor_binding_maps.get(method_node.id)
-        if cached is not None:
-            return cached
+        body = method_node.child_by_field_name(cs.FIELD_BODY)
         bindings: dict[str, ASTNode | None] = {}
         stack: list[ASTNode] = list(method_node.children)
         while stack:
             node = stack.pop()
-            if node.type in cs.JS_TS_FUNCTION_NODES:
+            if node.type in _JS_NESTED_CALLABLE_TYPES:
                 # A nested callable's locals are its own.
                 continue
             target_value: tuple[ASTNode | None, ASTNode | None] | None = None
@@ -341,13 +349,27 @@ class JsTypeInferenceEngine:
                     and value.type == cs.TS_NEW_EXPRESSION
                     and (bound_name := safe_decode_text(target))
                 ):
-                    ctor = ut.extract_constructor_name(value)
-                    if bound_name not in bindings:
+                    if (
+                        node.type == cs.TS_VARIABLE_DECLARATOR
+                        and node.parent is not None
+                        and node.parent.type == cs.TS_LEXICAL_DECLARATION
+                        and (
+                            body is None
+                            or node.parent.parent is None
+                            or node.parent.parent.id != body.id
+                        )
+                    ):
+                        # A `let`/`const` in a NESTED block is a DIFFERENT
+                        # variable; it can never type the method's return,
+                        # and its existence makes the name unknowable here.
+                        bindings[bound_name] = None
+                    elif bound_name not in bindings:
                         bindings[bound_name] = value
                     else:
                         prior = bindings[bound_name]
-                        if prior is None or ut.extract_constructor_name(prior) != ctor:
+                        if prior is None or ut.extract_constructor_name(
+                            prior
+                        ) != ut.extract_constructor_name(value):
                             bindings[bound_name] = None
             stack.extend(node.children)
-        self._ctor_binding_maps[method_node.id] = bindings
         return bindings
