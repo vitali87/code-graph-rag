@@ -6229,6 +6229,11 @@ class CallProcessor:
         # `with` block makes every name dynamic, so the whole file returns
         # empty and nothing ever resolves.
         bindings: dict[str, list[tuple[Node | None, Node | None]]] = {}
+        # TS declaration merging: every `namespace N` block in the file
+        # shares one member scope. Track occurrences so a repeated name's
+        # blocks are widened afterwards.
+        namespace_blocks: dict[str, list[Node]] = {}
+        namespace_parent: dict[int, Node] = {}
 
         def add(name: str | None, fn_node: Node | None, container: Node | None) -> None:
             if name:
@@ -6359,6 +6364,11 @@ class CallProcessor:
                     add(safe_decode_text(name_node), None, None)
                 if node_type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
                     next_container = node
+                    if name_node is not None and (
+                        ns_name := safe_decode_text(name_node)
+                    ):
+                        namespace_blocks.setdefault(ns_name, []).append(node)
+                        namespace_parent[id(node)] = fn_container
             elif node_type == cs.TS_IMPORT_ALIAS:
                 # `import x = Other.thing` (namespace alias form) binds x;
                 # the aliased path identifiers over-collect, which can only
@@ -6385,7 +6395,37 @@ class CallProcessor:
                         add_pattern(left, None)
             for child in node.named_children:
                 stack.append((child, next_container))
+        merged = [
+            (block, namespace_parent[id(block)])
+            for blocks in namespace_blocks.values()
+            if len(blocks) > 1
+            for block in blocks
+        ]
+        if merged:
+            # Any binding scoped inside a merged namespace block is visible
+            # from that namespace's OTHER blocks; widening to the blocks'
+            # enclosing container never understates the reach (an over-wide
+            # container can only suppress).
+            for name, entries in bindings.items():
+                bindings[name] = [
+                    (fn_node, self._widen_merged_container(container, merged))
+                    for fn_node, container in entries
+                ]
         return bindings
+
+    @staticmethod
+    def _widen_merged_container(
+        container: Node | None, merged: list[tuple[Node, Node]]
+    ) -> Node | None:
+        if container is None:
+            return None
+        for block, parent in merged:
+            if (
+                block.start_byte <= container.start_byte
+                and container.end_byte <= block.end_byte
+            ):
+                return parent
+        return container
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)

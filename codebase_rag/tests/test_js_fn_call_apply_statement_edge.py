@@ -904,3 +904,33 @@ export function main (cb: any = helper): void {
     assert any(
         rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
     )
+
+
+def test_ts_merged_namespace_member_shadow_suppresses(tmp_path: Path) -> None:
+    # Declaration merging: exported members of every `namespace N` block
+    # share one scope, so a site in block 2 sees block 1's helper, and the
+    # file-level namesake must not receive the edge.
+    src = """function helper (): number { return 1 }
+namespace N { export function helper (): number { return 2 } }
+namespace N { export function use (): number { return helper.call(this) } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
+
+
+def test_ts_merged_namespace_member_links_without_namesake(tmp_path: Path) -> None:
+    # The same merging with no outer namesake: the block-1 member is the
+    # unique binding and the block-2 call links to it.
+    src = """namespace N { export function helper (): number { return 2 } }
+namespace N { export function use (): number { return helper.call(this) } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and str(frm).endswith(".use")
+        for frm, rel, to in cap.rels
+        if str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "helper"
+    )
