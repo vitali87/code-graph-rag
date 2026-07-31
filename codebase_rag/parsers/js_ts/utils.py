@@ -144,7 +144,11 @@ def arrow_binding_name(func_node: Node) -> str | None:
     # step. Anonymous / destructured arrows, and arrows that are merely an
     # argument to a call bound to a name (`const m = useMutation(() => {})`),
     # stay unnamed: the arrow is not the binding's own value there.
-    if func_node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+    if func_node.type not in (
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+    ):
         return None
     return _value_binding_name(func_node)
 

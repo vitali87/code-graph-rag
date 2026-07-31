@@ -82,6 +82,7 @@ from .ast_js import (
     TS_CLASS_BODY,
     TS_FUNCTION_DECLARATION,
     TS_FUNCTION_EXPRESSION,
+    TS_GENERATOR_FUNCTION,
     TS_GENERATOR_FUNCTION_DECLARATION,
     TS_OBJECT,
 )
@@ -197,6 +198,10 @@ FQN_JS_FUNCTION_TYPES = (
     TS_METHOD_DEFINITION,
     TS_ARROW_FUNCTION,
     TS_FUNCTION_EXPRESSION,
+    # A generator EXPRESSION (`const g = function* () {}`) is a function
+    # value like any function_expression; without it the node never
+    # registers and nothing can reference it (issue #994).
+    TS_GENERATOR_FUNCTION,
 )
 
 # The grammar emits `internal_module` for a `namespace`/`module` block; without
@@ -219,6 +224,7 @@ FQN_TS_FUNCTION_TYPES = (
     TS_METHOD_DEFINITION,
     TS_ARROW_FUNCTION,
     TS_FUNCTION_EXPRESSION,
+    TS_GENERATOR_FUNCTION,
     TS_FUNCTION_SIGNATURE,
 )
 
