@@ -1026,6 +1026,7 @@ class CallResolver:
         if not (
             call_name.startswith(cs.IIFE_FUNC_PREFIX)
             or call_name.startswith(cs.IIFE_ARROW_PREFIX)
+            or call_name.startswith(cs.PREFIX_IIFE_DIRECT)
         ):
             return None
         iife_qn = f"{module_qn}.{call_name}"

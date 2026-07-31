@@ -371,7 +371,11 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # JS/TS definition pass registers these as their own nodes named by the key
 # (scope.onSuccess), so a passed object of callbacks must reference each or
 # every TanStack-style callback reports as dead.
-_INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# Generator expressions are inline function values like the other two
+# (issue #994): a registered node with no reference path is an orphan.
+_INLINE_FUNC_VALUE_TYPES = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
 # JS/TS scopes that bind their own parameters (and, for a named function
 # expression, their own name) for the lexical receiver resolution of #988.
 _JS_LEXICAL_CALLABLE_SCOPES = frozenset(
@@ -2431,6 +2435,20 @@ class CallProcessor:
                             return peeled.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
+                case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION if (
+                    language in _JS_TS_LANGUAGES
+                ):
+                    # An unparenthesised direct IIFE (`const x = function ()
+                    # {...}()`) has the function itself as the callee. A NAMED
+                    # one registers under its own name (possibly a duplicate
+                    # variant), so only the span-resolved path may emit its
+                    # edge; a positional name here is for the anonymous form.
+                    if self._js_iife_callee_name(func_child):
+                        return None
+                    return (
+                        f"{cs.PREFIX_IIFE_DIRECT}"
+                        f"{func_child.start_point[0]}_{func_child.start_point[1]}"
+                    )
 
         match call_node.type:
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
@@ -2589,11 +2607,161 @@ class CallProcessor:
     def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
         for child in parenthesized_expr.children:
             match child.type:
-                case cs.TS_FUNCTION_EXPRESSION:
+                case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION:
+                    # A named IIFE registers under its own name, not the
+                    # positional iife_* name; its edge comes from the
+                    # span-resolved path, never a bare-name lookup (a
+                    # same-named sibling would capture it).
+                    if self._js_iife_callee_name(child):
+                        return None
                     return f"{cs.IIFE_FUNC_PREFIX}{child.start_point[0]}_{child.start_point[1]}"
                 case cs.TS_ARROW_FUNCTION:
                     return f"{cs.IIFE_ARROW_PREFIX}{child.start_point[0]}_{child.start_point[1]}"
         return None
+
+    @staticmethod
+    def _js_iife_callee_name(func_node: Node) -> str | None:
+        name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and name_node.text is not None:
+            return name_node.text.decode(cs.ENCODING_UTF8)
+        return None
+
+    def _js_named_iife_callee(
+        self, call_node: Node, module_qn: str
+    ) -> FunctionLocation | None:
+        # A NAMED IIFE (`(function build () {...})()`, `function build ()
+        # {...}()`) registers under its own name, minted as a duplicate
+        # variant when a sibling shares it; a sequence IIFE
+        # (`(0, function () {...})()`, the indirect-this idiom) registers as
+        # an anonymous node. Neither the positional iife_* names nor
+        # bare-name resolution can reach them safely, so resolve the callee
+        # NODE by its own source span to the exact minted qn. The plain
+        # anonymous parenthesised/direct forms keep their positional names
+        # and are excluded here.
+        func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func_child is None:
+            return None
+        target, paren_peels, other_peels = self._peel_iife_callee_wrappers(func_child)
+        if target.type not in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+            return None
+        # The plain anonymous forms (bare callee, or exactly one paren) keep
+        # their positional iife_direct_/iife_func_ names; everything else
+        # registers under its own name or as an anonymous node and resolves
+        # only by span.
+        if (
+            other_peels == 0
+            and paren_peels <= 1
+            and not self._js_iife_callee_name(target)
+        ):
+            return None
+        return self._recorded_caller(target, module_qn)
+
+    @staticmethod
+    def _peel_iife_callee_wrappers(func_child: Node) -> tuple[Node, int, int]:
+        # Peel to a FIXPOINT (wrappers nest: `((fn))()`, `(0, (fn))()`, cast
+        # forms), the same discipline as _peel_bound_callable. Parens and
+        # casts are value-transparent; the comma operator yields its LAST
+        # operand. Anything else (ternary, logicals) has no single static
+        # callee and stops the peel.
+        target = func_child
+        paren_peels = 0
+        other_peels = 0
+        while True:
+            if target.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                inner = next(
+                    (
+                        child
+                        for child in target.named_children
+                        if child.type != cs.TS_COMMENT
+                    ),
+                    None,
+                )
+                if inner is None:
+                    break
+                target = inner
+                paren_peels += 1
+            elif target.type == cs.TS_JS_SEQUENCE_EXPRESSION:
+                if not target.named_children:
+                    break
+                target = target.named_children[-1]
+                other_peels += 1
+            elif target.type in cs.TS_CAST_WRAPPER_TYPES:
+                inner = next(iter(target.named_children), None)
+                if inner is None:
+                    break
+                target = inner
+                other_peels += 1
+            else:
+                break
+        return target, paren_peels, other_peels
+
+    def _js_branch_callee_functions(
+        self, call_node: Node, module_qn: str
+    ) -> list[FunctionLocation]:
+        # A BRANCH-valued callee (`(c ? f : g)()`, `(f || g)()`) may invoke
+        # ANY of its inline function operands, and no single node can be the
+        # span-resolved callee. Reference each operand so a function whose
+        # only use is such a call (and everything only it calls) stays live:
+        # a sound liveness over-approximation (issue #1002's family).
+        func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func_child is None:
+            return []
+        locations: list[FunctionLocation] = []
+        branched = False
+        stack: list[Node] = [func_child]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if (
+                node_type
+                in (
+                    cs.TS_FUNCTION_EXPRESSION,
+                    cs.TS_GENERATOR_FUNCTION,
+                    cs.TS_ARROW_FUNCTION,
+                )
+                and (loc := self._recorded_caller(node, module_qn)) is not None
+            ):
+                locations.append(loc)
+            elif self._js_branch_operands(node, stack):
+                branched = True
+        return locations if branched else []
+
+    @staticmethod
+    def _js_wrapper_operands(node: Node, stack: list[Node]) -> bool:
+        # Value-transparent wrappers: push what they yield; True when handled.
+        node_type = node.type
+        if (
+            node_type == cs.TS_PARENTHESIZED_EXPRESSION
+            or node_type in cs.TS_CAST_WRAPPER_TYPES
+        ):
+            stack.extend(
+                child for child in node.named_children if child.type != cs.TS_COMMENT
+            )
+            return True
+        if node_type == cs.TS_JS_SEQUENCE_EXPRESSION:
+            if node.named_children:
+                stack.append(node.named_children[-1])
+            return True
+        return False
+
+    def _js_branch_operands(self, node: Node, stack: list[Node]) -> bool:
+        # Push a branch expression's candidate operands; True only for a
+        # genuine BRANCH (ternary / short-circuit), which is what licenses
+        # the candidate-set references.
+        if self._js_wrapper_operands(node, stack):
+            return False
+        node_type = node.type
+        if node_type == cs.TS_JS_TERNARY_EXPRESSION:
+            for field in (cs.FIELD_CONSEQUENCE, cs.FIELD_ALTERNATIVE):
+                if (child := node.child_by_field_name(field)) is not None:
+                    stack.append(child)
+            return True
+        if node_type == cs.TS_BINARY_EXPRESSION and self._js_is_logical_binary(node):
+            for field in (cs.FIELD_LEFT, cs.FIELD_RIGHT):
+                if (child := node.child_by_field_name(field)) is not None:
+                    stack.append(child)
+            return True
+        return False
 
     def _ingest_function_calls(
         self,
@@ -2939,6 +3107,25 @@ class CallProcessor:
                         caller_spec,
                         calls_rel,
                         (loc.label, qn_key, loc.qualified_name),
+                    )
+                # A NAMED IIFE yields no call name (a bare-name lookup would
+                # bind a same-named sibling); its edge is emitted here from
+                # the callee node's own span.
+                if (
+                    iife_loc := self._js_named_iife_callee(call_node, module_qn)
+                ) is not None:
+                    ensure_rel(
+                        caller_spec,
+                        calls_rel,
+                        (iife_loc.label, qn_key, iife_loc.qualified_name),
+                    )
+                for branch_loc in self._js_branch_callee_functions(
+                    call_node, module_qn
+                ):
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.REFERENCES,
+                        (branch_loc.label, qn_key, branch_loc.qualified_name),
                     )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
@@ -6482,11 +6669,16 @@ class CallProcessor:
         ]
 
     def _is_unowned_js_scope(self, node: Node) -> bool:
-        # An anonymous arrow/function-expression that gets no caller node of its
-        # own (no name, no binding name): a `.map()`/`cell`/forwardRef callback.
-        # Its calls bubble up to the enclosing named scope (_attributable_func_nodes),
-        # and so must its JSX references: the enclosing JSX walk continues through it.
-        if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
+        # An anonymous arrow/function/generator expression that gets no caller
+        # node of its own (no name, no binding name): a `.map()`/`cell`/
+        # forwardRef callback. Its calls bubble up to the enclosing named
+        # scope (_attributable_func_nodes), and so must its JSX references:
+        # the enclosing JSX walk continues through it.
+        if node.type not in (
+            cs.TS_ARROW_FUNCTION,
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
             return False
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
 
