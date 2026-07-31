@@ -102,7 +102,7 @@ module.exports = { main }
 """
     cap = _run(tmp_path, src)
     assert any(
-        "helperFn" in str(to) and rel != str(cs.RelationshipType.DEFINES)
+        "helperFn" in str(to) and rel == str(cs.RelationshipType.REFERENCES)
         for _frm, rel, to in cap.rels
     )
 
