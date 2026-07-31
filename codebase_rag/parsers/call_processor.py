@@ -6235,11 +6235,12 @@ class CallProcessor:
         # repeated name's members gain one introduction per SIBLING block
         # afterwards; that is exactly where merging makes them visible, and
         # nowhere else.
-        # Merge groups key on (enclosing container id, name): namespaces
-        # merge only when declared in the SAME parent scope, so `A.N` never
-        # merges with a top-level `N` that shares the leaf name. Node
-        # identity uses tree-sitter's stable `.id` (fresh Python wrappers
-        # over the same tree node compare unequal with `is`).
+        # Merge groups key on (nearest NON-namespace container id, dotted
+        # namespace path): `A { N }` in either A block and `A.N` at top
+        # level all key to (program, "A.N") and merge, while a top-level `N`
+        # keys to (program, "N") and stays distinct. Node identity uses
+        # tree-sitter's stable `.id` (fresh Python wrappers over the same
+        # tree node compare unequal with `is`).
         namespace_blocks: dict[tuple[int, str], list[Node]] = {}
         namespace_group_of: dict[int, tuple[int, str]] = {}
         ns_exported: list[tuple[str, Node | None, Node]] = []
@@ -6292,11 +6293,15 @@ class CallProcessor:
                 return parent.parent
             return parent
 
-        stack: list[tuple[Node, Node]] = [(root, root)]
+        stack: list[tuple[Node, Node, int, tuple[str, ...]]] = [
+            (root, root, root.id, ())
+        ]
         while stack:
-            node, fn_container = stack.pop()
+            node, fn_container, ns_anchor, ns_path = stack.pop()
             node_type = node.type
             next_container = fn_container
+            next_ns_anchor = ns_anchor
+            next_ns_path = ns_path
             if node_type in _JS_LEXICAL_CALLABLE_SCOPES:
                 params = node.child_by_field_name(cs.FIELD_PARAMETERS)
                 if params is not None:
@@ -6333,9 +6338,13 @@ class CallProcessor:
                             ns_exported.append((decl_name, node, fn_container))
                 # A method_definition name is a property, never a binding.
                 next_container = node.child_by_field_name(cs.FIELD_BODY) or node
+                next_ns_anchor = next_container.id
+                next_ns_path = ()
             elif node_type == cs.TS_CLASS_STATIC_BLOCK:
                 # A static block is its own `var` scope.
                 next_container = node
+                next_ns_anchor = node.id
+                next_ns_path = ()
             elif node_type == cs.TS_JS_WITH_STATEMENT:
                 # Dynamic scoping: no receiver in this file can be trusted.
                 return {}
@@ -6396,7 +6405,8 @@ class CallProcessor:
                     if name_node is not None and (
                         ns_name := safe_decode_text(name_node)
                     ):
-                        group = (fn_container.id, ns_name)
+                        next_ns_path = ns_path + tuple(ns_name.split(cs.SEPARATOR_DOT))
+                        group = (ns_anchor, cs.SEPARATOR_DOT.join(next_ns_path))
                         namespace_blocks.setdefault(group, []).append(node)
                         namespace_group_of[node.id] = group
             elif node_type == cs.TS_IMPORT_ALIAS:
@@ -6424,7 +6434,7 @@ class CallProcessor:
                     elif left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN):
                         add_pattern(left, None)
             for child in node.named_children:
-                stack.append((child, next_container))
+                stack.append((child, next_container, next_ns_anchor, next_ns_path))
         for member_name, fn_node, block in ns_exported:
             group = namespace_group_of.get(block.id)
             if group is None:

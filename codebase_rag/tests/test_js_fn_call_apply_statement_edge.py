@@ -1030,3 +1030,43 @@ namespace N { export function use (): number { return helper.call(this) } }
         for frm, rel, to in cap.rels
         if str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "helper"
     )
+
+
+def test_nested_namespace_merges_across_parent_blocks(tmp_path: Path) -> None:
+    # Two inner `N` blocks under two `A` blocks are the SAME namespace A.N;
+    # block 2's call must not fall through to the file-level namesake.
+    src = """function helper (): number { return 1 }
+namespace A { export namespace N { export function helper (): number { return 2 } } }
+namespace A { export namespace N { export function use (): number { return helper.call(this) } } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
+
+
+def test_mixed_spelling_namespace_merges(tmp_path: Path) -> None:
+    # `namespace A { export namespace N }` and `namespace A.N` are the same
+    # namespace; the dotted spelling must join the group.
+    src = """function helper (): number { return 1 }
+namespace A { export namespace N { export function helper (): number { return 2 } } }
+namespace A.N { export function use (): number { return helper.call(this) } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
+
+
+def test_depth_three_namespace_merges(tmp_path: Path) -> None:
+    src = """function helper (): number { return 1 }
+namespace A { export namespace B { export namespace N { export function helper (): number { return 2 } } } }
+namespace A { export namespace B { export namespace N { export function use (): number { return helper.call(this) } } } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
