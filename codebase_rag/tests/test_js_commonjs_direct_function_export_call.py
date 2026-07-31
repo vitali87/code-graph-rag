@@ -19,9 +19,13 @@ PROJECT = "p"
 class _Capture:
     def __init__(self) -> None:
         self.rels: list[tuple[PropertyValue, str, PropertyValue]] = []
+        self.exported_nodes: list[str] = []
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
-        return None
+        if properties.get(cs.KEY_IS_EXPORTED) and (
+            qn := properties.get(cs.KEY_QUALIFIED_NAME)
+        ):
+            self.exported_nodes.append(str(qn))
 
     def ensure_relationship_batch(
         self,
@@ -289,3 +293,32 @@ module.exports = ((v) => v)(1)
         rel == calls and str(frm) == "p.ser" and str(to).startswith("p.ser.")
         for frm, rel, to in cap.rels
     )
+
+
+def test_reindex_does_not_resurrect_sparse_export_node(tmp_path: Path) -> None:
+    # A reused updater re-parses the file; the stale span claim refuses
+    # re-registration, so finalisation must NOT write an exported node (or
+    # repopulate the alias map) for a qn absent from the registry.
+    (tmp_path / "ser.js").write_text("module.exports = (v) => String(v)\n")
+    (tmp_path / "b.js").write_text("""'use strict'
+const s = require('./ser')
+function main () { return s(1) }
+module.exports = { main }
+""")
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    updater = GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    (tmp_path / "ser.js").write_text("module.exports = (v) => String(v) + ''\n")
+    updater.remove_file_from_state(tmp_path / "ser.js")
+    cap.exported_nodes.clear()
+    updater.run(force=True)
+    registry = updater.factory.call_processor._resolver.function_registry
+    for qn in cap.exported_nodes:
+        assert qn in registry

@@ -383,7 +383,10 @@ class JsTsModuleSystemMixin:
         # the node was refused everywhere; emit nothing rather than guess.
         for node, invoked in pending:
             loc = self.function_locations.get(function_span_key(module_qn, node))
-            if loc is None:
+            if loc is None or loc.qualified_name not in self.function_registry:
+                # No claim, or a STALE claim from before a watch-mode removal
+                # purged the registry: writing anything would resurrect a
+                # sparse node for a function that no longer exists.
                 continue
             if invoked:
                 self.ingestor.ensure_relationship_batch(
@@ -421,6 +424,9 @@ class JsTsModuleSystemMixin:
         if not language_obj:
             return
 
+        # Reset first: an exception in a later pass must not leak a stale
+        # pending list into the next file's finalisation.
+        self._pending_direct_module_exports = []
         query_texts = [
             cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
             cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
