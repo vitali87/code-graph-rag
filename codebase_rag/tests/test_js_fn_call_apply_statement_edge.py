@@ -989,3 +989,44 @@ export function outerUse (): void { helper.call(this) }
     assert not any(
         rel == calls and str(frm).endswith(".outerUse") for frm, rel, _to in cap.rels
     )
+
+
+def test_distinct_namespaces_sharing_leaf_name_do_not_merge(tmp_path: Path) -> None:
+    # `A.N` and top-level `N` are different namespaces; sharing the leaf
+    # name must not replicate A.N's members into N.
+    src = """declare function helper (): number
+namespace A { export namespace N { export function helper (): number { return 2 } } }
+namespace N { export function use (): number { return helper.call(this) } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_sibling_inner_namespaces_do_not_merge(tmp_path: Path) -> None:
+    # `Foo.Utils` and `Bar.Utils` are distinct; a call in Bar.Utils to a
+    # file-level function must not bind Foo.Utils' member.
+    src = """function log (m: string): void { }
+namespace Foo { export namespace Utils { export function log (m: string): void { } } }
+namespace Bar { export namespace Utils { export function run (): void { log.call(this, 'x') } } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls and "Foo" in str(to) for _frm, rel, to in cap.rels)
+    # The file-level log is the unique relevant binding at the site.
+    assert any(rel == calls and str(to) == "p.a.log" for _frm, rel, to in cap.rels)
+
+
+def test_merged_namespace_exported_const_links(tmp_path: Path) -> None:
+    # The declarator replication path: an exported const arrow in block 1 is
+    # visible in block 2.
+    src = """namespace N { export const helper = (): number => 1 }
+namespace N { export function use (): number { return helper.call(this) } }
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and str(frm).endswith(".use")
+        for frm, rel, to in cap.rels
+        if str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == "helper"
+    )

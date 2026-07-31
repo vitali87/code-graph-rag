@@ -6235,8 +6235,13 @@ class CallProcessor:
         # repeated name's members gain one introduction per SIBLING block
         # afterwards; that is exactly where merging makes them visible, and
         # nowhere else.
-        namespace_blocks: dict[str, list[Node]] = {}
-        namespace_name_of: dict[int, str] = {}
+        # Merge groups key on (enclosing container id, name): namespaces
+        # merge only when declared in the SAME parent scope, so `A.N` never
+        # merges with a top-level `N` that shares the leaf name. Node
+        # identity uses tree-sitter's stable `.id` (fresh Python wrappers
+        # over the same tree node compare unequal with `is`).
+        namespace_blocks: dict[tuple[int, str], list[Node]] = {}
+        namespace_group_of: dict[int, tuple[int, str]] = {}
         ns_exported: list[tuple[str, Node | None, Node]] = []
 
         def add(name: str | None, fn_node: Node | None, container: Node | None) -> None:
@@ -6391,8 +6396,9 @@ class CallProcessor:
                     if name_node is not None and (
                         ns_name := safe_decode_text(name_node)
                     ):
-                        namespace_blocks.setdefault(ns_name, []).append(node)
-                        namespace_name_of[id(node)] = ns_name
+                        group = (fn_container.id, ns_name)
+                        namespace_blocks.setdefault(group, []).append(node)
+                        namespace_group_of[node.id] = group
             elif node_type == cs.TS_IMPORT_ALIAS:
                 # `import x = Other.thing` (namespace alias form) binds x;
                 # the aliased path identifiers over-collect, which can only
@@ -6420,14 +6426,14 @@ class CallProcessor:
             for child in node.named_children:
                 stack.append((child, next_container))
         for member_name, fn_node, block in ns_exported:
-            ns_name = namespace_name_of.get(id(block))
-            if ns_name is None:
+            group = namespace_group_of.get(block.id)
+            if group is None:
                 continue
-            blocks = namespace_blocks.get(ns_name, [])
+            blocks = namespace_blocks.get(group, [])
             if len(blocks) < 2:
                 continue
             for sibling in blocks:
-                if sibling is not block:
+                if sibling.id != block.id:
                     add(member_name, fn_node, sibling)
         return bindings
 
