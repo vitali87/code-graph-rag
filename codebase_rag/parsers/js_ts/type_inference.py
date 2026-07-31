@@ -18,6 +18,25 @@ _JS_NESTED_CALLABLE_TYPES = frozenset(cs.JS_TS_FUNCTION_NODES) | {
     cs.TS_GENERATOR_FUNCTION
 }
 
+# Ancestor node types that bound a `let`/`const` declaration's scope: the
+# nearest one governs the binding (a for-header declaration scopes to the for
+# statement, a case-level one to the whole switch body).
+_JS_SCOPE_CONTAINER_TYPES = frozenset(
+    {
+        cs.TS_STATEMENT_BLOCK,
+        cs.TS_JS_SWITCH_BODY,
+        cs.TS_JS_FOR_STATEMENT,
+        cs.TS_JS_FOR_IN_STATEMENT,
+    }
+)
+
+# Declarations of a name: (scope start_byte, scope end_byte, `new` value node
+# when the declarator's own initialiser constructs, else None). Assignments:
+# (site byte, `new` value node).
+_CtorDecls = dict[str, list[tuple[int, int, "ASTNode | None"]]]
+_CtorAssigns = dict[str, list[tuple[int, "ASTNode"]]]
+_CtorBindingIndex = tuple[_CtorDecls, _CtorAssigns]
+
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
     from ..import_processor import ImportProcessor
@@ -260,9 +279,14 @@ class JsTypeInferenceEngine:
         # method; deliberately NOT stored on the engine: a tree-sitter node id
         # is a recycled heap address across parses, and holding Node values
         # would pin whole trees against the bounded AST cache.
-        ctor_bindings: dict[str, ASTNode | None] | None = None
+        ctor_index: _CtorBindingIndex | None = None
 
         for return_node in return_nodes:
+            # Nested callables own their returns: a callback's `return new
+            # Foo()` (or `return x`) is the callback's value, never the
+            # method's, so BOTH branches below are gated here.
+            if not self._return_belongs_to(return_node, method_node):
+                continue
             for child in return_node.children:
                 if child.type == cs.TS_RETURN:
                     continue
@@ -273,18 +297,18 @@ class JsTypeInferenceEngine:
                 # `return x` where the METHOD'S OWN body binds `x = new
                 # C(...)` (the cache-then-construct factory, fastify's
                 # ContentType.from, issue #992): the CONSTRUCTED class types
-                # the return when every construction bound to x agrees.
-                # Unknown-value assignments (the cache hit) do not veto; a
-                # second DIFFERENT class does. Nested callables own their
-                # locals and their returns, so both are excluded.
-                if (
-                    child.type == cs.TS_IDENTIFIER
-                    and self._return_belongs_to(return_node, method_node)
-                    and (name := safe_decode_text(child))
-                ):
-                    if ctor_bindings is None:
-                        ctor_bindings = self._js_ctor_bindings(method_node)
-                    constructed = ctor_bindings.get(name)
+                # the return when every construction reaching THIS return's
+                # variable agrees. Bindings resolve by SCOPE SPAN: the
+                # innermost declarator whose scope encloses the return is the
+                # variable, so a nested-block shadow neither erases an outer
+                # construction nor inherits it. Unknown-value assignments
+                # (the cache hit) do not veto; a second DIFFERENT class does.
+                if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
+                    if ctor_index is None:
+                        ctor_index = self._js_ctor_binding_index(method_node)
+                    constructed = self._js_constructed_for(
+                        name, child.start_byte, ctor_index
+                    )
                     if constructed is None:
                         continue
                     ctor = ut.extract_constructor_name(constructed)
@@ -320,56 +344,167 @@ class JsTypeInferenceEngine:
             current = current.parent
         return False
 
-    def _js_ctor_bindings(self, method_node: ASTNode) -> dict[str, ASTNode | None]:
-        body = method_node.child_by_field_name(cs.FIELD_BODY)
-        bindings: dict[str, ASTNode | None] = {}
+    def _js_ctor_binding_index(self, method_node: ASTNode) -> _CtorBindingIndex:
+        # One scan of the method body (nested callables excluded: their
+        # locals are their own) collecting every DECLARATION of every name
+        # with the byte span of the scope it governs, plus every
+        # `x = new C(...)` assignment site. Scope spans, not name equality,
+        # decide which construction reaches which return.
+        decls: _CtorDecls = {}
+        assigns: _CtorAssigns = {}
         stack: list[ASTNode] = list(method_node.children)
         while stack:
             node = stack.pop()
             if node.type in _JS_NESTED_CALLABLE_TYPES:
-                # A nested callable's locals are its own.
                 continue
-            target_value: tuple[ASTNode | None, ASTNode | None] | None = None
             if node.type == cs.TS_VARIABLE_DECLARATOR:
-                target_value = (
-                    node.child_by_field_name(cs.FIELD_NAME),
-                    node.child_by_field_name(cs.FIELD_VALUE),
-                )
+                self._index_ctor_declarator(node, method_node, decls)
             elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                target_value = (
-                    node.child_by_field_name(cs.FIELD_LEFT),
-                    node.child_by_field_name(cs.TS_FIELD_RIGHT),
-                )
-            if target_value is not None:
-                target, value = target_value
-                if (
-                    target is not None
-                    and value is not None
-                    and target.type == cs.TS_IDENTIFIER
-                    and value.type == cs.TS_NEW_EXPRESSION
-                    and (bound_name := safe_decode_text(target))
-                ):
-                    if (
-                        node.type == cs.TS_VARIABLE_DECLARATOR
-                        and node.parent is not None
-                        and node.parent.type == cs.TS_LEXICAL_DECLARATION
-                        and (
-                            body is None
-                            or node.parent.parent is None
-                            or node.parent.parent.id != body.id
-                        )
-                    ):
-                        # A `let`/`const` in a NESTED block is a DIFFERENT
-                        # variable; it can never type the method's return,
-                        # and its existence makes the name unknowable here.
-                        bindings[bound_name] = None
-                    elif bound_name not in bindings:
-                        bindings[bound_name] = value
-                    else:
-                        prior = bindings[bound_name]
-                        if prior is None or ut.extract_constructor_name(
-                            prior
-                        ) != ut.extract_constructor_name(value):
-                            bindings[bound_name] = None
+                self._index_ctor_assignment(node, assigns)
+            elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
+                self._index_ctor_loop_binding(node, method_node, decls)
+            elif node.type == cs.TS_JS_CATCH_CLAUSE:
+                self._index_ctor_catch_binding(node, decls)
             stack.extend(node.children)
-        return bindings
+        return decls, assigns
+
+    def _index_ctor_declarator(
+        self, node: ASTNode, method_node: ASTNode, decls: _CtorDecls
+    ) -> None:
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        if target is None:
+            return
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        ctor_value = (
+            value if value is not None and value.type == cs.TS_NEW_EXPRESSION else None
+        )
+        is_lexical = (
+            node.parent is not None and node.parent.type == cs.TS_LEXICAL_DECLARATION
+        )
+        span = (
+            self._js_scope_span(node, method_node)
+            if is_lexical
+            else (method_node.start_byte, method_node.end_byte)
+        )
+        # A destructuring pattern introduces its names with an unknowable
+        # value (the construction cannot be attributed to one of them).
+        single = target.type == cs.TS_IDENTIFIER
+        for bound_name in self._js_binding_names(target):
+            decls.setdefault(bound_name, []).append(
+                (span[0], span[1], ctor_value if single else None)
+            )
+
+    @staticmethod
+    def _index_ctor_assignment(node: ASTNode, assigns: _CtorAssigns) -> None:
+        target = node.child_by_field_name(cs.FIELD_LEFT)
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if (
+            target is not None
+            and value is not None
+            and target.type == cs.TS_IDENTIFIER
+            and value.type == cs.TS_NEW_EXPRESSION
+            and (bound_name := safe_decode_text(target))
+        ):
+            assigns.setdefault(bound_name, []).append((node.start_byte, value))
+
+    def _index_ctor_loop_binding(
+        self, node: ASTNode, method_node: ASTNode, decls: _CtorDecls
+    ) -> None:
+        # `for (const x of xs)` binds x over the loop; `for (var x of xs)`
+        # hoists it; `for (x of xs)` (no kind) assigns an existing binding
+        # and introduces nothing.
+        kind = node.child_by_field_name(cs.FIELD_KIND)
+        if kind is None:
+            return
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return
+        span = (
+            (method_node.start_byte, method_node.end_byte)
+            if kind.type == cs.TS_JS_VAR_KIND
+            else (node.start_byte, node.end_byte)
+        )
+        for bound_name in self._js_binding_names(left):
+            decls.setdefault(bound_name, []).append((span[0], span[1], None))
+
+    def _index_ctor_catch_binding(self, node: ASTNode, decls: _CtorDecls) -> None:
+        param = node.child_by_field_name(cs.FIELD_PARAMETER)
+        if param is None:
+            return
+        for bound_name in self._js_binding_names(param):
+            decls.setdefault(bound_name, []).append(
+                (node.start_byte, node.end_byte, None)
+            )
+
+    @staticmethod
+    def _js_binding_names(target: ASTNode) -> list[str]:
+        if target.type == cs.TS_IDENTIFIER:
+            name = safe_decode_text(target)
+            return [name] if name else []
+        names: list[str] = []
+        stack: list[ASTNode] = list(target.children)
+        while stack:
+            node = stack.pop()
+            if node.type in (
+                cs.TS_IDENTIFIER,
+                cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+            ):
+                if name := safe_decode_text(node):
+                    names.append(name)
+                continue
+            stack.extend(node.children)
+        return names
+
+    @staticmethod
+    def _js_scope_span(node: ASTNode, method_node: ASTNode) -> tuple[int, int]:
+        # The scope a `let`/`const` governs: the nearest enclosing block-like
+        # ancestor (a for-header declaration governs the for statement, a
+        # case-level one the switch body), or the whole method.
+        current = node.parent
+        while current is not None and current.id != method_node.id:
+            if current.type in _JS_SCOPE_CONTAINER_TYPES:
+                return (current.start_byte, current.end_byte)
+            current = current.parent
+        return (method_node.start_byte, method_node.end_byte)
+
+    @staticmethod
+    def _js_innermost_scope(
+        entries: list[tuple[int, int, ASTNode | None]], pos: int
+    ) -> tuple[int, int] | None:
+        enclosing = [(s, e) for s, e, _v in entries if s <= pos < e]
+        if not enclosing:
+            return None
+        # Nested spans: the innermost starts latest; ties are the same span.
+        return max(enclosing, key=lambda span: (span[0], -span[1]))
+
+    def _js_constructed_for(
+        self, name: str, pos: int, index: _CtorBindingIndex
+    ) -> ASTNode | None:
+        # The variable `return x` reads is the innermost declaration of x
+        # whose scope encloses the return (no declaration: the name is a
+        # parameter, function-scoped). The constructions reaching it are its
+        # own initialiser plus every assignment site resolving to the SAME
+        # declaration; they must all agree on one class.
+        decls, assigns = index
+        entries = decls.get(name, [])
+        scope = self._js_innermost_scope(entries, pos)
+        constructions: list[ASTNode] = []
+        if scope is not None:
+            constructions.extend(
+                value
+                for s, e, value in entries
+                if (s, e) == scope and value is not None
+            )
+        for site, value in assigns.get(name, []):
+            if self._js_innermost_scope(entries, site) == scope:
+                constructions.append(value)
+        ctor_names = {ut.extract_constructor_name(value) for value in constructions}
+        ctor_names.discard(None)
+        if len(ctor_names) != 1:
+            return None
+        chosen = ctor_names.pop()
+        return next(
+            value
+            for value in constructions
+            if ut.extract_constructor_name(value) == chosen
+        )

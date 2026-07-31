@@ -205,6 +205,10 @@ TS_JS_FOR_STATEMENT = "for_statement"
 TS_JS_FOR_IN_STATEMENT = "for_in_statement"
 TS_JS_TRY_STATEMENT = "try_statement"
 TS_JS_CATCH_CLAUSE = "catch_clause"
+TS_JS_SWITCH_BODY = "switch_body"
+# `for (var x of xs)` hoists x to the function; only this `kind` widens the
+# loop binding's scope past the for statement itself.
+TS_JS_VAR_KIND = "var"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
 FIELD_HANDLER = "handler"

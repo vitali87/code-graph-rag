@@ -254,6 +254,123 @@ module.exports = ContentType
     )
 
 
+def test_outer_construction_survives_nested_shadow(tmp_path: Path) -> None:
+    # A nested-block shadow is a DIFFERENT variable; it must not erase the
+    # unambiguous outer construction that the outer return actually returns.
+    files = {
+        "content-type.js": """'use strict'
+class Other {
+  get parameters () { return new Map() }
+  warm () { return 1 }
+}
+class ContentType {
+  static from (v) {
+    let x = new ContentType(v)
+    if (v) { let x = new Other(v); x.warm() }
+    return x
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        str(frm).endswith(".send")
+        and str(to) == "p.content-type.ContentType.parameters"
+        for frm, _rel, to in cap.rels
+    )
+    assert not any(
+        str(frm).endswith(".send") and str(to).endswith("Other.parameters")
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_return_inside_shadow_block_types_the_shadow(tmp_path: Path) -> None:
+    # A return INSIDE the shadowing block returns the SHADOW's construction,
+    # never the outer one (an unscoped outer-wins rule would fabricate a
+    # wrong-class edge here).
+    files = {
+        "content-type.js": """'use strict'
+class Other {
+  get parameters () { return new Map() }
+}
+class ContentType {
+  static from (v) {
+    let x = new ContentType(v)
+    x.toString()
+    if (v) { let x = new Other(v); return x }
+    return null
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        str(frm).endswith(".send") and str(to).endswith("Other.parameters")
+        for frm, _rel, to in cap.rels
+    )
+    assert not any(
+        str(frm).endswith(".send")
+        and str(to) == "p.content-type.ContentType.parameters"
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_non_new_shadow_does_not_inherit_outer_type(tmp_path: Path) -> None:
+    # A shadow initialised from a CALL is unknowable; the return inside its
+    # block must not be typed by the outer same-named construction.
+    files = {
+        "content-type.js": """'use strict'
+class ContentType {
+  static from (v) {
+    let x = new ContentType(v)
+    x.toString()
+    if (v) { let x = v.parse(); return x }
+    return null
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )
+
+
+def test_callback_direct_construction_return_not_attributed(tmp_path: Path) -> None:
+    # A callback ARGUMENT directly returning a construction is the
+    # callback's return, not the method's; attributing it types the factory
+    # with a class it never returns.
+    files = {
+        "content-type.js": """'use strict'
+function run (cb) { return cb() }
+class ContentType {
+  static from (v) {
+    run(function () { return new ContentType('a') })
+    return v
+  }
+  get parameters () { return new Map() }
+}
+module.exports = ContentType
+""",
+        "reply.js": REPLY,
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        str(frm).endswith(".send") and "parameters" in str(to)
+        for frm, _rel, to in cap.rels
+    )
+
+
 def test_generator_expression_locals_do_not_leak(tmp_path: Path) -> None:
     # `var` inside the generator discriminates: the lexical-block rule lets
     # var through, so only the generator exclusion blocks this leak.
