@@ -2641,27 +2641,54 @@ class CallProcessor:
         func_child = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func_child is None:
             return None
+        # Peel to a FIXPOINT (wrappers nest: `((fn))()`, `(0, (fn))()`, cast
+        # forms), the same discipline as _peel_bound_callable. Parens and
+        # casts are value-transparent; the comma operator yields its LAST
+        # operand. Anything else (ternary, logicals) has no single static
+        # callee and stops the peel.
         target = func_child
-        from_sequence = False
-        if func_child.type == cs.TS_PARENTHESIZED_EXPRESSION:
-            inner = next(
-                (
-                    child
-                    for child in func_child.named_children
-                    if child.type != cs.TS_COMMENT
-                ),
-                None,
-            )
-            if inner is not None and inner.type == cs.TS_JS_SEQUENCE_EXPRESSION:
-                # The comma operator yields its LAST operand; that operand
-                # is what the call invokes.
-                from_sequence = True
-                inner = inner.named_children[-1] if inner.named_children else None
-            if inner is not None:
+        paren_peels = 0
+        other_peels = 0
+        while True:
+            if target.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                inner = next(
+                    (
+                        child
+                        for child in target.named_children
+                        if child.type != cs.TS_COMMENT
+                    ),
+                    None,
+                )
+                if inner is None:
+                    break
                 target = inner
+                paren_peels += 1
+                continue
+            if target.type == cs.TS_JS_SEQUENCE_EXPRESSION:
+                if not target.named_children:
+                    break
+                target = target.named_children[-1]
+                other_peels += 1
+                continue
+            if target.type in cs.TS_CAST_WRAPPER_TYPES:
+                inner = next(iter(target.named_children), None)
+                if inner is None:
+                    break
+                target = inner
+                other_peels += 1
+                continue
+            break
         if target.type not in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
             return None
-        if not from_sequence and not self._js_iife_callee_name(target):
+        # The plain anonymous forms (bare callee, or exactly one paren) keep
+        # their positional iife_direct_/iife_func_ names; everything else
+        # registers under its own name or as an anonymous node and resolves
+        # only by span.
+        if (
+            other_peels == 0
+            and paren_peels <= 1
+            and not self._js_iife_callee_name(target)
+        ):
             return None
         return self._recorded_caller(target, module_qn)
 

@@ -161,3 +161,63 @@ const b = (0, function () { return helper(2) })()
 module.exports = { b }
 """
     _assert_single_anonymous_called(_run(tmp_path, src))
+
+
+def test_double_paren_named_generator_iife_gets_call_edge(tmp_path: Path) -> None:
+    # Wrappers NEST; the callee peel must run to a fixpoint or one extra
+    # pair of parens orphans the function and everything only it calls.
+    src = """'use strict'
+function helper (x) { return x }
+const b = ((function* gg () { yield helper(1) }))()
+module.exports = { b }
+"""
+    _assert_named_iife_called(_run(tmp_path, src), "gg")
+
+
+def test_double_paren_anonymous_iife_gets_call_edge(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const a = ((function* () { yield helper(1) }))()
+const b = ((function () { return helper(2) }))()
+module.exports = { a, b }
+"""
+    cap = _run(tmp_path, src)
+    anon = [n for n in cap.nodes if cs.PREFIX_ANONYMOUS in n]
+    assert len(anon) == 2
+    calls = str(cs.RelationshipType.CALLS)
+    for node in anon:
+        assert any(rel == calls and str(to) == node for _frm, rel, to in cap.rels)
+
+
+def test_nested_sequence_paren_iifes_get_call_edges(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x }
+const a = (0, (function* () { yield helper(1) }))()
+const b = ((0, function* () { yield helper(2) }))()
+module.exports = { a, b }
+"""
+    cap = _run(tmp_path, src)
+    anon = [n for n in cap.nodes if cs.PREFIX_ANONYMOUS in n]
+    assert len(anon) == 2
+    calls = str(cs.RelationshipType.CALLS)
+    for node in anon:
+        assert any(rel == calls and str(to) == node for _frm, rel, to in cap.rels)
+
+
+def test_ts_cast_wrapped_iife_gets_call_edge(tmp_path: Path) -> None:
+    # TS cast wrappers are value-transparent; `(fn as any)()` invokes fn.
+    src = """function helper (x: number) { return x }
+const b = (function* () { yield helper(1) } as any)()
+export { b }
+"""
+    (tmp_path / "a.ts").write_text(src)
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    _assert_single_anonymous_called(cap)
