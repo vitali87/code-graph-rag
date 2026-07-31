@@ -199,9 +199,109 @@ def test_symbol_for_registry_constant_links(tmp_path: Path) -> None:
     )
 
 
+def test_module_binding_constructor_install_links(tmp_path: Path) -> None:
+    # `const CTP = require('./mod.js')` binding a whole-module CONSTRUCTOR
+    # FUNCTION (prototype methods, no class syntax): `[kSym]: new CTP()`
+    # must type the install (fastify's kContentTypeParser).
+    files = {
+        "symbols.js": SYMBOLS,
+        "parser.js": """'use strict'
+function Parser (opts) {
+  this.opts = opts
+}
+Parser.prototype.ping = function () { return 'pong' }
+module.exports = Parser
+""",
+        "main.js": """'use strict'
+const { kCtrl } = require('./symbols.js')
+const Parser = require('./parser.js')
+function build (options) {
+  return { [kCtrl]: new Parser(options) }
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { build, use }
+""",
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to) == "p.parser.Parser.ping"
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_class_field_symbol_install_links(tmp_path: Path) -> None:
+    # `class Server { [kCtrl] = new Ctrl() }`: the class-field installation
+    # feeds the index like an object-literal key.
+    files = {
+        "symbols.js": SYMBOLS,
+        "ctrl.js": CTRL,
+        "main.js": """'use strict'
+const { kCtrl } = require('./symbols.js')
+const { Ctrl } = require('./ctrl.js')
+class Server {
+  [kCtrl] = new Ctrl()
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { Server, use }
+""",
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to) == "p.ctrl.Ctrl.ping"
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_for_of_var_binding_is_function_scoped(tmp_path: Path) -> None:
+    # `for (var ctrl of list)` hoists ctrl to the function; a read AFTER the
+    # loop still reads the loop variable, never an outer same-named binding.
+    ctrl = CTRL.replace(
+        "module.exports = { Ctrl, createCtrl }",
+        """class Other {
+  ping () { return 'nope' }
+}
+module.exports = { Ctrl, Other, createCtrl }
+""",
+    )
+    main = """'use strict'
+const { kCtrl } = require('./symbols.js')
+const { Other } = require('./ctrl.js')
+const ctrl = new Other()
+function sink (v) { return v }
+function build (list) {
+  for (var ctrl of list) { sink(ctrl) }
+  return { [kCtrl]: ctrl }
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { build, use, ctrl }
+"""
+    cap = _run(
+        tmp_path,
+        {"symbols.js": SYMBOLS, "ctrl.js": ctrl, "main.js": main},
+    )
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to).endswith(".ping")
+        for frm, rel, to in cap.rels
+    )
+
+
 def test_parameter_installation_is_unknowable(tmp_path: Path) -> None:
     # The installed value is a PARAMETER; a same-named module-level binding
-    # must not type it (the decorator pattern this feature targets).
+    # must not type it (the decorator pattern this feature targets). The
+    # call site degrades to REFERENCES over name-matching methods so
+    # liveness survives without a wrong-class CALLS.
     main = """'use strict'
 const { kCtrl } = require('./symbols.js')
 const { Other } = require('./ctrl.js')
@@ -232,6 +332,12 @@ module.exports = { Ctrl, Other, createCtrl }
         and str(to).endswith(".ping")
         for frm, rel, to in cap.rels
     )
+    refs = str(cs.RelationshipType.REFERENCES)
+    for target in ("p.ctrl.Ctrl.ping", "p.ctrl.Other.ping"):
+        assert any(
+            rel == refs and str(frm).endswith(".use") and str(to) == target
+            for frm, rel, to in cap.rels
+        )
 
 
 def test_parameter_subscript_installation_is_unknowable(tmp_path: Path) -> None:
@@ -265,6 +371,12 @@ module.exports = { Ctrl, Other, createCtrl }
         and str(to).endswith(".ping")
         for frm, rel, to in cap.rels
     )
+    refs = str(cs.RelationshipType.REFERENCES)
+    for target in ("p.ctrl.Ctrl.ping", "p.ctrl.Other.ping"):
+        assert any(
+            rel == refs and str(frm).endswith(".use") and str(to) == target
+            for frm, rel, to in cap.rels
+        )
 
 
 def test_block_shadow_does_not_type_the_installation(tmp_path: Path) -> None:

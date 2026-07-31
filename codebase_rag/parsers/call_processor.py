@@ -6580,7 +6580,11 @@ class CallProcessor:
             node = stack.pop()
             if node.type == cs.TS_VARIABLE_DECLARATOR:
                 self._collect_symbol_declarator(node, module_qn)
-            elif node.type == cs.TS_PAIR:
+            elif node.type in (
+                cs.TS_PAIR,
+                cs.TS_PUBLIC_FIELD_DEFINITION,
+                cs.TS_JS_FIELD_DEFINITION,
+            ):
                 self._collect_symbol_pair(node, module_qn)
             elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
                 self._collect_symbol_subscript_assignment(node, module_qn)
@@ -6616,7 +6620,13 @@ class CallProcessor:
             self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
 
     def _collect_symbol_pair(self, node: Node, module_qn: str) -> None:
-        key = node.child_by_field_name(cs.FIELD_KEY)
+        # An object-literal pair OR a class field: the key sits in `key`,
+        # `name` (TS field) or `property` (JS field), the value in `value`.
+        key = (
+            node.child_by_field_name(cs.FIELD_KEY)
+            or node.child_by_field_name(cs.FIELD_NAME)
+            or node.child_by_field_name(cs.FIELD_PROPERTY)
+        )
         value = node.child_by_field_name(cs.FIELD_VALUE)
         if key is None or value is None:
             return
@@ -6676,26 +6686,51 @@ class CallProcessor:
             return self._js_value_type_class_qn(inner, module_qn, depth)
         if node_type == cs.TS_NEW_EXPRESSION:
             ctor = js_ts_utils.extract_constructor_name(value)
-            return self._js_registered_class(ctor, module_qn) if ctor else None
+            if not ctor:
+                return None
+            return self._js_registered_class(
+                ctor, module_qn, allow_constructor_function=True
+            )
         if node_type == cs.TS_IDENTIFIER:
             return self._js_identifier_class_qn(value, module_qn, depth)
         if node_type == cs.TS_CALL_EXPRESSION:
-            return self._js_call_result_class_qn(value, module_qn, depth)
+            return self._js_call_result_class_qn(value, module_qn)
         return None
 
-    def _js_registered_class(self, name: str, module_qn: str) -> str | None:
-        js = self._resolver.type_inference.js_type_inference
+    def _js_registered_class(
+        self, name: str, module_qn: str, allow_constructor_function: bool = False
+    ) -> str | None:
+        # allow_constructor_function: a `new X(...)` target may be an
+        # old-style CONSTRUCTOR FUNCTION with prototype methods (fastify's
+        # ContentTypeParser), registered as Function; accepting it lets its
+        # prototype methods resolve. Never allowed for name hints, where a
+        # function qn is a factory, not a type.
         registry = self._resolver.function_registry
-        if name in registry and registry[name] == NodeType.CLASS:
+        accepted = (
+            (NodeType.CLASS, NodeType.FUNCTION)
+            if allow_constructor_function
+            else (NodeType.CLASS,)
+        )
+        if name in registry and registry[name] in accepted:
             return name
-        resolved = js._resolve_js_class_name(name, module_qn)
-        if (
-            resolved is not None
-            and resolved in registry
-            and registry[resolved] == NodeType.CLASS
-        ):
-            return resolved
+        for candidate in self._js_name_candidates(name, module_qn):
+            if candidate in registry and registry[candidate] in accepted:
+                return candidate
         return None
+
+    def _js_name_candidates(self, name: str, module_qn: str) -> list[str]:
+        # The qns a bare name may denote: the imported member, the imported
+        # MODULE's same-named export (`const P = require('./p.js')` where
+        # p.js exports its constructor), or the module-local binding.
+        candidates: list[str] = []
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn)
+        if import_map is not None and name in import_map:
+            imported = import_map[name]
+            candidates.append(imported)
+            if not imported.endswith(f"{cs.SEPARATOR_DOT}{name}"):
+                candidates.append(f"{imported}{cs.SEPARATOR_DOT}{name}")
+        candidates.append(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+        return candidates
 
     def _js_identifier_class_qn(
         self, ident: Node, module_qn: str, depth: int
@@ -6757,8 +6792,16 @@ class CallProcessor:
                     and kind_node is not None
                     and self._js_pattern_binds(left, name)
                 ):
+                    # `for (var x of xs)` hoists x to the FUNCTION; a read
+                    # after the loop still reads the loop variable.
+                    span_node = scope if kind_node.type == cs.TS_JS_VAR_KIND else node
                     intros.append(
-                        (node.start_byte, node.end_byte, _JS_DECL_OPAQUE, None)
+                        (
+                            span_node.start_byte,
+                            span_node.end_byte,
+                            _JS_DECL_OPAQUE,
+                            None,
+                        )
                     )
             elif node.type == cs.TS_JS_CATCH_CLAUSE:
                 param = node.child_by_field_name(cs.FIELD_PARAMETER)
@@ -6843,9 +6886,7 @@ class CallProcessor:
                 stack.extend(node.named_children)
         return False
 
-    def _js_call_result_class_qn(
-        self, call: Node, module_qn: str, depth: int
-    ) -> str | None:
+    def _js_call_result_class_qn(self, call: Node, module_qn: str) -> str | None:
         func = call.child_by_field_name(cs.FIELD_FUNCTION)
         if func is None:
             return None
@@ -6857,48 +6898,51 @@ class CallProcessor:
                 self._js_symbol_name_qn(fn_name, module_qn)
             )
         if func.type == cs.TS_MEMBER_EXPRESSION:
-            obj = func.child_by_field_name(cs.FIELD_OBJECT)
-            prop = func.child_by_field_name(cs.FIELD_PROPERTY)
-            if (
-                obj is None
-                or prop is None
-                or obj.type != cs.TS_IDENTIFIER
-                or not (owner := safe_decode_text(obj))
-                or not (method := safe_decode_text(prop))
-            ):
-                return None
-            js = self._resolver.type_inference.js_type_inference
-            hint = js._infer_js_method_return_type(
-                f"{owner}{cs.SEPARATOR_DOT}{method}", module_qn
-            )
-            if hint and (resolved := self._js_registered_class(hint, module_qn)):
-                return resolved
-            # A static assigned OUTSIDE the class body (`C.build = build`;
-            # fastify's SchemaController.buildSchemaController) is invisible
-            # to the class-body method finder. Only a VERIFIED assignment in
-            # the class's module may redirect; a same-named free function
-            # alone must not (it can be unrelated).
-            class_qn = js._resolve_js_class_name(owner, module_qn)
-            if class_qn is None:
-                return None
-            assigned = self._js_static_assigned_factory(class_qn, method)
-            if assigned is None:
-                return None
-            class_module = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if assigned.type == cs.TS_IDENTIFIER:
-                fn_name = safe_decode_text(assigned)
-                if not fn_name:
-                    return None
-                return self._js_factory_return_class(
-                    f"{class_module}{cs.SEPARATOR_DOT}{fn_name}"
-                )
-            if assigned.type in cs.JS_TS_FUNCTION_NODES:
-                return self._js_function_return_class(
-                    assigned,
-                    f"{class_module}{cs.SEPARATOR_DOT}{method}",
-                    class_module,
-                )
+            return self._js_member_call_result_class(func, module_qn)
+        return None
+
+    def _js_member_call_result_class(self, func: Node, module_qn: str) -> str | None:
+        obj = func.child_by_field_name(cs.FIELD_OBJECT)
+        prop = func.child_by_field_name(cs.FIELD_PROPERTY)
+        if (
+            obj is None
+            or prop is None
+            or obj.type != cs.TS_IDENTIFIER
+            or not (owner := safe_decode_text(obj))
+            or not (method := safe_decode_text(prop))
+        ):
             return None
+        js = self._resolver.type_inference.js_type_inference
+        hint = js._infer_js_method_return_type(
+            f"{owner}{cs.SEPARATOR_DOT}{method}", module_qn
+        )
+        if hint and (resolved := self._js_registered_class(hint, module_qn)):
+            return resolved
+        # A static assigned OUTSIDE the class body (`C.build = build`;
+        # fastify's SchemaController.buildSchemaController) is invisible
+        # to the class-body method finder. Only a VERIFIED assignment in
+        # the class's module may redirect; a same-named free function
+        # alone must not (it can be unrelated).
+        class_qn = js._resolve_js_class_name(owner, module_qn)
+        if class_qn is None:
+            return None
+        assigned = self._js_static_assigned_factory(class_qn, method)
+        if assigned is None:
+            return None
+        class_module = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if assigned.type == cs.TS_IDENTIFIER:
+            fn_name = safe_decode_text(assigned)
+            if not fn_name:
+                return None
+            return self._js_factory_return_class(
+                f"{class_module}{cs.SEPARATOR_DOT}{fn_name}"
+            )
+        if assigned.type in cs.JS_TS_FUNCTION_NODES:
+            return self._js_function_return_class(
+                assigned,
+                f"{class_module}{cs.SEPARATOR_DOT}{method}",
+                class_module,
+            )
         return None
 
     def _js_static_assigned_factory(self, class_qn: str, method: str) -> Node | None:
@@ -7118,17 +7162,29 @@ class CallProcessor:
         if sym_qn is None or sym_qn not in self.js_symbol_constants:
             return None
         # The shape is recognised from here on: a symbol-keyed receiver is
-        # NEVER resolvable by name, so the generic path is suppressed even
-        # when no installation typed (an empty target list), rather than
-        # letting the trie guess a same-named method on an unrelated class.
-        classes = self.js_symbol_member_types.get(sym_qn) or set()
+        # never resolvable by NAME, so the generic path (whose trie fallback
+        # guesses one same-named method) is suppressed. With typed
+        # installations the index provides the targets; without any, the
+        # site degrades to REFERENCES over EVERY method of that name, so
+        # liveness survives while no wrong-class CALLS is fabricated.
         registry = self._resolver.function_registry
-        targets = [
-            (registry[method_qn], method_qn)
-            for class_qn in sorted(classes)
-            if (method_qn := f"{class_qn}{cs.SEPARATOR_DOT}{method}") in registry
+        classes = self.js_symbol_member_types.get(sym_qn)
+        if classes:
+            targets = [
+                (registry[method_qn], method_qn)
+                for class_qn in sorted(classes)
+                if (method_qn := f"{class_qn}{cs.SEPARATOR_DOT}{method}") in registry
+            ]
+            return targets, len(classes) == 1
+        name_matches = self._resolver.type_inference.simple_name_lookup.get(
+            method, set()
+        )
+        fan = [
+            (registry[qn], qn)
+            for qn in sorted(name_matches)
+            if qn in registry and registry[qn] != NodeType.CLASS
         ]
-        return targets, len(classes) == 1
+        return fan, False
 
     def _js_fn_call_receiver_binding(
         self, call_node: Node, module_qn: str

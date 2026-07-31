@@ -104,6 +104,9 @@ TS_PROPERTY_IDENTIFIER = "property_identifier"
 TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
 # The `(a, b = 1, ...rest)` parameter list of a function.
 TS_JS_FORMAL_PARAMETERS = "formal_parameters"
+# A class field in the JS grammar (`[k] = v` in a class body); TS spells it
+# public_field_definition. Its key sits in the `property` field.
+TS_JS_FIELD_DEFINITION = "field_definition"
 # The Symbol global: `Symbol('x')` / `Symbol.for('x')` mint the unique keys
 # that symbol-keyed member dispatch (issue #989) indexes.
 JS_SYMBOL_GLOBAL = "Symbol"
