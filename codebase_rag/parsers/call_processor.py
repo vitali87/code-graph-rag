@@ -384,10 +384,13 @@ _JS_LEXICAL_CALLABLE_SCOPES = frozenset(
         cs.TS_METHOD_DEFINITION,
     }
 )
-# Declarations hoisted to function/module scope: the LAST same-named one wins.
+# Declarations hoisted to function/module scope.
 _JS_LEXICAL_HOISTED_DECLARATIONS = frozenset(
     {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
 )
+# Inline values that ARE callables when held by a declarator; generators
+# included (a `const gen = function* () {...}` receiver is invocable).
+_JS_INLINE_CALLABLE_VALUE_TYPES = _INLINE_FUNC_VALUE_TYPES | {cs.TS_GENERATOR_FUNCTION}
 # JS/TS function scopes that REBIND `this` per call (a plain function /
 # generator / function expression), as opposed to an arrow_function (inherits
 # `this` lexically) or a method_definition / class-field arrow (binds `this` to
@@ -596,6 +599,7 @@ class CallProcessor:
         "_flow_processor",
         "_rpc_exposure",
         "_dispatch_registry",
+        "_js_file_receiver_bindings",
     )
 
     def __init__(
@@ -631,6 +635,12 @@ class CallProcessor:
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
+        # Per-module map of identifier -> (binding count, function node,
+        # container) for the #988 lexical receiver resolution; built once per
+        # file on first use.
+        self._js_file_receiver_bindings: dict[
+            str, dict[str, tuple[int, Node | None, Node | None]]
+        ] = {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -6169,192 +6179,156 @@ class CallProcessor:
     def _js_lexical_function_binding(
         self, site: Node, name: str, module_qn: str
     ) -> FunctionLocation | None:
-        # Walk the enclosing scopes innermost-out; the FIRST scope that binds
-        # `name` decides. A binding that is a function (hoisted declaration,
-        # self-name of a function expression, or a declarator holding an
-        # inline function) resolves by its own source span; any other binding
-        # (parameter, loop/catch/class binding, non-function declarator) means
-        # the runtime value is unknowable and resolution stops with nothing.
-        # An unbound name (a true global or an import) also yields nothing.
-        scope = site.parent
-        while scope is not None:
-            bound, func_node = self._js_scope_binding_for(scope, name)
-            if bound:
-                if func_node is None:
-                    return None
-                return self._recorded_caller(func_node, module_qn)
-            scope = scope.parent
-        return None
+        # UNIQUE-BINDING resolution: the receiver name resolves only when the
+        # WHOLE FILE introduces it exactly once, that introduction IS a
+        # function (a hoisted declaration, a declarator holding an inline
+        # function, or a function expression's self-name), and the binding's
+        # container span encloses the site. Any second introduction anywhere
+        # (a parameter, another declarator, a loop/catch/class/import binding,
+        # even a plain reassignment) makes the runtime value unknowable and
+        # suppresses. This deliberately trades conservative misses for never
+        # inventing an edge: shadowing, `var` hoisting across sibling blocks,
+        # switch/for/catch scoping and duplicate declarations all collapse
+        # into "more than one introduction", with no scope simulation at all.
+        root = site
+        while root.parent is not None:
+            root = root.parent
+        bindings = self._js_file_receiver_bindings.get(module_qn)
+        if bindings is None:
+            bindings = self._js_collect_file_bindings(root)
+            self._js_file_receiver_bindings[module_qn] = bindings
+        entry = bindings.get(name)
+        if entry is None:
+            return None
+        count, fn_node, container = entry
+        if count != 1 or fn_node is None or container is None:
+            return None
+        if not (container.start_byte <= site.start_byte < container.end_byte):
+            return None
+        return self._recorded_caller(fn_node, module_qn)
 
-    def _js_scope_binding_for(self, scope: Node, name: str) -> tuple[bool, Node | None]:
-        # (bound, function_node): whether this scope introduces `name`, and
-        # the function node it binds when the binding IS a function.
-        if scope.type in _JS_LEXICAL_CALLABLE_SCOPES:
-            # Parameters shadow everything else in the body, including a
-            # function expression's own name.
-            params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
-            if params is not None and self._js_pattern_binds(params, name):
-                return True, None
-            # A single-identifier arrow param (`x => ...`) has no
-            # formal_parameters wrapper.
-            if (
-                scope.type == cs.TS_ARROW_FUNCTION
-                and params is None
-                and (single := scope.child_by_field_name(cs.FIELD_PARAMETER))
-                is not None
-                and safe_decode_text(single) == name
-            ):
-                return True, None
-            # Only a named function/generator EXPRESSION binds its own name in
-            # its body; a declaration binds in the ENCLOSING scope (found by
-            # the hoisted scan there), and a METHOD name never binds at all.
-            if scope.type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
-                name_node = scope.child_by_field_name(cs.FIELD_NAME)
-                if name_node is not None and safe_decode_text(name_node) == name:
-                    return True, scope
-            # `var` hoists to function scope no matter which block wrote it.
-            return self._js_var_hoisted_binding(
-                scope.child_by_field_name(cs.FIELD_BODY), name
-            )
-        if scope.type in (cs.TS_STATEMENT_BLOCK, cs.TS_PROGRAM, cs.TS_JS_SWITCH_BODY):
-            decided = self._js_block_binding(scope, name)
-            if decided is not None:
-                return decided
-            if scope.type == cs.TS_PROGRAM:
-                # Module scope is also the top-level `var` hoist target.
-                return self._js_var_hoisted_binding(scope, name)
-            return False, None
-        if scope.type == cs.TS_JS_FOR_STATEMENT:
-            # The C-style loop's init clause scopes its bindings to the loop.
-            init = scope.child_by_field_name(cs.FIELD_INITIALIZER)
-            if init is not None and init.type in (
-                cs.TS_LEXICAL_DECLARATION,
-                cs.TS_VARIABLE_DECLARATION,
-            ):
-                decided = self._js_declaration_binding(init, name)
-                if decided is not None:
-                    return decided
-            return False, None
-        if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
-            left = scope.child_by_field_name(cs.FIELD_LEFT)
-            if left is not None and self._js_pattern_binds(left, name):
-                return True, None
-            return False, None
-        if scope.type == cs.TS_JS_CATCH_CLAUSE:
-            param = scope.child_by_field_name(cs.FIELD_PARAMETER)
-            if param is not None and self._js_pattern_binds(param, name):
-                return True, None
-            return False, None
-        return False, None
+    def _js_collect_file_bindings(
+        self, root: Node
+    ) -> dict[str, tuple[int, Node | None, Node | None]]:
+        # One pass over the file: name -> (introduction count, function node
+        # when the single introduction is a function, container node whose
+        # span bounds where the binding is usable). Introductions are
+        # OVER-collected on purpose (destructuring defaults, import aliases,
+        # bare assignment targets): each extra count can only suppress.
+        bindings: dict[str, tuple[int, Node | None, Node | None]] = {}
 
-    def _js_block_binding(
-        self, scope: Node, name: str
-    ) -> tuple[bool, Node | None] | None:
-        # Scan a block-like scope's own declarations; None means the scope
-        # does not bind `name` and the walk continues outward. A switch body
-        # is one shared scope whose declarations sit inside its case clauses.
-        children: list[Node] = []
-        for child in scope.named_children:
-            if child.type in (cs.TS_JS_SWITCH_CASE, cs.TS_JS_SWITCH_DEFAULT):
-                children.extend(child.named_children)
+        def add(name: str | None, fn_node: Node | None, container: Node | None) -> None:
+            if not name:
+                return
+            prior = bindings.get(name)
+            if prior is None:
+                bindings[name] = (1, fn_node, container)
             else:
-                children.append(child)
-        hoisted: Node | None = None
-        for child in children:
-            if child.type == cs.TS_EXPORT_STATEMENT:
-                # `export function f ...` wraps the declaration; the binding
-                # rules are those of the declaration itself.
-                wrapped = child.child_by_field_name(cs.FIELD_DECLARATION)
-                if wrapped is None:
-                    continue
-                child = wrapped
-            if child.type in _JS_LEXICAL_HOISTED_DECLARATIONS:
-                child_name = child.child_by_field_name(cs.FIELD_NAME)
-                if child_name is not None and safe_decode_text(child_name) == name:
-                    # Later declaration wins under hoisting.
-                    hoisted = child
-            elif child.type in (
-                cs.TS_LEXICAL_DECLARATION,
-                cs.TS_VARIABLE_DECLARATION,
-            ):
-                decided = self._js_declaration_binding(child, name)
-                if decided is not None:
-                    return decided
-            elif child.type == cs.TS_CLASS_DECLARATION:
-                child_name = child.child_by_field_name(cs.FIELD_NAME)
-                if child_name is not None and safe_decode_text(child_name) == name:
-                    return True, None
-        if hoisted is not None:
-            return True, hoisted
-        return None
+                bindings[name] = (prior[0] + 1, None, None)
 
-    def _js_declaration_binding(
-        self, declaration: Node, name: str
-    ) -> tuple[bool, Node | None] | None:
-        for declarator in declaration.named_children:
-            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
-                continue
-            target = declarator.child_by_field_name(cs.FIELD_NAME)
-            if target is None or not self._js_pattern_binds(target, name):
-                continue
-            value = declarator.child_by_field_name(cs.FIELD_VALUE)
-            if value is not None:
-                value = self._unwrap_ts_value(value)
-                if value.type in _INLINE_FUNC_VALUE_TYPES:
-                    return True, value
-            return True, None
-        return None
-
-    def _js_var_hoisted_binding(
-        self, body: Node | None, name: str
-    ) -> tuple[bool, Node | None]:
-        # `var` declarators anywhere in this function's body (nested callables
-        # and class bodies excluded: their vars are their own) bind `name` at
-        # function scope. A single var holding an inline function resolves to
-        # it; multiple same-named vars or a non-function value are unknowable.
-        if body is None:
-            return False, None
-        found: Node | None = None
-        count = 0
-        stack = list(body.named_children)
-        while stack:
-            node = stack.pop()
-            if (
-                node.type in _JS_LEXICAL_CALLABLE_SCOPES
-                or node.type == cs.TS_CLASS_BODY
-            ):
-                continue
-            if node.type == cs.TS_VARIABLE_DECLARATION:
-                decided = self._js_declaration_binding(node, name)
-                if decided is not None:
-                    count += 1
-                    found = decided[1]
-            stack.extend(node.named_children)
-        if count == 0:
-            return False, None
-        if count == 1:
-            return True, found
-        return True, None
-
-    @staticmethod
-    def _js_pattern_binds(pattern: Node, name: str) -> bool:
-        # Whether a binding pattern subtree (params, destructuring target,
-        # loop/catch binding) introduces `name`. Identifiers inside DEFAULT
-        # VALUES over-match; that only suppresses an edge, never invents one.
-        stack = [pattern]
-        while stack:
-            part = stack.pop()
-            if (
-                part.type
-                in (
+        def add_pattern(pattern: Node) -> None:
+            stack = [pattern]
+            while stack:
+                part = stack.pop()
+                if part.type in (
                     cs.TS_IDENTIFIER,
                     cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+                ):
+                    add(safe_decode_text(part), None, None)
+                stack.extend(part.named_children)
+
+        stack: list[tuple[Node, Node]] = [(root, root)]
+        while stack:
+            node, fn_container = stack.pop()
+            node_type = node.type
+            next_container = fn_container
+            if node_type in _JS_LEXICAL_CALLABLE_SCOPES:
+                params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+                if params is not None:
+                    add_pattern(params)
+                elif (
+                    single := node.child_by_field_name(cs.FIELD_PARAMETER)
+                ) is not None:
+                    add_pattern(single)
+                if node_type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+                    # A named function expression binds its own name in its
+                    # body only.
+                    name_node = node.child_by_field_name(cs.FIELD_NAME)
+                    if name_node is not None:
+                        add(safe_decode_text(name_node), node, node)
+                elif node_type in _JS_LEXICAL_HOISTED_DECLARATIONS:
+                    name_node = node.child_by_field_name(cs.FIELD_NAME)
+                    container: Node | None = node.parent
+                    if (
+                        container is not None
+                        and container.type == cs.TS_EXPORT_STATEMENT
+                    ):
+                        container = container.parent
+                    if name_node is not None:
+                        add(safe_decode_text(name_node), node, container)
+                # A method_definition name is a property, never a binding.
+                next_container = node.child_by_field_name(cs.FIELD_BODY) or node
+            elif node_type == cs.TS_VARIABLE_DECLARATOR:
+                target = node.child_by_field_name(cs.FIELD_NAME)
+                if target is not None:
+                    if target.type == cs.TS_IDENTIFIER:
+                        value = node.child_by_field_name(cs.FIELD_VALUE)
+                        fn_value: Node | None = None
+                        if value is not None:
+                            value = self._unwrap_ts_value(value)
+                            if value.type in _JS_INLINE_CALLABLE_VALUE_TYPES:
+                                fn_value = value
+                        declaration = node.parent
+                        # `var` (variable_declaration) hoists to the enclosing
+                        # function; `let`/`const` scope to their declaration's
+                        # parent block.
+                        if (
+                            declaration is not None
+                            and declaration.type == cs.TS_LEXICAL_DECLARATION
+                            and declaration.parent is not None
+                        ):
+                            container = declaration.parent
+                        else:
+                            container = fn_container
+                        add(safe_decode_text(target), fn_value, container)
+                    else:
+                        add_pattern(target)
+            elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
+                # Covers for-of and for-in, with or without var/let/const:
+                # the left side binds (or rebinds) its identifiers.
+                left = node.child_by_field_name(cs.FIELD_LEFT)
+                if left is not None:
+                    add_pattern(left)
+            elif node_type == cs.TS_JS_CATCH_CLAUSE:
+                param = node.child_by_field_name(cs.FIELD_PARAMETER)
+                if param is not None:
+                    add_pattern(param)
+            elif node_type in (cs.TS_CLASS_DECLARATION, cs.TS_CLASS_EXPRESSION):
+                name_node = node.child_by_field_name(cs.FIELD_NAME)
+                if name_node is not None:
+                    add(safe_decode_text(name_node), None, None)
+            elif node_type == cs.TS_IMPORT_STATEMENT:
+                clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == cs.TS_IMPORT_CLAUSE
+                    ),
+                    None,
                 )
-                and safe_decode_text(part) == name
+                if clause is not None:
+                    add_pattern(clause)
+            elif node_type in (
+                cs.TS_JS_ASSIGNMENT_EXPRESSION,
+                cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
             ):
-                return True
-            stack.extend(part.named_children)
-        return False
+                # A bare reassignment rebinds the name to an arbitrary value.
+                left = node.child_by_field_name(cs.FIELD_LEFT)
+                if left is not None and left.type == cs.TS_IDENTIFIER:
+                    add(safe_decode_text(left), None, None)
+            for child in node.named_children:
+                stack.append((child, next_container))
+        return bindings
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)

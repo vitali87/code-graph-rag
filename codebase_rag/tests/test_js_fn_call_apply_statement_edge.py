@@ -305,9 +305,11 @@ module.exports = { hook, setup }
     assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "hook"))
 
 
-def test_duplicate_declarations_last_one_wins(tmp_path: Path) -> None:
-    # Two same-named hoisted declarations: the later one is what the name
-    # denotes at runtime; SOME registered variant must gain the edge.
+def test_duplicate_declarations_suppress(tmp_path: Path) -> None:
+    # Two same-named hoisted declarations: the name has two introductions, so
+    # which one the call hits is unknowable to the unique-binding rule; no
+    # edge may be invented (the shadowed first declaration IS dead code, and
+    # an edge onto either variant could falsely revive it).
     src = """'use strict'
 function helper (x) { return x + 1 }
 function helper (x) { return x + 2 }
@@ -318,13 +320,9 @@ function main () {
 module.exports = { main }
 """
     cap = _run(tmp_path, src)
-    assert any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "helper")) or any(
-        f.endswith(".main")
-        for f, rel in {
-            (str(frm), rel)
-            for frm, rel, to in cap.rels
-            if "helper@" in str(to) and rel != str(cs.RelationshipType.DEFINES)
-        }
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
     )
 
 
@@ -384,18 +382,11 @@ module.exports = { main, hook }
 
 
 def test_switch_case_binding_does_not_mislink(tmp_path: Path) -> None:
-    # A lexical declaration inside a switch case scopes to the switch body.
+    # A lexical declaration inside a switch case shadows the module function;
+    # the call through it must emit nothing.
     src = """'use strict'
 function helper (x) { return x + 1 }
 function main (o, x) {
-  switch (x) {
-    case 1: {
-      helper.call(this, 1)
-      break
-    }
-    case 2:
-      break
-  }
   switch (x) {
     case 1:
       const helper = o.thing
@@ -407,16 +398,33 @@ function main (o, x) {
 module.exports = { main, helper }
 """
     cap = _run(tmp_path, src)
-    # The first switch's receiver is genuinely the module function (a block
-    # with no local binding); the second's is the case-scoped const. Exactly
-    # the first site may emit; the assertion pins that the const site does
-    # not, by demanding at most the single legitimate edge.
-    edges = {
-        (f, rel)
-        for f, rel in _edges_to_leaf(cap, "helper")
-        if rel == str(cs.RelationshipType.CALLS) and f.endswith(".main")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )
+
+
+def test_switch_case_unshadowed_call_links(tmp_path: Path) -> None:
+    # The positive twin: with no shadowing binding anywhere, a call inside a
+    # switch case links to the module function.
+    src = """'use strict'
+function helper (x) { return x + 1 }
+function main (x) {
+  switch (x) {
+    case 1: {
+      helper.call(this, 1)
+      break
     }
-    assert len(edges) <= 1
+  }
+  return 2
+}
+module.exports = { main, helper }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )
 
 
 def test_try_block_var_hoists_to_function_scope(tmp_path: Path) -> None:
@@ -501,3 +509,85 @@ module.exports = { f }
 """
     cap = _run(tmp_path, src)
     assert _self_loops(cap)
+
+
+def test_for_of_var_receiver_does_not_mislink(tmp_path: Path) -> None:
+    # `for (var hook of ...)` is function-scoped: after the loop the name is
+    # the loop binding, never the module function.
+    src = """'use strict'
+function hook (x) { return x + 1 }
+function main (list) {
+  for (var hook of list.hooks) { }
+  hook.call(this, 1)
+  return 2
+}
+module.exports = { main, hook }
+"""
+    cap = _run(tmp_path, src)
+    assert not any(f.endswith(".main") for f, _rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_block_function_declaration_var_redeclared_suppresses(
+    tmp_path: Path,
+) -> None:
+    # A local function declaration plus a same-named `var` in a nested block:
+    # the runtime value after the try is the var's; no edge may bind the
+    # declaration.
+    src = """'use strict'
+function main (list) {
+  function hook (x) { return x + 1 }
+  try { var hook = list.resolve() } catch (e) { }
+  hook.call(this, 1)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "hook"))
+
+
+def test_module_block_var_redeclaration_suppresses(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x + 1 }
+{ var helper = globalThis.pick }
+helper.call(this, 1)
+module.exports = { helper }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_class_static_block_var_shadow_suppresses(tmp_path: Path) -> None:
+    src = """'use strict'
+function helper (x) { return x + 1 }
+class C {
+  static {
+    if (globalThis.cond) { var helper = globalThis.pick }
+    helper.call(this, 1)
+  }
+}
+module.exports = { C, helper }
+"""
+    cap = _run(tmp_path, src)
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(rel == calls for _f, rel in _edges_to_leaf(cap, "helper"))
+
+
+def test_generator_function_expression_receiver_is_safe(tmp_path: Path) -> None:
+    # A `const gen = function* () {...}` receiver is recognised as a callable
+    # binding, but the definition pass does not yet REGISTER generator
+    # function expressions as nodes (tracked separately), so the span lookup
+    # correctly refuses and nothing is emitted. Pin that no edge is invented;
+    # once generator expressions are ingested, this flips to a positive link.
+    src = """'use strict'
+function main () {
+  const gen = function* () { yield 1 }
+  gen.call(this)
+  return 2
+}
+module.exports = { main }
+"""
+    cap = _run(tmp_path, src)
+    assert not _edges_to_leaf(cap, "gen")
