@@ -220,6 +220,10 @@ FIELD_FINALIZER = "finalizer"
 FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
+TS_TYPE_ANNOTATION = "type_annotation"
+TS_IMPORT_ALIAS = "import_alias"
+TS_JS_WITH_STATEMENT = "with_statement"
+TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
@@ -232,6 +236,7 @@ TS_SUBSCRIPT_EXPRESSION = "subscript_expression"
 TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
+TS_GENERATOR_FUNCTION = "generator_function"
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"
@@ -270,6 +275,17 @@ JS_COMMONJS_EXPORTS_FUNCTION_QUERY = """
 """
 
 # JS/TS CommonJS module.exports query
+# The DIRECT form `module.exports = function (...) {...}` / arrow: the whole
+# module IS one function (fastify's generated error-serializer). Two-level
+# member on the left, unlike the three-level named-property form below.
+JS_COMMONJS_DIRECT_EXPORT_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (identifier) @module_obj
+    property: (property_identifier) @exports_prop)
+  right: [(function_expression) (arrow_function) (call_expression)] @export_function)
+"""
+
 JS_COMMONJS_MODULE_EXPORTS_QUERY = """
 (assignment_expression
   left: (member_expression

@@ -86,6 +86,9 @@ FIELD_RETURN_TYPE = "return_type"
 FIELD_CONSTRUCTOR = "constructor"
 FIELD_DECLARATOR = "declarator"
 FIELD_PARAMETERS = "parameters"
+# A JS/TS arrow with a single bare-identifier parameter (`x => ...`) carries it
+# in the singular `parameter` field, with no formal_parameters wrapper.
+FIELD_PARAMETER = "parameter"
 FIELD_RECEIVER = "receiver"
 FIELD_TYPE = "type"
 # The wrapped function/class inside a Python decorated_definition node.
