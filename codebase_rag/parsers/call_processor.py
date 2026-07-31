@@ -3457,21 +3457,41 @@ class CallProcessor:
                             language in cs.JS_TS_LANGUAGES
                             and self._js_is_logical_binary(value)
                         )
-                        operands: list[Node] = []
-                        pending = list(value.named_children)
+                        # Position matters for `&&` only: a function value
+                        # is always truthy, so the LEFT operand of `&&` can
+                        # never be the expression's result; `||`/`??` flow
+                        # either operand.
+                        operands: list[tuple[Node, bool]] = []
+                        pending: list[tuple[Node, bool]] = [(value, True)]
                         while pending:
-                            operand = self._unwrap_ts_value(pending.pop())
+                            raw, value_position = pending.pop()
+                            operand = self._unwrap_ts_value(raw)
                             if (
                                 is_logical
                                 and operand.type == cs.TS_BINARY_EXPRESSION
                                 and self._js_is_logical_binary(operand)
                             ):
-                                pending.extend(operand.named_children)
+                                is_and = (
+                                    safe_decode_text(
+                                        operand.child_by_field_name(cs.FIELD_OPERATOR)
+                                    )
+                                    == cs.JS_OPERATOR_LOGICAL_AND
+                                )
+                                left = operand.child_by_field_name(cs.FIELD_LEFT)
+                                right = operand.child_by_field_name(cs.TS_FIELD_RIGHT)
+                                if left is not None:
+                                    pending.append(
+                                        (left, value_position and not is_and)
+                                    )
+                                if right is not None:
+                                    pending.append((right, value_position))
                                 continue
-                            operands.append(operand)
-                        for operand in operands:
+                            operands.append((operand, value_position))
+                        for operand, value_position in operands:
                             if operand.type in _INLINE_FUNC_VALUE_TYPES or (
-                                is_logical and operand.type in _ASSIGNMENT_RHS_REF_TYPES
+                                is_logical
+                                and value_position
+                                and operand.type in _ASSIGNMENT_RHS_REF_TYPES
                             ):
                                 self._emit_callback_edge(
                                     caller_spec,

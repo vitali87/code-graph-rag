@@ -63,7 +63,7 @@ def _referenced_from(cap: _Capture, caller_leaf: str, target_leaf: str) -> bool:
     return any(
         str(frm).rsplit(cs.SEPARATOR_DOT, 1)[-1] == caller_leaf
         and str(to).rsplit(cs.SEPARATOR_DOT, 1)[-1] == target_leaf
-        and rel != str(cs.RelationshipType.DEFINES)
+        and rel == str(cs.RelationshipType.REFERENCES)
         for frm, rel, to in cap.rels
     )
 
@@ -168,3 +168,17 @@ func Run(valid bool, other bool) bool {
         and rel == str(cs.RelationshipType.REFERENCES)
         for _frm, rel, to in cap.rels
     )
+
+
+def test_and_left_operand_is_not_referenced(tmp_path: Path) -> None:
+    # A function value is always truthy, so the LEFT operand of `&&` can
+    # never be the expression's result; referencing it would falsely revive.
+    src = """'use strict'
+function fallback () { return 1 }
+function main (options) {
+  const handler = fallback && options.other
+  return handler
+}
+module.exports = { main }
+"""
+    assert not _referenced_from(_run(tmp_path, src), "main", "fallback")
