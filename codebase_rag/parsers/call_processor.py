@@ -6964,30 +6964,34 @@ class CallProcessor:
         stack: list[Node] = [root_node]
         while stack:
             node = stack.pop()
-            if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                if (
-                    left is not None
-                    and left.type == cs.TS_MEMBER_EXPRESSION
-                    and (inner := left.child_by_field_name(cs.FIELD_OBJECT)) is not None
-                    and inner.type == cs.TS_MEMBER_EXPRESSION
-                    and (obj := inner.child_by_field_name(cs.FIELD_OBJECT)) is not None
-                    and obj.type == cs.TS_IDENTIFIER
-                    and safe_decode_text(obj) == fn_leaf
-                    and (prop := inner.child_by_field_name(cs.FIELD_PROPERTY))
-                    is not None
-                    and safe_decode_text(prop) == cs.JS_PROTOTYPE_KEYWORD
-                ):
-                    if member is None:
-                        return True
-                    outer_prop = left.child_by_field_name(cs.FIELD_PROPERTY)
-                    if (
-                        outer_prop is not None
-                        and safe_decode_text(outer_prop) == member
-                    ):
-                        return True
+            if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION and (
+                self._js_prototype_assignment_matches(node, fn_leaf, member)
+            ):
+                return True
             stack.extend(node.children)
         return False
+
+    @staticmethod
+    def _js_prototype_assignment_matches(
+        node: Node, fn_leaf: str, member: str | None
+    ) -> bool:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if (
+            left is None
+            or left.type != cs.TS_MEMBER_EXPRESSION
+            or (inner := left.child_by_field_name(cs.FIELD_OBJECT)) is None
+            or inner.type != cs.TS_MEMBER_EXPRESSION
+            or (obj := inner.child_by_field_name(cs.FIELD_OBJECT)) is None
+            or obj.type != cs.TS_IDENTIFIER
+            or safe_decode_text(obj) != fn_leaf
+            or (prop := inner.child_by_field_name(cs.FIELD_PROPERTY)) is None
+            or safe_decode_text(prop) != cs.JS_PROTOTYPE_KEYWORD
+        ):
+            return False
+        if member is None:
+            return True
+        outer_prop = left.child_by_field_name(cs.FIELD_PROPERTY)
+        return outer_prop is not None and safe_decode_text(outer_prop) == member
 
     def _js_name_candidates(self, name: str, module_qn: str) -> list[str]:
         # The qns a bare name may denote: the imported member, the imported
@@ -7056,31 +7060,41 @@ class CallProcessor:
             if node.type == cs.TS_VARIABLE_DECLARATOR:
                 self._js_declarator_introduction(node, scope, name, intros)
             elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                kind_node = node.child_by_field_name(cs.FIELD_KIND)
-                if (
-                    left is not None
-                    and kind_node is not None
-                    and self._js_pattern_binds(left, name)
-                ):
-                    # `for (var x of xs)` hoists x to the FUNCTION; a read
-                    # after the loop still reads the loop variable.
-                    span_node = scope if kind_node.type == cs.TS_JS_VAR_KIND else node
-                    intros.append(
-                        (
-                            span_node.start_byte,
-                            span_node.end_byte,
-                            _JS_DECL_OPAQUE,
-                            None,
-                        )
-                    )
+                self._js_loop_introduction(node, scope, name, intros)
             elif node.type == cs.TS_JS_CATCH_CLAUSE:
-                param = node.child_by_field_name(cs.FIELD_PARAMETER)
-                if param is not None and self._js_pattern_binds(param, name):
-                    intros.append(
-                        (node.start_byte, node.end_byte, _JS_DECL_OPAQUE, None)
-                    )
+                self._js_catch_introduction(node, name, intros)
             stack.extend(node.children)
+
+    def _js_loop_introduction(
+        self,
+        node: Node,
+        scope: Node,
+        name: str,
+        intros: list[tuple[int, int, str, Node | None]],
+    ) -> None:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        kind_node = node.child_by_field_name(cs.FIELD_KIND)
+        if (
+            left is not None
+            and kind_node is not None
+            and self._js_pattern_binds(left, name)
+        ):
+            # `for (var x of xs)` hoists x to the FUNCTION; a read after
+            # the loop still reads the loop variable.
+            span_node = scope if kind_node.type == cs.TS_JS_VAR_KIND else node
+            intros.append(
+                (span_node.start_byte, span_node.end_byte, _JS_DECL_OPAQUE, None)
+            )
+
+    def _js_catch_introduction(
+        self,
+        node: Node,
+        name: str,
+        intros: list[tuple[int, int, str, Node | None]],
+    ) -> None:
+        param = node.child_by_field_name(cs.FIELD_PARAMETER)
+        if param is not None and self._js_pattern_binds(param, name):
+            intros.append((node.start_byte, node.end_byte, _JS_DECL_OPAQUE, None))
 
     def _js_declarator_introduction(
         self,
