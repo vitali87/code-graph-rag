@@ -808,3 +808,99 @@ namespace N {
     assert not any(
         rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
     )
+
+
+def test_reused_updater_does_not_use_stale_bindings(tmp_path: Path) -> None:
+    # A reused updater (watch mode, a second run) re-parses files; the
+    # binding index from the FIRST parse must not resolve spans against the
+    # new registry, or the edge lands on whatever now sits at the old
+    # line/column.
+    (tmp_path / "a.js").write_text("""'use strict'
+function helper () { return 1 }
+function main () { helper.call(this) }
+module.exports = { main }
+""")
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    updater = GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    (tmp_path / "a.js").write_text("""'use strict'
+function decoy () { return 9 }
+function main () { const helper = require('./z'); helper.call(this) }
+module.exports = { main }
+""")
+    cap.rels.clear()
+    updater.run(force=True)
+    assert not any(
+        str(to).endswith(".decoy") and rel == str(cs.RelationshipType.CALLS)
+        for _frm, rel, to in cap.rels
+    )
+
+
+def test_ts_namespace_function_not_visible_outside(tmp_path: Path) -> None:
+    # A function declared inside a namespace is scoped to it; a site outside
+    # must not link to it, while a site inside must.
+    src = """namespace N {
+  function helper (): string { return 'inner' }
+  export function innerUse (): string { return '' + helper.call(this) }
+}
+export function outerUse (): void {
+  helper.call(this, 1)
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    outer = {
+        (f, str(to))
+        for f, rel, to in [(str(a), b, c) for a, b, c in cap.rels]
+        if rel == calls and f.endswith(".outerUse")
+    }
+    assert not outer
+    assert any(
+        rel == calls and str(frm).endswith(".innerUse")
+        for frm, rel, to in cap.rels
+        if str(to).endswith(".helper")
+    )
+
+
+def test_ts_namespace_import_alias_shadow_suppresses(tmp_path: Path) -> None:
+    # `import helper = Other.thing` inside a namespace binds a value name.
+    src = """function helper (): string { return 'outer' }
+namespace Other {
+  export const thing = { call: (x: unknown) => x }
+}
+namespace N {
+  import helper = Other.thing
+  export function use (): void {
+    helper.call(this)
+  }
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert not any(
+        rel == calls and str(to) == "p.a.helper" for _frm, rel, to in cap.rels
+    )
+
+
+def test_ts_default_param_value_does_not_suppress(tmp_path: Path) -> None:
+    # The TS twin of the JS default-value test, with the default in the SAME
+    # function as the site: `main (cb: any = helper)` reads helper; it
+    # introduces only cb, so the call inside main keeps its edge.
+    src = """export function helper (): number { return 1 }
+export function main (cb: any = helper): void {
+  helper.call(this)
+  void cb
+}
+"""
+    cap = _run(tmp_path, src, filename="a.ts")
+    calls = str(cs.RelationshipType.CALLS)
+    assert any(
+        rel == calls and f.endswith(".main") for f, rel in _edges_to_leaf(cap, "helper")
+    )

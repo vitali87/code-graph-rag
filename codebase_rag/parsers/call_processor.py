@@ -6148,6 +6148,11 @@ class CallProcessor:
             return False
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
 
+    def reset_js_receiver_bindings(self) -> None:
+        # Drop the per-file receiver-binding index; a reused updater's next
+        # pass re-parses files and must rebuild it from the fresh trees.
+        self._js_file_receiver_bindings.clear()
+
     def _js_fn_call_receiver_binding(
         self, call_node: Node, module_qn: str
     ) -> FunctionLocation | None:
@@ -6239,6 +6244,14 @@ class CallProcessor:
                     left = part.child_by_field_name(cs.FIELD_LEFT)
                     if left is not None:
                         stack.append(left)
+                    continue
+                if part.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+                    # The TS grammar hangs a default straight off the
+                    # parameter (no assignment_pattern wrapper); only the
+                    # pattern field introduces names.
+                    ts_pattern = part.child_by_field_name(cs.TS_FIELD_PATTERN)
+                    if ts_pattern is not None:
+                        stack.append(ts_pattern)
                     continue
                 if part.type == cs.TS_TYPE_ANNOTATION:
                     continue
@@ -6338,10 +6351,20 @@ class CallProcessor:
                 cs.TS_MODULE,
             ):
                 # Classes, TS enums and namespaces all bind VALUE names (an
-                # enum compiles to a var, a namespace to an object).
+                # enum compiles to a var, a namespace to an object). A
+                # namespace/module body is additionally its own scope: its
+                # members are invisible outside it.
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
                 if name_node is not None:
                     add(safe_decode_text(name_node), None, None)
+                if node_type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+                    next_container = node
+            elif node_type == cs.TS_IMPORT_ALIAS:
+                # `import x = Other.thing` (namespace alias form) binds x;
+                # the aliased path identifiers over-collect, which can only
+                # suppress.
+                add_pattern(node, None)
+                continue
             elif node_type == cs.TS_IMPORT_STATEMENT:
                 # Covers default/named/namespace clauses AND the TS
                 # `import x = require(...)` form: every identifier in the

@@ -213,6 +213,7 @@ FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
 TS_TYPE_ANNOTATION = "type_annotation"
+TS_IMPORT_ALIAS = "import_alias"
 TS_JS_WITH_STATEMENT = "with_statement"
 TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
