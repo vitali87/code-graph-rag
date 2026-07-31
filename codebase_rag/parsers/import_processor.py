@@ -402,6 +402,9 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        # A re-parsed module that no longer directly exports one function
+        # must not leave the stale whole-module alias mapping behind.
+        self.commonjs_direct_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)

@@ -13,6 +13,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode
 from ..utils import (
+    function_span_key,
     get_cached_query,
     ingest_exported_function,
     safe_decode_text,
@@ -24,7 +25,9 @@ from .utils import get_js_ts_language_obj
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import (
+        FunctionLocation,
         FunctionRegistryTrieProtocol,
+        FunctionSpanKey,
         LanguageQueries,
         SimpleNameLookup,
     )
@@ -32,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class JsTsModuleSystemMixin:
-    __slots__ = ("_processed_imports",)
+    __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -40,6 +43,7 @@ class JsTsModuleSystemMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
+    function_locations: dict[FunctionSpanKey, FunctionLocation]
     _processed_imports: set[str]
 
     @abstractmethod
@@ -64,6 +68,7 @@ class JsTsModuleSystemMixin:
 
     def __init__(self) -> None:
         self._processed_imports = set()
+        self._pending_direct_module_exports: list[tuple[ASTNode, bool]] = []
 
     def _ingest_missing_import_patterns(
         self,
@@ -301,12 +306,16 @@ class JsTsModuleSystemMixin:
         root_node: ASTNode,
         module_qn: str,
         language_obj: Language,
-    ) -> None:
+    ) -> list[tuple[ASTNode, bool]]:
         # `module.exports = function (...) {...}` makes the WHOLE module one
-        # function (fastify's generated error-serializer). Register it as an
-        # exported function under its own name (or its position when
-        # anonymous) and record the module-to-function mapping, so a
-        # whole-module require alias called directly resolves to it.
+        # function; `module.exports = function (...) {...}(args)` (with or
+        # without parens, fastify's generated error-serializer) exports the
+        # IIFE's RETURN value and runs the wrapper at module load. Collect
+        # the function nodes now; the caller finalises AFTER the deferred
+        # anonymous flush, resolving each node's qn by its own SOURCE SPAN so
+        # a name collision or refused registration can never point the edge
+        # or the alias map at an unrelated namesake.
+        pending: list[tuple[ASTNode, bool]] = []
         try:
             cursor = QueryCursor(
                 get_cached_query(language_obj, cs.JS_COMMONJS_DIRECT_EXPORT_QUERY)
@@ -314,7 +323,7 @@ class JsTsModuleSystemMixin:
             captures = sorted_captures(cursor, root_node)
         except Exception as e:
             logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
-            return
+            return pending
         for module_obj, exports_prop, export_function in zip(
             captures.get(cs.CAPTURE_MODULE_OBJ, []),
             captures.get(cs.CAPTURE_EXPORTS_PROP, []),
@@ -324,47 +333,79 @@ class JsTsModuleSystemMixin:
                 continue
             if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
                 continue
+            if self._is_export_inside_function(export_function):
+                # Assigned when the enclosing function runs, not at module
+                # load: neither a load-time call nor the module's export.
+                continue
             immediately_invoked = False
             if export_function.type == cs.TS_CALL_EXPRESSION:
-                # `module.exports = function (...) {...}(args)` (generated
-                # fast-json-stringify, fastify's error-serializer): the
-                # export is the IIFE's RETURN value, and the wrapped
-                # function runs at module load, so the module CALLS it; its
-                # returned callables stay alive through their internal
-                # references. Any other call expression is not a function
-                # export.
-                callee = export_function.child_by_field_name(cs.FIELD_FUNCTION)
+                callee: ASTNode | None = export_function.child_by_field_name(
+                    cs.FIELD_FUNCTION
+                )
+                while (
+                    callee is not None and callee.type == cs.TS_PARENTHESIZED_EXPRESSION
+                ):
+                    callee = callee.named_children[0] if callee.named_children else None
                 if callee is None or callee.type not in (
                     cs.TS_FUNCTION_EXPRESSION,
                     cs.TS_ARROW_FUNCTION,
                 ):
+                    # Any other call expression is not a function export.
                     continue
                 export_function = callee
                 immediately_invoked = True
-            name_node = export_function.child_by_field_name(cs.FIELD_NAME)
-            function_name = (
-                safe_decode_text(name_node) if name_node is not None else None
-            )
-            if not function_name:
-                row, col = export_function.start_point
-                function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
-            self._ingest_export_function(
-                export_function,
-                function_name,
-                module_qn,
-                cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
-            )
-            function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-            if immediately_invoked:
+            else:
+                # The function IS the export: register it (own name, or its
+                # position when anonymous) marked exported. A refusal (span
+                # already claimed by the node's earlier registration) is
+                # fine: finalisation reads the claimed span either way.
+                name_node = export_function.child_by_field_name(cs.FIELD_NAME)
+                function_name = (
+                    safe_decode_text(name_node) if name_node is not None else None
+                )
+                if not function_name:
+                    row, col = export_function.start_point
+                    function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
+                self._ingest_export_function(
+                    export_function,
+                    function_name,
+                    module_qn,
+                    cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+                )
+            pending.append((export_function, immediately_invoked))
+        return pending
+
+    def _finalise_direct_module_exports(
+        self, module_qn: str, pending: list[tuple[ASTNode, bool]]
+    ) -> None:
+        # Runs AFTER the deferred anonymous flush: every function node's
+        # minted qn is now in the span registry. An unregistered span means
+        # the node was refused everywhere; emit nothing rather than guess.
+        for node, invoked in pending:
+            loc = self.function_locations.get(function_span_key(module_qn, node))
+            if loc is None:
+                continue
+            if invoked:
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     cs.RelationshipType.CALLS,
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
+                    (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name),
                 )
             else:
-                # The alias map is only sound for the plain form: an IIFE's
-                # export is its return value, not the wrapped function.
-                self.import_processor.commonjs_direct_exports[module_qn] = function_qn
+                # The module's one export: aliases calling the whole-module
+                # require resolve to it, and it is exported by definition
+                # (the named form's earlier registration may have recorded
+                # is_exported False; the merge fixes it up).
+                self.ingestor.ensure_node_batch(
+                    loc.label,
+                    {
+                        cs.KEY_QUALIFIED_NAME: loc.qualified_name,
+                        cs.KEY_IS_EXPORTED: True,
+                    },
+                )
+                self.import_processor.commonjs_direct_exports[module_qn] = (
+                    loc.qualified_name
+                )
 
     def _ingest_commonjs_exports(
         self,
@@ -384,7 +425,9 @@ class JsTsModuleSystemMixin:
             cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
             cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
         ]
-        self._ingest_direct_module_export(root_node, module_qn, language_obj)
+        self._pending_direct_module_exports = self._ingest_direct_module_export(
+            root_node, module_qn, language_obj
+        )
 
         for query_text in query_texts:
             try:
