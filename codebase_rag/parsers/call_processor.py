@@ -869,6 +869,9 @@ class CallProcessor:
         "_rpc_exposure",
         "_dispatch_registry",
         "_js_file_receiver_bindings",
+        "js_symbol_constants",
+        "_js_symbol_assignments",
+        "js_symbol_member_types",
     )
 
     def __init__(
@@ -910,6 +913,14 @@ class CallProcessor:
         self._js_file_receiver_bindings: dict[
             str, dict[str, list[tuple[Node | None, Node | None]]]
         ] = {}
+        # Symbol-keyed member dispatch (issue #989): qns of symbol CONSTANTS
+        # (`kX = Symbol(...)`, `kX: Symbol(...)`), raw `[kX]: value` /
+        # `obj[kX] = value` records as (module_qn, symbol_name, class_qn),
+        # and the finalised symbol qn -> assigned class qns map. Strings
+        # only: holding Node values would pin whole trees.
+        self.js_symbol_constants: set[str] = set()
+        self._js_symbol_assignments: list[tuple[str, str, str]] = []
+        self.js_symbol_member_types: dict[str, set[str]] = {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -2940,6 +2951,22 @@ class CallProcessor:
                         calls_rel,
                         (loc.label, qn_key, loc.qualified_name),
                     )
+                # `recv[kSym].method(...)`: the callee text contains brackets
+                # and resolves nowhere useful; the symbol index carries the
+                # edges, and the generic path (with its phantom-prone
+                # bare-name fallback) is suppressed for the recognised shape.
+                if (
+                    sym_targets := self._js_symbol_member_targets(call_node, module_qn)
+                ) is not None:
+                    targets, unique = sym_targets
+                    sym_rel = calls_rel if unique else cs.RelationshipType.REFERENCES
+                    for sym_label, sym_qn_target in targets:
+                        ensure_rel(
+                            caller_spec,
+                            sym_rel,
+                            (sym_label, qn_key, sym_qn_target),
+                        )
+                    call_name = None
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
                 # or otherwise yields no name still consumes its arguments through
@@ -6494,6 +6521,280 @@ class CallProcessor:
         # Drop the per-file receiver-binding index; a reused updater's next
         # pass re-parses files and must rebuild it from the fresh trees.
         self._js_file_receiver_bindings.clear()
+        self.js_symbol_constants.clear()
+        self._js_symbol_assignments.clear()
+        self.js_symbol_member_types.clear()
+
+    def collect_js_symbol_bindings(
+        self,
+        file_path: Path,
+        root_node: Node,
+        language: cs.SupportedLanguage,
+    ) -> None:
+        # Pre-pass for symbol-keyed member dispatch (issue #989): one walk
+        # per JS/TS file collecting (a) symbol CONSTANT definitions
+        # (`kX = Symbol('...')` declarators, `kX: Symbol('...')` pairs) and
+        # (b) raw symbol-keyed installations (`{ [kX]: value }` pairs,
+        # `obj[kX] = value` assignments) with the value's class resolved
+        # immediately (strings only). Whether a key actually names a symbol
+        # constant is judged in finalize, once every file's constants are in.
+        if language not in _JS_TS_LANGUAGES:
+            return
+        try:
+            module_qn = self._module_qn(
+                file_path, cached_relative_path(file_path, self.repo_path)
+            )
+        except ValueError:
+            return
+        stack: list[Node] = [root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_VARIABLE_DECLARATOR:
+                self._collect_symbol_declarator(node, module_qn)
+            elif node.type == cs.TS_PAIR:
+                self._collect_symbol_pair(node, module_qn)
+            elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                self._collect_symbol_subscript_assignment(node, module_qn)
+            stack.extend(node.children)
+
+    @staticmethod
+    def _js_is_symbol_mint(value: Node | None) -> bool:
+        # `Symbol('x')` or `Symbol.for('x')`.
+        if value is None or value.type != cs.TS_CALL_EXPRESSION:
+            return False
+        func = value.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None:
+            return False
+        if func.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(func) == cs.JS_SYMBOL_GLOBAL
+        if func.type == cs.TS_MEMBER_EXPRESSION:
+            obj = func.child_by_field_name(cs.FIELD_OBJECT)
+            return (
+                obj is not None
+                and obj.type == cs.TS_IDENTIFIER
+                and safe_decode_text(obj) == cs.JS_SYMBOL_GLOBAL
+            )
+        return False
+
+    def _collect_symbol_declarator(self, node: Node, module_qn: str) -> None:
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        if (
+            target is not None
+            and target.type == cs.TS_IDENTIFIER
+            and self._js_is_symbol_mint(node.child_by_field_name(cs.FIELD_VALUE))
+            and (name := safe_decode_text(target))
+        ):
+            self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+
+    def _collect_symbol_pair(self, node: Node, module_qn: str) -> None:
+        key = node.child_by_field_name(cs.FIELD_KEY)
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        if key is None or value is None:
+            return
+        if key.type == cs.TS_PROPERTY_IDENTIFIER and self._js_is_symbol_mint(value):
+            if name := safe_decode_text(key):
+                self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+            return
+        if key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME:
+            index = next(
+                (c for c in key.named_children if c.type != cs.TS_COMMENT), None
+            )
+            if (
+                index is not None
+                and index.type == cs.TS_IDENTIFIER
+                and (sym_name := safe_decode_text(index))
+                and (class_qn := self._js_symbol_value_class_qn(value, module_qn))
+            ):
+                self._js_symbol_assignments.append((module_qn, sym_name, class_qn))
+
+    def _collect_symbol_subscript_assignment(self, node: Node, module_qn: str) -> None:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if left is None or value is None or left.type != cs.TS_SUBSCRIPT_EXPRESSION:
+            return
+        index = left.child_by_field_name(cs.TS_FIELD_INDEX)
+        if (
+            index is not None
+            and index.type == cs.TS_IDENTIFIER
+            and (sym_name := safe_decode_text(index))
+            and (class_qn := self._js_symbol_value_class_qn(value, module_qn))
+        ):
+            self._js_symbol_assignments.append((module_qn, sym_name, class_qn))
+
+    def _js_symbol_value_class_qn(self, value: Node, module_qn: str) -> str | None:
+        # Resolve the INSTALLED value to a class qn, entirely at sweep time
+        # so only strings are kept: a direct construction, a factory call, or
+        # an identifier typed by the enclosing callable's locals.
+        js = self._resolver.type_inference.js_type_inference
+        if value.type == cs.TS_IDENTIFIER:
+            enclosing = value.parent
+            while (
+                enclosing is not None and enclosing.type not in cs.JS_TS_FUNCTION_NODES
+            ):
+                enclosing = enclosing.parent
+            if enclosing is None:
+                return None
+            hint = js.build_local_variable_type_map(enclosing, module_qn).get(
+                safe_decode_text(value) or ""
+            )
+        else:
+            hint = js._infer_js_variable_type_from_value(value, module_qn)
+        if not hint:
+            return None
+        return self._js_class_qn_from_hint(hint, module_qn)
+
+    def _js_class_qn_from_hint(self, hint: str, module_qn: str) -> str | None:
+        js = self._resolver.type_inference.js_type_inference
+        registry = self._resolver.function_registry
+        if hint in registry and registry[hint] == NodeType.CLASS:
+            return hint
+        # _resolve_js_class_name falls back to the imported qn even when it
+        # is not a class; only a REGISTERED class ends the search here.
+        resolved = js._resolve_js_class_name(hint, module_qn)
+        if (
+            resolved is not None
+            and resolved in registry
+            and registry[resolved] == NodeType.CLASS
+        ):
+            return resolved
+        # A bare FACTORY name: resolve the function and type its return.
+        fn_qn = self._js_symbol_name_qn(hint, module_qn)
+        if fn_qn is None or fn_qn not in registry:
+            return None
+        fn_node = self._js_function_node_by_qn(fn_qn)
+        if fn_node is None:
+            return None
+        factory_module = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        # A direct `return new X(...)` names the class outright (the general
+        # return analysis resolves a NEW to the factory's OWN scope, which
+        # for a top-level function is the module).
+        if ctor := self._js_direct_return_ctor(fn_node):
+            resolved = js._resolve_js_class_name(ctor, factory_module)
+            if (
+                resolved is not None
+                and resolved in registry
+                and registry[resolved] == NodeType.CLASS
+            ):
+                return resolved
+            return None
+        returned = js._analyze_return_statements(fn_node, fn_qn)
+        if returned is None:
+            return None
+        if returned in registry and registry[returned] == NodeType.CLASS:
+            return returned
+        resolved = js._resolve_js_class_name(returned, factory_module)
+        if (
+            resolved is not None
+            and resolved in registry
+            and registry[resolved] == NodeType.CLASS
+        ):
+            return resolved
+        return None
+
+    @staticmethod
+    def _js_direct_return_ctor(fn_node: Node) -> str | None:
+        stack: list[Node] = list(fn_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in cs.JS_TS_FUNCTION_NODES:
+                # A nested callable's returns are its own.
+                continue
+            if node.type == cs.TS_RETURN_STATEMENT:
+                for child in node.named_children:
+                    if child.type == cs.TS_NEW_EXPRESSION:
+                        return js_ts_utils.extract_constructor_name(child)
+            stack.extend(node.children)
+        return None
+
+    def _js_function_node_by_qn(self, fn_qn: str) -> Node | None:
+        # Locate a top-level FUNCTION's definition node from its qn (the
+        # class.method finder cannot: it splits qns as module.Class.method).
+        module_qn, _, fn_name = fn_qn.rpartition(cs.SEPARATOR_DOT)
+        type_inference = self._resolver.type_inference
+        file_path = type_inference.module_qn_to_file_path.get(module_qn)
+        if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
+            return None
+        root_node, _language = entry
+        stack: list[Node] = [root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_FUNCTION_DECLARATION:
+                name = node.child_by_field_name(cs.FIELD_NAME)
+                if name is not None and safe_decode_text(name) == fn_name:
+                    return node
+            elif node.type == cs.TS_VARIABLE_DECLARATOR:
+                name = node.child_by_field_name(cs.FIELD_NAME)
+                value = node.child_by_field_name(cs.FIELD_VALUE)
+                if (
+                    name is not None
+                    and value is not None
+                    and value.type in cs.JS_TS_FUNCTION_NODES
+                    and safe_decode_text(name) == fn_name
+                ):
+                    return value
+            stack.extend(node.children)
+        return None
+
+    def _js_symbol_name_qn(self, name: str, module_qn: str) -> str | None:
+        # The qn a bare name denotes in this module: the imported member's qn
+        # when the name is imported, else the module-local qn.
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn)
+        if import_map is not None and name in import_map:
+            imported = import_map[name]
+            if imported.endswith(f"{cs.SEPARATOR_DOT}{name}"):
+                return imported
+            return f"{imported}{cs.SEPARATOR_DOT}{name}"
+        return f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+
+    def finalize_js_symbol_bindings(self) -> None:
+        # Keep only installations whose key resolves to a REGISTERED symbol
+        # constant: an arbitrary computed key (`obj[i]`) must never join the
+        # index, or unrelated subscript reads would type by it.
+        for module_qn, sym_name, class_qn in self._js_symbol_assignments:
+            sym_qn = self._js_symbol_name_qn(sym_name, module_qn)
+            if sym_qn is not None and sym_qn in self.js_symbol_constants:
+                self.js_symbol_member_types.setdefault(sym_qn, set()).add(class_qn)
+        self._js_symbol_assignments.clear()
+
+    def _js_symbol_member_targets(
+        self, call_node: Node, module_qn: str
+    ) -> tuple[list[tuple[str, str]], bool] | None:
+        # `recv[kSym].method(...)` where kSym resolves to a symbol constant
+        # with recorded installations: exactly ONE installed class binds the
+        # call (unique=True, CALLS); several installed classes are a sound
+        # candidate set (unique=False, the caller references each class's
+        # matching method so liveness holds without guessing). Returns None
+        # for every other shape, leaving the generic path untouched. The
+        # bare-name trie fallback is SUPPRESSED for the recognised shapes:
+        # the issue #989 receiver is statically unknowable by name and the
+        # trie falsely revives same-named methods on unrelated classes.
+        func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None or func.type != cs.TS_MEMBER_EXPRESSION:
+            return None
+        obj = func.child_by_field_name(cs.FIELD_OBJECT)
+        prop = func.child_by_field_name(cs.FIELD_PROPERTY)
+        if obj is None or prop is None or obj.type != cs.TS_SUBSCRIPT_EXPRESSION:
+            return None
+        index = obj.child_by_field_name(cs.TS_FIELD_INDEX)
+        if index is None or index.type != cs.TS_IDENTIFIER:
+            return None
+        sym_name = safe_decode_text(index)
+        method = safe_decode_text(prop)
+        if not sym_name or not method:
+            return None
+        sym_qn = self._js_symbol_name_qn(sym_name, module_qn)
+        if sym_qn is None or sym_qn not in self.js_symbol_constants:
+            return None
+        classes = self.js_symbol_member_types.get(sym_qn)
+        if not classes:
+            return None
+        registry = self._resolver.function_registry
+        targets = [
+            (registry[method_qn], method_qn)
+            for class_qn in sorted(classes)
+            if (method_qn := f"{class_qn}{cs.SEPARATOR_DOT}{method}") in registry
+        ]
+        return targets, len(classes) == 1
 
     def _js_fn_call_receiver_binding(
         self, call_node: Node, module_qn: str

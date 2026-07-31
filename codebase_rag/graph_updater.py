@@ -1917,10 +1917,16 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
+            self.factory.call_processor.collect_js_symbol_bindings(
+                file_path, root_node, language
+            )
         # Bindings are pending until every file's ctor metadata (param order,
         # param->attribute renames) is in: a construction site may be scanned
-        # before the file defining its class.
+        # before the file defining its class. Symbol-keyed installations wait
+        # the same way: a `[kX]: value` site may be swept before the file
+        # defining kX.
         self.factory.call_processor.finalize_callable_field_bindings()
+        self.factory.call_processor.finalize_js_symbol_bindings()
         for file_path, language in self._parsed_files:
             root_node = self._ast_for(file_path)
             if root_node is None:

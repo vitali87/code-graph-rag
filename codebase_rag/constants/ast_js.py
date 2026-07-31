@@ -100,6 +100,11 @@ TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
 TS_PROPERTY_IDENTIFIER = "property_identifier"
+# `[expr]` as an object-literal / class-member key.
+TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
+# The Symbol global: `Symbol('x')` / `Symbol.for('x')` mint the unique keys
+# that symbol-keyed member dispatch (issue #989) indexes.
+JS_SYMBOL_GLOBAL = "Symbol"
 
 # JS prototype property keywords
 JS_PROTOTYPE_KEYWORD = "prototype"
