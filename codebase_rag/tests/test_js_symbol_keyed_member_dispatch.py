@@ -199,6 +199,191 @@ def test_symbol_for_registry_constant_links(tmp_path: Path) -> None:
     )
 
 
+def test_parameter_installation_is_unknowable(tmp_path: Path) -> None:
+    # The installed value is a PARAMETER; a same-named module-level binding
+    # must not type it (the decorator pattern this feature targets).
+    main = """'use strict'
+const { kCtrl } = require('./symbols.js')
+const { Other } = require('./ctrl.js')
+const ctrl = new Other()
+function install (server, ctrl) {
+  return { [kCtrl]: ctrl }
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { install, use, ctrl }
+"""
+    ctrl = CTRL.replace(
+        "module.exports = { Ctrl, createCtrl }",
+        """class Other {
+  ping () { return 'nope' }
+}
+module.exports = { Ctrl, Other, createCtrl }
+""",
+    )
+    cap = _run(
+        tmp_path,
+        {"symbols.js": SYMBOLS, "ctrl.js": ctrl, "main.js": main},
+    )
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to).endswith(".ping")
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_parameter_subscript_installation_is_unknowable(tmp_path: Path) -> None:
+    main = """'use strict'
+const { kCtrl } = require('./symbols.js')
+const { Other } = require('./ctrl.js')
+const controller = new Other()
+function decorate (instance, controller) {
+  instance[kCtrl] = controller
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { decorate, use, controller }
+"""
+    ctrl = CTRL.replace(
+        "module.exports = { Ctrl, createCtrl }",
+        """class Other {
+  ping () { return 'nope' }
+}
+module.exports = { Ctrl, Other, createCtrl }
+""",
+    )
+    cap = _run(
+        tmp_path,
+        {"symbols.js": SYMBOLS, "ctrl.js": ctrl, "main.js": main},
+    )
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to).endswith(".ping")
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_block_shadow_does_not_type_the_installation(tmp_path: Path) -> None:
+    # The outer `const ctrl = new Ctrl()` is the installed binding; a
+    # nested-block shadow (before OR after the install site) must not
+    # replace it.
+    ctrl = CTRL.replace(
+        "module.exports = { Ctrl, createCtrl }",
+        """class Other {
+  ping () { return 'nope' }
+}
+module.exports = { Ctrl, Other, createCtrl }
+""",
+    )
+    for shadow_first in (True, False):
+        install = "  const ctrl = new Ctrl()\n"
+        shadow = "  if (options) { const ctrl = new Other(); ctrl.ping() }\n"
+        body = (shadow + install) if shadow_first else (install + shadow)
+        main = (
+            """'use strict'
+const { kCtrl } = require('./symbols.js')
+const { Ctrl, Other } = require('./ctrl.js')
+function build (options) {
+"""
+            + body
+            + """  return { [kCtrl]: ctrl }
+}
+function use (server) {
+  return server[kCtrl].ping()
+}
+module.exports = { build, use }
+"""
+        )
+        sub = tmp_path / ("a" if shadow_first else "b")
+        sub.mkdir()
+        cap = _run(
+            sub,
+            {"symbols.js": SYMBOLS, "ctrl.js": ctrl, "main.js": main},
+        )
+        assert any(
+            rel == str(cs.RelationshipType.CALLS)
+            and str(frm).endswith(".use")
+            and str(to) == "p.ctrl.Ctrl.ping"
+            for frm, rel, to in cap.rels
+        ), f"shadow_first={shadow_first}"
+        assert not any(
+            str(frm).endswith(".use") and str(to).endswith("Other.ping")
+            for frm, _rel, to in cap.rels
+        ), f"shadow_first={shadow_first}"
+
+
+def test_real_static_method_never_falls_back_to_free_function(
+    tmp_path: Path,
+) -> None:
+    # `Registry.build(o)` has a REAL static in the class body; an unrelated
+    # module-level `function build` must never type the result.
+    files = {
+        "symbols.js": SYMBOLS,
+        "ctrl.js": CTRL.replace(
+            "module.exports = { Ctrl, createCtrl }",
+            """class Other {
+  ping () { return 'nope' }
+}
+class Registry {
+  static build (o) { return o.cached }
+}
+function build (o) { return new Other() }
+module.exports = { Ctrl, Other, Registry, build, createCtrl }
+""",
+        ),
+        "main.js": MAIN.replace(
+            "const { createCtrl } = require('./ctrl.js')",
+            "const { Registry } = require('./ctrl.js')",
+        ).replace(
+            "  const ctrl = createCtrl(options)\n  return { [kCtrl]: ctrl }",
+            "  return { [kCtrl]: Registry.build(options) }",
+        ),
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to).endswith(".ping")
+        for frm, rel, to in cap.rels
+    )
+
+
+def test_divergent_destructured_returns_do_not_guess(tmp_path: Path) -> None:
+    files = {
+        "symbols.js": SYMBOLS,
+        "ctrl.js": CTRL.replace(
+            "module.exports = { Ctrl, createCtrl }",
+            """class Other {
+  ping () { return 'nope' }
+}
+function makeCtrl (opts) {
+  if (opts.legacy) { return { ctrl: new Other() } }
+  return { ctrl: new Ctrl() }
+}
+module.exports = { Ctrl, Other, makeCtrl, createCtrl }
+""",
+        ),
+        "main.js": MAIN.replace(
+            "const { createCtrl } = require('./ctrl.js')",
+            "const { makeCtrl } = require('./ctrl.js')",
+        ).replace(
+            "  const ctrl = createCtrl(options)",
+            "  const { ctrl } = makeCtrl(options)",
+        ),
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to).endswith(".ping")
+        for frm, rel, to in cap.rels
+    )
+
+
 def test_unknown_method_on_installed_class_emits_nothing(tmp_path: Path) -> None:
     main = MAIN.replace("server[kCtrl].ping()", "server[kCtrl].vanish()")
     cap = _run(
