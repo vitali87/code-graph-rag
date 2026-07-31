@@ -132,12 +132,15 @@ def _is_js_well_known_symbol_root(name: str, is_method: bool, path: str) -> bool
     # the `Symbol.` path and stays ordinary code.
     if not is_method or not path.endswith(_JS_TS_EXTS):
         return False
-    # Formatting must not decide (`[ Symbol.iterator ]`, `[Symbol["iterator"]]`
-    # spell the same protocol member): compare whitespace-free, accepting the
-    # dotted and the bracket-notation access off the Symbol global. A string
-    # key (`['Symbol.fake']`) or user symbol variable (`[mySym]`) keeps its
-    # own spelling and never matches.
-    compact = name.replace(" ", "")
+    # Formatting must not decide (`[ Symbol.iterator ]`, `[\tSymbol.iterator\t]`,
+    # `[Symbol["iterator"]]` spell the same protocol member): compare free of
+    # ALL whitespace, accepting the dotted and the bracket-notation access off
+    # the Symbol global. Deliberately any Symbol access, not an allowlist of
+    # the well-known set: `Symbol.for(...)` registry members (Node invokes
+    # `Symbol.for('nodejs.util.inspect.custom')`) are runtime-reached too. A
+    # string key (`['Symbol.fake']`) or user symbol variable (`[mySym]`) keeps
+    # its own spelling and never matches.
+    compact = "".join(name.split())
     return compact.endswith(cs.JS_COMPUTED_NAME_SUFFIX) and (
         compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
         or compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX)

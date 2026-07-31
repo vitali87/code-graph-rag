@@ -104,6 +104,43 @@ def test_spaced_and_bracket_notation_variants_are_roots() -> None:
     assert not dead
 
 
+def test_tab_and_newline_formatting_variants_are_roots() -> None:
+    # Formatters can put any whitespace inside the computed brackets; tabs and
+    # line terminators must normalise away exactly like spaces.
+    dead = _collect(
+        [
+            _method(
+                "proj.a.Tabbed.[\tSymbol.iterator\t]",
+                "[\tSymbol.iterator\t]",
+                "a/t.ts",
+            ),
+            _method(
+                "proj.a.Wrapped.[\n  Symbol.asyncIterator\n]",
+                "[\n  Symbol.asyncIterator\n]",
+                "a/w.js",
+            ),
+        ]
+    )
+    assert not dead
+
+
+def test_symbol_registry_members_are_roots() -> None:
+    # `Symbol.for(...)` registry symbols are invoked by runtime consumers the
+    # graph cannot see (Node's util.inspect invokes
+    # `Symbol.for('nodejs.util.inspect.custom')` members). The predicate is
+    # deliberately any-Symbol-access, not an allowlist of the well-known set.
+    dead = _collect(
+        [
+            _method(
+                "proj.a.C.[Symbol.for('nodejs.util.inspect.custom')]",
+                "[Symbol.for('nodejs.util.inspect.custom')]",
+                "a/c.js",
+            )
+        ]
+    )
+    assert not dead
+
+
 def test_near_miss_names_still_report() -> None:
     # A STRING key spelling `'Symbol.fake'` and a user symbol variable are
     # ordinary members: no runtime protocol invokes them.
